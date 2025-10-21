@@ -19,8 +19,16 @@ class PostgresEbayDatabase:
         return next(get_db())
     
     def _safe_get(self, data: Dict, *keys):
-        """Safely get nested dict values"""
-        return reduce(lambda a, k: (a or {}).get(k) if isinstance(a, dict) else None, keys, data)
+        """Safely get nested dict/list values"""
+        def accessor(obj, key):
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return obj.get(key)
+            if isinstance(obj, list) and isinstance(key, int) and 0 <= key < len(obj):
+                return obj[key]
+            return None
+        return reduce(accessor, keys, data)
     
     def _parse_money(self, money_obj: Optional[Dict]) -> Tuple[Optional[Decimal], Optional[str]]:
         """Parse eBay money object to (value, currency)"""
