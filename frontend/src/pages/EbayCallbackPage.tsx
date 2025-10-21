@@ -12,9 +12,14 @@ export const EbayCallbackPage: React.FC = () => {
   const { refreshUser } = useAuth();
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(true);
+  const hasProcessed = React.useRef(false);
 
   useEffect(() => {
     const handleCallback = async () => {
+      if (hasProcessed.current) {
+        return;
+      }
+      hasProcessed.current = true;
       const code = searchParams.get('code');
       const state = searchParams.get('state');
       const errorParam = searchParams.get('error');
@@ -33,7 +38,9 @@ export const EbayCallbackPage: React.FC = () => {
 
       try {
         const redirectUri = `${window.location.origin}/ebay/callback`;
-        await ebayApi.handleCallback(code, redirectUri, state || undefined);
+        const environment = localStorage.getItem('ebay_oauth_environment') || 'sandbox';
+        localStorage.removeItem('ebay_oauth_environment');
+        await ebayApi.handleCallback(code, redirectUri, environment, state || undefined);
         await refreshUser();
         setTimeout(() => {
           navigate('/dashboard');

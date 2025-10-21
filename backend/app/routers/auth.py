@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from datetime import timedelta
 from app.models.user import UserCreate, UserLogin, UserResponse, Token, PasswordResetRequest, PasswordReset
 from app.services.auth import (
@@ -9,7 +8,7 @@ from app.services.auth import (
     get_current_active_user,
     get_password_hash
 )
-from app.database import get_db
+from app.services.database import db
 from app.config import settings
 from app.utils.logger import logger
 
@@ -17,9 +16,9 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 @router.post("/register", response_model=UserResponse)
-async def register(user_data: UserCreate, db: Session = Depends(get_db)):
+async def register(user_data: UserCreate):
     logger.info(f"Registration attempt for email: {user_data.email}")
-    user = register_user(user_data, db)
+    user = register_user(user_data)
     return UserResponse(
         id=user.id,
         email=user.email,
@@ -32,9 +31,9 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
+async def login(user_credentials: UserLogin):
     logger.info(f"Login attempt for email: {user_credentials.email}")
-    user = authenticate_user(user_credentials.email, user_credentials.password, db)
+    user = authenticate_user(user_credentials.email, user_credentials.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -64,22 +63,16 @@ async def get_current_user_info(current_user = Depends(get_current_active_user))
     )
 
 
-password_reset_tokens = {}
-
 @router.post("/password-reset/request")
-async def request_password_reset(reset_request: PasswordResetRequest, db: Session = Depends(get_db)):
-    from app.db_models.user import User
-    import uuid
-    
+async def request_password_reset(reset_request: PasswordResetRequest):
     logger.info(f"Password reset requested for email: {reset_request.email}")
-    user = db.query(User).filter(User.email == reset_request.email).first()
+    user = db.get_user_by_email(reset_request.email)
     
     if not user:
         logger.warning(f"Password reset requested for non-existent email: {reset_request.email}")
         return {"message": "If the email exists, a reset token has been sent"}
     
-    reset_token = str(uuid.uuid4())
-    password_reset_tokens[reset_token] = reset_request.email
+    reset_token = db.create_password_reset_token(reset_request.email)
     
     logger.info(f"Password reset token created for: {reset_request.email}")
     
@@ -90,12 +83,10 @@ async def request_password_reset(reset_request: PasswordResetRequest, db: Sessio
 
 
 @router.post("/password-reset/confirm")
-async def reset_password(reset_data: PasswordReset, db: Session = Depends(get_db)):
-    from app.db_models.user import User
-    
+async def reset_password(reset_data: PasswordReset):
     logger.info(f"Password reset confirmation for email: {reset_data.email}")
     
-    email = password_reset_tokens.get(reset_data.reset_token)
+    email = db.verify_password_reset_token(reset_data.reset_token)
     if not email or email != reset_data.email:
         logger.warning(f"Invalid password reset token used for: {reset_data.email}")
         raise HTTPException(
@@ -103,7 +94,7 @@ async def reset_password(reset_data: PasswordReset, db: Session = Depends(get_db
             detail="Invalid or expired reset token"
         )
     
-    user = db.query(User).filter(User.email == reset_data.email).first()
+    user = db.get_user_by_email(reset_data.email)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -111,10 +102,9 @@ async def reset_password(reset_data: PasswordReset, db: Session = Depends(get_db
         )
     
     hashed_password = get_password_hash(reset_data.new_password)
-    user.hashed_password = hashed_password
-    db.commit()
+    db.update_user(user.id, {"hashed_password": hashed_password})
     
-    del password_reset_tokens[reset_data.reset_token]
+    db.delete_password_reset_token(reset_data.reset_token)
     
     logger.info(f"Password reset successful for: {reset_data.email}")
     

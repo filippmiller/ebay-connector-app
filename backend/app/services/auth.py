@@ -1,31 +1,23 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+import hashlib
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.user import User as UserModel, UserCreate
-from app.db_models.user import User
-from app.database import get_db
+from app.services.database import db
 from app.utils.logger import logger
 
-ph = PasswordHasher()
 security = HTTPBearer()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    try:
-        ph.verify(hashed_password, plain_password)
-        return True
-    except VerifyMismatchError:
-        return False
+    return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
 
 def get_password_hash(password: str) -> str:
-    return ph.hash(password)
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -39,8 +31,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-def authenticate_user(email: str, password: str, db: Session) -> Optional[UserModel]:
-    user = db.query(User).filter(User.email == email).first()
+def authenticate_user(email: str, password: str) -> Optional[UserModel]:
+    user = db.get_user_by_email(email)
     if not user:
         logger.warning(f"Authentication failed: User not found - {email}")
         return None
@@ -48,21 +40,11 @@ def authenticate_user(email: str, password: str, db: Session) -> Optional[UserMo
         logger.warning(f"Authentication failed: Invalid password - {email}")
         return None
     logger.info(f"User authenticated successfully: {email}")
-    return UserModel(
-        id=user.id,
-        email=user.email,
-        username=user.username,
-        hashed_password=user.hashed_password,
-        role=user.role,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        ebay_connected=user.ebay_connected
-    )
+    return user
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> UserModel:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -79,21 +61,12 @@ async def get_current_user(
         logger.error(f"JWT validation error: {str(e)}")
         raise credentials_exception
     
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.get_user_by_id(user_id)
     if user is None:
         logger.error(f"User not found for token: {user_id}")
         raise credentials_exception
     
-    return UserModel(
-        id=user.id,
-        email=user.email,
-        username=user.username,
-        hashed_password=user.hashed_password,
-        role=user.role,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        ebay_connected=user.ebay_connected
-    )
+    return user
 
 
 async def get_current_active_user(current_user: UserModel = Depends(get_current_user)) -> UserModel:
@@ -103,8 +76,8 @@ async def get_current_active_user(current_user: UserModel = Depends(get_current_
     return current_user
 
 
-def register_user(user_data: UserCreate, db: Session) -> UserModel:
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
+def register_user(user_data: UserCreate) -> UserModel:
+    existing_user = db.get_user_by_email(user_data.email)
     if existing_user:
         logger.warning(f"Registration failed: Email already exists - {user_data.email}")
         raise HTTPException(
@@ -112,25 +85,21 @@ def register_user(user_data: UserCreate, db: Session) -> UserModel:
             detail="Email already registered"
         )
     
+    ADMIN_EMAILS = [
+        "filippmiller@gmail.com",
+        "mylifeis0plus1@gmail.com",
+        "nikitin.sergei.v@gmail.com"
+    ]
+    
+    from app.models.user import UserRole
+    if user_data.email.lower() in [email.lower() for email in ADMIN_EMAILS]:
+        user_data.role = UserRole.ADMIN
+        logger.info(f"Admin role assigned to: {user_data.email}")
+    else:
+        user_data.role = UserRole.USER
+        logger.info(f"User role assigned to: {user_data.email}")
+    
     hashed_password = get_password_hash(user_data.password)
-    user = User(
-        email=user_data.email,
-        username=user_data.username,
-        hashed_password=hashed_password,
-        role=user_data.role,
-        created_at=datetime.utcnow()
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    logger.info(f"New user registered: {user.email}")
-    return UserModel(
-        id=user.id,
-        email=user.email,
-        username=user.username,
-        hashed_password=user.hashed_password,
-        role=user.role,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        ebay_connected=user.ebay_connected
-    )
+    user = db.create_user(user_data, hashed_password)
+    logger.info(f"New user registered: {user.email} with role: {user.role}")
+    return user

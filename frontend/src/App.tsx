@@ -9,6 +9,10 @@ import { PasswordResetPage } from './pages/PasswordResetPage';
 import { MessagesPage } from './pages/MessagesPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { OffersPage } from './pages/OffersPage';
+import { EbayTestPage } from './pages/EbayTestPage';
+import { OrdersViewPage } from './pages/OrdersViewPage';
+import { AnalyticsDashboardPage } from './pages/AnalyticsDashboardPage';
+import TodoListPage from './pages/TodoListPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -116,6 +120,34 @@ function App() {
                 <OffersPage />
               </ProtectedRoute>
             }
+          />
+          <Route
+            path="/ebay/test"
+            element={
+              <ProtectedRoute>
+                <EbayTestPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/orders-view"
+            element={
+              <ProtectedRoute>
+                <OrdersViewPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/analytics"
+            element={
+              <ProtectedRoute>
+                <AnalyticsDashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/todolist"
+            element={<TodoListPage />}
           />
         </Routes>
       </AuthProvider>

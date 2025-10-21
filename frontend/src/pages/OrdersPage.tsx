@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getOrders, getOrderStats } from '../api/orders';
-import { Package, Search, Filter, Download } from 'lucide-react';
+import { Package, Search, Download } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
@@ -60,7 +60,7 @@ export const OrdersPage = () => {
     try {
       setLoading(true);
       const data = await getOrders(selectedStatus, searchQuery);
-      setOrders(data);
+      setOrders(data as Order[]);
     } catch (error) {
       console.error('Failed to load orders:', error);
     } finally {
@@ -71,7 +71,7 @@ export const OrdersPage = () => {
   const loadStats = async () => {
     try {
       const data = await getOrderStats();
-      setStats(data);
+      setStats(data as OrderStats);
     } catch (error) {
       console.error('Failed to load stats:', error);
     }

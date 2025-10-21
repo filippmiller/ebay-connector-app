@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>eBay Connector - Master Todo List</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+        }
+        h1 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        .subtitle {
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .phase {
+            margin-bottom: 30px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .phase-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 20px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .phase-header:hover {
+            background: linear-gradient(135deg, #5568d3 0%, #653a8b 100%);
+        }
+        .phase-content {
+            padding: 20px;
+        }
+        .todo-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            background: #f7fafc;
+            border-left: 4px solid transparent;
+            transition: all 0.2s;
+        }
+        .todo-item:hover {
+            background: #edf2f7;
+            transform: translateX(5px);
+        }
+        .todo-item.completed {
+            border-left-color: #48bb78;
+            background: #f0fff4;
+        }
+        .todo-item.in-progress {
+            border-left-color: #4299e1;
+            background: #ebf8ff;
+        }
+        .todo-item.pending {
+            border-left-color: #ed8936;
+            background: #fffaf0;
+        }
+        .todo-item.dismissed {
+            border-left-color: #a0aec0;
+            background: #f7fafc;
+            opacity: 0.6;
+        }
+        .checkbox {
+            font-size: 24px;
+            margin-right: 15px;
+            min-width: 30px;
+        }
+        .todo-content {
+            flex: 1;
+        }
+        .todo-title {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 5px;
+        }
+        .todo-desc {
+            color: #718096;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .todo-log {
+            color: #4a5568;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+            background: #edf2f7;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 8px;
+            white-space: pre-wrap;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .status-completed { background: #c6f6d5; color: #22543d; }
+        .status-in-progress { background: #bee3f8; color: #2c5282; }
+        .status-pending { background: #feebc8; color: #7c2d12; }
+        .status-dismissed { background: #e2e8f0; color: #4a5568; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .timestamp {
+            text-align: center;
+            color: #a0aec0;
+            font-size: 12px;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 eBay Connector - Master Todo List</h1>
+        <p class="subtitle">Last Updated: October 21, 2025 - 10:05 AM PST | Real-time Progress Tracking</p>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number">8</div>
+                <div class="stat-label">✅ Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">1</div>
+                <div class="stat-label">🔄 In Progress</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">45</div>
+                <div class="stat-label">📋 Pending</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">15%</div>
+                <div class="stat-label">📊 Overall Progress</div>
+            </div>
+        </div>
+
+        <!-- CURRENT SPRINT -->
+        <div class="phase">
+            <div class="phase-header">
+                🎯 CURRENT SPRINT: Fix Database Persistence & Complete Setup
+            </div>
+            <div class="phase-content">
+                <div class="todo-item completed">
+                    <div class="checkbox">✅</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Registration & Login System<span class="status-badge status-completed">COMPLETED</span></div>
+                        <div class="todo-desc">Admin role assignment, show/hide password toggle, authentication flow</div>
+                        <div class="todo-log">✅ Admin badge shows for filippmiller@gmail.com, mylifeis0plus1@gmail.com, nikitin.sergei.v@gmail.com
+✅ Eye icon show/hide password working perfectly
+✅ JWT authentication with proper token handling</div>
+                    </div>
+                </div>
+
+                <div class="todo-item completed">
+                    <div class="checkbox">✅</div>
+                    <div class="todo-content">
+                        <div class="todo-title">eBay Production OAuth Connection<span class="status-badge status-completed">COMPLETED</span></div>
+                        <div class="todo-desc">OAuth flow, environment toggle (sandbox/production), credential management</div>
+                        <div class="todo-log">✅ Successfully connected to eBay Production API
+✅ Environment toggle working (sandbox ↔ production)
+✅ OAuth tokens saved and validated
+✅ 1,811 total orders discovered in eBay account</div>
+                    </div>
+                </div>
+
+                <div class="todo-item completed">
+                    <div class="checkbox">✅</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Fix IndentationError in ebay_database.py<span class="status-badge status-completed">COMPLETED</span></div>
+                        <div class="todo-desc">Python syntax error preventing sync from working</div>
+                        <div class="todo-log">✅ Fixed incorrect indentation on line 447
+✅ Moved get_filtered_orders and get_analytics_summary inside EbayDatabase class
+✅ Backend redeployed successfully</div>
+                    </div>
+                </div>
+
+                <div class="todo-item completed">
+                    <div class="checkbox">✅</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Test eBay API Order Fetch<span class="status-badge status-completed">COMPLETED</span></div>
+                        <div class="todo-desc">Verify eBay API returns order data correctly</div>
+                        <div class="todo-log">✅ Successfully fetched 50 orders (test mode)
+✅ Confirmed 1,811 total orders available
+✅ All order data complete: buyer info, addresses, pricing, SKUs, etc.</div>
+                    </div>
+                </div>
+
+                <div class="todo-item completed">
+                    <div class="checkbox">✅</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Sync 1,800 Orders to Database<span class="status-badge status-completed">COMPLETED</span></div>
+                        <div class="todo-desc">Bulk sync all orders from eBay to local database</div>
+                        <div class="todo-log">✅ Successfully synced 1,800 out of 1,811 orders (99.4%)
+⚠️ Fly.io auto-suspended machine at order 1,800
+⚠️ Last 11 orders not synced due to suspension
+⚠️ Data lost after suspension due to ephemeral /tmp storage</div>
+                    </div>
+                </div>
+
+                <div class="todo-item in-progress">
+                    <div class="checkbox">🔄</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement Fly.io Persistent Volume<span class="status-badge status-in-progress">IN PROGRESS</span></div>
+                        <div class="todo-desc">Create permanent storage to prevent data loss on machine suspend/restart/redeploy</div>
+                        <div class="todo-log">⏳ Creating Fly.io volume for /data mount
+⏳ Updating backend to use /data/ebay_connector.db instead of /tmp
+⏳ Configuring fly.toml with volume mount
+⏳ Will redeploy and verify persistence through restart</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Complete Order Sync (All 1,811 Orders)<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Re-sync after persistent storage is set up</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Verify Data Persists Through Redeploy<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Test that orders survive backend redeployment</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Test All Pages & Features<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Orders page, Messages, Offers, Analytics, Filters</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 1 -->
+        <div class="phase">
+            <div class="phase-header">
+                📊 PHASE 1: Database Models (SQLAlchemy + Relationships)
+            </div>
+            <div class="phase-content">
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Migrate to SQLAlchemy ORM<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Replace raw SQLite with SQLAlchemy models</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create Buying Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">item_id, tracking, buyer/seller, paid_date, amount, refund, profit, status, storage, comment</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create SKU Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">sku, model, category, condition, part_number, price, title, description, brand</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create Listing Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">sku_id (FK), ebay_listing_id, price, shipping_group, condition, storage, warehouse</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create Inventory Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">sku_id (FK), storage, status, category, price, warehouse_id (FK)</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create Return Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">return_id, item_id, buyer, tracking, reason, sale_price, status, comment</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create Warehouse Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">name, location, capacity, type</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create SyncLog Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">endpoint, record_count, duration, status, error_message</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create Report Model<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">report_type, filters, generated_at, file_path</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Set Up Alembic Migrations<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Version control for database schema</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 2 -->
+        <div class="phase">
+            <div class="phase-header">
+                🔄 PHASE 2: eBay Sync Engine (Background Tasks Every 5 Min)
+            </div>
+            <div class="phase-content">
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Set Up APScheduler / Celery<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Background task scheduler for recurring sync</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement 5-Minute Sync Job<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Auto-sync orders, listings, returns every 5 minutes</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Add Manual Resync API Route<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">POST /admin/resync for manual refresh</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement SyncLog Tracking<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Log every sync: endpoint, count, duration, status</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 3 -->
+        <div class="phase">
+            <div class="phase-header">
+                💰 PHASE 3: Profit Engine (Auto-Calculate Profit on Each Sync)
+            </div>
+            <div class="phase-content">
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement Profit Calculation<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">profit = sale_price - amount_paid - ebay_fee - shipping_cost</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Highlight Negative Profits in UI<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Red text/badge for losses</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Create Profit Summary API<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">GET /api/stats/profit - total, average, by period</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 4 -->
+        <div class="phase">
+            <div class="phase-header">
+                🔌 PHASE 4: REST API Routes (Full CRUD for All Models)
+            </div>
+            <div class="phase-content">
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement /api/buying (CRUD)<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">GET, POST, PUT, DELETE with filtering & pagination</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement /api/sku (CRUD)<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Full SKU management API</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement /api/listing (CRUD + eBay Sync)<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Listings with eBay API integration</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement /api/inventory (CRUD)<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Inventory management endpoints</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement /api/returns (CRUD)<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Returns & cancellations API</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement /api/report/export (CSV)<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Export data to CSV/Excel</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Implement /api/sync/status<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Last sync summary & status</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 5 -->
+        <div class="phase">
+            <div class="phase-header">
+                🎨 PHASE 5: Frontend Modules (TASKS | BUYING | SKU | LISTING | INVENTORY | RETURNS)
+            </div>
+            <div class="phase-content">
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">BUYING Tab<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Table view, filters, detail pane, profit highlighting</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">SKU Tab<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">CRUD interface, image preview, Add/Edit/Delete</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">LISTING Tab<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">eBay listings, batch operations, Clone/Commit/Remove</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">INVENTORY Tab<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Stock control, status editing, Freeze/Relist actions</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">RETURNS Tab<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Return management, eBay Post-Order API sync</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 6-9 -->
+        <div class="phase">
+            <div class="phase-header">
+                ⚡ PHASE 6-9: Advanced Features & Deployment
+            </div>
+            <div class="phase-content">
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Saved Filters Per User<span class="status-badge status-pending">PENDING</span></div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Column Drag & Visibility Control<span class="status-badge status-pending">PENDING</span></div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Role-Based Access Control<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Admin, Purchaser, Lister, Checker, Viewer</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Audit Logs (Edits + Timestamps)<span class="status-badge status-pending">PENDING</span></div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Notification Bar (Sync Failures, Profit Drops)<span class="status-badge status-pending">PENDING</span></div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Dashboard & Reports<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Purchases, listings, returns, profit trends, CSV/PDF export</div>
+                    </div>
+                </div>
+
+                <div class="todo-item pending">
+                    <div class="checkbox">⏳</div>
+                    <div class="todo-content">
+                        <div class="todo-title">Production Deployment<span class="status-badge status-pending">PENDING</span></div>
+                        <div class="todo-desc">Deploy to Render/Railway/Cloudflare Workers + Cloudflare Pages</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="timestamp">
+            📅 Last Updated: October 21, 2025 at 10:05 AM PST<br>
+            🔄 Auto-refreshes every time Devin makes progress<br>
+            🔗 <a href="https://ebay-connection-app-k0ge3h93.devinapps.com" style="color: #667eea;">View Live App</a>
+        </div>
+    </div>
+
+    <script>
+        // Auto-refresh every 30 seconds to show latest progress
+        setTimeout(() => location.reload(), 30000);
+    </script>
+</body>
+</html>

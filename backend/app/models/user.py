@@ -21,6 +21,7 @@ class User(BaseModel):
     ebay_access_token: Optional[str] = None
     ebay_refresh_token: Optional[str] = None
     ebay_token_expires_at: Optional[datetime] = None
+    ebay_environment: str = "sandbox"
 
 
 class UserCreate(BaseModel):

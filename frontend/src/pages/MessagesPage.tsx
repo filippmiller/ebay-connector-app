@@ -6,7 +6,6 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Separator } from '../components/ui/separator';
 
 interface Message {
   id: string;
@@ -32,7 +31,7 @@ interface MessageStats {
 }
 
 export const MessagesPage = () => {
-  const { user } = useAuth();
+  const { } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [stats, setStats] = useState<MessageStats>({ unread_count: 0, flagged_count: 0 });
   const [selectedFolder, setSelectedFolder] = useState<'inbox' | 'sent' | 'flagged' | 'archived'>('inbox');
@@ -62,7 +61,7 @@ export const MessagesPage = () => {
   const loadStats = async () => {
     try {
       const data = await getMessageStats();
-      setStats(data);
+      setStats(data as MessageStats);
     } catch (error) {
       console.error('Failed to load stats:', error);
     }

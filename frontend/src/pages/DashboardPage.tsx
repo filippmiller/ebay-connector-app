@@ -8,6 +8,8 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ScrollArea } from '../components/ui/scroll-area';
+import { Switch } from '../components/ui/switch';
+import { Label } from '../components/ui/label';
 import type { EbayConnectionStatus, EbayLog } from '../types';
 import { LogOut, Link as LinkIcon, Unlink, Mail, Package, DollarSign, LayoutDashboard } from 'lucide-react';
 
@@ -18,6 +20,10 @@ export const DashboardPage: React.FC = () => {
   const [logs, setLogs] = useState<EbayLog[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
+    const saved = localStorage.getItem('ebay_environment');
+    return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
+  });
 
   useEffect(() => {
     loadConnectionStatus();
@@ -50,7 +56,8 @@ export const DashboardPage: React.FC = () => {
 
     try {
       const redirectUri = `${window.location.origin}/ebay/callback`;
-      const response = await ebayApi.startAuth(redirectUri);
+      localStorage.setItem('ebay_oauth_environment', environment);
+      const response = await ebayApi.startAuth(redirectUri, environment);
       window.location.href = response.authorization_url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start eBay authorization');
@@ -149,13 +156,13 @@ export const DashboardPage: React.FC = () => {
 
             <Card 
               className="cursor-pointer hover:shadow-lg transition-shadow"
-              onClick={() => navigate('/orders')}
+              onClick={() => navigate('/orders-view')}
             >
               <CardContent className="p-6 flex items-center gap-4">
                 <Package className="h-8 w-8 text-green-600" />
                 <div>
                   <h3 className="font-semibold">Orders</h3>
-                  <p className="text-sm text-gray-600">Track sales</p>
+                  <p className="text-sm text-gray-600">View & filter orders</p>
                 </div>
               </CardContent>
             </Card>
@@ -175,13 +182,13 @@ export const DashboardPage: React.FC = () => {
 
             <Card 
               className="cursor-pointer hover:shadow-lg transition-shadow"
-              onClick={() => {}}
+              onClick={() => navigate('/analytics')}
             >
               <CardContent className="p-6 flex items-center gap-4">
                 <LayoutDashboard className="h-8 w-8 text-orange-600" />
                 <div>
                   <h3 className="font-semibold">Analytics</h3>
-                  <p className="text-sm text-gray-600">Coming soon</p>
+                  <p className="text-sm text-gray-600">View insights & trends</p>
                 </div>
               </CardContent>
             </Card>
@@ -191,7 +198,9 @@ export const DashboardPage: React.FC = () => {
         <Tabs defaultValue="connection" className="space-y-4">
           <TabsList>
             <TabsTrigger value="connection">eBay Connection</TabsTrigger>
-            <TabsTrigger value="terminal">Connection Terminal</TabsTrigger>
+            {user?.role === 'admin' && (
+              <TabsTrigger value="terminal">Connection Terminal</TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="connection" className="space-y-4">
@@ -209,6 +218,43 @@ export const DashboardPage: React.FC = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border">
+                  <div className="flex items-center gap-3">
+                    <Label htmlFor="env-switch" className="font-medium">
+                      Environment:
+                    </Label>
+                    <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                      {environment === 'sandbox' ? 'Sandbox (Testing)' : 'Production (Live)'}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Label htmlFor="env-switch" className="text-sm text-gray-600">
+                      Sandbox
+                    </Label>
+                    <Switch
+                      id="env-switch"
+                      checked={environment === 'production'}
+                      onCheckedChange={(checked) => {
+                        const newEnv = checked ? 'production' : 'sandbox';
+                        setEnvironment(newEnv);
+                        localStorage.setItem('ebay_environment', newEnv);
+                      }}
+                      disabled={connectionStatus?.connected}
+                    />
+                    <Label htmlFor="env-switch" className="text-sm text-gray-600">
+                      Production
+                    </Label>
+                  </div>
+                </div>
+
+                {connectionStatus?.connected && (
+                  <Alert>
+                    <AlertDescription>
+                      Disconnect to change environment. Currently using: <strong>{environment}</strong>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 <div className="flex items-center gap-4">
                   <div>
                     <span className="text-sm text-gray-600">Status: </span>
@@ -231,15 +277,25 @@ export const DashboardPage: React.FC = () => {
                   )}
                 </div>
 
-                <div className="pt-4">
+                <div className="pt-4 flex gap-3">
                   {connectionStatus?.connected ? (
-                    <Button 
-                      variant="destructive" 
-                      onClick={handleDisconnect}
-                      disabled={loading}
-                    >
-                      {loading ? 'Disconnecting...' : 'Disconnect from eBay'}
-                    </Button>
+                    <>
+                      {user?.role === 'admin' && (
+                        <Button 
+                          onClick={() => navigate('/ebay/test')}
+                          disabled={loading}
+                        >
+                          Test eBay API
+                        </Button>
+                      )}
+                      <Button 
+                        variant="destructive" 
+                        onClick={handleDisconnect}
+                        disabled={loading}
+                      >
+                        {loading ? 'Disconnecting...' : 'Disconnect from eBay'}
+                      </Button>
+                    </>
                   ) : (
                     <Button 
                       onClick={handleConnectEbay}

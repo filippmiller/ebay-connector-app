@@ -7,15 +7,66 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
-    EBAY_CLIENT_ID: Optional[str] = None
-    EBAY_CLIENT_SECRET: Optional[str] = None
-    EBAY_REDIRECT_URI: Optional[str] = None
     EBAY_ENVIRONMENT: str = "sandbox"
     
-    DATABASE_URL: str = "sqlite:///./ebay_connector.db"
+    EBAY_SANDBOX_CLIENT_ID: Optional[str] = None
+    EBAY_SANDBOX_DEV_ID: Optional[str] = None
+    EBAY_SANDBOX_CERT_ID: Optional[str] = None
+    EBAY_SANDBOX_REDIRECT_URI: Optional[str] = None
+    EBAY_SANDBOX_RUNAME: Optional[str] = None
+    
+    EBAY_PRODUCTION_CLIENT_ID: Optional[str] = None
+    EBAY_PRODUCTION_DEV_ID: Optional[str] = None
+    EBAY_PRODUCTION_CERT_ID: Optional[str] = None
+    EBAY_PRODUCTION_REDIRECT_URI: Optional[str] = None
+    EBAY_PRODUCTION_RUNAME: Optional[str] = None
+    
+    DATABASE_URL: str = "postgresql://postgres:EVfiVxDuuwRa8hAx@db.nrpfahjygulsfxmbmfzv.supabase.co:5432/postgres?sslmode=require"
     
     class Config:
         env_file = ".env"
+    
+    @property
+    def ebay_client_id(self) -> Optional[str]:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return self.EBAY_SANDBOX_CLIENT_ID
+        return self.EBAY_PRODUCTION_CLIENT_ID
+    
+    @property
+    def ebay_cert_id(self) -> Optional[str]:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return self.EBAY_SANDBOX_CERT_ID
+        return self.EBAY_PRODUCTION_CERT_ID
+    
+    @property
+    def ebay_dev_id(self) -> Optional[str]:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return self.EBAY_SANDBOX_DEV_ID
+        return self.EBAY_PRODUCTION_DEV_ID
+    
+    @property
+    def ebay_redirect_uri(self) -> Optional[str]:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return self.EBAY_SANDBOX_REDIRECT_URI
+        return self.EBAY_PRODUCTION_REDIRECT_URI
+    
+    @property
+    def ebay_api_base_url(self) -> str:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return "https://api.sandbox.ebay.com"
+        return "https://api.ebay.com"
+    
+    @property
+    def ebay_auth_base_url(self) -> str:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return "https://auth.sandbox.ebay.com"
+        return "https://auth.ebay.com"
+    
+    @property
+    def ebay_runame(self) -> Optional[str]:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return self.EBAY_SANDBOX_RUNAME
+        return self.EBAY_PRODUCTION_RUNAME
 
 
 settings = Settings()
