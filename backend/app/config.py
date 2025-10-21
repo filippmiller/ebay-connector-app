@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
+        extra = "ignore"
     
     @property
     def ebay_client_id(self) -> Optional[str]:
