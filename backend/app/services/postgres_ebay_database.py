@@ -1,6 +1,8 @@
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Tuple
 from datetime import datetime
+from decimal import Decimal
 import json
+from functools import reduce
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models_sqlalchemy import get_db
@@ -15,6 +17,105 @@ class PostgresEbayDatabase:
     def _get_session(self) -> Session:
         """Get a database session"""
         return next(get_db())
+    
+    def _safe_get(self, data: Dict, *keys):
+        """Safely get nested dict values"""
+        return reduce(lambda a, k: (a or {}).get(k) if isinstance(a, dict) else None, keys, data)
+    
+    def _parse_money(self, money_obj: Optional[Dict]) -> Tuple[Optional[Decimal], Optional[str]]:
+        """Parse eBay money object to (value, currency)"""
+        if not money_obj:
+            return (None, None)
+        value = money_obj.get('value')
+        currency = money_obj.get('currency')
+        if value is not None:
+            try:
+                return (Decimal(str(value)), currency)
+            except:
+                return (None, currency)
+        return (None, currency)
+    
+    def _parse_datetime(self, dt_string: Optional[str]) -> Optional[datetime]:
+        """Parse ISO 8601 datetime to UTC"""
+        if not dt_string:
+            return None
+        try:
+            from dateutil import parser
+            return parser.isoparse(dt_string)
+        except:
+            try:
+                return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
+            except:
+                logger.warning(f"Failed to parse datetime: {dt_string}")
+                return None
+    
+    def normalize_order(self, order_data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """
+        Normalize eBay order data into DB-ready format
+        Returns: (order_dict, line_items_list)
+        """
+        items = order_data.get('lineItems') or []
+        total_val, total_cur = self._parse_money(self._safe_get(order_data, 'pricingSummary', 'total'))
+        
+        tracking = None
+        fulfillments = order_data.get('fulfillments') or []
+        for fulfillment in fulfillments:
+            shipments = fulfillment.get('shipments') or []
+            for shipment in shipments:
+                packages = shipment.get('packages') or []
+                for package in packages:
+                    tracking = package.get('trackingNumber')
+                    if tracking:
+                        break
+                if tracking:
+                    break
+            if tracking:
+                break
+        
+        ship_to = self._safe_get(order_data, 'fulfillmentStartInstructions', 0, 'shippingStep', 'shipTo') or {}
+        
+        normalized_order = {
+            'order_id': order_data.get('orderId'),
+            'creation_date': self._parse_datetime(order_data.get('creationDate')),
+            'last_modified': self._parse_datetime(order_data.get('lastModifiedDate')),
+            'payment_status': (order_data.get('orderPaymentStatus') or 'UNKNOWN').upper(),
+            'fulfillment_status': (order_data.get('orderFulfillmentStatus') or 'UNKNOWN').upper(),
+            'buyer_username': self._safe_get(order_data, 'buyer', 'username'),
+            'buyer_email': self._safe_get(order_data, 'buyer', 'email'),
+            'buyer_registered': self._safe_get(order_data, 'buyer', 'registered'),
+            'total_amount': total_val,
+            'total_currency': total_cur,
+            'order_total_value': total_val,
+            'order_total_currency': total_cur,
+            'line_items_count': len(items),
+            'tracking_number': tracking,
+            'ship_to_name': ship_to.get('fullName'),
+            'ship_to_city': ship_to.get('city'),
+            'ship_to_state': ship_to.get('stateOrProvince'),
+            'ship_to_postal_code': ship_to.get('postalCode'),
+            'ship_to_country_code': ship_to.get('countryCode'),
+            'order_data': json.dumps(order_data),
+            'raw_payload': json.dumps(order_data)
+        }
+        
+        line_items = []
+        for li in items:
+            line_item_cost = li.get('lineItemCost') or {}
+            total_cost = line_item_cost.get('total') or line_item_cost
+            item_val, item_cur = self._parse_money(total_cost)
+            
+            line_items.append({
+                'order_id': order_data.get('orderId'),
+                'line_item_id': li.get('lineItemId'),
+                'sku': li.get('sku'),
+                'title': li.get('title'),
+                'quantity': li.get('quantity') or 0,
+                'total_value': item_val,
+                'currency': item_cur,
+                'raw_payload': json.dumps(li)
+            })
+        
+        return normalized_order, line_items
     
     def upsert_order(self, user_id: str, order_data: Dict[str, Any]) -> bool:
         """Insert or update an order"""
@@ -134,7 +235,7 @@ class PostgresEbayDatabase:
             session.close()
     
     def batch_upsert_orders(self, user_id: str, orders: List[Dict[str, Any]]) -> int:
-        """Batch insert or update multiple orders - much faster than individual upserts"""
+        """Batch insert or update multiple orders with normalization"""
         if not orders:
             return 0
         
@@ -143,6 +244,7 @@ class PostgresEbayDatabase:
         try:
             now = datetime.utcnow()
             stored_count = 0
+            all_line_items = []
             
             batch_size = 100
             for i in range(0, len(orders), batch_size):
@@ -150,57 +252,54 @@ class PostgresEbayDatabase:
                 
                 values_list = []
                 for order_data in batch:
-                    order_id = order_data.get('orderId')
-                    if not order_id:
+                    if not order_data.get('orderId'):
                         logger.warning("Skipping order without orderId")
                         continue
                     
-                    creation_date = order_data.get('creationDate')
-                    last_modified = order_data.get('lastModifiedDate')
-                    payment_status = order_data.get('orderPaymentStatus')
-                    fulfillment_status = order_data.get('orderFulfillmentStatus')
-                    
-                    buyer = order_data.get('buyer', {})
-                    buyer_username = buyer.get('username')
-                    buyer_email = buyer.get('email')
-                    
-                    pricing = order_data.get('pricingSummary', {})
-                    total_amount = pricing.get('total', {}).get('value')
-                    total_currency = pricing.get('total', {}).get('currency')
-                    
-                    values_list.append({
-                        'order_id': order_id,
-                        'user_id': user_id,
-                        'creation_date': creation_date,
-                        'last_modified': last_modified,
-                        'payment_status': payment_status,
-                        'fulfillment_status': fulfillment_status,
-                        'buyer_username': buyer_username,
-                        'buyer_email': buyer_email,
-                        'total_amount': total_amount,
-                        'total_currency': total_currency,
-                        'order_data': json.dumps(order_data),
-                        'created_at': now,
-                        'updated_at': now
-                    })
+                    try:
+                        normalized_order, line_items = self.normalize_order(order_data)
+                        all_line_items.extend(line_items)
+                        
+                        normalized_order['user_id'] = user_id
+                        normalized_order['created_at'] = now
+                        normalized_order['updated_at'] = now
+                        
+                        values_list.append(normalized_order)
+                    except Exception as e:
+                        logger.error(f"Error normalizing order {order_data.get('orderId')}: {str(e)}")
+                        continue
                 
                 if not values_list:
                     continue
                 
-                query = text("""
+                params = {}
+                value_placeholders = []
+                
+                for idx, values in enumerate(values_list):
+                    placeholders = []
+                    for key in ['order_id', 'user_id', 'creation_date', 'last_modified',
+                               'payment_status', 'fulfillment_status', 'buyer_username', 'buyer_email',
+                               'buyer_registered', 'total_amount', 'total_currency',
+                               'order_total_value', 'order_total_currency', 'line_items_count',
+                               'tracking_number', 'ship_to_name', 'ship_to_city', 'ship_to_state',
+                               'ship_to_postal_code', 'ship_to_country_code',
+                               'order_data', 'raw_payload', 'created_at', 'updated_at']:
+                        param_name = f"{key}_{idx}"
+                        params[param_name] = values.get(key)
+                        placeholders.append(f":{param_name}")
+                    value_placeholders.append(f"({','.join(placeholders)})")
+                
+                query = text(f"""
                     INSERT INTO ebay_orders 
                     (order_id, user_id, creation_date, last_modified_date, 
                      order_payment_status, order_fulfillment_status, 
-                     buyer_username, buyer_email, total_amount, total_currency,
-                     order_data, created_at, updated_at)
-                    VALUES 
-                    """ + ",".join([
-                        f"(:order_id_{idx}, :user_id_{idx}, :creation_date_{idx}, :last_modified_{idx}, "
-                        f":payment_status_{idx}, :fulfillment_status_{idx}, "
-                        f":buyer_username_{idx}, :buyer_email_{idx}, :total_amount_{idx}, :total_currency_{idx}, "
-                        f":order_data_{idx}, :created_at_{idx}, :updated_at_{idx})"
-                        for idx in range(len(values_list))
-                    ]) + """
+                     buyer_username, buyer_email, buyer_registered,
+                     total_amount, total_currency,
+                     order_total_value, order_total_currency, line_items_count,
+                     tracking_number, ship_to_name, ship_to_city, ship_to_state,
+                     ship_to_postal_code, ship_to_country_code,
+                     order_data, raw_payload, created_at, updated_at)
+                    VALUES {','.join(value_placeholders)}
                     ON CONFLICT (order_id, user_id) 
                     DO UPDATE SET
                         last_modified_date = EXCLUDED.last_modified_date,
@@ -208,22 +307,31 @@ class PostgresEbayDatabase:
                         order_fulfillment_status = EXCLUDED.order_fulfillment_status,
                         buyer_username = EXCLUDED.buyer_username,
                         buyer_email = EXCLUDED.buyer_email,
+                        buyer_registered = EXCLUDED.buyer_registered,
                         total_amount = EXCLUDED.total_amount,
                         total_currency = EXCLUDED.total_currency,
+                        order_total_value = EXCLUDED.order_total_value,
+                        order_total_currency = EXCLUDED.order_total_currency,
+                        line_items_count = EXCLUDED.line_items_count,
+                        tracking_number = EXCLUDED.tracking_number,
+                        ship_to_name = EXCLUDED.ship_to_name,
+                        ship_to_city = EXCLUDED.ship_to_city,
+                        ship_to_state = EXCLUDED.ship_to_state,
+                        ship_to_postal_code = EXCLUDED.ship_to_postal_code,
+                        ship_to_country_code = EXCLUDED.ship_to_country_code,
                         order_data = EXCLUDED.order_data,
+                        raw_payload = EXCLUDED.raw_payload,
                         updated_at = EXCLUDED.updated_at
                 """)
-                
-                params = {}
-                for idx, values in enumerate(values_list):
-                    for key, value in values.items():
-                        params[f"{key}_{idx}"] = value
                 
                 session.execute(query, params)
                 stored_count += len(values_list)
             
+            if all_line_items:
+                self.batch_upsert_line_items(session, all_line_items)
+            
             session.commit()
-            logger.info(f"Batch upserted {stored_count} orders for user {user_id}")
+            logger.info(f"Batch upserted {stored_count} orders and {len(all_line_items)} line items for user {user_id}")
             return stored_count
             
         except Exception as e:
@@ -232,6 +340,59 @@ class PostgresEbayDatabase:
             return 0
         finally:
             session.close()
+    
+    def batch_upsert_line_items(self, session: Session, line_items: List[Dict[str, Any]]) -> int:
+        """Batch upsert line items"""
+        if not line_items:
+            return 0
+        
+        try:
+            batch_size = 100
+            stored_count = 0
+            
+            for i in range(0, len(line_items), batch_size):
+                batch = line_items[i:i + batch_size]
+                
+                params = {}
+                value_placeholders = []
+                
+                for idx, item in enumerate(batch):
+                    if not item.get('order_id') or not item.get('line_item_id'):
+                        continue
+                    
+                    placeholders = []
+                    for key in ['order_id', 'line_item_id', 'sku', 'title', 'quantity', 
+                               'total_value', 'currency', 'raw_payload']:
+                        param_name = f"{key}_{idx}"
+                        params[param_name] = item.get(key)
+                        placeholders.append(f":{param_name}")
+                    value_placeholders.append(f"({','.join(placeholders)})")
+                
+                if not value_placeholders:
+                    continue
+                
+                query = text(f"""
+                    INSERT INTO order_line_items 
+                    (order_id, line_item_id, sku, title, quantity, total_value, currency, raw_payload)
+                    VALUES {','.join(value_placeholders)}
+                    ON CONFLICT (order_id, line_item_id) 
+                    DO UPDATE SET
+                        sku = EXCLUDED.sku,
+                        title = EXCLUDED.title,
+                        quantity = EXCLUDED.quantity,
+                        total_value = EXCLUDED.total_value,
+                        currency = EXCLUDED.currency,
+                        raw_payload = EXCLUDED.raw_payload
+                """)
+                
+                session.execute(query, params)
+                stored_count += len(value_placeholders)
+            
+            return stored_count
+            
+        except Exception as e:
+            logger.error(f"Error in batch upsert line items: {str(e)}")
+            raise
     
     def create_sync_job(self, user_id: str, sync_type: str) -> int:
         """Create a new sync job"""

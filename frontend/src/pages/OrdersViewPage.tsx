@@ -44,9 +44,13 @@ export const OrdersViewPage: React.FC = () => {
         : '/ebay/orders?limit=100';
       
       const data = await apiClient.get(url) as any;
-      setOrders(data.orders || []);
+      console.log('Fetched data:', data);
+      console.log('Orders array:', data.orders);
+      const ordersArray = Array.isArray(data.orders) ? data.orders : [];
+      setOrders(ordersArray);
       setTotal(data.total || 0);
     } catch (err) {
+      console.error('Error fetching orders:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch orders');
     } finally {
       setLoading(false);
@@ -195,7 +199,7 @@ export const OrdersViewPage: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 {orders.map((order) => {
-                  const orderData = order.order_data;
+                  const orderData = order.order_data || {};
                   return (
                     <Card key={order.order_id} className="border-l-4 border-l-blue-500">
                       <CardContent className="pt-6">
@@ -204,7 +208,7 @@ export const OrdersViewPage: React.FC = () => {
                             <p className="text-sm font-medium text-gray-500">Order ID</p>
                             <p className="text-lg font-semibold">{order.order_id}</p>
                             <p className="text-sm text-gray-600 mt-1">
-                              {new Date(order.creation_date).toLocaleDateString()}
+                              {order.creation_date ? new Date(order.creation_date).toLocaleDateString() : 'N/A'}
                             </p>
                           </div>
                           <div>
@@ -215,7 +219,7 @@ export const OrdersViewPage: React.FC = () => {
                           <div>
                             <p className="text-sm font-medium text-gray-500">Total Amount</p>
                             <p className="text-lg font-semibold">
-                              {order.total_currency} {order.total_amount || '0.00'}
+                              {order.total_currency || 'USD'} {order.total_amount || '0.00'}
                             </p>
                             <div className="flex gap-2 mt-1">
                               <span className="text-xs px-2 py-1 rounded bg-green-100 text-green-800">
@@ -228,15 +232,15 @@ export const OrdersViewPage: React.FC = () => {
                           </div>
                         </div>
                         
-                        {orderData && orderData.lineItems && Array.isArray(orderData.lineItems) && orderData.lineItems.length > 0 && (
+                        {orderData.lineItems && Array.isArray(orderData.lineItems) && orderData.lineItems.length > 0 && (
                           <div className="mt-4 pt-4 border-t">
                             <p className="text-sm font-medium text-gray-500 mb-2">Items</p>
                             <div className="space-y-2">
                               {orderData.lineItems.map((item: any, idx: number) => (
                                 <div key={idx} className="text-sm">
-                                  <span className="font-medium">{item.title}</span>
+                                  <span className="font-medium">{item.title || 'Unknown item'}</span>
                                   <span className="text-gray-600 ml-2">
-                                    Qty: {item.quantity} × {item.lineItemCost?.currency} {item.lineItemCost?.value}
+                                    Qty: {item.quantity || 1} × {item.lineItemCost?.currency || 'USD'} {item.lineItemCost?.value || '0.00'}
                                   </span>
                                 </div>
                               ))}

@@ -116,16 +116,16 @@ export const OrdersPage = () => {
           <div className="grid grid-cols-3 gap-4 mb-4">
             <div className="bg-blue-50 p-4 rounded-lg">
               <div className="text-sm text-gray-600">Total Orders</div>
-              <div className="text-2xl font-bold">{stats.total_orders}</div>
+              <div className="text-2xl font-bold">{stats.total_orders || 0}</div>
             </div>
             <div className="bg-green-50 p-4 rounded-lg">
               <div className="text-sm text-gray-600">Total Revenue</div>
-              <div className="text-2xl font-bold">{formatCurrency(stats.total_revenue)}</div>
+              <div className="text-2xl font-bold">{formatCurrency(stats.total_revenue || 0)}</div>
             </div>
             <div className="bg-purple-50 p-4 rounded-lg">
               <div className="text-sm text-gray-600">Status Breakdown</div>
               <div className="flex gap-2 mt-2 flex-wrap">
-                {Object.entries(stats.status_breakdown).map(([status, count]) => (
+                {stats.status_breakdown && Object.entries(stats.status_breakdown).map(([status, count]) => (
                   <Badge key={status} className={getStatusColor(status)}>
                     {status}: {count}
                   </Badge>
@@ -195,21 +195,21 @@ export const OrdersPage = () => {
                   onClick={() => setSelectedOrder(selectedOrder?.id === order.id ? null : order)}
                 >
                   <TableCell className="font-medium">{order.order_id}</TableCell>
-                  <TableCell>{formatDate(order.order_date)}</TableCell>
+                  <TableCell>{order.order_date ? formatDate(order.order_date) : 'N/A'}</TableCell>
                   <TableCell>
                     <div className="text-sm">
-                      <div className="font-medium">{order.buyer_username}</div>
-                      <div className="text-gray-500 text-xs">{order.buyer_email}</div>
+                      <div className="font-medium">{order.buyer_username || 'N/A'}</div>
+                      <div className="text-gray-500 text-xs">{order.buyer_email || ''}</div>
                     </div>
                   </TableCell>
                   <TableCell>
                     <Badge className={getStatusColor(order.order_status)}>
-                      {order.order_status}
+                      {order.order_status || 'UNKNOWN'}
                     </Badge>
                   </TableCell>
-                  <TableCell>{order.line_items.length} item(s)</TableCell>
+                  <TableCell>{order.line_items?.length || 0} item(s)</TableCell>
                   <TableCell className="text-right font-medium">
-                    {formatCurrency(order.total_amount)}
+                    {formatCurrency(order.total_amount || 0)}
                   </TableCell>
                   <TableCell>
                     {order.tracking_number && (
@@ -264,18 +264,18 @@ export const OrdersPage = () => {
             <div>
               <div className="text-sm text-gray-600 mb-2">Line Items</div>
               <div className="space-y-2">
-                {selectedOrder.line_items.map((item) => (
+                {(selectedOrder.line_items || []).map((item) => (
                   <div key={item.id} className="flex items-center gap-4 bg-white p-3 rounded">
                     {item.image_url && (
                       <img src={item.image_url} alt={item.title} className="w-16 h-16 object-cover rounded" />
                     )}
                     <div className="flex-1">
-                      <div className="font-medium">{item.title}</div>
+                      <div className="font-medium">{item.title || 'Unknown item'}</div>
                       <div className="text-sm text-gray-600">
-                        Quantity: {item.quantity} × {formatCurrency(item.unit_price)}
+                        Quantity: {item.quantity || 1} × {formatCurrency(item.unit_price || 0)}
                       </div>
                     </div>
-                    <div className="font-medium">{formatCurrency(item.total_price)}</div>
+                    <div className="font-medium">{formatCurrency(item.total_price || 0)}</div>
                   </div>
                 ))}
               </div>
