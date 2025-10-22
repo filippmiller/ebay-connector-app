@@ -76,6 +76,17 @@ async def get_current_active_user(current_user: UserModel = Depends(get_current_
     return current_user
 
 
+async def admin_required(current_user: UserModel = Depends(get_current_user)) -> UserModel:
+    from app.models.user import UserRole
+    if current_user.role != UserRole.ADMIN:
+        logger.warning(f"Non-admin user attempted admin action: {current_user.email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return current_user
+
+
 def register_user(user_data: UserCreate) -> UserModel:
     existing_user = db.get_user_by_email(user_data.email)
     if existing_user:

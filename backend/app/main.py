@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, ebay, orders, messages, offers
+from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2
 from app.utils.logger import logger
 import os
 from sqlalchemy import create_engine, text, inspect
@@ -27,6 +27,14 @@ app.include_router(ebay.router)
 app.include_router(orders.router)
 app.include_router(messages.router)
 app.include_router(offers.router)
+app.include_router(migration.router)
+app.include_router(buying.router)
+app.include_router(inventory.router)
+app.include_router(transactions.router)
+app.include_router(financials.router)
+app.include_router(admin.router)
+app.include_router(offers_v2.router)
+app.include_router(inventory_v2.router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -40,28 +48,44 @@ async def startup_event():
         logger.info("📊 Running database migrations...")
         
         try:
-            from alembic.config import Config
-            from alembic import command
+            import signal
             
-            alembic_cfg = Config("/app/alembic.ini")
-            alembic_cfg.set_main_option("sqlalchemy.url", database_url)
-            command.upgrade(alembic_cfg, "head")
-            logger.info("✅ Database migrations completed successfully!")
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Database connection timeout")
             
-        except Exception as e:
-            logger.warning(f"⚠️  Alembic migration failed: {e}")
-            logger.info("🔨 Creating tables manually...")
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(10)
             
             try:
-                engine = create_engine(database_url)
-                from app.models_sqlalchemy.models import Base
-                Base.metadata.create_all(bind=engine)
-                logger.info("✅ Tables created successfully!")
+                from alembic.config import Config
+                from alembic import command
                 
-            except Exception as e2:
-                logger.error(f"❌ Failed to create tables: {e2}")
+                alembic_cfg = Config("/app/alembic.ini")
+                alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+                command.upgrade(alembic_cfg, "head")
+                logger.info("✅ Database migrations completed successfully!")
+                
+            except TimeoutError:
+                logger.error("⏱️  Database connection timed out - migrations skipped")
+            except Exception as e:
+                logger.warning(f"⚠️  Alembic migration failed: {e}")
+                logger.info("🔨 Creating tables manually...")
+                
+                try:
+                    engine = create_engine(database_url, connect_args={"connect_timeout": 5})
+                    from app.models_sqlalchemy.models import Base
+                    Base.metadata.create_all(bind=engine)
+                    logger.info("✅ Tables created successfully!")
+                    
+                except Exception as e2:
+                    logger.error(f"❌ Failed to create tables: {e2}")
+            finally:
+                signal.alarm(0)  # Cancel alarm
         
-        logger.info("✅ PostgreSQL database ready - data persists permanently!")
+        except Exception as outer_e:
+            logger.error(f"❌ Startup database initialization failed: {outer_e}")
+        
+        logger.info("✅ PostgreSQL configured - attempting to connect...")
         
     else:
         logger.info("Using SQLite database - data persists between restarts")

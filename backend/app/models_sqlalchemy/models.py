@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean, Index
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -24,6 +25,21 @@ class OrderStatus(str, enum.Enum):
     completed = "completed"
 
 
+class PaymentStatus(str, enum.Enum):
+    PAID = "PAID"
+    NOT_PAID = "NOT_PAID"
+    PARTIALLY_PAID = "PARTIALLY_PAID"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+
+
+class FulfillmentStatus(str, enum.Enum):
+    FULFILLED = "FULFILLED"
+    PARTIALLY_FULFILLED = "PARTIALLY_FULFILLED"
+    NOT_STARTED = "NOT_STARTED"
+    UNKNOWN = "UNKNOWN"
+
+
 class ConditionType(str, enum.Enum):
     new = "new"
     refurbished = "refurbished"
@@ -34,11 +50,82 @@ class ConditionType(str, enum.Enum):
 
 
 class InventoryStatus(str, enum.Enum):
-    available = "available"
-    listed = "listed"
-    sold = "sold"
-    frozen = "frozen"
-    reserved = "reserved"
+    AVAILABLE = "AVAILABLE"
+    LISTED = "LISTED"
+    SOLD = "SOLD"
+    FROZEN = "FROZEN"
+    REPAIR = "REPAIR"
+    RETURNED = "RETURNED"
+    PENDING_LISTING = "PENDING_LISTING"
+    available = "AVAILABLE"
+    listed = "LISTED"
+    sold = "SOLD"
+    frozen = "FROZEN"
+    reserved = "FROZEN"
+
+
+class ProfitStatus(str, enum.Enum):
+    OK = "OK"
+    NEGATIVE = "NEGATIVE"
+    INCOMPLETE = "INCOMPLETE"
+
+
+class FeeType(str, enum.Enum):
+    FINAL_VALUE_FEE = "FINAL_VALUE_FEE"
+    AD_FEE = "AD_FEE"
+    SHIPPING_LABEL = "SHIPPING_LABEL"
+    OTHER = "OTHER"
+
+
+class PayoutStatus(str, enum.Enum):
+    PAID = "PAID"
+    IN_PROGRESS = "IN_PROGRESS"
+    ON_HOLD = "ON_HOLD"
+
+
+class PayoutItemType(str, enum.Enum):
+    ORDER = "ORDER"
+    REFUND = "REFUND"
+    ADJUSTMENT = "ADJUSTMENT"
+    FEE_REVERSAL = "FEE_REVERSAL"
+    OTHER = "OTHER"
+
+
+class OfferDirection(str, enum.Enum):
+    INBOUND = "INBOUND"
+    OUTBOUND = "OUTBOUND"
+
+
+class OfferState(str, enum.Enum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    DECLINED = "DECLINED"
+    EXPIRED = "EXPIRED"
+    WITHDRAWN = "WITHDRAWN"
+    COUNTERED = "COUNTERED"
+    SENT = "SENT"
+
+
+class OfferAction(str, enum.Enum):
+    SEND = "SEND"
+    ACCEPT = "ACCEPT"
+    DECLINE = "DECLINE"
+    COUNTER = "COUNTER"
+    EXPIRE = "EXPIRE"
+    WITHDRAW = "WITHDRAW"
+
+
+class OfferActor(str, enum.Enum):
+    SYSTEM = "SYSTEM"
+    ADMIN = "ADMIN"
+
+
+class EbayStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    ENDED = "ENDED"
+    DRAFT = "DRAFT"
+    PENDING = "PENDING"
+    UNKNOWN = "UNKNOWN"
 
 
 class User(Base):
@@ -181,24 +268,58 @@ class Inventory(Base):
     __tablename__ = "inventory"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    sku_id = Column(Integer, ForeignKey('sku.id'), nullable=False)
-    storage = Column(String(100), nullable=True)
-    status = Column(Enum(InventoryStatus), default=InventoryStatus.available)
-    category = Column(String(100), nullable=True)
-    price = Column(Float, default=0.0)
-    warehouse_id = Column(Integer, ForeignKey('warehouses.id'), nullable=True)
+    sku_id = Column(Integer, ForeignKey('sku.id'), nullable=True)
+    sku_code = Column(String(100), nullable=True, index=True)
+    model = Column(Text, nullable=True)
+    category = Column(String(100), nullable=True, index=True)
+    condition = Column(Enum(ConditionType), nullable=True, index=True)
+    part_number = Column(String(100), nullable=True, index=True)
+    title = Column(Text, nullable=True)
+    
+    price_value = Column(Numeric(14, 2), nullable=True)
+    price_currency = Column(CHAR(3), nullable=True)
+    
+    ebay_listing_id = Column(String(100), nullable=True, index=True)
+    ebay_status = Column(Enum(EbayStatus), nullable=True, index=True)
+    
+    status = Column(Enum(InventoryStatus), default=InventoryStatus.AVAILABLE, index=True)
+    photo_count = Column(Integer, default=0)
+    notes = Column(Text, nullable=True)
+    
+    storage_id = Column(String(100), nullable=True, index=True)
+    storage = Column(String(100), nullable=True, index=True)
+    warehouse_id = Column(Integer, ForeignKey('warehouses.id'), nullable=True, index=True)
+    
     quantity = Column(Integer, default=1)
     
-    rec_created = Column(DateTime, nullable=False, default=datetime.utcnow)
-    rec_updated = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    rec_created = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    rec_updated = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+    author = Column(String(100), nullable=True, index=True)
+    
+    buyer_info = Column(Text, nullable=True)
+    tracking_number = Column(String(100), nullable=True, index=True)
+    raw_payload = Column(JSONB, nullable=True)
     
     sku = relationship("SKU", back_populates="inventory_items")
     warehouse = relationship("Warehouse", back_populates="inventory_items")
     
     __table_args__ = (
         Index('idx_inventory_sku_id', 'sku_id'),
+        Index('idx_inventory_sku_code', 'sku_code'),
+        Index('idx_inventory_category', 'category'),
+        Index('idx_inventory_condition', 'condition'),
         Index('idx_inventory_status', 'status'),
+        Index('idx_inventory_ebay_status', 'ebay_status'),
         Index('idx_inventory_warehouse_id', 'warehouse_id'),
+        Index('idx_inventory_storage', 'storage'),
+        Index('idx_inventory_storage_id', 'storage_id'),
+        Index('idx_inventory_author', 'author'),
+        Index('idx_inventory_part_number', 'part_number'),
+        Index('idx_inventory_tracking', 'tracking_number'),
+        Index('idx_inventory_ebay_listing', 'ebay_listing_id'),
+        Index('idx_inventory_created_desc', desc(rec_created)),
+        Index('idx_composite_status_warehouse', 'status', 'warehouse_id'),
+        Index('idx_composite_storage_status', 'storage_id', 'status'),
     )
 
 
@@ -234,12 +355,21 @@ class SyncLog(Base):
     __tablename__ = "sync_logs"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(String(100), unique=True, nullable=True, index=True)
     user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
     endpoint = Column(String(255), nullable=False)
+    
+    pages_fetched = Column(Integer, default=0)
+    records_fetched = Column(Integer, default=0)
+    records_stored = Column(Integer, default=0)
     record_count = Column(Integer, default=0)
+    
     duration = Column(Float, default=0.0)
+    duration_ms = Column(Integer, default=0)
+    
     status = Column(String(50), nullable=False)
     error_message = Column(Text, nullable=True)
+    error_text = Column(Text, nullable=True)
     
     sync_started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     sync_completed_at = Column(DateTime, nullable=True)
@@ -249,6 +379,7 @@ class SyncLog(Base):
     user = relationship("User", back_populates="sync_logs")
     
     __table_args__ = (
+        Index('idx_synclog_job_id', 'job_id'),
         Index('idx_synclog_user_id', 'user_id'),
         Index('idx_synclog_status', 'status'),
         Index('idx_synclog_started', 'sync_started_at'),
@@ -285,4 +416,242 @@ class PasswordResetToken(Base):
     __table_args__ = (
         Index('idx_reset_token_email', 'email'),
         Index('idx_reset_token_expires', 'expires_at'),
+    )
+
+
+class Purchase(Base):
+    __tablename__ = "purchases"
+    
+    purchase_id = Column(String(100), primary_key=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    
+    creation_date = Column(DateTime(timezone=True), nullable=True)
+    last_modified_at = Column(DateTime(timezone=True), nullable=True)
+    
+    buyer_username = Column(String(100), nullable=True, index=True)
+    seller_username = Column(String(100), nullable=True, index=True)
+    
+    total_value = Column(Numeric(14, 2), nullable=True)
+    total_currency = Column(CHAR(3), nullable=True)
+    
+    payment_status = Column(Enum(PaymentStatus), nullable=True, index=True)
+    fulfillment_status = Column(Enum(FulfillmentStatus), nullable=True, index=True)
+    
+    tracking_number = Column(String(100), nullable=True)
+    ship_to_name = Column(String(255), nullable=True)
+    ship_to_city = Column(String(100), nullable=True)
+    ship_to_state = Column(String(100), nullable=True)
+    ship_to_postal = Column(String(20), nullable=True)
+    ship_to_country = Column(CHAR(2), nullable=True)
+    
+    raw_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    line_items = relationship("PurchaseLineItem", back_populates="purchase", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_purchase_creation_date', 'creation_date'),
+        Index('idx_purchase_buyer', 'buyer_username'),
+        Index('idx_purchase_seller', 'seller_username'),
+        Index('idx_purchase_payment_status', 'payment_status'),
+        Index('idx_purchase_fulfillment_status', 'fulfillment_status'),
+        Index('idx_purchase_user_id', 'user_id'),
+    )
+
+
+class PurchaseLineItem(Base):
+    __tablename__ = "purchase_line_items"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    purchase_id = Column(String(100), ForeignKey('purchases.purchase_id'), nullable=False)
+    line_item_id = Column(String(100), nullable=False)
+    
+    sku = Column(String(100), nullable=True, index=True)
+    title = Column(Text, nullable=True)
+    quantity = Column(Integer, default=0)
+    total_value = Column(Numeric(14, 2), nullable=True)
+    currency = Column(CHAR(3), nullable=True)
+    
+    raw_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    purchase = relationship("Purchase", back_populates="line_items")
+    
+    __table_args__ = (
+        Index('idx_purch_line_purchase_id', 'purchase_id'),
+        Index('idx_purch_line_sku', 'sku'),
+        Index('idx_purch_line_unique', 'purchase_id', 'line_item_id', unique=True),
+    )
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+    
+    transaction_id = Column(String(100), primary_key=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    
+    order_id = Column(String(100), nullable=True, index=True)
+    line_item_id = Column(String(100), nullable=True)
+    sku = Column(String(100), nullable=True, index=True)
+    
+    buyer_username = Column(String(100), nullable=True, index=True)
+    sale_value = Column(Numeric(14, 2), nullable=True)
+    currency = Column(CHAR(3), nullable=True)
+    sale_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    
+    quantity = Column(Integer, default=0)
+    shipping_charged = Column(Numeric(14, 2), nullable=True)
+    tax_collected = Column(Numeric(14, 2), nullable=True)
+    
+    fulfillment_status = Column(Enum(FulfillmentStatus), nullable=True)
+    payment_status = Column(Enum(PaymentStatus), nullable=True)
+    
+    profit = Column(Numeric(14, 2), nullable=True)
+    profit_status = Column(Enum(ProfitStatus), nullable=True)
+    
+    raw_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_txn_order_id', 'order_id'),
+        Index('idx_txn_sale_date', 'sale_date'),
+        Index('idx_txn_buyer', 'buyer_username'),
+        Index('idx_txn_sku', 'sku'),
+        Index('idx_txn_user_id', 'user_id'),
+    )
+
+
+class Fee(Base):
+    __tablename__ = "fees"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    
+    source_type = Column(String(50), nullable=True)
+    source_id = Column(String(100), nullable=True, index=True)
+    fee_type = Column(String(100), nullable=True, index=True)
+    
+    amount = Column(Numeric(14, 2), nullable=True)
+    currency = Column(CHAR(3), nullable=True)
+    assessed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    
+    raw_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_fee_source_id', 'source_id'),
+        Index('idx_fee_type', 'fee_type'),
+        Index('idx_fee_assessed_at', 'assessed_at'),
+        Index('idx_fee_user_id', 'user_id'),
+    )
+
+
+class Payout(Base):
+    __tablename__ = "payouts"
+    
+    payout_id = Column(String(100), primary_key=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    
+    total_amount = Column(Numeric(14, 2), nullable=True)
+    currency = Column(CHAR(3), nullable=True)
+    status = Column(Enum(PayoutStatus), nullable=True)
+    payout_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    
+    raw_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    payout_items = relationship("PayoutItem", back_populates="payout", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_payout_date', 'payout_date'),
+        Index('idx_payout_user_id', 'user_id'),
+    )
+
+
+class PayoutItem(Base):
+    __tablename__ = "payout_items"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    payout_id = Column(String(100), ForeignKey('payouts.payout_id'), nullable=False)
+    
+    type = Column(String(50), nullable=True)
+    reference_id = Column(String(100), nullable=True, index=True)
+    amount = Column(Numeric(14, 2), nullable=True)
+    currency = Column(CHAR(3), nullable=True)
+    
+    raw_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    payout = relationship("Payout", back_populates="payout_items")
+    
+    __table_args__ = (
+        Index('idx_payout_item_payout_id', 'payout_id'),
+        Index('idx_payout_item_reference_id', 'reference_id'),
+    )
+
+
+class Offer(Base):
+    __tablename__ = "offers"
+    
+    offer_id = Column(String(100), primary_key=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    
+    direction = Column(Enum(OfferDirection), nullable=False, index=True)
+    state = Column(Enum(OfferState), nullable=False, default=OfferState.PENDING, index=True)
+    
+    item_id = Column(String(100), nullable=True, index=True)
+    sku = Column(String(100), nullable=True, index=True)
+    buyer_username = Column(String(100), nullable=True, index=True)
+    
+    quantity = Column(Integer, default=1)
+    price_value = Column(Numeric(14, 2), nullable=True)
+    price_currency = Column(CHAR(3), nullable=True)
+    original_price_value = Column(Numeric(14, 2), nullable=True)
+    original_price_currency = Column(CHAR(3), nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    message = Column(Text, nullable=True)
+    raw_payload = Column(JSONB, nullable=True)
+    
+    actions = relationship("OfferActionLog", back_populates="offer", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_offer_item_id', 'item_id'),
+        Index('idx_offer_state', 'state'),
+        Index('idx_offer_direction', 'direction'),
+        Index('idx_offer_created_at', 'created_at'),
+        Index('idx_offer_buyer', 'buyer_username'),
+        Index('idx_offer_sku', 'sku'),
+        Index('idx_offer_user_id', 'user_id'),
+    )
+
+
+class OfferActionLog(Base):
+    __tablename__ = "offer_actions"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    offer_id = Column(String(100), ForeignKey('offers.offer_id', ondelete='CASCADE'), nullable=False, index=True)
+    
+    action = Column(Enum(OfferAction), nullable=False)
+    actor = Column(Enum(OfferActor), nullable=False, default=OfferActor.SYSTEM)
+    notes = Column(Text, nullable=True)
+    result_state = Column(Enum(OfferState), nullable=True)
+    
+    raw_payload = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    
+    offer = relationship("Offer", back_populates="actions")
+    
+    __table_args__ = (
+        Index('idx_offer_action_offer_id', 'offer_id'),
+        Index('idx_offer_action_created_at', 'created_at'),
     )

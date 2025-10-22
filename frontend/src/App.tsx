@@ -8,11 +8,22 @@ import { EbayCallbackPage } from './pages/EbayCallbackPage';
 import { PasswordResetPage } from './pages/PasswordResetPage';
 import { MessagesPage } from './pages/MessagesPage';
 import { OrdersPage } from './pages/OrdersPage';
-import { OffersPage } from './pages/OffersPage';
 import { EbayTestPage } from './pages/EbayTestPage';
 import { OrdersViewPage } from './pages/OrdersViewPage';
 import { AnalyticsDashboardPage } from './pages/AnalyticsDashboardPage';
 import TodoListPage from './pages/TodoListPage';
+import BuyingPage from './pages/BuyingPage';
+import InventoryPageV3 from './pages/InventoryPageV3';
+import TransactionsPage from './pages/TransactionsPage';
+import FinancialsPage from './pages/FinancialsPage';
+import AdminJobsPage from './pages/AdminJobsPage';
+import OffersPageV2 from './pages/OffersPageV2';
+import SKUPage from './pages/SKUPage';
+import ListingPage from './pages/ListingPage';
+import ShippingPage from './pages/ShippingPage';
+import ReturnsPage from './pages/ReturnsPage';
+import CasesPage from './pages/CasesPage';
+import AdminPage from './pages/AdminPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -97,14 +108,9 @@ function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/messages"
-            element={
-              <ProtectedRoute>
-                <MessagesPage />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/messages" element={<ProtectedRoute><MessagesPage /></ProtectedRoute>} />
+          <Route path="/offers" element={<ProtectedRoute><OffersPageV2 /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
           <Route
             path="/orders"
             element={
@@ -117,7 +123,7 @@ function App() {
             path="/offers"
             element={
               <ProtectedRoute>
-                <OffersPage />
+                <OffersPageV2 />
               </ProtectedRoute>
             }
           />
@@ -148,6 +154,86 @@ function App() {
           <Route
             path="/todolist"
             element={<TodoListPage />}
+          />
+          <Route
+            path="/buying"
+            element={
+              <ProtectedRoute>
+                <BuyingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/inventory"
+            element={
+              <ProtectedRoute>
+                <InventoryPageV3 />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/sku"
+            element={
+              <ProtectedRoute>
+                <SKUPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/listing"
+            element={
+              <ProtectedRoute>
+                <ListingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shipping"
+            element={
+              <ProtectedRoute>
+                <ShippingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/returns"
+            element={
+              <ProtectedRoute>
+                <ReturnsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cases"
+            element={
+              <ProtectedRoute>
+                <CasesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/transactions"
+            element={
+              <ProtectedRoute>
+                <TransactionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/financials"
+            element={
+              <ProtectedRoute>
+                <FinancialsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/jobs"
+            element={
+              <ProtectedRoute>
+                <AdminJobsPage />
+              </ProtectedRoute>
+            }
           />
         </Routes>
       </AuthProvider>

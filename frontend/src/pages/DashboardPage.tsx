@@ -193,6 +193,61 @@ export const DashboardPage: React.FC = () => {
               </CardContent>
             </Card>
           </div>
+
+          <h2 className="text-2xl font-bold mb-4 mt-8">Core Operations</h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card 
+              className="cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => navigate('/buying')}
+            >
+              <CardContent className="p-6 flex items-center gap-4">
+                <Package className="h-8 w-8 text-blue-600" />
+                <div>
+                  <h3 className="font-semibold">Buying</h3>
+                  <p className="text-sm text-gray-600">Purchases from eBay</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card 
+              className="cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => navigate('/inventory')}
+            >
+              <CardContent className="p-6 flex items-center gap-4">
+                <Package className="h-8 w-8 text-green-600" />
+                <div>
+                  <h3 className="font-semibold">Inventory</h3>
+                  <p className="text-sm text-gray-600">Stock management</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card 
+              className="cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => navigate('/transactions')}
+            >
+              <CardContent className="p-6 flex items-center gap-4">
+                <DollarSign className="h-8 w-8 text-purple-600" />
+                <div>
+                  <h3 className="font-semibold">Transactions</h3>
+                  <p className="text-sm text-gray-600">Sales records</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card 
+              className="cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => navigate('/financials')}
+            >
+              <CardContent className="p-6 flex items-center gap-4">
+                <DollarSign className="h-8 w-8 text-orange-600" />
+                <div>
+                  <h3 className="font-semibold">Financials</h3>
+                  <p className="text-sm text-gray-600">Fees & payouts</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
 
         <Tabs defaultValue="connection" className="space-y-4">

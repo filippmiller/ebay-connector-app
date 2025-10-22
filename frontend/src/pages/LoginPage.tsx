@@ -24,7 +24,7 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login({ email, password });
-      navigate('/dashboard');
+      navigate('/buying');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {

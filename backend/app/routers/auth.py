@@ -35,6 +35,7 @@ async def login(user_credentials: UserLogin):
     logger.info(f"Login attempt for email: {user_credentials.email}")
     user = authenticate_user(user_credentials.email, user_credentials.password)
     if not user:
+        logger.warning(f"Failed login attempt for: {user_credentials.email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -46,7 +47,7 @@ async def login(user_credentials: UserLogin):
         data={"sub": user.id}, expires_delta=access_token_expires
     )
     
-    logger.info(f"User logged in successfully: {user.email}")
+    logger.info(f"✅ User logged in successfully: {user.email} (role: {user.role})")
     return {"access_token": access_token, "token_type": "bearer"}
 
 

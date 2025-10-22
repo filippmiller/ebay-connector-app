@@ -81,6 +81,7 @@ class PostgresEbayDatabase:
                 break
         
         ship_to = self._safe_get(order_data, 'fulfillmentStartInstructions', 0, 'shippingStep', 'shipTo') or {}
+        contact_addr = ship_to.get('contactAddress') or {}
         
         normalized_order = {
             'order_id': order_data.get('orderId'),
@@ -90,7 +91,7 @@ class PostgresEbayDatabase:
             'fulfillment_status': (order_data.get('orderFulfillmentStatus') or 'UNKNOWN').upper(),
             'buyer_username': self._safe_get(order_data, 'buyer', 'username'),
             'buyer_email': self._safe_get(order_data, 'buyer', 'email'),
-            'buyer_registered': self._safe_get(order_data, 'buyer', 'registered'),
+            'buyer_registered': self._safe_get(order_data, 'buyer', 'registeredDate'),
             'total_amount': total_val,
             'total_currency': total_cur,
             'order_total_value': total_val,
@@ -98,10 +99,10 @@ class PostgresEbayDatabase:
             'line_items_count': len(items),
             'tracking_number': tracking,
             'ship_to_name': ship_to.get('fullName'),
-            'ship_to_city': ship_to.get('city'),
-            'ship_to_state': ship_to.get('stateOrProvince'),
-            'ship_to_postal_code': ship_to.get('postalCode'),
-            'ship_to_country_code': ship_to.get('countryCode'),
+            'ship_to_city': contact_addr.get('city'),
+            'ship_to_state': contact_addr.get('stateOrProvince'),
+            'ship_to_postal_code': contact_addr.get('postalCode'),
+            'ship_to_country_code': contact_addr.get('countryCode'),
             'order_data': json.dumps(order_data),
             'raw_payload': json.dumps(order_data)
         }
