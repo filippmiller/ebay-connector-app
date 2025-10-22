@@ -5,6 +5,7 @@ import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EbayCallbackPage } from './pages/EbayCallbackPage';
+import { EbayConnectionPage } from './pages/EbayConnectionPage';
 import { PasswordResetPage } from './pages/PasswordResetPage';
 import { MessagesPage } from './pages/MessagesPage';
 import { OrdersPage } from './pages/OrdersPage';
@@ -111,6 +112,7 @@ function App() {
           <Route path="/messages" element={<ProtectedRoute><MessagesPage /></ProtectedRoute>} />
           <Route path="/offers" element={<ProtectedRoute><OffersPageV2 /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="/admin/ebay-connection" element={<ProtectedRoute><EbayConnectionPage /></ProtectedRoute>} />
           <Route
             path="/orders"
             element={
