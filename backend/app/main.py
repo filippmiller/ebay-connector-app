@@ -1,16 +1,28 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2
 from app.utils.logger import logger
 import os
+import traceback
+import logging
 from sqlalchemy import create_engine, text, inspect
 
 app = FastAPI(title="eBay Connector API", version="1.0.0")
+
+error_logger = logging.getLogger("uvicorn.error")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    error_logger.error(f"Path: {request.url} | Error: {str(exc)} | Traceback: {tb}")
+    return JSONResponse({"ok": False, "error": str(exc), "path": str(request.url)}, status_code=500)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://ebay-connection-app-k0ge3h93.devinapps.com",
+        "https://ebay-ui-app-b6oqapk8.devinapps.com",
         "http://localhost:5173",
         "http://localhost:3000",
         "*"
@@ -25,7 +37,15 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(ebay.router)
 app.include_router(orders.router)
-app.include_router(messages.router)
+
+try:
+    app.include_router(messages.router)
+    print("✅ [startup] messages router registered successfully")
+except Exception as e:
+    print(f"❌ [startup] messages router registration failed: {e}")
+    import traceback
+    traceback.print_exc()
+
 app.include_router(offers.router)
 app.include_router(migration.router)
 app.include_router(buying.router)

@@ -42,29 +42,18 @@ class EbayService:
                 detail="eBay credentials not configured"
             )
         
-        if not settings.ebay_runame:
-            ebay_logger.log_ebay_event(
-                "authorization_url_error",
-                "eBay RuName not configured",
-                status="error",
-                error="EBAY_RUNAME not set in environment"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="eBay RuName not configured"
-            )
-        
         if not scopes:
             scopes = [
                 "https://api.ebay.com/oauth/api_scope",
                 "https://api.ebay.com/oauth/api_scope/sell.account",
                 "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-                "https://api.ebay.com/oauth/api_scope/sell.inventory"
+                "https://api.ebay.com/oauth/api_scope/sell.inventory",
+                "https://api.ebay.com/oauth/api_scope/sell.finances"
             ]
         
         params = {
             "client_id": settings.ebay_client_id,
-            "redirect_uri": settings.ebay_runame,
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": " ".join(scopes)
         }
@@ -76,17 +65,17 @@ class EbayService:
         
         ebay_logger.log_ebay_event(
             "authorization_url_generated",
-            f"Generated eBay authorization URL ({settings.EBAY_ENVIRONMENT}) for redirect_uri: {settings.ebay_runame}",
+            f"Generated eBay authorization URL ({settings.EBAY_ENVIRONMENT}) for redirect_uri: {redirect_uri}",
             request_data={
                 "environment": settings.EBAY_ENVIRONMENT,
-                "redirect_uri": settings.ebay_runame,
+                "redirect_uri": redirect_uri,
                 "scopes": scopes,
                 "state": state
             },
             status="success"
         )
         
-        logger.info(f"Generated eBay {settings.EBAY_ENVIRONMENT} authorization URL with RuName: {settings.ebay_runame}")
+        logger.info(f"Generated eBay {settings.EBAY_ENVIRONMENT} authorization URL with redirect_uri: {redirect_uri}")
         return auth_url
     
     async def exchange_code_for_token(self, code: str, redirect_uri: str) -> EbayTokenResponse:
@@ -113,7 +102,7 @@ class EbayService:
         data = {
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": settings.ebay_runame
+            "redirect_uri": redirect_uri
         }
         
         ebay_logger.log_ebay_event(
@@ -305,6 +294,69 @@ class EbayService:
         
         logger.info(f"Saved eBay tokens for user: {user_id}")
     
+    async def ensure_valid_token(self, user_id: str) -> str:
+        """
+        Ensures the user has a valid access token, refreshing if necessary.
+        Returns the valid access token.
+        """
+        user = db.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        if not user.ebay_connected or not user.ebay_refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="eBay account not connected"
+            )
+        
+        now = datetime.utcnow()
+        expires_at = user.ebay_token_expires_at
+        
+        if expires_at and now >= expires_at - timedelta(minutes=5):
+            logger.info(f"Token expired or expiring soon for user {user_id}, refreshing...")
+            try:
+                token_response = await self.refresh_access_token(user.ebay_refresh_token)
+                self.save_user_tokens(user_id, token_response)
+                logger.info(f"Token refreshed successfully for user {user_id}")
+                return token_response.access_token
+            except Exception as e:
+                logger.error(f"Failed to refresh token for user {user_id}: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Failed to refresh eBay token. Please reconnect your eBay account."
+                )
+        
+        return user.ebay_access_token
+    
+    async def call_ebay_api_with_retry(self, user_id: str, api_call_func, *args, **kwargs) -> Any:
+        """
+        Wrapper that calls an eBay API function with automatic token refresh on 401.
+        """
+        access_token = await self.ensure_valid_token(user_id)
+        
+        try:
+            return await api_call_func(access_token, *args, **kwargs)
+        except HTTPException as e:
+            if e.status_code == 401 or (e.status_code == 400 and "expired" in str(e.detail).lower()):
+                logger.info(f"Got 401/expired error, attempting token refresh for user {user_id}")
+                try:
+                    user = db.get_user_by_id(user_id)
+                    if user and user.ebay_refresh_token:
+                        token_response = await self.refresh_access_token(user.ebay_refresh_token)
+                        self.save_user_tokens(user_id, token_response)
+                        logger.info(f"Token refreshed after 401, retrying API call for user {user_id}")
+                        return await api_call_func(token_response.access_token, *args, **kwargs)
+                except Exception as refresh_error:
+                    logger.error(f"Failed to refresh token after 401 for user {user_id}: {str(refresh_error)}")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="eBay token expired and refresh failed. Please reconnect your eBay account."
+                    )
+            raise
+    
     async def fetch_orders(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Fetch orders from eBay Fulfillment API
@@ -390,7 +442,7 @@ class EbayService:
     async def fetch_transactions(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Fetch transaction records from eBay Finances API
-        By default, fetches transactions from the last 90 days
+        By default, fetches transactions from the last 90 days (or wide range for initial backfill)
         """
         if not access_token:
             raise HTTPException(
@@ -398,20 +450,23 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        api_url = f"{settings.ebay_api_base_url}/sell/finances/v1/transaction"
+        api_url = f"{settings.ebay_finances_api_base_url}/sell/finances/v1/transaction"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
         }
         
         params = filter_params or {}
         
-        if 'filter' not in params:
+        if 'filter' not in params and 'limit' not in params:
             from datetime import datetime, timedelta
             end_date = datetime.utcnow()
-            start_date = end_date - timedelta(days=90)
+            start_date = end_date - timedelta(days=1095)
             params['filter'] = f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
+            params['limit'] = 1000
         
         ebay_logger.log_ebay_event(
             "fetch_transactions_request",
@@ -850,6 +905,795 @@ class EbayService:
             logger.error(f"Offers sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
+
+    async def fetch_user_identity(self, access_token: str) -> Dict[str, Any]:
+        """
+        Fetch user identity from eBay Commerce Identity API
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        api_url = f"{settings.ebay_api_base_url}/commerce/identity/v1/user"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json"
+        }
+        
+        ebay_logger.log_ebay_event(
+            "fetch_identity_request",
+            f"Fetching user identity from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url
+            }
+        )
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    api_url,
+                    headers=headers,
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    ebay_logger.log_ebay_event(
+                        "fetch_identity_failed",
+                        f"Failed to fetch identity: {response.status_code}",
+                        response_data={"error": error_detail},
+                        status="error",
+                        error=error_detail
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch identity: {error_detail}"
+                    )
+                
+                identity_data = response.json()
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_identity_success",
+                    f"Successfully fetched user identity",
+                    response_data=identity_data,
+                    status="success"
+                )
+                
+                return identity_data
+                
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_identity_error",
+                "HTTP request error during identity fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+    
+    async def fetch_user_privileges(self, access_token: str) -> Dict[str, Any]:
+        """
+        Fetch user privileges from eBay Sell Account API
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        api_url = f"{settings.ebay_api_base_url}/sell/account/v1/privilege"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json"
+        }
+        
+        ebay_logger.log_ebay_event(
+            "fetch_privileges_request",
+            f"Fetching user privileges from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url
+            }
+        )
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    api_url,
+                    headers=headers,
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    ebay_logger.log_ebay_event(
+                        "fetch_privileges_failed",
+                        f"Failed to fetch privileges: {response.status_code}",
+                        response_data={"error": error_detail},
+                        status="error",
+                        error=error_detail
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch privileges: {error_detail}"
+                    )
+                
+                privileges_data = response.json()
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_privileges_success",
+                    f"Successfully fetched user privileges",
+                    response_data=privileges_data,
+                    status="success"
+                )
+                
+                return privileges_data
+                
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_privileges_error",
+                "HTTP request error during privileges fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+    
+    async def fetch_message_folders(self, access_token: str, verbose: int = 0) -> Dict[str, Any]:
+        """
+        Enumerate My Messages folders using ReturnSummary
+        """
+        logger.info(f"fetch_message_folders called with verbose={verbose}")
+        
+        if not access_token:
+            logger.error("No access token provided")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        if settings.EBAY_ENVIRONMENT == "production":
+            api_url = "https://api.ebay.com/ws/api.dll"
+        else:
+            api_url = "https://api.sandbox.ebay.com/ws/api.dll"
+        
+        logger.info(f"Using eBay API URL: {api_url}")
+        
+        xml_request = """<?xml version="1.0" encoding="utf-8"?>
+<GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{}</eBayAuthToken>
+  </RequesterCredentials>
+  <DetailLevel>ReturnSummary</DetailLevel>
+  <WarningLevel>High</WarningLevel>
+</GetMyMessagesRequest>""".format(access_token)
+        
+        headers = {
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "1201",
+            "X-EBAY-API-CALL-NAME": "GetMyMessages",
+            "X-EBAY-API-SITEID": "0",
+            "Content-Type": "text/xml",
+            "Accept": "text/xml"
+        }
+        
+        ebay_logger.log_ebay_event(
+            "fetch_message_folders_request",
+            f"Fetching message folders from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url
+            }
+        )
+        
+        try:
+            logger.info("Making HTTP request to eBay API for folders")
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    api_url,
+                    content=xml_request,
+                    headers=headers,
+                    timeout=30.0
+                )
+                
+                logger.info(f"eBay API response status: {response.status_code}, content length: {len(response.text)}")
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    logger.error(f"eBay API returned non-200 status: {response.status_code}")
+                    ebay_logger.log_ebay_event(
+                        "fetch_message_folders_failed",
+                        f"Failed to fetch folders: {response.status_code}",
+                        response_data={"status_code": response.status_code, "error": error_detail[:500]},
+                        status="error",
+                        error=error_detail[:500]
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch folders: {error_detail[:200]}"
+                    )
+                
+                logger.info("Parsing XML response")
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(response.text)
+                logger.info("XML parsed successfully")
+                
+                ns = {'ns': 'urn:ebay:apis:eBLBaseComponents'}
+                
+                ack = root.findtext('{urn:ebay:apis:eBLBaseComponents}Ack', '')
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_message_folders_response",
+                    f"eBay API response received with Ack={ack}",
+                    response_data={"ack": ack, "response_length": len(response.text)}
+                )
+                
+                if ack not in ['Success', 'Warning']:
+                    errors = []
+                    for error in root.findall('.//{urn:ebay:apis:eBLBaseComponents}Errors'):
+                        error_code = error.findtext('{urn:ebay:apis:eBLBaseComponents}ErrorCode', '')
+                        short_msg = error.findtext('{urn:ebay:apis:eBLBaseComponents}ShortMessage', '')
+                        long_msg = error.findtext('{urn:ebay:apis:eBLBaseComponents}LongMessage', '')
+                        errors.append({
+                            "code": error_code,
+                            "short": short_msg,
+                            "long": long_msg
+                        })
+                    
+                    error_detail = "; ".join([f"{e['code']}: {e['short']}" for e in errors]) if errors else "Unknown error"
+                    ebay_logger.log_ebay_event(
+                        "fetch_message_folders_api_error",
+                        f"eBay API returned error: {error_detail}",
+                        response_data={"errors": errors, "ack": ack},
+                        status="error",
+                        error=error_detail
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"eBay API error: {error_detail}"
+                    )
+                
+                folders = []
+                summary_elem = root.find('.//{urn:ebay:apis:eBLBaseComponents}Summary')
+                
+                if summary_elem is not None:
+                    folder_summary = summary_elem.find('{urn:ebay:apis:eBLBaseComponents}FolderSummary')
+                    if folder_summary is not None:
+                        folder_elems = folder_summary.findall('{urn:ebay:apis:eBLBaseComponents}Folder')
+                        for folder_elem in folder_elems:
+                            folder_id = folder_elem.findtext('{urn:ebay:apis:eBLBaseComponents}FolderID', '')
+                            folder_name = folder_elem.findtext('{urn:ebay:apis:eBLBaseComponents}FolderName', '')
+                            new_count = folder_elem.findtext('{urn:ebay:apis:eBLBaseComponents}NewMessageCount', '0')
+                            total_count = folder_elem.findtext('{urn:ebay:apis:eBLBaseComponents}TotalMessageCount', '0')
+                            
+                            folder = {
+                                'id': int(folder_id) if folder_id else 0,
+                                'name': folder_name,
+                                'total': int(total_count) if total_count else 0,
+                                'unread': int(new_count) if new_count else 0
+                            }
+                            folders.append(folder)
+                
+                summary = {}
+                if summary_elem is not None:
+                    summary = {
+                        'totalMessages': int(summary_elem.findtext('{urn:ebay:apis:eBLBaseComponents}TotalMessages', '0') or '0'),
+                        'newMessages': int(summary_elem.findtext('{urn:ebay:apis:eBLBaseComponents}NewMessageCount', '0') or '0'),
+                        'flaggedMessages': int(summary_elem.findtext('{urn:ebay:apis:eBLBaseComponents}FlaggedMessageCount', '0') or '0'),
+                        'totalHighPriorityMessages': int(summary_elem.findtext('{urn:ebay:apis:eBLBaseComponents}TotalHighPriorityCount', '0') or '0'),
+                        'totalUnreadMessages': int(summary_elem.findtext('{urn:ebay:apis:eBLBaseComponents}TotalUnreadCount', '0') or '0')
+                    }
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_message_folders_success",
+                    f"Successfully fetched {len(folders)} folders from eBay",
+                    response_data={"folders": folders, "summary": summary},
+                    status="success"
+                )
+                
+                logger.info(f"Successfully fetched {len(folders)} message folders from eBay")
+                
+                result = {
+                    "folders": folders,
+                    "summary": summary
+                }
+                
+                if verbose:
+                    result['debug'] = {
+                        "ack": ack,
+                        "headers_used": {k: v for k, v in headers.items() if k != "Authorization"},
+                        "total_folders": len(folders),
+                        "raw_xml_snippet": response.text[:300]
+                    }
+                
+                return result
+                
+        except ET.ParseError as e:
+            error_msg = f"XML parsing failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_message_folders_parse_error",
+                "XML parsing error during folders fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            logger.error(f"Response text: {response.text[:1000]}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_message_folders_error",
+                "HTTP request error during folders fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+    
+    async def fetch_messages(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Fetch messages from eBay using Trading API GetMyMessages
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        if settings.EBAY_ENVIRONMENT == "production":
+            api_url = "https://api.ebay.com/ws/api.dll"
+        else:
+            api_url = "https://api.sandbox.ebay.com/ws/api.dll"
+        
+        params = filter_params or {}
+        folder_id = params.get('folder_id')
+        start_time = params.get('start_time', '2015-01-01T00:00:00.000Z')
+        end_time = params.get('end_time')
+        page_number = params.get('page_number', 1)
+        entries_per_page = params.get('entries_per_page', 200)
+        
+        folder_filter = f"<FolderID>{folder_id}</FolderID>" if folder_id is not None else ""
+        time_filter = ""
+        if start_time:
+            time_filter += f"<StartCreationTime>{start_time}</StartCreationTime>"
+        if end_time:
+            time_filter += f"<EndCreationTime>{end_time}</EndCreationTime>"
+        
+        detail_level = params.get('detail_level', 'ReturnHeaders')
+        
+        xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{access_token}</eBayAuthToken>
+  </RequesterCredentials>
+  <DetailLevel>{detail_level}</DetailLevel>
+  <WarningLevel>High</WarningLevel>
+  {folder_filter}
+  {time_filter}
+  <Pagination>
+    <EntriesPerPage>{entries_per_page}</EntriesPerPage>
+    <PageNumber>{page_number}</PageNumber>
+  </Pagination>
+</GetMyMessagesRequest>"""
+        
+        headers = {
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "1355",
+            "X-EBAY-API-CALL-NAME": "GetMyMessages",
+            "X-EBAY-API-SITEID": "0",
+            "Content-Type": "text/xml"
+        }
+        
+        ebay_logger.log_ebay_event(
+            "fetch_messages_request",
+            f"Fetching messages from eBay Trading API GetMyMessages ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "folder_id": folder_id,
+                "start_time": start_time,
+                "end_time": end_time,
+                "page": page_number
+            }
+        )
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    api_url,
+                    content=xml_request,
+                    headers=headers,
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    ebay_logger.log_ebay_event(
+                        "fetch_messages_failed",
+                        f"Failed to fetch messages: {response.status_code}",
+                        response_data={
+                            "status_code": response.status_code,
+                            "error": error_detail[:500]
+                        },
+                        status="error",
+                        error=error_detail[:500]
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch messages: {error_detail[:200]}"
+                    )
+                
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(response.text)
+                
+                ns = {'ns': 'urn:ebay:apis:eBLBaseComponents'}
+                
+                ack = root.findtext('ns:Ack', '', ns)
+                if ack not in ['Success', 'Warning']:
+                    errors = []
+                    for error in root.findall('.//ns:Errors', ns):
+                        error_code = error.findtext('ns:ErrorCode', '', ns)
+                        error_msg = error.findtext('ns:LongMessage', '', ns)
+                        errors.append(f"{error_code}: {error_msg}")
+                    
+                    error_detail = "; ".join(errors) if errors else "Unknown error"
+                    ebay_logger.log_ebay_event(
+                        "fetch_messages_api_error",
+                        f"eBay API returned error: {error_detail}",
+                        response_data={"errors": errors},
+                        status="error",
+                        error=error_detail
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"eBay API error: {error_detail}"
+                    )
+                
+                summary = {}
+                summary_elem = root.find('.//ns:Summary', ns)
+                if summary_elem is not None:
+                    summary = {
+                        'totalMessages': int(summary_elem.findtext('ns:TotalMessages', '0', ns)),
+                        'newMessages': int(summary_elem.findtext('ns:NewMessageCount', '0', ns)),
+                        'flaggedMessages': int(summary_elem.findtext('ns:FlaggedMessageCount', '0', ns)),
+                        'totalHighPriorityMessages': int(summary_elem.findtext('ns:TotalHighPriorityCount', '0', ns)),
+                        'totalUnreadMessages': int(summary_elem.findtext('ns:TotalUnreadCount', '0', ns))
+                    }
+                
+                messages = []
+                for msg_elem in root.findall('.//ns:Messages', ns):
+                    message = {
+                        'messageId': msg_elem.findtext('ns:MessageID', '', ns),
+                        'externalMessageId': msg_elem.findtext('ns:ExternalMessageID', '', ns),
+                        'folderId': msg_elem.findtext('ns:FolderID', '', ns),
+                        'sender': msg_elem.findtext('ns:Sender', '', ns),
+                        'recipientUserID': msg_elem.findtext('ns:RecipientUserID', '', ns) or msg_elem.findtext('ns:ReceivingUserID', '', ns),
+                        'subject': msg_elem.findtext('ns:Subject', '', ns),
+                        'body': msg_elem.findtext('ns:Text', '', ns) or msg_elem.findtext('ns:Body', '', ns),
+                        'messageType': msg_elem.findtext('ns:MessageType', '', ns),
+                        'flagged': msg_elem.findtext('ns:Flagged', 'false', ns).lower() == 'true',
+                        'read': msg_elem.findtext('ns:Read', 'false', ns).lower() == 'true',
+                        'receiveDate': msg_elem.findtext('ns:ReceiveDate', '', ns),
+                        'expirationDate': msg_elem.findtext('ns:ExpirationDate', '', ns),
+                        'itemID': msg_elem.findtext('ns:ItemID', '', ns),
+                        'responseEnabled': msg_elem.findtext('ns:ResponseEnabled', 'false', ns).lower() == 'true',
+                        'highPriority': msg_elem.findtext('ns:HighPriority', 'false', ns).lower() == 'true'
+                    }
+                    messages.append(message)
+                
+                pagination_result = root.find('.//ns:PaginationResult', ns)
+                total_pages = 1
+                total_entries = len(messages)
+                if pagination_result is not None:
+                    total_pages = int(pagination_result.findtext('ns:TotalNumberOfPages', '1', ns))
+                    total_entries = int(pagination_result.findtext('ns:TotalNumberOfEntries', str(len(messages)), ns))
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_messages_success",
+                    f"Successfully fetched {len(messages)} messages from eBay (page {page_number}/{total_pages})",
+                    response_data={
+                        "total_messages": len(messages),
+                        "total_entries": total_entries,
+                        "total_pages": total_pages,
+                        "summary": summary
+                    },
+                    status="success"
+                )
+                
+                logger.info(f"Successfully fetched {len(messages)} messages from eBay (page {page_number}/{total_pages})")
+                
+                return {
+                    "messages": messages,
+                    "total": len(messages),
+                    "total_entries": total_entries,
+                    "total_pages": total_pages,
+                    "current_page": page_number,
+                    "summary": summary,
+                    "raw_response_snippet": response.text[:1000] if len(messages) == 0 else None
+                }
+                
+        except ET.ParseError as e:
+            error_msg = f"XML parsing failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_messages_parse_error",
+                "XML parsing error during messages fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            logger.error(f"Response text: {response.text[:1000]}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_messages_error",
+                "HTTP request error during messages fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+    
+    async def fetch_message_bodies(self, access_token: str, message_ids: List[str]) -> Dict[str, Any]:
+        """
+        Fetch message bodies by MessageIDs (max 10 per call)
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        if not message_ids or len(message_ids) == 0:
+            return {"messages": []}
+        
+        if len(message_ids) > 10:
+            raise ValueError("Maximum 10 MessageIDs per call")
+        
+        if settings.EBAY_ENVIRONMENT == "production":
+            api_url = "https://api.ebay.com/ws/api.dll"
+        else:
+            api_url = "https://api.sandbox.ebay.com/ws/api.dll"
+        
+        message_id_xml = "\n    ".join([f"<MessageID>{mid}</MessageID>" for mid in message_ids])
+        
+        xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{access_token}</eBayAuthToken>
+  </RequesterCredentials>
+  <DetailLevel>ReturnMessages</DetailLevel>
+  <WarningLevel>High</WarningLevel>
+  <MessageIDs>
+    {message_id_xml}
+  </MessageIDs>
+</GetMyMessagesRequest>"""
+        
+        headers = {
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "1355",
+            "X-EBAY-API-CALL-NAME": "GetMyMessages",
+            "X-EBAY-API-SITEID": "0",
+            "Content-Type": "text/xml"
+        }
+        
+        ebay_logger.log_ebay_event(
+            "fetch_message_bodies_request",
+            f"Fetching {len(message_ids)} message bodies from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "message_count": len(message_ids)
+            }
+        )
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    api_url,
+                    content=xml_request,
+                    headers=headers,
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    ebay_logger.log_ebay_event(
+                        "fetch_message_bodies_failed",
+                        f"Failed to fetch message bodies: {response.status_code}",
+                        response_data={"status_code": response.status_code, "error": error_detail[:500]},
+                        status="error",
+                        error=error_detail[:500]
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch message bodies: {error_detail[:200]}"
+                    )
+                
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(response.text)
+                
+                ns = {'ns': 'urn:ebay:apis:eBLBaseComponents'}
+                
+                ack = root.findtext('ns:Ack', '', ns)
+                if ack not in ['Success', 'Warning']:
+                    errors = []
+                    for error in root.findall('.//ns:Errors', ns):
+                        error_code = error.findtext('ns:ErrorCode', '', ns)
+                        error_msg = error.findtext('ns:LongMessage', '', ns)
+                        errors.append(f"{error_code}: {error_msg}")
+                    
+                    error_detail = "; ".join(errors) if errors else "Unknown error"
+                    ebay_logger.log_ebay_event(
+                        "fetch_message_bodies_api_error",
+                        f"eBay API returned error: {error_detail}",
+                        response_data={"errors": errors},
+                        status="error",
+                        error=error_detail
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"eBay API error: {error_detail}"
+                    )
+                
+                messages = []
+                for msg_elem in root.findall('.//ns:Messages', ns):
+                    message = {
+                        'messageId': msg_elem.findtext('ns:MessageID', '', ns),
+                        'externalMessageId': msg_elem.findtext('ns:ExternalMessageID', '', ns),
+                        'folderId': msg_elem.findtext('ns:FolderID', '', ns),
+                        'sender': msg_elem.findtext('ns:Sender', '', ns),
+                        'recipientUserID': msg_elem.findtext('ns:RecipientUserID', '', ns) or msg_elem.findtext('ns:ReceivingUserID', '', ns),
+                        'subject': msg_elem.findtext('ns:Subject', '', ns),
+                        'body': msg_elem.findtext('ns:Text', '', ns) or msg_elem.findtext('ns:Body', '', ns),
+                        'messageType': msg_elem.findtext('ns:MessageType', '', ns),
+                        'flagged': msg_elem.findtext('ns:Flagged', 'false', ns).lower() == 'true',
+                        'read': msg_elem.findtext('ns:Read', 'false', ns).lower() == 'true',
+                        'receiveDate': msg_elem.findtext('ns:ReceiveDate', '', ns),
+                        'expirationDate': msg_elem.findtext('ns:ExpirationDate', '', ns),
+                        'itemID': msg_elem.findtext('ns:ItemID', '', ns),
+                        'responseEnabled': msg_elem.findtext('ns:ResponseEnabled', 'false', ns).lower() == 'true',
+                        'highPriority': msg_elem.findtext('ns:HighPriority', 'false', ns).lower() == 'true'
+                    }
+                    messages.append(message)
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_message_bodies_success",
+                    f"Successfully fetched {len(messages)} message bodies from eBay",
+                    response_data={"total_messages": len(messages)},
+                    status="success"
+                )
+                
+                logger.info(f"Successfully fetched {len(messages)} message bodies from eBay")
+                
+                return {
+                    "messages": messages,
+                    "total": len(messages)
+                }
+                
+        except ET.ParseError as e:
+            error_msg = f"XML parsing failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_message_bodies_parse_error",
+                "XML parsing error during message bodies fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            logger.error(f"Response text: {response.text[:1000]}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_message_bodies_error",
+                "HTTP request error during message bodies fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+    
+    async def fetch_payments_program(self, access_token: str) -> Dict[str, Any]:
+        """
+        Fetch payments program enrollment status from eBay Sell Account API
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        api_url = f"{settings.ebay_api_base_url}/sell/account/v1/payments_program"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+        }
+        
+        ebay_logger.log_ebay_event(
+            "fetch_payments_program_request",
+            f"Fetching payments program enrollment from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url
+            }
+        )
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    api_url,
+                    headers=headers,
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    ebay_logger.log_ebay_event(
+                        "fetch_payments_program_failed",
+                        f"Failed to fetch payments program: {response.status_code}",
+                        response_data={"error": error_detail},
+                        status="error",
+                        error=error_detail
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch payments program: {error_detail}"
+                    )
+                
+                program_data = response.json()
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_payments_program_success",
+                    f"Successfully fetched payments program enrollment",
+                    response_data=program_data,
+                    status="success"
+                )
+                
+                return program_data
+                
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_payments_program_error",
+                "HTTP request error during payments program fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
 
 
 ebay_service = EbayService()

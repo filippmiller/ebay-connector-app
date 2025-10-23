@@ -70,6 +70,15 @@ class PostgresDatabase:
         finally:
             db.close()
     
+    def get_all_users(self) -> list[UserModel]:
+        """Get all users from the database"""
+        db: Session = next(get_db())
+        try:
+            db_users = db.query(UserDB).all()
+            return [self._db_to_model(db_user) for db_user in db_users]
+        finally:
+            db.close()
+    
     def update_user(self, user_id: str, updates: dict) -> Optional[UserModel]:
         if not updates:
             return self.get_user_by_id(user_id)

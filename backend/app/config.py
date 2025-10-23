@@ -58,6 +58,12 @@ class Settings(BaseSettings):
         return "https://api.ebay.com"
     
     @property
+    def ebay_finances_api_base_url(self) -> str:
+        if self.EBAY_ENVIRONMENT == "sandbox":
+            return "https://apiz.sandbox.ebay.com"
+        return "https://apiz.ebay.com"
+    
+    @property
     def ebay_auth_base_url(self) -> str:
         if self.EBAY_ENVIRONMENT == "sandbox":
             return "https://auth.sandbox.ebay.com"
