@@ -269,16 +269,22 @@ class EbayService:
                 detail=error_msg
             )
     
-    def save_user_tokens(self, user_id: str, token_response: EbayTokenResponse):
+    def save_user_tokens(self, user_id: str, token_response: EbayTokenResponse, preserve_refresh_token: bool = False):
         expires_at = datetime.utcnow() + timedelta(seconds=token_response.expires_in)
         
         updates = {
             "ebay_connected": True,
             "ebay_access_token": token_response.access_token,
-            "ebay_refresh_token": token_response.refresh_token,
             "ebay_token_expires_at": expires_at,
             "ebay_environment": settings.EBAY_ENVIRONMENT
         }
+        
+        if token_response.refresh_token:
+            updates["ebay_refresh_token"] = token_response.refresh_token
+        elif not preserve_refresh_token:
+            user = db.get_user_by_id(user_id)
+            if user and user.ebay_refresh_token:
+                updates["ebay_refresh_token"] = user.ebay_refresh_token
         
         db.update_user(user_id, updates)
         
@@ -287,7 +293,8 @@ class EbayService:
             f"Saved eBay tokens for user {user_id}",
             request_data={
                 "user_id": user_id,
-                "expires_at": expires_at.isoformat()
+                "expires_at": expires_at.isoformat(),
+                "has_new_refresh_token": bool(token_response.refresh_token)
             },
             status="success"
         )
