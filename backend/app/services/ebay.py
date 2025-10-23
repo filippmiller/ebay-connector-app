@@ -850,6 +850,78 @@ class EbayService:
             logger.error(f"Offers sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
+    
+    async def get_ebay_user_id(self, access_token: str) -> str:
+        """Get eBay user ID from access token using GetUser Trading API call"""
+        import xml.etree.ElementTree as ET
+        
+        api_url = "https://api.ebay.com/ws/api.dll" if settings.EBAY_ENVIRONMENT == "production" else "https://api.sandbox.ebay.com/ws/api.dll"
+        
+        xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetUserRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+    <RequesterCredentials>
+        <eBayAuthToken>{access_token}</eBayAuthToken>
+    </RequesterCredentials>
+    <WarningLevel>High</WarningLevel>
+</GetUserRequest>"""
+        
+        headers = {
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
+            "X-EBAY-API-CALL-NAME": "GetUser",
+            "X-EBAY-API-SITEID": "0",
+            "Content-Type": "text/xml"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(api_url, content=xml_request, headers=headers)
+            
+            root = ET.fromstring(response.text)
+            user_id_elem = root.find(".//{urn:ebay:apis:eBLBaseComponents}UserID")
+            
+            if user_id_elem is not None and user_id_elem.text:
+                return user_id_elem.text
+            
+            return "unknown"
+        except Exception as e:
+            logger.error(f"Failed to get eBay user ID: {str(e)}")
+            return "unknown"
+    
+    async def get_ebay_username(self, access_token: str) -> Optional[str]:
+        """Get eBay username from access token using GetUser Trading API call"""
+        import xml.etree.ElementTree as ET
+        
+        api_url = "https://api.ebay.com/ws/api.dll" if settings.EBAY_ENVIRONMENT == "production" else "https://api.sandbox.ebay.com/ws/api.dll"
+        
+        xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetUserRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+    <RequesterCredentials>
+        <eBayAuthToken>{access_token}</eBayAuthToken>
+    </RequesterCredentials>
+    <WarningLevel>High</WarningLevel>
+</GetUserRequest>"""
+        
+        headers = {
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
+            "X-EBAY-API-CALL-NAME": "GetUser",
+            "X-EBAY-API-SITEID": "0",
+            "Content-Type": "text/xml"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(api_url, content=xml_request, headers=headers)
+            
+            root = ET.fromstring(response.text)
+            user_id_elem = root.find(".//{urn:ebay:apis:eBLBaseComponents}UserID")
+            
+            if user_id_elem is not None and user_id_elem.text:
+                return user_id_elem.text
+            
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get eBay username: {str(e)}")
+            return None
 
 
 ebay_service = EbayService()

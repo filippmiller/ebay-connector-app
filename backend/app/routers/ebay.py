@@ -13,12 +13,17 @@ router = APIRouter(prefix="/ebay", tags=["ebay"])
 async def start_ebay_auth(
     auth_request: EbayAuthRequest,
     redirect_uri: str = Query(..., description="Redirect URI for OAuth callback"),
-    environment: str = Query('sandbox', description="eBay environment: sandbox or production"),
+    environment: str = Query('production', description="eBay environment: sandbox or production"),
+    house_name: Optional[str] = Query(None, description="Human-readable name for this eBay account"),
+    purpose: str = Query('BOTH', description="Account purpose: BUYER, SELLER, or BOTH"),
     current_user: User = Depends(get_current_active_user)
 ):
-    logger.info(f"Starting eBay OAuth for user: {current_user.email} in {environment} mode")
+    logger.info(f"Starting eBay OAuth for user: {current_user.email} in {environment} mode, house_name: {house_name}")
     
     from app.config import settings
+    import json
+    import uuid
+    
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = environment
     
@@ -26,15 +31,24 @@ async def start_ebay_auth(
     db.update_user(current_user.id, {"ebay_environment": environment})
     
     try:
+        state_data = {
+            "org_id": current_user.id,
+            "nonce": str(uuid.uuid4()),
+            "house_name": house_name,
+            "purpose": purpose,
+            "environment": environment
+        }
+        state = json.dumps(state_data)
+        
         auth_url = ebay_service.get_authorization_url(
             redirect_uri=redirect_uri,
-            state=current_user.id,
+            state=state,
             scopes=auth_request.scopes
         )
         
         return {
             "authorization_url": auth_url,
-            "state": current_user.id
+            "state": state
         }
     except Exception as e:
         logger.error(f"Error starting eBay auth: {str(e)}")
@@ -50,17 +64,29 @@ async def start_ebay_auth(
 async def ebay_auth_callback(
     callback_data: EbayAuthCallback,
     redirect_uri: str = Query(..., description="Redirect URI used in OAuth start"),
-    environment: str = Query('sandbox', description="eBay environment: sandbox or production"),
+    environment: str = Query('production', description="eBay environment: sandbox or production"),
     current_user: User = Depends(get_current_active_user)
 ):
     logger.info(f"Processing eBay OAuth callback for user: {current_user.email} in {environment} mode")
     
-    if callback_data.state and callback_data.state != current_user.id:
-        logger.warning(f"State mismatch in OAuth callback for user: {current_user.email}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid state parameter"
-        )
+    import json
+    from app.database import get_db
+    from app.services.ebay_account_service import ebay_account_service
+    from app.models.ebay_account import EbayAccountCreate
+    
+    state_data = None
+    try:
+        state_data = json.loads(callback_data.state) if callback_data.state else None
+    except:
+        pass
+    
+    if state_data:
+        if state_data.get("org_id") != current_user.id:
+            logger.warning(f"State org_id mismatch in OAuth callback for user: {current_user.email}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid state parameter"
+            )
     
     from app.config import settings
     original_env = settings.EBAY_ENVIRONMENT
@@ -72,12 +98,55 @@ async def ebay_auth_callback(
             redirect_uri=redirect_uri
         )
         
-        ebay_service.save_user_tokens(current_user.id, token_response)
+        ebay_user_id = await ebay_service.get_ebay_user_id(token_response.access_token)
+        username = await ebay_service.get_ebay_username(token_response.access_token)
         
-        return {
-            "message": "Successfully connected to eBay",
-            "expires_in": token_response.expires_in
-        }
+        house_name = state_data.get("house_name") if state_data else None
+        if not house_name:
+            house_name = username or ebay_user_id or f"Account-{ebay_user_id[:8]}"
+        
+        purpose = state_data.get("purpose", "BOTH") if state_data else "BOTH"
+        
+        db = next(get_db())
+        try:
+            account_data = EbayAccountCreate(
+                ebay_user_id=ebay_user_id,
+                username=username,
+                house_name=house_name,
+                purpose=purpose,
+                marketplace_id="EBAY_US",
+                site_id=0
+            )
+            
+            account = ebay_account_service.create_account(db, current_user.id, account_data)
+            
+            ebay_account_service.save_tokens(
+                db,
+                account.id,
+                token_response.access_token,
+                token_response.refresh_token,
+                token_response.expires_in
+            )
+            
+            scopes = token_response.scope.split() if hasattr(token_response, 'scope') and token_response.scope else []
+            if scopes:
+                ebay_account_service.save_authorizations(db, account.id, scopes)
+            
+            ebay_service.save_user_tokens(current_user.id, token_response)
+            
+            logger.info(f"Successfully connected eBay account: {account.id} ({house_name})")
+            
+            return {
+                "message": "Successfully connected to eBay",
+                "account_id": account.id,
+                "house_name": house_name,
+                "ebay_user_id": ebay_user_id,
+                "username": username,
+                "expires_in": token_response.expires_in
+            }
+        finally:
+            db.close()
+        
     except Exception as e:
         logger.error(f"Error in eBay OAuth callback: {str(e)}")
         raise
