@@ -922,6 +922,191 @@ class EbayService:
         except Exception as e:
             logger.error(f"Failed to get eBay username: {str(e)}")
             return None
+    
+    async def get_message_folders(self, access_token: str) -> Dict[str, Any]:
+        """Get message folders using GetMyMessages with ReturnSummary"""
+        import xml.etree.ElementTree as ET
+        
+        api_url = "https://api.ebay.com/ws/api.dll"
+        
+        xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{access_token}</eBayAuthToken>
+  </RequesterCredentials>
+  <DetailLevel>ReturnSummary</DetailLevel>
+  <WarningLevel>High</WarningLevel>
+</GetMyMessagesRequest>"""
+        
+        headers = {
+            "X-EBAY-API-SITEID": "0",
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "1193",
+            "X-EBAY-API-CALL-NAME": "GetMyMessages",
+            "Content-Type": "text/xml"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(api_url, content=xml_request, headers=headers)
+            
+            root = ET.fromstring(response.text)
+            ns = {"ebay": "urn:ebay:apis:eBLBaseComponents"}
+            
+            folders = []
+            summary_elem = root.find(".//ebay:Summary", ns)
+            if summary_elem is not None:
+                for folder_elem in summary_elem.findall(".//ebay:FolderSummary", ns):
+                    folder_id_elem = folder_elem.find("ebay:FolderID", ns)
+                    folder_name_elem = folder_elem.find("ebay:FolderName", ns)
+                    total_elem = folder_elem.find("ebay:TotalMessageCount", ns)
+                    
+                    if folder_id_elem is not None and folder_name_elem is not None:
+                        folders.append({
+                            "folder_id": folder_id_elem.text,
+                            "folder_name": folder_name_elem.text,
+                            "total_count": int(total_elem.text) if total_elem is not None else 0
+                        })
+            
+            return {"folders": folders}
+        except Exception as e:
+            logger.error(f"Failed to get message folders: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to get message folders: {str(e)}")
+    
+    async def get_message_headers(self, access_token: str, folder_id: str, page_number: int = 1, entries_per_page: int = 200) -> Dict[str, Any]:
+        """Get message headers (IDs only) using GetMyMessages with ReturnHeaders"""
+        import xml.etree.ElementTree as ET
+        
+        api_url = "https://api.ebay.com/ws/api.dll"
+        
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        
+        xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{access_token}</eBayAuthToken>
+  </RequesterCredentials>
+  <DetailLevel>ReturnHeaders</DetailLevel>
+  <FolderID>{folder_id}</FolderID>
+  <WarningLevel>High</WarningLevel>
+  <StartTimeFrom>2015-01-01T00:00:00.000Z</StartTimeFrom>
+  <StartTimeTo>{now_iso}</StartTimeTo>
+  <Pagination>
+    <EntriesPerPage>{entries_per_page}</EntriesPerPage>
+    <PageNumber>{page_number}</PageNumber>
+  </Pagination>
+</GetMyMessagesRequest>"""
+        
+        headers = {
+            "X-EBAY-API-SITEID": "0",
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "1193",
+            "X-EBAY-API-CALL-NAME": "GetMyMessages",
+            "Content-Type": "text/xml"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(api_url, content=xml_request, headers=headers)
+            
+            root = ET.fromstring(response.text)
+            ns = {"ebay": "urn:ebay:apis:eBLBaseComponents"}
+            
+            message_ids = []
+            alert_ids = []
+            
+            messages_elem = root.find(".//ebay:Messages", ns)
+            if messages_elem is not None:
+                for msg_elem in messages_elem.findall("ebay:Message", ns):
+                    msg_id_elem = msg_elem.find("ebay:MessageID", ns)
+                    if msg_id_elem is not None and msg_id_elem.text:
+                        message_ids.append(msg_id_elem.text)
+                
+                for alert_elem in messages_elem.findall("ebay:Alert", ns):
+                    alert_id_elem = alert_elem.find("ebay:AlertID", ns)
+                    if alert_id_elem is not None and alert_id_elem.text:
+                        alert_ids.append(alert_id_elem.text)
+            
+            pagination_elem = root.find(".//ebay:PaginationResult", ns)
+            total_pages = 1
+            total_entries = 0
+            if pagination_elem is not None:
+                total_pages_elem = pagination_elem.find("ebay:TotalNumberOfPages", ns)
+                total_entries_elem = pagination_elem.find("ebay:TotalNumberOfEntries", ns)
+                if total_pages_elem is not None:
+                    total_pages = int(total_pages_elem.text)
+                if total_entries_elem is not None:
+                    total_entries = int(total_entries_elem.text)
+            
+            return {
+                "message_ids": message_ids,
+                "alert_ids": alert_ids,
+                "total_pages": total_pages,
+                "total_entries": total_entries
+            }
+        except Exception as e:
+            logger.error(f"Failed to get message headers: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to get message headers: {str(e)}")
+    
+    async def get_message_bodies(self, access_token: str, message_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get message bodies using GetMyMessages with ReturnMessages (batch of up to 10 IDs)"""
+        import xml.etree.ElementTree as ET
+        
+        if not message_ids:
+            return []
+        
+        if len(message_ids) > 10:
+            raise ValueError("Cannot fetch more than 10 message IDs at once")
+        
+        api_url = "https://api.ebay.com/ws/api.dll"
+        
+        message_id_xml = "".join([f"<MessageID>{mid}</MessageID>" for mid in message_ids])
+        
+        xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{access_token}</eBayAuthToken>
+  </RequesterCredentials>
+  <DetailLevel>ReturnMessages</DetailLevel>
+  <WarningLevel>High</WarningLevel>
+  {message_id_xml}
+</GetMyMessagesRequest>"""
+        
+        headers = {
+            "X-EBAY-API-SITEID": "0",
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "1193",
+            "X-EBAY-API-CALL-NAME": "GetMyMessages",
+            "Content-Type": "text/xml"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(api_url, content=xml_request, headers=headers)
+            
+            root = ET.fromstring(response.text)
+            ns = {"ebay": "urn:ebay:apis:eBLBaseComponents"}
+            
+            messages = []
+            messages_elem = root.find(".//ebay:Messages", ns)
+            if messages_elem is not None:
+                for msg_elem in messages_elem.findall("ebay:Message", ns):
+                    message = {}
+                    
+                    for field in ["MessageID", "ExternalMessageID", "Subject", "Text", "Sender", "RecipientUserID", "ReceiveDate", "ExpirationDate", "ItemID", "FolderID"]:
+                        elem = msg_elem.find(f"ebay:{field}", ns)
+                        if elem is not None:
+                            message[field.lower()] = elem.text
+                    
+                    read_elem = msg_elem.find("ebay:Read", ns)
+                    flagged_elem = msg_elem.find("ebay:Flagged", ns)
+                    
+                    message["read"] = read_elem.text.lower() == "true" if read_elem is not None else False
+                    message["flagged"] = flagged_elem.text.lower() == "true" if flagged_elem is not None else False
+                    
+                    messages.append(message)
+            
+            return messages
+        except Exception as e:
+            logger.error(f"Failed to get message bodies: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to get message bodies: {str(e)}")
 
 
 ebay_service = EbayService()
