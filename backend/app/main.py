@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2
+from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts
 from app.utils.logger import logger
 import os
 from sqlalchemy import create_engine, text, inspect
@@ -24,6 +24,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(ebay.router)
+app.include_router(ebay_accounts.router)
 app.include_router(orders.router)
 app.include_router(messages.router)
 app.include_router(offers.router)
