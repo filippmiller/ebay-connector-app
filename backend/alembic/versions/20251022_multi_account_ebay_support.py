@@ -36,6 +36,7 @@ def upgrade():
     op.create_index('idx_ebay_accounts_house_name', 'ebay_accounts', ['house_name'])
     op.create_index('idx_ebay_accounts_is_active', 'ebay_accounts', ['is_active'])
     op.execute('CREATE UNIQUE INDEX idx_ebay_accounts_org_ebay_user ON ebay_accounts (org_id, ebay_user_id)')
+    op.execute('CREATE UNIQUE INDEX idx_ebay_accounts_org_house_name ON ebay_accounts (org_id, house_name) WHERE is_active = TRUE')
     
     op.create_table(
         'ebay_tokens',
