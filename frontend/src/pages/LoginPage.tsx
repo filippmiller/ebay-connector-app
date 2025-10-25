@@ -10,25 +10,21 @@ import { Eye, EyeOff } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, loading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setLoading(true);
 
     try {
-      await login({ email, password });
+      await login(email, password);
       navigate('/buying');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
-    } finally {
-      setLoading(false);
     }
   };
 

@@ -21,10 +21,11 @@ class Settings(BaseSettings):
     EBAY_PRODUCTION_REDIRECT_URI: Optional[str] = None
     EBAY_PRODUCTION_RUNAME: Optional[str] = None
     
-    DATABASE_URL: str = "postgresql://postgres:EVfiVxDuuwRa8hAx@db.nrpfahjygulsfxmbmfzv.supabase.co:5432/postgres?sslmode=require"
+    DATABASE_URL: str = "sqlite:///./ebay_connector.db"
     
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
         extra = "ignore"
     
     @property
