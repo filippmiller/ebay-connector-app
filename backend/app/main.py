@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2
+from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts
 from app.utils.logger import logger
 import os
+import asyncio
 from sqlalchemy import create_engine, text, inspect
 
 app = FastAPI(title="eBay Connector API", version="1.0.0")
@@ -24,6 +25,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(ebay.router)
+app.include_router(ebay_accounts.router)
 app.include_router(orders.router)
 app.include_router(messages.router)
 app.include_router(offers.router)
@@ -89,6 +91,20 @@ async def startup_event():
         
     else:
         logger.info("Using SQLite database - data persists between restarts")
+    
+    logger.info("🔄 Starting background workers...")
+    try:
+        from app.workers import run_token_refresh_worker_loop, run_health_check_worker_loop
+        
+        asyncio.create_task(run_token_refresh_worker_loop())
+        logger.info("✅ Token refresh worker started (runs every 10 minutes)")
+        
+        asyncio.create_task(run_health_check_worker_loop())
+        logger.info("✅ Health check worker started (runs every 15 minutes)")
+        
+    except Exception as e:
+        logger.error(f"⚠️  Failed to start background workers: {e}")
+        logger.info("Workers can be run separately if needed")
 
 @app.get("/healthz")
 async def healthz():

@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
+import FixedHeader from '@/components/FixedHeader';
 
 interface Message {
   id: string;
@@ -116,11 +117,8 @@ export const MessagesPage = () => {
 
   return (
     <div className="h-screen flex flex-col bg-white">
-      <div className="border-b px-6 py-4">
-        <h1 className="text-2xl font-bold">Messages</h1>
-      </div>
-
-      <div className="flex flex-1 overflow-hidden">
+      <FixedHeader />
+      <div className="pt-12 flex flex-1 overflow-hidden">
         {/* Left Sidebar - Folders */}
         <div className="w-64 border-r bg-gray-50 p-4">
           <div className="space-y-1">

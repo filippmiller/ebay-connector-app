@@ -6,7 +6,11 @@ from app.database import get_db
 from app.db_models import Message
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
+from app.services.ebay import ebay_service
 from pydantic import BaseModel
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -138,3 +142,183 @@ async def get_message_stats(
         "unread_count": unread_count,
         "flagged_count": flagged_count
     }
+
+@router.post("/sync")
+async def sync_messages(
+    dry_run: bool = Query(False, alias="dryRun"),
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Comprehensive message sync using GetMyMessages API
+    - Enumerates folders first (ReturnSummary)
+    - Two-phase retrieval per folder (headers → bodies)
+    - Batches message body fetches (≤10 IDs at a time)
+    """
+    if not current_user.ebay_connected or not current_user.ebay_access_token:
+        raise HTTPException(status_code=400, detail="eBay account not connected")
+    
+    try:
+        logger.info(f"Enumerating message folders for user {current_user.id}")
+        folders_response = await ebay_service.get_message_folders(current_user.ebay_access_token)
+        folders = folders_response.get("folders", [])
+        
+        if not folders:
+            logger.warning(f"No message folders found for user {current_user.id}")
+            return {
+                "status": "completed",
+                "folders": {},
+                "total_fetched": 0,
+                "total_stored": 0,
+                "message": "No message folders found"
+            }
+        
+        logger.info(f"Found {len(folders)} folders: {[f['folder_name'] for f in folders]}")
+        
+        if dry_run:
+            folder_counts = {f["folder_name"]: f["total_count"] for f in folders}
+            total_count = sum(f["total_count"] for f in folders)
+            return {
+                "dry_run": True,
+                "folders": folder_counts,
+                "total": total_count
+            }
+        
+        total_fetched = 0
+        total_stored = 0
+        folder_stats = {}
+        
+        for folder in folders:
+            folder_id = folder["folder_id"]
+            folder_name = folder["folder_name"]
+            folder_total = folder["total_count"]
+            
+            logger.info(f"Processing folder {folder_name} (ID: {folder_id}) with {folder_total} messages")
+            
+            if folder_total == 0:
+                folder_stats[folder_name] = {"fetched": 0, "stored": 0}
+                continue
+            
+            all_message_ids = []
+            page_number = 1
+            
+            while True:
+                logger.info(f"Fetching headers page {page_number} for folder {folder_name}")
+                headers_response = await ebay_service.get_message_headers(
+                    current_user.ebay_access_token,
+                    folder_id,
+                    page_number=page_number,
+                    entries_per_page=200
+                )
+                
+                message_ids = headers_response.get("message_ids", [])
+                alert_ids = headers_response.get("alert_ids", [])
+                total_pages = headers_response.get("total_pages", 1)
+                
+                all_message_ids.extend(message_ids)
+                all_message_ids.extend(alert_ids)
+                
+                logger.info(f"Page {page_number}/{total_pages}: Found {len(message_ids)} messages, {len(alert_ids)} alerts")
+                
+                if page_number >= total_pages:
+                    break
+                
+                page_number += 1
+            
+            logger.info(f"Folder {folder_name}: Collected {len(all_message_ids)} total message IDs")
+            
+            folder_fetched = 0
+            folder_stored = 0
+            
+            for i in range(0, len(all_message_ids), 10):
+                batch_ids = all_message_ids[i:i+10]
+                logger.info(f"Fetching bodies for batch {i//10 + 1} ({len(batch_ids)} messages)")
+                
+                try:
+                    messages = await ebay_service.get_message_bodies(
+                        current_user.ebay_access_token,
+                        batch_ids
+                    )
+                    
+                    folder_fetched += len(messages)
+                    
+                    for msg in messages:
+                        message_id = msg.get("messageid") or msg.get("externalmessageid")
+                        
+                        if not message_id:
+                            logger.warning(f"Message missing ID, skipping: {msg}")
+                            continue
+                        
+                        existing = db.query(Message).filter(
+                            Message.message_id == message_id,
+                            Message.user_id == current_user.id
+                        ).first()
+                        
+                        if existing:
+                            logger.debug(f"Message {message_id} already exists, skipping")
+                            continue
+                        
+                        sender = msg.get("sender", "")
+                        recipient = msg.get("recipientuserid", "")
+                        direction = "INCOMING"
+                        
+                        ebay_username = getattr(current_user, "ebay_username", None)
+                        if sender and ebay_username and sender.lower() == ebay_username.lower():
+                            direction = "OUTGOING"
+                        
+                        receive_date_str = msg.get("receivedate", "")
+                        message_date = datetime.utcnow()
+                        if receive_date_str:
+                            try:
+                                message_date = datetime.fromisoformat(receive_date_str.replace("Z", "+00:00"))
+                            except Exception as e:
+                                logger.warning(f"Failed to parse date {receive_date_str}: {e}")
+                        
+                        message = Message(
+                            user_id=current_user.id,
+                            message_id=message_id,
+                            thread_id=msg.get("externalmessageid") or message_id,
+                            sender_username=sender,
+                            recipient_username=recipient,
+                            subject=msg.get("subject", ""),
+                            body=msg.get("text", ""),
+                            message_type="MEMBER_MESSAGE",
+                            is_read=msg.get("read", False),
+                            is_flagged=msg.get("flagged", False),
+                            is_archived=msg.get("folderid") == "2",
+                            direction=direction,
+                            message_date=message_date,
+                            order_id=None,
+                            listing_id=msg.get("itemid"),
+                            raw_data=str(msg)
+                        )
+                        db.add(message)
+                        folder_stored += 1
+                    
+                    db.commit()
+                    
+                except Exception as e:
+                    logger.error(f"Failed to fetch/store batch {i//10 + 1}: {str(e)}")
+                    db.rollback()
+                    continue
+            
+            folder_stats[folder_name] = {
+                "fetched": folder_fetched,
+                "stored": folder_stored
+            }
+            total_fetched += folder_fetched
+            total_stored += folder_stored
+            
+            logger.info(f"Folder {folder_name} complete: {folder_fetched} fetched, {folder_stored} stored")
+        
+        return {
+            "status": "completed",
+            "folders": folder_stats,
+            "total_fetched": total_fetched,
+            "total_stored": total_stored
+        }
+    
+    except Exception as e:
+        logger.error(f"Message sync failed: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Message sync failed: {str(e)}")

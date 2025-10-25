@@ -655,3 +655,146 @@ class OfferActionLog(Base):
         Index('idx_offer_action_offer_id', 'offer_id'),
         Index('idx_offer_action_created_at', 'created_at'),
     )
+
+
+class EbayAccount(Base):
+    __tablename__ = "ebay_accounts"
+    
+    id = Column(String(36), primary_key=True)
+    org_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    ebay_user_id = Column(Text, nullable=False)
+    username = Column(Text, nullable=True)
+    house_name = Column(Text, nullable=False)
+    purpose = Column(Text, nullable=True, server_default='BOTH')
+    marketplace_id = Column(Text, nullable=True)
+    site_id = Column(Integer, nullable=True)
+    connected_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    is_active = Column(Boolean, nullable=False, server_default='true')
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    tokens = relationship("EbayToken", back_populates="account", uselist=False, cascade="all, delete-orphan")
+    authorizations = relationship("EbayAuthorization", back_populates="account", cascade="all, delete-orphan")
+    sync_cursors = relationship("EbaySyncCursor", back_populates="account", cascade="all, delete-orphan")
+    health_events = relationship("EbayHealthEvent", back_populates="account", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_ebay_accounts_org_id', 'org_id'),
+        Index('idx_ebay_accounts_ebay_user_id', 'ebay_user_id'),
+        Index('idx_ebay_accounts_house_name', 'house_name'),
+        Index('idx_ebay_accounts_is_active', 'is_active'),
+    )
+
+
+class EbayToken(Base):
+    __tablename__ = "ebay_tokens"
+    
+    id = Column(String(36), primary_key=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
+    access_token = Column(Text, nullable=True)
+    refresh_token = Column(Text, nullable=True)
+    token_type = Column(Text, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_refreshed_at = Column(DateTime(timezone=True), nullable=True)
+    refresh_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    account = relationship("EbayAccount", back_populates="tokens")
+    
+    __table_args__ = (
+        Index('idx_ebay_tokens_account_id', 'ebay_account_id'),
+        Index('idx_ebay_tokens_expires_at', 'expires_at'),
+    )
+
+
+class EbayAuthorization(Base):
+    __tablename__ = "ebay_authorizations"
+    
+    id = Column(String(36), primary_key=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
+    scopes = Column(JSONB, nullable=False, server_default='[]')
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    account = relationship("EbayAccount", back_populates="authorizations")
+    
+    __table_args__ = (
+        Index('idx_ebay_authorizations_account_id', 'ebay_account_id'),
+    )
+
+
+class EbaySyncCursor(Base):
+    __tablename__ = "ebay_sync_cursors"
+    
+    id = Column(String(36), primary_key=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
+    resource = Column(Text, nullable=False)
+    checkpoint = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    account = relationship("EbayAccount", back_populates="sync_cursors")
+    
+    __table_args__ = (
+        Index('idx_ebay_sync_cursors_account_id', 'ebay_account_id'),
+        Index('idx_ebay_sync_cursors_resource', 'resource'),
+    )
+
+
+class EbayHealthEvent(Base):
+    __tablename__ = "ebay_health_events"
+    
+    id = Column(String(36), primary_key=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
+    checked_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    is_healthy = Column(Boolean, nullable=False)
+    http_status = Column(Integer, nullable=True)
+    ack = Column(Text, nullable=True)
+    error_code = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    response_time_ms = Column(Integer, nullable=True)
+    
+    account = relationship("EbayAccount", back_populates="health_events")
+    
+    __table_args__ = (
+        Index('idx_ebay_health_events_account_id', 'ebay_account_id'),
+        Index('idx_ebay_health_events_checked_at', 'checked_at'),
+        Index('idx_ebay_health_events_is_healthy', 'is_healthy'),
+    )
+
+
+class Message(Base):
+    __tablename__ = "ebay_messages"
+    
+    id = Column(String(36), primary_key=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
+    house_name = Column(Text, nullable=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    message_id = Column(String(100), nullable=False)
+    thread_id = Column(String(100), nullable=True)
+    sender_username = Column(String(100), nullable=True)
+    recipient_username = Column(String(100), nullable=True)
+    subject = Column(Text, nullable=True)
+    body = Column(Text, nullable=True)
+    message_type = Column(String(50), nullable=True)
+    is_read = Column(Boolean, default=False)
+    is_flagged = Column(Boolean, default=False)
+    is_archived = Column(Boolean, default=False)
+    direction = Column(String(20), nullable=True)
+    message_date = Column(DateTime(timezone=True), nullable=True)
+    read_date = Column(DateTime(timezone=True), nullable=True)
+    order_id = Column(String(100), nullable=True)
+    listing_id = Column(String(100), nullable=True)
+    raw_data = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_ebay_messages_account_id', 'ebay_account_id'),
+        Index('idx_ebay_messages_user_id', 'user_id'),
+        Index('idx_ebay_messages_message_id', 'message_id'),
+        Index('idx_ebay_messages_thread_id', 'thread_id'),
+        Index('idx_ebay_messages_is_read', 'is_read'),
+        Index('idx_ebay_messages_message_date', 'message_date'),
+    )

@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BUILD_NUMBER } from '@/config/build';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderTab {
   name: string;
@@ -26,11 +27,11 @@ const TABS: HeaderTab[] = [
 export default function FixedHeader() {
   const navigate = useNavigate();
   const location = useLocation();
-  const userEmail = localStorage.getItem('user_email') || '';
-  const isAdmin = ['filippmiller@gmail.com', 'mylifeis0plus1@gmail.com', 'nikitin.sergei.v@gmail.com'].includes(userEmail);
+  const { user, logout } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const handleLogout = () => {
-    localStorage.clear();
+    logout();
     navigate('/login');
   };
 
@@ -60,7 +61,7 @@ export default function FixedHeader() {
 
         <div className="flex items-center gap-3">
           <span className="text-xs font-mono text-gray-500">Build #{BUILD_NUMBER}</span>
-          <span className="text-xs text-gray-600">{userEmail}</span>
+          <span className="text-xs text-gray-600">{user?.email}</span>
           <Button
             onClick={handleLogout}
             variant="ghost"

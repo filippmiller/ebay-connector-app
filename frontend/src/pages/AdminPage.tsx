@@ -27,7 +27,7 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">Manage user accounts and permissions</p>
           </Card>
           
-          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/ebay/connect')}>
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ebay-connection')}>
             <h2 className="text-lg font-semibold">eBay Connection</h2>
             <p className="text-sm text-gray-600 mt-1">Manage eBay API connections</p>
           </Card>
