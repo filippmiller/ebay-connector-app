@@ -1,4 +1,8 @@
-export const onRequest = async ({ request, env }) => {
+interface Env {
+  API_PUBLIC_BASE_URL: string;
+}
+
+export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const upstreamBase = new URL(env.API_PUBLIC_BASE_URL);
   
