@@ -4,7 +4,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.database import get_db
-from app.utils.auth import get_current_user
+from app.services.auth import get_current_user
 from app.models_sqlalchemy.models import User
 from app.models.ebay_account import (
     EbayAccountResponse, EbayAccountWithToken, 
