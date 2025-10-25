@@ -7,14 +7,20 @@ from sqlalchemy import create_engine, text, inspect
 
 app = FastAPI(title="eBay Connector API", version="1.0.0")
 
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+allowed_origins = [
+    FRONTEND_URL,
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+
+if "devinapps.com" not in FRONTEND_URL:
+    allowed_origins.append("https://ebay-connection-app-k0ge3h93.devinapps.com")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://ebay-connection-app-k0ge3h93.devinapps.com",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "*"
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
