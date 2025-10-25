@@ -61,3 +61,7 @@ coverage/
 poetry.toml
 __pycache__/
 *.pyc
+
+# Python bytecode
+__pycache__/
+*.py[cod]
