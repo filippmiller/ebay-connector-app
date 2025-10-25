@@ -38,3 +38,13 @@ fly.toml
 # Temp files
 *.tmp
 *.temp
+
+# build artifacts
+node_modules/
+frontend/node_modules/
+.next/
+dist/
+build/
+backend/.venv/
+__pycache__/
+*.pyc
