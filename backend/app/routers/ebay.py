@@ -378,6 +378,68 @@ async def sync_all_disputes(current_user: User = Depends(get_current_active_user
         settings.EBAY_ENVIRONMENT = original_env
 
 
+@router.get("/disputes")
+async def get_disputes(
+    limit: int = Query(100, description="Number of disputes to return"),
+    offset: int = Query(0, description="Offset for pagination"),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get all disputes from database for the current user.
+    """
+    from app.services.ebay_database import ebay_db
+    from sqlalchemy import text
+    
+    session = ebay_db._get_session()
+    
+    try:
+        query = text("""
+            SELECT 
+                id,
+                dispute_id,
+                order_id,
+                dispute_reason as reason,
+                dispute_status as status,
+                open_date,
+                respond_by_date,
+                dispute_data,
+                created_at,
+                updated_at
+            FROM ebay_disputes
+            WHERE user_id = :user_id
+            ORDER BY open_date DESC
+            LIMIT :limit OFFSET :offset
+        """)
+        
+        result = session.execute(query, {
+            'user_id': current_user.id,
+            'limit': limit,
+            'offset': offset
+        })
+        
+        disputes = []
+        for row in result:
+            import json
+            dispute_data = json.loads(row.dispute_data) if row.dispute_data else {}
+            
+            disputes.append({
+                'id': row.id,
+                'dispute_id': row.dispute_id,
+                'order_id': row.order_id,
+                'buyer_username': dispute_data.get('buyerUsername'),
+                'open_date': row.open_date.isoformat() if row.open_date else None,
+                'status': row.status,
+                'amount': dispute_data.get('monetaryTransactions', [{}])[0].get('totalPrice', {}).get('value') if dispute_data.get('monetaryTransactions') else None,
+                'currency': dispute_data.get('monetaryTransactions', [{}])[0].get('totalPrice', {}).get('currency') if dispute_data.get('monetaryTransactions') else None,
+                'reason': row.reason,
+                'respond_by_date': row.respond_by_date.isoformat() if row.respond_by_date else None,
+            })
+        
+        return disputes
+    finally:
+        session.close()
+
+
 @router.post("/sync/offers")
 async def sync_all_offers(current_user: User = Depends(get_current_active_user)):
     if not current_user.ebay_connected or not current_user.ebay_access_token:
