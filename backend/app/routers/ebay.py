@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from app.models.ebay import EbayAuthRequest, EbayAuthCallback, EbayConnectionStatus
 from app.services.auth import get_current_active_user
@@ -460,3 +461,82 @@ async def get_analytics_summary(current_user: User = Depends(get_current_active_
     analytics = ebay_db.get_analytics_summary(current_user.id)
     
     return analytics
+
+
+@router.get("/sync/events/{run_id}")
+async def stream_sync_events(
+    run_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Stream sync events in real-time using Server-Sent Events (SSE).
+    Client opens this endpoint to receive live updates during sync operations.
+    """
+    from app.services.sync_event_logger import get_sync_events_from_db
+    import json
+    
+    async def event_generator():
+        events = get_sync_events_from_db(run_id, current_user.id)
+        
+        for event in events:
+            yield f"event: {event['event_type']}\n"
+            yield f"data: {json.dumps(event)}\n\n"
+        
+        yield f"event: end\n"
+        yield f"data: {json.dumps({'message': 'Stream complete'})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@router.get("/sync/logs/{run_id}")
+async def get_sync_logs(
+    run_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get all sync logs for a specific run_id.
+    Used for viewing historical logs or downloading complete log files.
+    """
+    from app.services.sync_event_logger import get_sync_events_from_db
+    
+    events = get_sync_events_from_db(run_id, current_user.id)
+    
+    return {
+        "run_id": run_id,
+        "events": events,
+        "total": len(events)
+    }
+
+
+@router.get("/sync/logs/{run_id}/export")
+async def export_sync_logs(
+    run_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Export sync logs as downloadable NDJSON file.
+    """
+    from app.services.sync_event_logger import get_sync_events_from_db
+    import json
+    
+    events = get_sync_events_from_db(run_id, current_user.id)
+    
+    def generate_ndjson():
+        for event in events:
+            yield json.dumps(event) + "\n"
+    
+    return StreamingResponse(
+        generate_ndjson(),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f"attachment; filename=sync_logs_{run_id}.ndjson"
+        }
+    )

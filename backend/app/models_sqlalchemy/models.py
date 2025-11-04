@@ -147,6 +147,7 @@ class User(Base):
     ebay_environment = Column(String(20), default="sandbox")
     
     sync_logs = relationship("SyncLog", back_populates="user")
+    sync_event_logs = relationship("SyncEventLog", back_populates="user")
     
     __table_args__ = (
         Index('idx_user_email', 'email'),
@@ -383,6 +384,45 @@ class SyncLog(Base):
         Index('idx_synclog_user_id', 'user_id'),
         Index('idx_synclog_status', 'status'),
         Index('idx_synclog_started', 'sync_started_at'),
+    )
+
+
+class SyncEventLog(Base):
+    """Detailed event-level logs for sync operations with real-time streaming support"""
+    __tablename__ = "sync_event_logs"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(100), nullable=False, index=True)  # Correlation ID for grouping events
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    sync_type = Column(String(50), nullable=False)  # 'orders', 'transactions', 'disputes', 'offers'
+    
+    event_type = Column(String(50), nullable=False)  # 'start', 'progress', 'log', 'http', 'error', 'done'
+    level = Column(String(20), nullable=False, default='info')  # 'debug', 'info', 'warning', 'error'
+    message = Column(Text, nullable=False)
+    
+    http_method = Column(String(10), nullable=True)
+    http_url = Column(Text, nullable=True)
+    http_status = Column(Integer, nullable=True)
+    http_duration_ms = Column(Integer, nullable=True)
+    
+    current_page = Column(Integer, nullable=True)
+    total_pages = Column(Integer, nullable=True)
+    items_fetched = Column(Integer, nullable=True)
+    items_stored = Column(Integer, nullable=True)
+    progress_pct = Column(Float, nullable=True)
+    
+    extra_data = Column(JSONB, nullable=True)
+    
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    
+    user = relationship("User", back_populates="sync_event_logs")
+    
+    __table_args__ = (
+        Index('idx_sync_event_run_id', 'run_id'),
+        Index('idx_sync_event_user_id', 'user_id'),
+        Index('idx_sync_event_type', 'event_type'),
+        Index('idx_sync_event_timestamp', 'timestamp'),
+        Index('idx_sync_event_run_timestamp', 'run_id', 'timestamp'),
     )
 
 
