@@ -62,7 +62,7 @@ export const MessagesPage = () => {
   const loadStats = async () => {
     try {
       const data = await getMessageStats();
-      setStats(data as MessageStats);
+      setStats(data);
     } catch (error) {
       console.error('Failed to load stats:', error);
     }

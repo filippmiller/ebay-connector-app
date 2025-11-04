@@ -19,16 +19,16 @@ export const getOrders = async (
     params.append('search', search);
   }
 
-  const response = await apiClient.get(`/ebay/orders?${params.toString()}`) as any;
-  return response.orders || [];
+  const response = await apiClient.get(`/ebay/orders?${params.toString()}`);
+  return response.data.orders || [];
 };
 
 export const getOrder = async (orderId: string) => {
   const response = await apiClient.get(`/ebay/orders/${orderId}`);
-  return response;
+  return response.data;
 };
 
 export const getOrderStats = async () => {
   const response = await apiClient.get('/ebay/analytics/summary');
-  return response;
+  return response.data;
 };

@@ -150,7 +150,7 @@ async def sync_messages(
     db: Session = Depends(get_db)
 ):
     """
-    Comprehensive message sync using GetMyMessages API
+    Comprehensive message sync using GetMyMessages API with real-time logging
     - Enumerates folders first (ReturnSummary)
     - Two-phase retrieval per folder (headers → bodies)
     - Batches message body fetches (≤10 IDs at a time)
@@ -158,41 +158,77 @@ async def sync_messages(
     if not current_user.ebay_connected or not current_user.ebay_access_token:
         raise HTTPException(status_code=400, detail="eBay account not connected")
     
+    from app.services.sync_event_logger import SyncEventLogger
+    import time
+    
+    event_logger = SyncEventLogger(current_user.id, 'messages')
+    start_time = time.time()
+    
     try:
+        event_logger.log_start("Starting Messages sync from eBay")
         logger.info(f"Enumerating message folders for user {current_user.id}")
+        
+        request_start = time.time()
         folders_response = await ebay_service.get_message_folders(current_user.ebay_access_token)
+        request_duration = int((time.time() - request_start) * 1000)
         folders = folders_response.get("folders", [])
+        
+        event_logger.log_http_request(
+            'POST',
+            '/ws/eBayISAPI.dll (GetMyMessages - ReturnSummary)',
+            200,
+            request_duration,
+            len(folders)
+        )
         
         if not folders:
             logger.warning(f"No message folders found for user {current_user.id}")
+            event_logger.log_warning("No message folders found")
+            duration_ms = int((time.time() - start_time) * 1000)
+            event_logger.log_done("Messages sync completed: no folders found", 0, 0, duration_ms)
+            event_logger.close()
             return {
                 "status": "completed",
                 "folders": {},
                 "total_fetched": 0,
                 "total_stored": 0,
-                "message": "No message folders found"
+                "message": "No message folders found",
+                "run_id": event_logger.run_id
             }
         
+        total_messages = sum(f["total_count"] for f in folders)
+        event_logger.log_info(f"Found {len(folders)} folders with {total_messages} total messages: {[f['folder_name'] for f in folders]}")
         logger.info(f"Found {len(folders)} folders: {[f['folder_name'] for f in folders]}")
         
         if dry_run:
             folder_counts = {f["folder_name"]: f["total_count"] for f in folders}
             total_count = sum(f["total_count"] for f in folders)
+            event_logger.close()
             return {
                 "dry_run": True,
                 "folders": folder_counts,
-                "total": total_count
+                "total": total_count,
+                "run_id": event_logger.run_id
             }
         
         total_fetched = 0
         total_stored = 0
         folder_stats = {}
+        folder_index = 0
         
         for folder in folders:
+            folder_index += 1
             folder_id = folder["folder_id"]
             folder_name = folder["folder_name"]
             folder_total = folder["total_count"]
             
+            event_logger.log_progress(
+                f"Processing folder {folder_index}/{len(folders)}: {folder_name} ({folder_total} messages)",
+                folder_index,
+                len(folders),
+                total_fetched,
+                total_stored
+            )
             logger.info(f"Processing folder {folder_name} (ID: {folder_id}) with {folder_total} messages")
             
             if folder_total == 0:
@@ -204,12 +240,15 @@ async def sync_messages(
             
             while True:
                 logger.info(f"Fetching headers page {page_number} for folder {folder_name}")
+                
+                request_start = time.time()
                 headers_response = await ebay_service.get_message_headers(
                     current_user.ebay_access_token,
                     folder_id,
                     page_number=page_number,
                     entries_per_page=200
                 )
+                request_duration = int((time.time() - request_start) * 1000)
                 
                 message_ids = headers_response.get("message_ids", [])
                 alert_ids = headers_response.get("alert_ids", [])
@@ -218,6 +257,14 @@ async def sync_messages(
                 all_message_ids.extend(message_ids)
                 all_message_ids.extend(alert_ids)
                 
+                event_logger.log_http_request(
+                    'POST',
+                    f'/ws/eBayISAPI.dll (GetMyMessages - {folder_name} page {page_number})',
+                    200,
+                    request_duration,
+                    len(message_ids) + len(alert_ids)
+                )
+                
                 logger.info(f"Page {page_number}/{total_pages}: Found {len(message_ids)} messages, {len(alert_ids)} alerts")
                 
                 if page_number >= total_pages:
@@ -225,19 +272,32 @@ async def sync_messages(
                 
                 page_number += 1
             
+            event_logger.log_info(f"Folder {folder_name}: Collected {len(all_message_ids)} message IDs, fetching bodies...")
             logger.info(f"Folder {folder_name}: Collected {len(all_message_ids)} total message IDs")
             
             folder_fetched = 0
             folder_stored = 0
+            total_batches = (len(all_message_ids) + 9) // 10
             
             for i in range(0, len(all_message_ids), 10):
                 batch_ids = all_message_ids[i:i+10]
-                logger.info(f"Fetching bodies for batch {i//10 + 1} ({len(batch_ids)} messages)")
+                batch_num = i//10 + 1
+                logger.info(f"Fetching bodies for batch {batch_num} ({len(batch_ids)} messages)")
                 
                 try:
+                    request_start = time.time()
                     messages = await ebay_service.get_message_bodies(
                         current_user.ebay_access_token,
                         batch_ids
+                    )
+                    request_duration = int((time.time() - request_start) * 1000)
+                    
+                    event_logger.log_http_request(
+                        'POST',
+                        f'/ws/eBayISAPI.dll (GetMyMessages - {folder_name} batch {batch_num}/{total_batches})',
+                        200,
+                        request_duration,
+                        len(messages)
                     )
                     
                     folder_fetched += len(messages)
@@ -309,16 +369,30 @@ async def sync_messages(
             total_fetched += folder_fetched
             total_stored += folder_stored
             
+            event_logger.log_info(f"Folder {folder_name} complete: {folder_fetched} fetched, {folder_stored} stored")
             logger.info(f"Folder {folder_name} complete: {folder_fetched} fetched, {folder_stored} stored")
+        
+        duration_ms = int((time.time() - start_time) * 1000)
+        event_logger.log_done(
+            f"Messages sync completed: {total_fetched} fetched, {total_stored} stored across {len(folders)} folders",
+            total_fetched,
+            total_stored,
+            duration_ms
+        )
         
         return {
             "status": "completed",
             "folders": folder_stats,
             "total_fetched": total_fetched,
-            "total_stored": total_stored
+            "total_stored": total_stored,
+            "run_id": event_logger.run_id
         }
     
     except Exception as e:
-        logger.error(f"Message sync failed: {str(e)}")
+        error_msg = str(e)
+        event_logger.log_error(f"Messages sync failed: {error_msg}", e)
+        logger.error(f"Message sync failed: {error_msg}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Message sync failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Message sync failed: {error_msg}")
+    finally:
+        event_logger.close()

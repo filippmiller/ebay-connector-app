@@ -19,12 +19,12 @@ export const getMessages = async (
   }
 
   const response = await apiClient.get(`/messages/?${params.toString()}`);
-  return response;
+  return response.data;
 };
 
 export const getMessage = async (messageId: string) => {
   const response = await apiClient.get(`/messages/${messageId}`);
-  return response;
+  return response.data;
 };
 
 export const updateMessage = async (
@@ -36,10 +36,10 @@ export const updateMessage = async (
   }
 ) => {
   const response = await apiClient.patch(`/messages/${messageId}`, updates);
-  return response;
+  return response.data;
 };
 
 export const getMessageStats = async () => {
   const response = await apiClient.get('/messages/stats/summary');
-  return response;
+  return response.data;
 };

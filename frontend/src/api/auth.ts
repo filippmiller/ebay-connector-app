@@ -3,22 +3,27 @@ import type { User, LoginCredentials, RegisterData, AuthResponse } from '../type
 
 export const authApi = {
   async register(data: RegisterData): Promise<User> {
-    return apiClient.post<User>('/auth/register', data);
+    const response = await apiClient.post<User>('/auth/register', data);
+    return response.data;
   },
 
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
-    return apiClient.post<AuthResponse>('/auth/login', credentials);
+    const response = await apiClient.post<AuthResponse>('/auth/login', credentials);
+    return response.data;
   },
 
   async getCurrentUser(): Promise<User> {
-    return apiClient.get<User>('/auth/me');
+    const response = await apiClient.get<User>('/auth/me');
+    return response.data;
   },
 
   async requestPasswordReset(email: string): Promise<{ message: string; reset_token?: string }> {
-    return apiClient.post('/auth/password-reset/request', { email });
+    const response = await apiClient.post('/auth/password-reset/request', { email });
+    return response.data;
   },
 
   async resetPassword(email: string, reset_token: string, new_password: string): Promise<{ message: string }> {
-    return apiClient.post('/auth/password-reset/confirm', { email, reset_token, new_password });
+    const response = await apiClient.post('/auth/password-reset/confirm', { email, reset_token, new_password });
+    return response.data;
   },
 };

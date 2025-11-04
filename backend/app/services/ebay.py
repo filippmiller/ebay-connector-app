@@ -499,8 +499,12 @@ class EbayService:
         Synchronize all orders from eBay to database with pagination
         """
         from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
         
+        event_logger = SyncEventLogger(user_id, 'orders')
         job_id = ebay_db.create_sync_job(user_id, 'orders')
+        start_time = time.time()
         
         try:
             total_fetched = 0
@@ -508,31 +512,61 @@ class EbayService:
             limit = 100
             offset = 0
             has_more = True
+            current_page = 0
             
+            event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT})")
             logger.info(f"Starting full order sync for user {user_id}")
             
             while has_more:
+                current_page += 1
                 filter_params = {
                     "limit": limit,
                     "offset": offset
                 }
                 
+                request_start = time.time()
                 orders_response = await self.fetch_orders(access_token, filter_params)
+                request_duration = int((time.time() - request_start) * 1000)
                 
                 orders = orders_response.get('orders', [])
                 total = orders_response.get('total', 0)
+                total_pages = (total + limit - 1) // limit if total > 0 else 1
+                
+                event_logger.log_http_request(
+                    'GET',
+                    f'/sell/fulfillment/v1/order?limit={limit}&offset={offset}',
+                    200,
+                    request_duration,
+                    len(orders)
+                )
                 
                 total_fetched += len(orders)
                 
                 batch_stored = ebay_db.batch_upsert_orders(user_id, orders)
                 total_stored += batch_stored
                 
+                event_logger.log_progress(
+                    f"Page {current_page}/{total_pages}: Fetched {len(orders)} orders, stored {batch_stored} (Total: {total_fetched}/{total})",
+                    current_page,
+                    total_pages,
+                    total_fetched,
+                    total_stored
+                )
+                
                 logger.info(f"Synced batch: {len(orders)} orders (total: {total_fetched}/{total}, stored: {total_stored})")
                 
                 offset += limit
                 has_more = len(orders) == limit and offset < total
             
+            duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
+            
+            event_logger.log_done(
+                f"Orders sync completed: {total_fetched} fetched, {total_stored} stored",
+                total_fetched,
+                total_stored,
+                duration_ms
+            )
             
             logger.info(f"Order sync completed: fetched={total_fetched}, stored={total_stored}")
             
@@ -540,14 +574,18 @@ class EbayService:
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
-                "job_id": job_id
+                "job_id": job_id,
+                "run_id": event_logger.run_id
             }
             
         except Exception as e:
             error_msg = str(e)
+            event_logger.log_error(f"Orders sync failed: {error_msg}", e)
             logger.error(f"Order sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
+        finally:
+            event_logger.close()
 
 
     async def fetch_payment_disputes(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -775,27 +813,59 @@ class EbayService:
 
     async def sync_all_disputes(self, user_id: str, access_token: str) -> Dict[str, Any]:
         """
-        Synchronize all payment disputes from eBay to database
+        Synchronize all payment disputes from eBay to database with real-time logging
         """
         from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
         
+        event_logger = SyncEventLogger(user_id, 'disputes')
         job_id = ebay_db.create_sync_job(user_id, 'disputes')
+        start_time = time.time()
         
         try:
             total_fetched = 0
             total_stored = 0
             
+            event_logger.log_start(f"Starting Disputes sync from eBay ({settings.EBAY_ENVIRONMENT})")
             logger.info(f"Starting disputes sync for user {user_id}")
             
+            request_start = time.time()
             disputes_response = await self.fetch_payment_disputes(access_token)
+            request_duration = int((time.time() - request_start) * 1000)
+            
             disputes = disputes_response.get('paymentDisputeSummaries', [])
             total_fetched = len(disputes)
+            
+            event_logger.log_http_request(
+                'GET',
+                '/sell/fulfillment/v1/payment_dispute_summary',
+                200,
+                request_duration,
+                total_fetched
+            )
+            
+            event_logger.log_progress(
+                f"Fetched {total_fetched} disputes, storing in database...",
+                1,
+                1,
+                total_fetched,
+                0
+            )
             
             for dispute in disputes:
                 if ebay_db.upsert_dispute(user_id, dispute):
                     total_stored += 1
             
+            duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
+            
+            event_logger.log_done(
+                f"Disputes sync completed: {total_fetched} fetched, {total_stored} stored",
+                total_fetched,
+                total_stored,
+                duration_ms
+            )
             
             logger.info(f"Disputes sync completed: fetched={total_fetched}, stored={total_stored}")
             
@@ -803,14 +873,18 @@ class EbayService:
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
-                "job_id": job_id
+                "job_id": job_id,
+                "run_id": event_logger.run_id
             }
             
         except Exception as e:
             error_msg = str(e)
+            event_logger.log_error(f"Disputes sync failed: {error_msg}", e)
             logger.error(f"Disputes sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
+        finally:
+            event_logger.close()
 
     async def sync_all_offers(self, user_id: str, access_token: str) -> Dict[str, Any]:
         """

@@ -1,8 +1,21 @@
 import axios from "axios";
 
+const getBaseURL = () => {
+  if (import.meta.env.VITE_API_PREFIX) {
+    return import.meta.env.VITE_API_PREFIX;
+  }
+  
+  if (typeof window !== 'undefined' && window.location.hostname.includes('devinapps.com')) {
+    return 'https://app-vatxxrtj.fly.dev';
+  }
+  
+  return "/api";
+};
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_PREFIX || "/api", // relative by default
+  baseURL: getBaseURL(),
   withCredentials: false,
+  timeout: 15000,
 });
 
 api.interceptors.request.use((config) => {

@@ -11,6 +11,7 @@ app = FastAPI(title="eBay Connector API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://ebay-ui-app-b6oqapk8.devinapps.com",
         "https://ebay-connection-app-k0ge3h93.devinapps.com",
         "http://localhost:5173",
         "http://localhost:3000",
