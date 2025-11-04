@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { ScrollArea } from '../components/ui/scroll-area';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
+import { SyncTerminal } from '../components/SyncTerminal';
 import type { EbayConnectionStatus, EbayLog } from '../types';
 import { Link as LinkIcon, Unlink } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
@@ -25,6 +26,22 @@ export const EbayConnectionPage: React.FC = () => {
     const saved = localStorage.getItem('ebay_environment');
     return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
   });
+  
+  const [syncing, setSyncing] = useState(false);
+  const [syncingTransactions, setSyncingTransactions] = useState(false);
+  const [syncingDisputes, setSyncingDisputes] = useState(false);
+  const [syncingMessages, setSyncingMessages] = useState(false);
+  const [syncingOffers, setSyncingOffers] = useState(false);
+  const [ordersRunId, setOrdersRunId] = useState<string | null>(null);
+  const [transactionsRunId, setTransactionsRunId] = useState<string | null>(null);
+  const [disputesRunId, setDisputesRunId] = useState<string | null>(null);
+  const [messagesRunId, setMessagesRunId] = useState<string | null>(null);
+  const [offersRunId, setOffersRunId] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<any>(null);
+  const [transactionsSyncResult, setTransactionsSyncResult] = useState<any>(null);
+  const [disputesSyncResult, setDisputesSyncResult] = useState<any>(null);
+  const [messagesSyncResult, setMessagesSyncResult] = useState<any>(null);
+  const [offersSyncResult, setOffersSyncResult] = useState<any>(null);
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -100,6 +117,139 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  const handleSyncOrders = async () => {
+    setError('');
+    setSyncing(true);
+    setSyncResult(null);
+    setOrdersRunId(null);
+    try {
+      const data = await ebayApi.syncAllOrders();
+      setSyncResult(data);
+      if (data.run_id) {
+        setOrdersRunId(data.run_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync orders');
+      setSyncing(false);
+    }
+  };
+
+  const handleSyncTransactions = async () => {
+    setError('');
+    setSyncingTransactions(true);
+    setTransactionsSyncResult(null);
+    setTransactionsRunId(null);
+    try {
+      const response = await fetch('/api/ebay/sync/transactions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to sync transactions');
+      const data = await response.json();
+      setTransactionsSyncResult(data);
+      if (data.run_id) {
+        setTransactionsRunId(data.run_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync transactions');
+      setSyncingTransactions(false);
+    }
+  };
+
+  const handleSyncDisputes = async () => {
+    setError('');
+    setSyncingDisputes(true);
+    setDisputesSyncResult(null);
+    setDisputesRunId(null);
+    try {
+      const response = await fetch('/api/ebay/sync/disputes', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to sync disputes');
+      const data = await response.json();
+      setDisputesSyncResult(data);
+      if (data.run_id) {
+        setDisputesRunId(data.run_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync disputes');
+      setSyncingDisputes(false);
+    }
+  };
+
+  const handleSyncMessages = async () => {
+    setError('');
+    setSyncingMessages(true);
+    setMessagesSyncResult(null);
+    setMessagesRunId(null);
+    try {
+      const response = await fetch('/api/messages/sync', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to sync messages');
+      const data = await response.json();
+      setMessagesSyncResult(data);
+      if (data.run_id) {
+        setMessagesRunId(data.run_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync messages');
+      setSyncingMessages(false);
+    }
+  };
+
+  const handleSyncOffers = async () => {
+    setError('');
+    setSyncingOffers(true);
+    setOffersSyncResult(null);
+    setOffersRunId(null);
+    try {
+      const response = await fetch('/api/ebay/sync/offers', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to sync offers');
+      const data = await response.json();
+      setOffersSyncResult(data);
+      if (data.run_id) {
+        setOffersRunId(data.run_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync offers');
+      setSyncingOffers(false);
+    }
+  };
+
+  const handleSyncComplete = (type: string) => {
+    switch (type) {
+      case 'orders':
+        setSyncing(false);
+        break;
+      case 'transactions':
+        setSyncingTransactions(false);
+        break;
+      case 'disputes':
+        setSyncingDisputes(false);
+        break;
+      case 'messages':
+        setSyncingMessages(false);
+        break;
+      case 'offers':
+        setSyncingOffers(false);
+        break;
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'success':
@@ -122,6 +272,7 @@ export const EbayConnectionPage: React.FC = () => {
           <Tabs defaultValue="connection" className="space-y-4">
             <TabsList>
               <TabsTrigger value="connection">eBay Connection</TabsTrigger>
+              <TabsTrigger value="sync">Sync Data</TabsTrigger>
               <TabsTrigger value="terminal">Connection Terminal</TabsTrigger>
             </TabsList>
 
@@ -237,6 +388,209 @@ export const EbayConnectionPage: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            <TabsContent value="sync" className="space-y-4">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {!connectionStatus?.connected && (
+                <Alert>
+                  <AlertDescription>
+                    Please connect to eBay first to sync data.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Sync Orders</CardTitle>
+                    <CardDescription>
+                      Fetch ALL orders from eBay and store in database
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={handleSyncOrders}
+                      disabled={syncing || !connectionStatus?.connected}
+                      className="w-full"
+                      size="lg"
+                    >
+                      {syncing ? 'Syncing Orders...' : 'Sync All Orders'}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Sync Transactions</CardTitle>
+                    <CardDescription>
+                      Fetch transactions from last 90 days
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={handleSyncTransactions}
+                      disabled={syncingTransactions || !connectionStatus?.connected}
+                      className="w-full"
+                      variant="secondary"
+                    >
+                      {syncingTransactions ? 'Syncing...' : 'Sync Transactions'}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Sync Disputes</CardTitle>
+                    <CardDescription>
+                      Fetch all payment disputes from eBay
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={handleSyncDisputes}
+                      disabled={syncingDisputes || !connectionStatus?.connected}
+                      className="w-full"
+                      variant="secondary"
+                    >
+                      {syncingDisputes ? 'Syncing...' : 'Sync Disputes'}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Sync Messages</CardTitle>
+                    <CardDescription>
+                      Fetch all messages from eBay inbox
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={handleSyncMessages}
+                      disabled={syncingMessages || !connectionStatus?.connected}
+                      className="w-full"
+                      variant="secondary"
+                    >
+                      {syncingMessages ? 'Syncing...' : 'Sync Messages'}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Sync Offers</CardTitle>
+                    <CardDescription>
+                      Fetch all offers from listings
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={handleSyncOffers}
+                      disabled={syncingOffers || !connectionStatus?.connected}
+                      className="w-full"
+                      variant="secondary"
+                    >
+                      {syncingOffers ? 'Syncing...' : 'Sync Offers'}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {ordersRunId && (
+                <div className="mt-6">
+                  <SyncTerminal 
+                    runId={ordersRunId}
+                    onComplete={() => handleSyncComplete('orders')}
+                  />
+                </div>
+              )}
+
+              {transactionsRunId && (
+                <div className="mt-6">
+                  <SyncTerminal 
+                    runId={transactionsRunId}
+                    onComplete={() => handleSyncComplete('transactions')}
+                  />
+                </div>
+              )}
+
+              {disputesRunId && (
+                <div className="mt-6">
+                  <SyncTerminal 
+                    runId={disputesRunId}
+                    onComplete={() => handleSyncComplete('disputes')}
+                  />
+                </div>
+              )}
+
+              {messagesRunId && (
+                <div className="mt-6">
+                  <SyncTerminal 
+                    runId={messagesRunId}
+                    onComplete={() => handleSyncComplete('messages')}
+                  />
+                </div>
+              )}
+
+              {offersRunId && (
+                <div className="mt-6">
+                  <SyncTerminal 
+                    runId={offersRunId}
+                    onComplete={() => handleSyncComplete('offers')}
+                  />
+                </div>
+              )}
+
+              {syncResult && (
+                <Alert className="mt-6 bg-green-50 border-green-200">
+                  <AlertDescription className="text-green-800">
+                    <strong>Orders Synced!</strong>
+                    <div className="mt-2 space-y-1">
+                      <div>Total Fetched: {syncResult.total_fetched}</div>
+                      <div>Total Stored: {syncResult.total_stored}</div>
+                      <div>Job ID: {syncResult.job_id}</div>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {transactionsSyncResult && (
+                <Alert className="mt-6 bg-blue-50 border-blue-200">
+                  <AlertDescription className="text-blue-800">
+                    <strong>Transactions Synced!</strong> Fetched: {transactionsSyncResult.total_fetched}, Stored: {transactionsSyncResult.total_stored}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {disputesSyncResult && (
+                <Alert className="mt-6 bg-purple-50 border-purple-200">
+                  <AlertDescription className="text-purple-800">
+                    <strong>Disputes Synced!</strong> Fetched: {disputesSyncResult.total_fetched}, Stored: {disputesSyncResult.total_stored}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {messagesSyncResult && (
+                <Alert className="mt-6 bg-indigo-50 border-indigo-200">
+                  <AlertDescription className="text-indigo-800">
+                    <strong>Messages Synced!</strong> Fetched: {messagesSyncResult.total_fetched}, Stored: {messagesSyncResult.total_stored}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {offersSyncResult && (
+                <Alert className="mt-6 bg-orange-50 border-orange-200">
+                  <AlertDescription className="text-orange-800">
+                    <strong>Offers Synced!</strong> Fetched: {offersSyncResult.total_fetched}, Stored: {offersSyncResult.total_stored}
+                  </AlertDescription>
+                </Alert>
+              )}
             </TabsContent>
 
             <TabsContent value="terminal" className="space-y-4">

@@ -90,7 +90,7 @@ export const EbayTestPage: React.FC = () => {
       const response = await fetch('/api/ebay/sync/transactions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
         },
       });
       if (!response.ok) throw new Error('Failed to sync transactions');
@@ -167,7 +167,7 @@ export const EbayTestPage: React.FC = () => {
       const response = await fetch('/api/ebay/sync/offers', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
         },
       });
       if (!response.ok) throw new Error('Failed to sync offers');
