@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { LogOut, ArrowLeft } from 'lucide-react';
 import { ScrollArea } from '../components/ui/scroll-area';
+import { SyncTerminal } from '../components/SyncTerminal';
 
 export const EbayTestPage: React.FC = () => {
   const navigate = useNavigate();
@@ -23,6 +24,7 @@ export const EbayTestPage: React.FC = () => {
   const [disputesSyncResult, setDisputesSyncResult] = useState<any>(null);
   const [offersSyncResult, setOffersSyncResult] = useState<any>(null);
   const [error, setError] = useState('');
+  const [ordersRunId, setOrdersRunId] = useState<string | null>(null);
 
   const handleLogout = () => {
     logout();
@@ -59,14 +61,21 @@ export const EbayTestPage: React.FC = () => {
     setError('');
     setSyncing(true);
     setSyncResult(null);
+    setOrdersRunId(null);
     try {
       const data = await ebayApi.syncAllOrders();
       setSyncResult(data);
+      if (data.run_id) {
+        setOrdersRunId(data.run_id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync orders');
-    } finally {
       setSyncing(false);
     }
+  };
+
+  const handleSyncComplete = () => {
+    setSyncing(false);
   };
 
   const handleSyncTransactions = async () => {
@@ -190,6 +199,15 @@ export const EbayTestPage: React.FC = () => {
             </Button>
           </CardContent>
         </Card>
+
+        {ordersRunId && (
+          <div className="mb-6">
+            <SyncTerminal 
+              runId={ordersRunId}
+              onComplete={handleSyncComplete}
+            />
+          </div>
+        )}
 
         {syncResult && (
           <Alert className="mb-6 bg-green-50 border-green-200">

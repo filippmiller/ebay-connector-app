@@ -16,7 +16,7 @@ import FixedHeader from '@/components/FixedHeader';
 
 export const EbayConnectionPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user, refreshUser } = useAuth();
+  const { user, refreshMe } = useAuth();
   const [connectionStatus, setConnectionStatus] = useState<EbayConnectionStatus | null>(null);
   const [logs, setLogs] = useState<EbayLog[]>([]);
   const [error, setError] = useState('');
@@ -77,7 +77,7 @@ export const EbayConnectionPage: React.FC = () => {
     try {
       await ebayApi.disconnect();
       await loadConnectionStatus();
-      await refreshUser();
+      await refreshMe();
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to disconnect from eBay');
