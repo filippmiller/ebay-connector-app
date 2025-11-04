@@ -28,7 +28,6 @@ export const EbayTestPage: React.FC = () => {
   const [disputesRunId, setDisputesRunId] = useState<string | null>(null);
   const [messagesRunId, setMessagesRunId] = useState<string | null>(null);
   const [syncingMessages, setSyncingMessages] = useState(false);
-  const [messagesSyncResult, setMessagesSyncResult] = useState<any>(null);
 
   const handleLogout = () => {
     logout();
@@ -134,7 +133,6 @@ export const EbayTestPage: React.FC = () => {
   const handleSyncMessages = async () => {
     setError('');
     setSyncingMessages(true);
-    setMessagesSyncResult(null);
     setMessagesRunId(null);
     try {
       const response = await fetch('/api/messages/sync', {
@@ -145,7 +143,6 @@ export const EbayTestPage: React.FC = () => {
       });
       if (!response.ok) throw new Error('Failed to sync messages');
       const data = await response.json();
-      setMessagesSyncResult(data);
       if (data.run_id) {
         setMessagesRunId(data.run_id);
       }

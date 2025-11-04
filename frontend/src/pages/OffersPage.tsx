@@ -43,7 +43,7 @@ export const OffersPage = () => {
     try {
       setLoading(true);
       const data = await getOffers(selectedStatus);
-      setOffers(data as Offer[]);
+      setOffers(data);
     } catch (error) {
       console.error('Failed to load offers:', error);
     } finally {
@@ -54,7 +54,7 @@ export const OffersPage = () => {
   const loadStats = async () => {
     try {
       const data = await getOfferStats();
-      setStats(data as OfferStats);
+      setStats(data);
     } catch (error) {
       console.error('Failed to load stats:', error);
     }

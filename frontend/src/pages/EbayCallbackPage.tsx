@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 export const EbayCallbackPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { refreshUser } = useAuth();
+  const { refreshMe } = useAuth();
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(true);
   const hasProcessed = React.useRef(false);
@@ -41,7 +41,7 @@ export const EbayCallbackPage: React.FC = () => {
         const environment = localStorage.getItem('ebay_oauth_environment') || 'sandbox';
         localStorage.removeItem('ebay_oauth_environment');
         await ebayApi.handleCallback(code, redirectUri, environment, state || undefined);
-        await refreshUser();
+        await refreshMe();
         setTimeout(() => {
           navigate('/dashboard');
         }, 1500);
@@ -52,7 +52,7 @@ export const EbayCallbackPage: React.FC = () => {
     };
 
     handleCallback();
-  }, [searchParams, navigate, refreshUser]);
+  }, [searchParams, navigate, refreshMe]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">

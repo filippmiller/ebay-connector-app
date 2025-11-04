@@ -60,7 +60,7 @@ export const OrdersPage = () => {
     try {
       setLoading(true);
       const data = await getOrders(selectedStatus, searchQuery);
-      setOrders(data as Order[]);
+      setOrders(data);
     } catch (error) {
       console.error('Failed to load orders:', error);
     } finally {
@@ -71,7 +71,7 @@ export const OrdersPage = () => {
   const loadStats = async () => {
     try {
       const data = await getOrderStats();
-      setStats(data as OrderStats);
+      setStats(data);
     } catch (error) {
       console.error('Failed to load stats:', error);
     }

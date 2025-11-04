@@ -15,7 +15,7 @@ export const getOffers = async (
   }
 
   const response = await apiClient.get(`/offers/?${params.toString()}`);
-  return response;
+  return response.data;
 };
 
 export const handleOfferAction = async (
@@ -29,10 +29,10 @@ export const handleOfferAction = async (
   }
 
   const response = await apiClient.post(`/offers/${offerId}/action`, payload);
-  return response;
+  return response.data;
 };
 
 export const getOfferStats = async () => {
   const response = await apiClient.get('/offers/stats/summary');
-  return response;
+  return response.data;
 };
