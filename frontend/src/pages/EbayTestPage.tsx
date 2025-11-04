@@ -25,6 +25,10 @@ export const EbayTestPage: React.FC = () => {
   const [offersSyncResult, setOffersSyncResult] = useState<any>(null);
   const [error, setError] = useState('');
   const [ordersRunId, setOrdersRunId] = useState<string | null>(null);
+  const [disputesRunId, setDisputesRunId] = useState<string | null>(null);
+  const [messagesRunId, setMessagesRunId] = useState<string | null>(null);
+  const [syncingMessages, setSyncingMessages] = useState(false);
+  const [messagesSyncResult, setMessagesSyncResult] = useState<any>(null);
 
   const handleLogout = () => {
     logout();
@@ -103,21 +107,56 @@ export const EbayTestPage: React.FC = () => {
     setError('');
     setSyncingDisputes(true);
     setDisputesSyncResult(null);
+    setDisputesRunId(null);
     try {
       const response = await fetch('/api/ebay/sync/disputes', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
         },
       });
       if (!response.ok) throw new Error('Failed to sync disputes');
       const data = await response.json();
       setDisputesSyncResult(data);
+      if (data.run_id) {
+        setDisputesRunId(data.run_id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync disputes');
-    } finally {
       setSyncingDisputes(false);
     }
+  };
+
+  const handleDisputesSyncComplete = () => {
+    setSyncingDisputes(false);
+  };
+
+  const handleSyncMessages = async () => {
+    setError('');
+    setSyncingMessages(true);
+    setMessagesSyncResult(null);
+    setMessagesRunId(null);
+    try {
+      const response = await fetch('/api/messages/sync', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to sync messages');
+      const data = await response.json();
+      setMessagesSyncResult(data);
+      if (data.run_id) {
+        setMessagesRunId(data.run_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync messages');
+      setSyncingMessages(false);
+    }
+  };
+
+  const handleMessagesSyncComplete = () => {
+    setSyncingMessages(false);
   };
 
   const handleSyncOffers = async () => {
@@ -222,7 +261,7 @@ export const EbayTestPage: React.FC = () => {
           </Alert>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           <Card>
             <CardHeader>
               <CardTitle>Sync Transactions</CardTitle>
@@ -238,25 +277,6 @@ export const EbayTestPage: React.FC = () => {
                 variant="secondary"
               >
                 {syncingTransactions ? 'Syncing...' : 'Sync Transactions'}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Sync Disputes</CardTitle>
-              <CardDescription>
-                Fetch all payment disputes
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                onClick={handleSyncDisputes}
-                disabled={syncingDisputes}
-                className="w-full"
-                variant="secondary"
-              >
-                {syncingDisputes ? 'Syncing...' : 'Sync Disputes'}
               </Button>
             </CardContent>
           </Card>
@@ -280,6 +300,64 @@ export const EbayTestPage: React.FC = () => {
             </CardContent>
           </Card>
         </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Sync Disputes</CardTitle>
+              <CardDescription>
+                Fetch all payment disputes from eBay
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                onClick={handleSyncDisputes}
+                disabled={syncingDisputes}
+                className="w-full"
+                variant="secondary"
+              >
+                {syncingDisputes ? 'Syncing...' : 'Sync Disputes'}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Sync Messages</CardTitle>
+              <CardDescription>
+                Fetch all messages from eBay inbox
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                onClick={handleSyncMessages}
+                disabled={syncingMessages}
+                className="w-full"
+                variant="secondary"
+              >
+                {syncingMessages ? 'Syncing...' : 'Sync Messages'}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+
+        {disputesRunId && (
+          <div className="mb-6">
+            <SyncTerminal 
+              runId={disputesRunId}
+              onComplete={handleDisputesSyncComplete}
+            />
+          </div>
+        )}
+
+        {messagesRunId && (
+          <div className="mb-6">
+            <SyncTerminal 
+              runId={messagesRunId}
+              onComplete={handleMessagesSyncComplete}
+            />
+          </div>
+        )}
 
         {transactionsSyncResult && (
           <Alert className="mb-6 bg-blue-50 border-blue-200">
