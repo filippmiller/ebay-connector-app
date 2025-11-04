@@ -3,18 +3,26 @@ interface Env {
 }
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
+  const apiBase = env.API_PUBLIC_BASE_URL;
   const url = new URL(request.url);
-  const upstreamBase = new URL(env.API_PUBLIC_BASE_URL);
+  const upstream = new URL(apiBase);
   
-  url.pathname = url.pathname.replace(/^\/api/, '');
-  url.host = upstreamBase.host;
-  url.protocol = upstreamBase.protocol;
+  const strippedPath = url.pathname.replace(/^\/api/, '') || '/';
+  upstream.pathname = strippedPath;
+  upstream.search = url.search;
   
   const headers = new Headers(request.headers);
+  headers.delete('host'); // avoid passing CF host upstream
   
-  return fetch(url.toString(), {
+  const init: RequestInit = {
     method: request.method,
     headers,
-    body: request.body,
-  });
+    redirect: 'follow'
+  };
+  
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    init.body = request.body;
+  }
+  
+  return fetch(upstream.toString(), init);
 };
