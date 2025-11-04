@@ -48,7 +48,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const token: string = data?.access_token;
       if (!token) throw new Error("No access_token in response");
       localStorage.setItem("auth_token", token);
-      await refreshMe();
+      refreshMe().catch(() => {});
     } finally {
       setLoading(false);
     }
