@@ -12,6 +12,7 @@ interface HeaderTab {
 }
 
 const TABS: HeaderTab[] = [
+  { name: 'ORDERS', path: '/orders' },
   { name: 'BUYING', path: '/buying' },
   { name: 'SKU', path: '/sku' },
   { name: 'LISTING', path: '/listing' },
