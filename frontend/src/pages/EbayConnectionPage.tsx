@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ebayApi } from '../api/ebay';
+import api from '../lib/apiClient';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Alert, AlertDescription } from '../components/ui/alert';
@@ -140,17 +141,10 @@ export const EbayConnectionPage: React.FC = () => {
     setTransactionsSyncResult(null);
     setTransactionsRunId(null);
     try {
-      const response = await fetch('/api/ebay/sync/transactions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to sync transactions');
-      const data = await response.json();
-      setTransactionsSyncResult(data);
-      if (data.run_id) {
-        setTransactionsRunId(data.run_id);
+      const response = await api.post('/ebay/sync/transactions');
+      setTransactionsSyncResult(response.data);
+      if (response.data.run_id) {
+        setTransactionsRunId(response.data.run_id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync transactions');
@@ -164,17 +158,10 @@ export const EbayConnectionPage: React.FC = () => {
     setDisputesSyncResult(null);
     setDisputesRunId(null);
     try {
-      const response = await fetch('/api/ebay/sync/disputes', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to sync disputes');
-      const data = await response.json();
-      setDisputesSyncResult(data);
-      if (data.run_id) {
-        setDisputesRunId(data.run_id);
+      const response = await api.post('/ebay/sync/disputes');
+      setDisputesSyncResult(response.data);
+      if (response.data.run_id) {
+        setDisputesRunId(response.data.run_id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync disputes');
@@ -188,17 +175,10 @@ export const EbayConnectionPage: React.FC = () => {
     setMessagesSyncResult(null);
     setMessagesRunId(null);
     try {
-      const response = await fetch('/api/messages/sync', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to sync messages');
-      const data = await response.json();
-      setMessagesSyncResult(data);
-      if (data.run_id) {
-        setMessagesRunId(data.run_id);
+      const response = await api.post('/messages/sync');
+      setMessagesSyncResult(response.data);
+      if (response.data.run_id) {
+        setMessagesRunId(response.data.run_id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync messages');
@@ -212,17 +192,10 @@ export const EbayConnectionPage: React.FC = () => {
     setOffersSyncResult(null);
     setOffersRunId(null);
     try {
-      const response = await fetch('/api/ebay/sync/offers', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to sync offers');
-      const data = await response.json();
-      setOffersSyncResult(data);
-      if (data.run_id) {
-        setOffersRunId(data.run_id);
+      const response = await api.post('/ebay/sync/offers');
+      setOffersSyncResult(response.data);
+      if (response.data.run_id) {
+        setOffersRunId(response.data.run_id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync offers');
