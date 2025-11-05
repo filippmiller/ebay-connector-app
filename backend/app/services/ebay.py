@@ -1,5 +1,6 @@
 import base64
 import httpx
+import asyncio
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -8,6 +9,19 @@ from app.config import settings
 from app.models.ebay import EbayTokenResponse
 from app.services.database import db
 from app.utils.logger import logger, ebay_logger
+
+ORDERS_PAGE_LIMIT = 200          # Fulfillment API max
+TRANSACTIONS_PAGE_LIMIT = 200    # Finances API max
+DISPUTES_PAGE_LIMIT = 100        # Fulfillment API max
+OFFERS_PAGE_LIMIT = 100          # Inventory API max
+MESSAGES_HEADERS_LIMIT = 200     # Trading API max for headers
+MESSAGES_BODIES_BATCH = 10       # Trading API hard limit for bodies
+
+ORDERS_CONCURRENCY = 6
+TRANSACTIONS_CONCURRENCY = 5
+DISPUTES_CONCURRENCY = 5
+OFFERS_CONCURRENCY = 6
+MESSAGES_CONCURRENCY = 5
 
 
 class EbayService:
@@ -496,7 +510,7 @@ class EbayService:
 
     async def sync_all_orders(self, user_id: str, access_token: str) -> Dict[str, Any]:
         """
-        Synchronize all orders from eBay to database with pagination
+        Synchronize all orders from eBay to database with pagination (limit=200)
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
@@ -509,13 +523,16 @@ class EbayService:
         try:
             total_fetched = 0
             total_stored = 0
-            limit = 100
+            limit = ORDERS_PAGE_LIMIT
             offset = 0
             has_more = True
             current_page = 0
             
-            event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT})")
-            logger.info(f"Starting full order sync for user {user_id}")
+            event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
+            event_logger.log_info(f"API Configuration: Fulfillment API v1, max batch size: {limit} orders per request")
+            logger.info(f"Starting full order sync for user {user_id} with limit={limit}")
+            
+            await asyncio.sleep(0.5)
             
             while has_more:
                 current_page += 1
@@ -523,6 +540,8 @@ class EbayService:
                     "limit": limit,
                     "offset": offset
                 }
+                
+                event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/fulfillment/v1/order?limit={limit}&offset={offset}")
                 
                 request_start = time.time()
                 orders_response = await self.fetch_orders(access_token, filter_params)
@@ -540,13 +559,22 @@ class EbayService:
                     len(orders)
                 )
                 
+                event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(orders)} orders (Total available: {total})")
+                
                 total_fetched += len(orders)
                 
+                await asyncio.sleep(0.3)
+                
+                event_logger.log_info(f"→ Storing {len(orders)} orders in database...")
+                store_start = time.time()
                 batch_stored = ebay_db.batch_upsert_orders(user_id, orders)
+                store_duration = int((time.time() - store_start) * 1000)
                 total_stored += batch_stored
                 
+                event_logger.log_info(f"← Database: Stored {batch_stored} orders ({store_duration}ms)")
+                
                 event_logger.log_progress(
-                    f"Page {current_page}/{total_pages}: Fetched {len(orders)} orders, stored {batch_stored} (Total: {total_fetched}/{total})",
+                    f"Page {current_page}/{total_pages} complete: {len(orders)} fetched, {batch_stored} stored | Running total: {total_fetched}/{total} fetched, {total_stored} stored",
                     current_page,
                     total_pages,
                     total_fetched,
@@ -557,12 +585,15 @@ class EbayService:
                 
                 offset += limit
                 has_more = len(orders) == limit and offset < total
+                
+                if has_more:
+                    await asyncio.sleep(0.8)
             
             duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
             
             event_logger.log_done(
-                f"Orders sync completed: {total_fetched} fetched, {total_stored} stored",
+                f"Orders sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
                 total_fetched,
                 total_stored,
                 duration_ms
@@ -766,11 +797,15 @@ class EbayService:
 
     async def sync_all_transactions(self, user_id: str, access_token: str) -> Dict[str, Any]:
         """
-        Synchronize all transactions from eBay to database with pagination
+        Synchronize all transactions from eBay to database with pagination (limit=200)
         """
         from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
         
+        event_logger = SyncEventLogger(user_id, 'transactions')
         job_id = ebay_db.create_sync_job(user_id, 'transactions')
+        start_time = time.time()
         
         try:
             total_fetched = 0
@@ -780,22 +815,84 @@ class EbayService:
             end_date = datetime.utcnow()
             start_date = end_date - timedelta(days=90)
             
-            filter_params = {
-                'filter': f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
-                'limit': 100
-            }
+            limit = TRANSACTIONS_PAGE_LIMIT
+            offset = 0
+            has_more = True
+            current_page = 0
             
-            logger.info(f"Starting transaction sync for user {user_id}")
+            event_logger.log_start(f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
+            event_logger.log_info(f"API Configuration: Finances API v1, max batch size: {limit} transactions per request")
+            event_logger.log_info(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} (90 days)")
+            logger.info(f"Starting transaction sync for user {user_id} with limit={limit}")
             
-            transactions_response = await self.fetch_transactions(access_token, filter_params)
-            transactions = transactions_response.get('transactions', [])
-            total_fetched = len(transactions)
+            await asyncio.sleep(0.5)
             
-            for transaction in transactions:
-                if ebay_db.upsert_transaction(user_id, transaction):
-                    total_stored += 1
+            while has_more:
+                current_page += 1
+                filter_params = {
+                    'filter': f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
+                    'limit': limit,
+                    'offset': offset
+                }
+                
+                event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/finances/v1/transaction?limit={limit}&offset={offset}")
+                
+                request_start = time.time()
+                transactions_response = await self.fetch_transactions(access_token, filter_params)
+                request_duration = int((time.time() - request_start) * 1000)
+                
+                transactions = transactions_response.get('transactions', [])
+                total = transactions_response.get('total', 0)
+                total_pages = (total + limit - 1) // limit if total > 0 else 1
+                
+                event_logger.log_http_request(
+                    'GET',
+                    f'/sell/finances/v1/transaction?limit={limit}&offset={offset}',
+                    200,
+                    request_duration,
+                    len(transactions)
+                )
+                
+                event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(transactions)} transactions (Total available: {total})")
+                
+                total_fetched += len(transactions)
+                
+                await asyncio.sleep(0.3)
+                
+                event_logger.log_info(f"→ Storing {len(transactions)} transactions in database...")
+                store_start = time.time()
+                for transaction in transactions:
+                    if ebay_db.upsert_transaction(user_id, transaction):
+                        total_stored += 1
+                store_duration = int((time.time() - store_start) * 1000)
+                
+                event_logger.log_info(f"← Database: Stored {total_stored - (total_fetched - len(transactions))} transactions ({store_duration}ms)")
+                
+                event_logger.log_progress(
+                    f"Page {current_page}/{total_pages} complete: {len(transactions)} fetched, {total_stored - (total_fetched - len(transactions))} stored | Running total: {total_fetched}/{total} fetched, {total_stored} stored",
+                    current_page,
+                    total_pages,
+                    total_fetched,
+                    total_stored
+                )
+                
+                logger.info(f"Synced batch: {len(transactions)} transactions (total: {total_fetched}/{total}, stored: {total_stored})")
+                
+                offset += limit
+                has_more = len(transactions) == limit and offset < total
+                
+                if has_more:
+                    await asyncio.sleep(0.8)
             
+            duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
+            
+            event_logger.log_done(
+                f"Transactions sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms
+            )
             
             logger.info(f"Transaction sync completed: fetched={total_fetched}, stored={total_stored}")
             
@@ -803,18 +900,22 @@ class EbayService:
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
-                "job_id": job_id
+                "job_id": job_id,
+                "run_id": event_logger.run_id
             }
             
         except Exception as e:
             error_msg = str(e)
+            event_logger.log_error(f"Transactions sync failed: {error_msg}", e)
             logger.error(f"Transaction sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
+        finally:
+            event_logger.close()
 
     async def sync_all_disputes(self, user_id: str, access_token: str) -> Dict[str, Any]:
         """
-        Synchronize all payment disputes from eBay to database with real-time logging
+        Synchronize all payment disputes from eBay to database with comprehensive logging
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
@@ -829,7 +930,12 @@ class EbayService:
             total_stored = 0
             
             event_logger.log_start(f"Starting Disputes sync from eBay ({settings.EBAY_ENVIRONMENT})")
+            event_logger.log_info(f"API Configuration: Fulfillment API v1 payment_dispute_summary/search")
             logger.info(f"Starting disputes sync for user {user_id}")
+            
+            await asyncio.sleep(0.5)
+            
+            event_logger.log_info(f"→ Requesting: GET /sell/fulfillment/v1/payment_dispute_summary/search")
             
             request_start = time.time()
             disputes_response = await self.fetch_payment_disputes(access_token)
@@ -846,23 +952,32 @@ class EbayService:
                 total_fetched
             )
             
-            event_logger.log_progress(
-                f"Fetched {total_fetched} disputes, storing in database...",
-                1,
-                1,
-                total_fetched,
-                0
-            )
+            event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {total_fetched} disputes")
             
+            await asyncio.sleep(0.3)
+            
+            event_logger.log_info(f"→ Storing {total_fetched} disputes in database...")
+            store_start = time.time()
             for dispute in disputes:
                 if ebay_db.upsert_dispute(user_id, dispute):
                     total_stored += 1
+            store_duration = int((time.time() - store_start) * 1000)
+            
+            event_logger.log_info(f"← Database: Stored {total_stored} disputes ({store_duration}ms)")
+            
+            event_logger.log_progress(
+                f"Disputes sync complete: {total_fetched} fetched, {total_stored} stored",
+                1,
+                1,
+                total_fetched,
+                total_stored
+            )
             
             duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
             
             event_logger.log_done(
-                f"Disputes sync completed: {total_fetched} fetched, {total_stored} stored",
+                f"Disputes sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
                 total_fetched,
                 total_stored,
                 duration_ms
@@ -889,7 +1004,7 @@ class EbayService:
 
     async def sync_all_offers(self, user_id: str, access_token: str) -> Dict[str, Any]:
         """
-        Synchronize all offers from eBay to database with real-time logging
+        Synchronize all offers from eBay to database with comprehensive logging
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
@@ -904,7 +1019,12 @@ class EbayService:
             total_stored = 0
             
             event_logger.log_start(f"Starting Offers sync from eBay ({settings.EBAY_ENVIRONMENT})")
+            event_logger.log_info(f"API Configuration: Inventory API v1, listing offers endpoint")
             logger.info(f"Starting offers sync for user {user_id}")
+            
+            await asyncio.sleep(0.5)
+            
+            event_logger.log_info(f"→ Requesting: GET /sell/inventory/v1/offer")
             
             request_start = time.time()
             offers_response = await self.fetch_offers(access_token)
@@ -921,23 +1041,32 @@ class EbayService:
                 total_fetched
             )
             
-            event_logger.log_progress(
-                f"Fetched {total_fetched} offers, storing in database...",
-                1,
-                1,
-                total_fetched,
-                0
-            )
+            event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {total_fetched} offers")
             
+            await asyncio.sleep(0.3)
+            
+            event_logger.log_info(f"→ Storing {total_fetched} offers in database...")
+            store_start = time.time()
             for offer in offers:
                 if ebay_db.upsert_offer(user_id, offer):
                     total_stored += 1
+            store_duration = int((time.time() - store_start) * 1000)
+            
+            event_logger.log_info(f"← Database: Stored {total_stored} offers ({store_duration}ms)")
+            
+            event_logger.log_progress(
+                f"Offers sync complete: {total_fetched} fetched, {total_stored} stored",
+                1,
+                1,
+                total_fetched,
+                total_stored
+            )
             
             duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
             
             event_logger.log_done(
-                f"Offers sync completed: {total_fetched} fetched, {total_stored} stored",
+                f"Offers sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
                 total_fetched,
                 total_stored,
                 duration_ms
