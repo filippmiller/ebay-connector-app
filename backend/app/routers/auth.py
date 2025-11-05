@@ -59,6 +59,12 @@ async def login(user_credentials: UserLogin):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database unavailable. Please try again later.",
         )
+    except Exception as e:
+        logger.exception(f"Unexpected error during login for {user_credentials.email}: {type(e).__name__}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error. Please try again later.",
+        )
 
 
 @router.get("/me", response_model=UserResponse)
