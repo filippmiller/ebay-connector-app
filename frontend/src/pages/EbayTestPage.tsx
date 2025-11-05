@@ -25,6 +25,7 @@ export const EbayTestPage: React.FC = () => {
   const [offersSyncResult, setOffersSyncResult] = useState<any>(null);
   const [error, setError] = useState('');
   const [ordersRunId, setOrdersRunId] = useState<string | null>(null);
+  const [transactionsRunId, setTransactionsRunId] = useState<string | null>(null);
   const [disputesRunId, setDisputesRunId] = useState<string | null>(null);
   const [messagesRunId, setMessagesRunId] = useState<string | null>(null);
   const [offersRunId, setOffersRunId] = useState<string | null>(null);
@@ -86,6 +87,7 @@ export const EbayTestPage: React.FC = () => {
     setError('');
     setSyncingTransactions(true);
     setTransactionsSyncResult(null);
+    setTransactionsRunId(null);
     try {
       const response = await fetch('/api/ebay/sync/transactions', {
         method: 'POST',
@@ -96,11 +98,17 @@ export const EbayTestPage: React.FC = () => {
       if (!response.ok) throw new Error('Failed to sync transactions');
       const data = await response.json();
       setTransactionsSyncResult(data);
+      if (data.run_id) {
+        setTransactionsRunId(data.run_id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync transactions');
-    } finally {
       setSyncingTransactions(false);
     }
+  };
+
+  const handleTransactionsSyncComplete = () => {
+    setSyncingTransactions(false);
   };
 
   const handleSyncDisputes = async () => {
@@ -279,7 +287,7 @@ export const EbayTestPage: React.FC = () => {
         </Card>
 
         {/* Large Terminal Window */}
-        {(ordersRunId || disputesRunId || messagesRunId || offersRunId) && (
+        {(ordersRunId || transactionsRunId || disputesRunId || messagesRunId || offersRunId) && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>Real-Time Sync Terminal</CardTitle>
@@ -292,6 +300,12 @@ export const EbayTestPage: React.FC = () => {
                 <SyncTerminal 
                   runId={ordersRunId}
                   onComplete={handleSyncComplete}
+                />
+              )}
+              {transactionsRunId && (
+                <SyncTerminal 
+                  runId={transactionsRunId}
+                  onComplete={handleTransactionsSyncComplete}
                 />
               )}
               {disputesRunId && (
