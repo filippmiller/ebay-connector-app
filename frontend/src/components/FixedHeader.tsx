@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BUILD_NUMBER, BUILD_TIMESTAMP } from '@/config/build';
+import { BUILD_TIMESTAMP } from '@/config/build';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderTab {
