@@ -4,8 +4,13 @@ from typing import Optional
 
 class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
+    JWT_SECRET: Optional[str] = None
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    
+    @property
+    def secret_key(self) -> str:
+        return self.JWT_SECRET or self.SECRET_KEY
     
     EBAY_ENVIRONMENT: str = "sandbox"
     

@@ -109,6 +109,23 @@ async def startup_event():
 async def healthz():
     return {"status": "ok"}
 
+@app.get("/healthz/db")
+async def healthz_db():
+    """Database health check endpoint"""
+    from fastapi import HTTPException, status
+    try:
+        from app.models_sqlalchemy import get_db
+        db = next(get_db())
+        db.execute(text("SELECT 1"))
+        db.close()
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        logger.error(f"Database health check failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable"
+        )
+
 @app.get("/")
 async def root():
     return {
