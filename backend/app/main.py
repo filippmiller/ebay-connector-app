@@ -8,15 +8,13 @@ from sqlalchemy import create_engine, text, inspect
 
 app = FastAPI(title="eBay Connector API", version="1.0.0")
 
+from app.config import settings
+
+origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://ebay-ui-app-b6oqapk8.devinapps.com",
-        "https://ebay-connection-app-k0ge3h93.devinapps.com",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "*"
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

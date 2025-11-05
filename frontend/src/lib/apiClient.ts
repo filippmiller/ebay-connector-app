@@ -1,6 +1,14 @@
 import axios from "axios";
 
 const getBaseURL = () => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  
   if (import.meta.env.VITE_API_PREFIX) {
     return import.meta.env.VITE_API_PREFIX;
   }

@@ -1,0 +1,26 @@
+backend/entrypoint.sh:6:if [ -n "$DATABASE_URL" ]; then
+backend/entrypoint.sh:11:    echo "⚠️  DATABASE_URL not set, skipping migrations"
+backend/add_missing_columns.py:5:os.environ['DATABASE_URL'] = 'postgresql://postgres:EVfiVxDuuwRa8hAx@db.nrpfahjygulsfxmbmfzv.supabase.co:5432/postgres?sslmode=require'
+backend/alembic.ini:87:# sqlalchemy.url is now loaded from environment variable DATABASE_URL in env.py
+backend/migrate_to_postgres.py:43:        os.environ["DATABASE_URL"] = POSTGRES_URL
+backend/migrate_to_postgres.py:396:    print("1. Update backend to use DATABASE_URL")
+backend/alembic/env.py:23:database_url = settings.DATABASE_URL
+backend/app/main.py:2:from fastapi.middleware.cors import CORSMiddleware
+backend/app/main.py:12:    CORSMiddleware,
+backend/app/main.py:47:    database_url = settings.DATABASE_URL
+backend/app/database.py:6:SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+backend/app/database.py:13:if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+backend/app/database.py:15:elif SQLALCHEMY_DATABASE_URL.startswith("postgresql"):
+backend/app/database.py:23:    SQLALCHEMY_DATABASE_URL,
+backend/app/routers/migration.py:15:    engine = create_engine(settings.DATABASE_URL)
+backend/app/services/ebay_database.py:541:if "postgresql" in settings.DATABASE_URL:
+backend/app/config.py:24:    DATABASE_URL: str = "sqlite:///./ebay_connector.db"
+backend/app/services/database.py:3:if "postgresql" in settings.DATABASE_URL:
+backend/app/models_sqlalchemy/__init__.py:6:DATABASE_URL = settings.DATABASE_URL
+backend/app/models_sqlalchemy/__init__.py:9:    DATABASE_URL,
+backend/app/models_sqlalchemy/__init__.py:10:    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
+CORS Configuration in backend/app/main.py (lines 13-18):
+- Hard-coded: https://ebay-ui-app-b6oqapk8.devinapps.com
+- Hard-coded: https://ebay-connection-app-k0ge3h93.devinapps.com
+- Wildcard: * (insecure for production)
+- Missing: https://ebay-connector-app-0uyvn1o1.devinapps.com (the canonical domain)
