@@ -45,6 +45,11 @@ async def startup_event():
     database_url = settings.DATABASE_URL
     
     if "postgresql" in database_url:
+        import re
+        masked_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:****@', database_url)
+        logger.info(f"📊 Database URL: {masked_url}")
+    
+    if "postgresql" in database_url:
         logger.info("🐘 Using PostgreSQL database (Supabase)")
         logger.info("📊 Running database migrations...")
         
@@ -120,10 +125,13 @@ async def healthz_db():
         db.close()
         return {"status": "ok", "database": "connected"}
     except Exception as e:
-        logger.error(f"Database health check failed: {str(e)}")
+        logger.exception("Database health check failed")
+        error_detail = "Database unavailable"
+        if settings.DEBUG:
+            error_detail = f"Database unavailable: {type(e).__name__}: {str(e)}"
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database unavailable"
+            detail=error_detail
         )
 
 @app.get("/")
