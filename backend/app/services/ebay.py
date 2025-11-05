@@ -590,7 +590,7 @@ class EbayService:
 
     async def fetch_payment_disputes(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Fetch payment disputes from eBay Fulfillment API
+        Fetch payment disputes from eBay Fulfillment API using search endpoint
         """
         if not access_token:
             raise HTTPException(
@@ -598,7 +598,7 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/payment_dispute"
+        api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/payment_dispute_summary/search"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -677,7 +677,7 @@ class EbayService:
     
     async def fetch_offers(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Fetch offers from eBay Negotiation API
+        Fetch offers from eBay Inventory API (listing offers, not buyer offers)
         """
         if not access_token:
             raise HTTPException(
@@ -685,11 +685,12 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        api_url = f"{settings.ebay_api_base_url}/sell/negotiation/v1/offer"
+        api_url = f"{settings.ebay_api_base_url}/sell/inventory/v1/offer"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
         }
         
         params = filter_params or {}
@@ -839,7 +840,7 @@ class EbayService:
             
             event_logger.log_http_request(
                 'GET',
-                '/sell/fulfillment/v1/payment_dispute_summary',
+                '/sell/fulfillment/v1/payment_dispute_summary/search',
                 200,
                 request_duration,
                 total_fetched
@@ -888,27 +889,59 @@ class EbayService:
 
     async def sync_all_offers(self, user_id: str, access_token: str) -> Dict[str, Any]:
         """
-        Synchronize all offers from eBay to database
+        Synchronize all offers from eBay to database with real-time logging
         """
         from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
         
+        event_logger = SyncEventLogger(user_id, 'offers')
         job_id = ebay_db.create_sync_job(user_id, 'offers')
+        start_time = time.time()
         
         try:
             total_fetched = 0
             total_stored = 0
             
+            event_logger.log_start(f"Starting Offers sync from eBay ({settings.EBAY_ENVIRONMENT})")
             logger.info(f"Starting offers sync for user {user_id}")
             
+            request_start = time.time()
             offers_response = await self.fetch_offers(access_token)
+            request_duration = int((time.time() - request_start) * 1000)
+            
             offers = offers_response.get('offers', [])
             total_fetched = len(offers)
+            
+            event_logger.log_http_request(
+                'GET',
+                '/sell/inventory/v1/offer',
+                200,
+                request_duration,
+                total_fetched
+            )
+            
+            event_logger.log_progress(
+                f"Fetched {total_fetched} offers, storing in database...",
+                1,
+                1,
+                total_fetched,
+                0
+            )
             
             for offer in offers:
                 if ebay_db.upsert_offer(user_id, offer):
                     total_stored += 1
             
+            duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
+            
+            event_logger.log_done(
+                f"Offers sync completed: {total_fetched} fetched, {total_stored} stored",
+                total_fetched,
+                total_stored,
+                duration_ms
+            )
             
             logger.info(f"Offers sync completed: fetched={total_fetched}, stored={total_stored}")
             
@@ -916,14 +949,18 @@ class EbayService:
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
-                "job_id": job_id
+                "job_id": job_id,
+                "run_id": event_logger.run_id
             }
             
         except Exception as e:
             error_msg = str(e)
+            event_logger.log_error(f"Offers sync failed: {error_msg}", e)
             logger.error(f"Offers sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
+        finally:
+            event_logger.close()
     
     async def get_ebay_user_id(self, access_token: str) -> str:
         """Get eBay user ID from access token using GetUser Trading API call"""

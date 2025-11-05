@@ -27,6 +27,7 @@ export const EbayTestPage: React.FC = () => {
   const [ordersRunId, setOrdersRunId] = useState<string | null>(null);
   const [disputesRunId, setDisputesRunId] = useState<string | null>(null);
   const [messagesRunId, setMessagesRunId] = useState<string | null>(null);
+  const [offersRunId, setOffersRunId] = useState<string | null>(null);
   const [syncingMessages, setSyncingMessages] = useState(false);
 
   const handleLogout = () => {
@@ -160,6 +161,7 @@ export const EbayTestPage: React.FC = () => {
     setError('');
     setSyncingOffers(true);
     setOffersSyncResult(null);
+    setOffersRunId(null);
     try {
       const response = await fetch('/api/ebay/sync/offers', {
         method: 'POST',
@@ -170,11 +172,17 @@ export const EbayTestPage: React.FC = () => {
       if (!response.ok) throw new Error('Failed to sync offers');
       const data = await response.json();
       setOffersSyncResult(data);
+      if (data.run_id) {
+        setOffersRunId(data.run_id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync offers');
-    } finally {
       setSyncingOffers(false);
     }
+  };
+
+  const handleOffersSyncComplete = () => {
+    setSyncingOffers(false);
   };
 
   return (
@@ -216,144 +224,105 @@ export const EbayTestPage: React.FC = () => {
           </Alert>
         )}
 
+        {/* Sync Buttons Row */}
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Sync All Orders to Database</CardTitle>
+            <CardTitle>eBay Data Sync Operations</CardTitle>
             <CardDescription>
-              This will fetch ALL orders from eBay (with pagination) and store them in the database without duplicates.
-              This may take a while for accounts with many orders.
+              Click any button to sync data from eBay. Real-time progress will be shown in the terminal below.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button
-              onClick={handleSyncOrders}
-              disabled={syncing}
-              className="w-full"
-              size="lg"
-            >
-              {syncing ? 'Syncing Orders...' : 'Sync All Orders'}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {ordersRunId && (
-          <div className="mb-6">
-            <SyncTerminal 
-              runId={ordersRunId}
-              onComplete={handleSyncComplete}
-            />
-          </div>
-        )}
-
-        {syncResult && (
-          <Alert className="mb-6 bg-green-50 border-green-200">
-            <AlertDescription className="text-green-800">
-              <strong>Sync Completed Successfully!</strong>
-              <div className="mt-2 space-y-1">
-                <div>Total Fetched: {syncResult.total_fetched}</div>
-                <div>Total Stored: {syncResult.total_stored}</div>
-                <div>Job ID: {syncResult.job_id}</div>
-              </div>
-            </AlertDescription>
-          </Alert>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Sync Transactions</CardTitle>
-              <CardDescription>
-                Fetch all transactions from last 90 days
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                onClick={handleSyncOrders}
+                disabled={syncing}
+                size="sm"
+                variant={syncing ? "secondary" : "default"}
+              >
+                {syncing ? 'Syncing Orders...' : 'Sync Orders'}
+              </Button>
               <Button
                 onClick={handleSyncTransactions}
                 disabled={syncingTransactions}
-                className="w-full"
+                size="sm"
                 variant="secondary"
               >
                 {syncingTransactions ? 'Syncing...' : 'Sync Transactions'}
               </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Sync Offers</CardTitle>
-              <CardDescription>
-                Fetch all offers from listings
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                onClick={handleSyncOffers}
-                disabled={syncingOffers}
-                className="w-full"
-                variant="secondary"
-              >
-                {syncingOffers ? 'Syncing...' : 'Sync Offers'}
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Sync Disputes</CardTitle>
-              <CardDescription>
-                Fetch all payment disputes from eBay
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
               <Button
                 onClick={handleSyncDisputes}
                 disabled={syncingDisputes}
-                className="w-full"
+                size="sm"
                 variant="secondary"
               >
                 {syncingDisputes ? 'Syncing...' : 'Sync Disputes'}
               </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Sync Messages</CardTitle>
-              <CardDescription>
-                Fetch all messages from eBay inbox
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
               <Button
                 onClick={handleSyncMessages}
                 disabled={syncingMessages}
-                className="w-full"
+                size="sm"
                 variant="secondary"
               >
                 {syncingMessages ? 'Syncing...' : 'Sync Messages'}
               </Button>
+              <Button
+                onClick={handleSyncOffers}
+                disabled={syncingOffers}
+                size="sm"
+                variant="secondary"
+              >
+                {syncingOffers ? 'Syncing...' : 'Sync Offers'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Large Terminal Window */}
+        {(ordersRunId || disputesRunId || messagesRunId || offersRunId) && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Real-Time Sync Terminal</CardTitle>
+              <CardDescription>
+                Live activity log showing all eBay API communication and sync progress
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {ordersRunId && (
+                <SyncTerminal 
+                  runId={ordersRunId}
+                  onComplete={handleSyncComplete}
+                />
+              )}
+              {disputesRunId && (
+                <SyncTerminal 
+                  runId={disputesRunId}
+                  onComplete={handleDisputesSyncComplete}
+                />
+              )}
+              {messagesRunId && (
+                <SyncTerminal 
+                  runId={messagesRunId}
+                  onComplete={handleMessagesSyncComplete}
+                />
+              )}
+              {offersRunId && (
+                <SyncTerminal 
+                  runId={offersRunId}
+                  onComplete={handleOffersSyncComplete}
+                />
+              )}
             </CardContent>
           </Card>
-        </div>
-
-        {disputesRunId && (
-          <div className="mb-6">
-            <SyncTerminal 
-              runId={disputesRunId}
-              onComplete={handleDisputesSyncComplete}
-            />
-          </div>
         )}
 
-        {messagesRunId && (
-          <div className="mb-6">
-            <SyncTerminal 
-              runId={messagesRunId}
-              onComplete={handleMessagesSyncComplete}
-            />
-          </div>
+        {/* Success Messages */}
+        {syncResult && (
+          <Alert className="mb-6 bg-green-50 border-green-200">
+            <AlertDescription className="text-green-800">
+              <strong>Orders Synced!</strong> Fetched: {syncResult.total_fetched}, Stored: {syncResult.total_stored}
+            </AlertDescription>
+          </Alert>
         )}
 
         {transactionsSyncResult && (
