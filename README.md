@@ -169,6 +169,24 @@ The frontend will be available at http://localhost:5173
 
 ## Production Deployment
 
+### Canonical Production Environment
+
+**Production URL:** https://ebay-connector-app-0uyvn1o1.devinapps.com (note: "uy" not "vy")
+
+**Production Branch:** `main`
+
+**Build Verification:**
+- Current build number is displayed in the header (e.g., "Build #6")
+- To verify the latest build is deployed, append `?v=verify` to the URL and do a hard refresh (Ctrl/Cmd+Shift+R)
+- Check that the build number matches the latest commit on main branch in `frontend/src/config/build.ts`
+
+**Important Notes:**
+- ⚠️ The domain `ebay-connector-app-0uvyn1o1.devinapps.com` (with "vy") is deprecated and archived. Do not use it.
+- Always deploy from the `main` branch to production
+- The production deployment automatically updates when changes are pushed to main
+
+### Production Deployment Checklist
+
 For production deployment:
 1. Change `SECRET_KEY` to a strong random value
 2. Update `EBAY_REDIRECT_URI` to your production domain
