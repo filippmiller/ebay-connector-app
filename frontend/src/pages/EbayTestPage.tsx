@@ -65,7 +65,6 @@ export const EbayTestPage: React.FC = () => {
     setError('');
     setSyncing(true);
     setSyncResult(null);
-    setOrdersRunId(null);
     try {
       const data = await ebayApi.syncAllOrders();
       setSyncResult(data);
@@ -87,18 +86,10 @@ export const EbayTestPage: React.FC = () => {
     setSyncingTransactions(true);
     setTransactionsSyncResult(null);
     try {
-      const response = await fetch('/api/ebay/sync/transactions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to sync transactions');
-      const data = await response.json();
+      const data = await ebayApi.syncAllTransactions();
       setTransactionsSyncResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync transactions');
-    } finally {
       setSyncingTransactions(false);
     }
   };
@@ -107,16 +98,8 @@ export const EbayTestPage: React.FC = () => {
     setError('');
     setSyncingDisputes(true);
     setDisputesSyncResult(null);
-    setDisputesRunId(null);
     try {
-      const response = await fetch('/api/ebay/sync/disputes', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to sync disputes');
-      const data = await response.json();
+      const data = await ebayApi.syncAllDisputes();
       setDisputesSyncResult(data);
       if (data.run_id) {
         setDisputesRunId(data.run_id);
@@ -161,16 +144,8 @@ export const EbayTestPage: React.FC = () => {
     setError('');
     setSyncingOffers(true);
     setOffersSyncResult(null);
-    setOffersRunId(null);
     try {
-      const response = await fetch('/api/ebay/sync/offers', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to sync offers');
-      const data = await response.json();
+      const data = await ebayApi.syncAllOffers();
       setOffersSyncResult(data);
       if (data.run_id) {
         setOffersRunId(data.run_id);

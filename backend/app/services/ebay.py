@@ -494,7 +494,7 @@ class EbayService:
             )
 
 
-    async def sync_all_orders(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_orders(self, user_id: str, access_token: str, run_id: str = None) -> Dict[str, Any]:
         """
         Synchronize all orders from eBay to database with pagination
         """
@@ -502,7 +502,7 @@ class EbayService:
         from app.services.sync_event_logger import SyncEventLogger
         import time
         
-        event_logger = SyncEventLogger(user_id, 'orders')
+        event_logger = SyncEventLogger(user_id, 'orders', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'orders')
         start_time = time.time()
         
@@ -764,13 +764,17 @@ class EbayService:
             )
 
 
-    async def sync_all_transactions(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_transactions(self, user_id: str, access_token: str, run_id: str = None) -> Dict[str, Any]:
         """
         Synchronize all transactions from eBay to database with pagination
         """
         from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
         
+        event_logger = SyncEventLogger(user_id, 'transactions', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'transactions')
+        start_time = time.time()
         
         try:
             total_fetched = 0
@@ -785,17 +789,37 @@ class EbayService:
                 'limit': 100
             }
             
+            event_logger.log_start(f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT})")
             logger.info(f"Starting transaction sync for user {user_id}")
             
+            request_start = time.time()
             transactions_response = await self.fetch_transactions(access_token, filter_params)
+            request_duration = int((time.time() - request_start) * 1000)
+            
             transactions = transactions_response.get('transactions', [])
             total_fetched = len(transactions)
+            
+            event_logger.log_http_request(
+                'GET',
+                f'/sell/finances/v1/transaction?filter=transactionDate:[...]&limit=100',
+                200,
+                request_duration,
+                total_fetched
+            )
             
             for transaction in transactions:
                 if ebay_db.upsert_transaction(user_id, transaction):
                     total_stored += 1
             
+            duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
+            
+            event_logger.log_done(
+                f"Transactions sync completed: {total_fetched} fetched, {total_stored} stored",
+                total_fetched,
+                total_stored,
+                duration_ms
+            )
             
             logger.info(f"Transaction sync completed: fetched={total_fetched}, stored={total_stored}")
             
@@ -803,16 +827,20 @@ class EbayService:
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
-                "job_id": job_id
+                "job_id": job_id,
+                "run_id": event_logger.run_id
             }
             
         except Exception as e:
             error_msg = str(e)
+            event_logger.log_error(f"Transactions sync failed: {error_msg}", e)
             logger.error(f"Transaction sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
+        finally:
+            event_logger.close()
 
-    async def sync_all_disputes(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_disputes(self, user_id: str, access_token: str, run_id: str = None) -> Dict[str, Any]:
         """
         Synchronize all payment disputes from eBay to database with real-time logging
         """
@@ -820,7 +848,7 @@ class EbayService:
         from app.services.sync_event_logger import SyncEventLogger
         import time
         
-        event_logger = SyncEventLogger(user_id, 'disputes')
+        event_logger = SyncEventLogger(user_id, 'disputes', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'disputes')
         start_time = time.time()
         
@@ -887,7 +915,7 @@ class EbayService:
         finally:
             event_logger.close()
 
-    async def sync_all_offers(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_offers(self, user_id: str, access_token: str, run_id: str = None) -> Dict[str, Any]:
         """
         Synchronize all offers from eBay to database with real-time logging
         """
@@ -895,7 +923,7 @@ class EbayService:
         from app.services.sync_event_logger import SyncEventLogger
         import time
         
-        event_logger = SyncEventLogger(user_id, 'offers')
+        event_logger = SyncEventLogger(user_id, 'offers', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'offers')
         start_time = time.time()
         

@@ -19,10 +19,10 @@ class SyncEventLogger:
     Emits structured log events that can be streamed via SSE and persisted to database.
     """
     
-    def __init__(self, user_id: str, sync_type: str):
+    def __init__(self, user_id: str, sync_type: str, run_id: Optional[str] = None):
         self.user_id = user_id
         self.sync_type = sync_type
-        self.run_id = f"{sync_type}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        self.run_id = run_id or f"{sync_type}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         self.db: Optional[Session] = None
         self.events = []
         

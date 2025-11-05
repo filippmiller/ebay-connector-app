@@ -56,6 +56,21 @@ export const ebayApi = {
     return response.data;
   },
 
+  async syncAllTransactions(): Promise<any> {
+    const response = await apiClient.post('/ebay/sync/transactions');
+    return response.data;
+  },
+
+  async syncAllDisputes(): Promise<any> {
+    const response = await apiClient.post('/ebay/sync/disputes');
+    return response.data;
+  },
+
+  async syncAllOffers(): Promise<any> {
+    const response = await apiClient.post('/ebay/sync/offers');
+    return response.data;
+  },
+
   async getSyncJobs(limit: number = 10): Promise<any> {
     const response = await apiClient.get(`/ebay/sync/jobs?limit=${limit}`);
     return response.data;
