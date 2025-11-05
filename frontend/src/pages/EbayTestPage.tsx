@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { LogOut, ArrowLeft } from 'lucide-react';
-import { ScrollArea } from '../components/ui/scroll-area';
 import { SyncTerminal } from '../components/SyncTerminal';
 
 export const EbayTestPage: React.FC = () => {
