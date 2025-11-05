@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -143,33 +143,59 @@ async def get_message_stats(
         "flagged_count": flagged_count
     }
 
-@router.post("/sync")
+@router.post("/sync", status_code=202)
 async def sync_messages(
+    background_tasks: BackgroundTasks,
     dry_run: bool = Query(False, alias="dryRun"),
-    current_user: UserModel = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """
-    Comprehensive message sync using GetMyMessages API with real-time logging
-    - Enumerates folders first (ReturnSummary)
-    - Two-phase retrieval per folder (headers → bodies)
-    - Batches message body fetches (≤10 IDs at a time)
+    Start messages sync in background and return run_id immediately.
+    Client can use run_id to stream live progress via SSE endpoint.
     """
     if not current_user.ebay_connected or not current_user.ebay_access_token:
         raise HTTPException(status_code=400, detail="eBay account not connected")
     
     from app.services.sync_event_logger import SyncEventLogger
-    import time
     
     event_logger = SyncEventLogger(current_user.id, 'messages')
+    run_id = event_logger.run_id
+    
+    logger.info(f"Allocated run_id {run_id} for messages sync, user: {current_user.email}")
+    
+    background_tasks.add_task(
+        _run_messages_sync,
+        current_user.id,
+        current_user.ebay_access_token,
+        dry_run,
+        run_id
+    )
+    
+    return {
+        "run_id": run_id,
+        "status": "started",
+        "message": "Messages sync started in background"
+    }
+
+
+async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run_id: str):
+    """Background task to run messages sync with error handling"""
+    from app.services.sync_event_logger import SyncEventLogger
+    from app.database import get_db
+    import time
+    
+    event_logger = SyncEventLogger(user_id, 'messages')
+    event_logger.run_id = run_id
     start_time = time.time()
+    
+    db = next(get_db())
     
     try:
         event_logger.log_start("Starting Messages sync from eBay")
-        logger.info(f"Enumerating message folders for user {current_user.id}")
+        logger.info(f"Enumerating message folders for user {user_id}")
         
         request_start = time.time()
-        folders_response = await ebay_service.get_message_folders(current_user.ebay_access_token)
+        folders_response = await ebay_service.get_message_folders(access_token)
         request_duration = int((time.time() - request_start) * 1000)
         folders = folders_response.get("folders", [])
         
@@ -182,19 +208,12 @@ async def sync_messages(
         )
         
         if not folders:
-            logger.warning(f"No message folders found for user {current_user.id}")
+            logger.warning(f"No message folders found for user {user_id}")
             event_logger.log_warning("No message folders found")
             duration_ms = int((time.time() - start_time) * 1000)
             event_logger.log_done("Messages sync completed: no folders found", 0, 0, duration_ms)
             event_logger.close()
-            return {
-                "status": "completed",
-                "folders": {},
-                "total_fetched": 0,
-                "total_stored": 0,
-                "message": "No message folders found",
-                "run_id": event_logger.run_id
-            }
+            return
         
         total_messages = sum(f["total_count"] for f in folders)
         event_logger.log_info(f"Found {len(folders)} folders with {total_messages} total messages: {[f['folder_name'] for f in folders]}")
@@ -203,13 +222,9 @@ async def sync_messages(
         if dry_run:
             folder_counts = {f["folder_name"]: f["total_count"] for f in folders}
             total_count = sum(f["total_count"] for f in folders)
+            event_logger.log_done(f"Dry run completed: {total_count} messages found", 0, 0, 0)
             event_logger.close()
-            return {
-                "dry_run": True,
-                "folders": folder_counts,
-                "total": total_count,
-                "run_id": event_logger.run_id
-            }
+            return
         
         total_fetched = 0
         total_stored = 0
@@ -243,7 +258,7 @@ async def sync_messages(
                 
                 request_start = time.time()
                 headers_response = await ebay_service.get_message_headers(
-                    current_user.ebay_access_token,
+                    access_token,
                     folder_id,
                     page_number=page_number,
                     entries_per_page=200
@@ -287,7 +302,7 @@ async def sync_messages(
                 try:
                     request_start = time.time()
                     messages = await ebay_service.get_message_bodies(
-                        current_user.ebay_access_token,
+                        access_token,
                         batch_ids
                     )
                     request_duration = int((time.time() - request_start) * 1000)
@@ -311,7 +326,7 @@ async def sync_messages(
                         
                         existing = db.query(Message).filter(
                             Message.message_id == message_id,
-                            Message.user_id == current_user.id
+                            Message.user_id == user_id
                         ).first()
                         
                         if existing:
@@ -322,10 +337,6 @@ async def sync_messages(
                         recipient = msg.get("recipientuserid", "")
                         direction = "INCOMING"
                         
-                        ebay_username = getattr(current_user, "ebay_username", None)
-                        if sender and ebay_username and sender.lower() == ebay_username.lower():
-                            direction = "OUTGOING"
-                        
                         receive_date_str = msg.get("receivedate", "")
                         message_date = datetime.utcnow()
                         if receive_date_str:
@@ -335,7 +346,7 @@ async def sync_messages(
                                 logger.warning(f"Failed to parse date {receive_date_str}: {e}")
                         
                         message = Message(
-                            user_id=current_user.id,
+                            user_id=user_id,
                             message_id=message_id,
                             thread_id=msg.get("externalmessageid") or message_id,
                             sender_username=sender,
@@ -379,20 +390,12 @@ async def sync_messages(
             total_stored,
             duration_ms
         )
-        
-        return {
-            "status": "completed",
-            "folders": folder_stats,
-            "total_fetched": total_fetched,
-            "total_stored": total_stored,
-            "run_id": event_logger.run_id
-        }
     
     except Exception as e:
         error_msg = str(e)
         event_logger.log_error(f"Messages sync failed: {error_msg}", e)
-        logger.error(f"Message sync failed: {error_msg}")
+        logger.error(f"Background messages sync failed for run_id {run_id}: {error_msg}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Message sync failed: {error_msg}")
     finally:
         event_logger.close()
+        db.close()

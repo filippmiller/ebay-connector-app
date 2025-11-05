@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from app.models.ebay import EbayAuthRequest, EbayAuthCallback, EbayConnectionStatus
@@ -263,31 +263,64 @@ async def test_fetch_transactions(
         settings.EBAY_ENVIRONMENT = original_env
 
 
-@router.post("/sync/orders")
-async def sync_all_orders(current_user: User = Depends(get_current_active_user)):
+@router.post("/sync/orders", status_code=status.HTTP_202_ACCEPTED)
+async def sync_all_orders(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Start orders sync in background and return run_id immediately.
+    Client can use run_id to stream live progress via SSE endpoint.
+    """
     if not current_user.ebay_connected or not current_user.ebay_access_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="eBay account not connected. Please connect to eBay first."
         )
     
-    logger.info(f"Starting order sync for user: {current_user.email}")
+    from app.services.sync_event_logger import SyncEventLogger
     
+    event_logger = SyncEventLogger(current_user.id, 'orders')
+    run_id = event_logger.run_id
+    
+    logger.info(f"Allocated run_id {run_id} for order sync, user: {current_user.email}")
+    
+    background_tasks.add_task(
+        _run_orders_sync,
+        current_user.id,
+        current_user.ebay_access_token,
+        current_user.ebay_environment,
+        run_id
+    )
+    
+    return {
+        "run_id": run_id,
+        "status": "started",
+        "message": "Orders sync started in background"
+    }
+
+
+async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
+    """Background task to run orders sync with error handling"""
     from app.config import settings
+    from app.services.sync_event_logger import SyncEventLogger
+    
+    event_logger = SyncEventLogger(user_id, 'orders')
+    event_logger.run_id = run_id  # Use the pre-allocated run_id
+    
     original_env = settings.EBAY_ENVIRONMENT
-    settings.EBAY_ENVIRONMENT = current_user.ebay_environment
+    settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        result = await ebay_service.sync_all_orders(
-            current_user.id,
-            current_user.ebay_access_token
-        )
-        return result
+        event_logger.log_start(f"Starting orders sync for user {user_id}")
+        await ebay_service.sync_all_orders(user_id, access_token, event_logger=event_logger)
+        event_logger.log_done("Orders sync completed successfully", 0, 0, 0)
     except Exception as e:
-        logger.error(f"Error syncing orders: {str(e)}")
-        raise
+        logger.error(f"Background orders sync failed for run_id {run_id}: {str(e)}")
+        event_logger.log_error(f"Orders sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
+        event_logger.close()
 
 
 @router.get("/orders")
@@ -324,58 +357,114 @@ async def get_sync_jobs(
     }
 
 
-@router.post("/sync/transactions")
-async def sync_all_transactions(current_user: User = Depends(get_current_active_user)):
+@router.post("/sync/transactions", status_code=status.HTTP_202_ACCEPTED)
+async def sync_all_transactions(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user)
+):
     if not current_user.ebay_connected or not current_user.ebay_access_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="eBay account not connected. Please connect to eBay first."
         )
     
-    logger.info(f"Starting transaction sync for user: {current_user.email}")
+    from app.services.sync_event_logger import SyncEventLogger
     
+    event_logger = SyncEventLogger(current_user.id, 'transactions')
+    run_id = event_logger.run_id
+    
+    logger.info(f"Allocated run_id {run_id} for transaction sync, user: {current_user.email}")
+    
+    background_tasks.add_task(
+        _run_transactions_sync,
+        current_user.id,
+        current_user.ebay_access_token,
+        current_user.ebay_environment,
+        run_id
+    )
+    
+    return {
+        "run_id": run_id,
+        "status": "started",
+        "message": "Transactions sync started in background"
+    }
+
+
+async def _run_transactions_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     from app.config import settings
+    from app.services.sync_event_logger import SyncEventLogger
+    
+    event_logger = SyncEventLogger(user_id, 'transactions')
+    event_logger.run_id = run_id
+    
     original_env = settings.EBAY_ENVIRONMENT
-    settings.EBAY_ENVIRONMENT = current_user.ebay_environment
+    settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        result = await ebay_service.sync_all_transactions(
-            current_user.id,
-            current_user.ebay_access_token
-        )
-        return result
+        event_logger.log_start(f"Starting transactions sync for user {user_id}")
+        await ebay_service.sync_all_transactions(user_id, access_token, event_logger=event_logger)
+        event_logger.log_done("Transactions sync completed successfully", 0, 0, 0)
     except Exception as e:
-        logger.error(f"Error syncing transactions: {str(e)}")
-        raise
+        logger.error(f"Background transactions sync failed for run_id {run_id}: {str(e)}")
+        event_logger.log_error(f"Transactions sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
+        event_logger.close()
 
 
-@router.post("/sync/disputes")
-async def sync_all_disputes(current_user: User = Depends(get_current_active_user)):
+@router.post("/sync/disputes", status_code=status.HTTP_202_ACCEPTED)
+async def sync_all_disputes(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user)
+):
     if not current_user.ebay_connected or not current_user.ebay_access_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="eBay account not connected. Please connect to eBay first."
         )
     
-    logger.info(f"Starting disputes sync for user: {current_user.email}")
+    from app.services.sync_event_logger import SyncEventLogger
     
+    event_logger = SyncEventLogger(current_user.id, 'disputes')
+    run_id = event_logger.run_id
+    
+    logger.info(f"Allocated run_id {run_id} for disputes sync, user: {current_user.email}")
+    
+    background_tasks.add_task(
+        _run_disputes_sync,
+        current_user.id,
+        current_user.ebay_access_token,
+        current_user.ebay_environment,
+        run_id
+    )
+    
+    return {
+        "run_id": run_id,
+        "status": "started",
+        "message": "Disputes sync started in background"
+    }
+
+
+async def _run_disputes_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     from app.config import settings
+    from app.services.sync_event_logger import SyncEventLogger
+    
+    event_logger = SyncEventLogger(user_id, 'disputes')
+    event_logger.run_id = run_id
+    
     original_env = settings.EBAY_ENVIRONMENT
-    settings.EBAY_ENVIRONMENT = current_user.ebay_environment
+    settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        result = await ebay_service.sync_all_disputes(
-            current_user.id,
-            current_user.ebay_access_token
-        )
-        return result
+        event_logger.log_start(f"Starting disputes sync for user {user_id}")
+        await ebay_service.sync_all_disputes(user_id, access_token, event_logger=event_logger)
+        event_logger.log_done("Disputes sync completed successfully", 0, 0, 0)
     except Exception as e:
-        logger.error(f"Error syncing disputes: {str(e)}")
-        raise
+        logger.error(f"Background disputes sync failed for run_id {run_id}: {str(e)}")
+        event_logger.log_error(f"Disputes sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
+        event_logger.close()
 
 
 @router.get("/disputes")
@@ -440,31 +529,59 @@ async def get_disputes(
         session.close()
 
 
-@router.post("/sync/offers")
-async def sync_all_offers(current_user: User = Depends(get_current_active_user)):
+@router.post("/sync/offers", status_code=status.HTTP_202_ACCEPTED)
+async def sync_all_offers(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user)
+):
     if not current_user.ebay_connected or not current_user.ebay_access_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="eBay account not connected. Please connect to eBay first."
         )
     
-    logger.info(f"Starting offers sync for user: {current_user.email}")
+    from app.services.sync_event_logger import SyncEventLogger
     
+    event_logger = SyncEventLogger(current_user.id, 'offers')
+    run_id = event_logger.run_id
+    
+    logger.info(f"Allocated run_id {run_id} for offers sync, user: {current_user.email}")
+    
+    background_tasks.add_task(
+        _run_offers_sync,
+        current_user.id,
+        current_user.ebay_access_token,
+        current_user.ebay_environment,
+        run_id
+    )
+    
+    return {
+        "run_id": run_id,
+        "status": "started",
+        "message": "Offers sync started in background"
+    }
+
+
+async def _run_offers_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     from app.config import settings
+    from app.services.sync_event_logger import SyncEventLogger
+    
+    event_logger = SyncEventLogger(user_id, 'offers')
+    event_logger.run_id = run_id
+    
     original_env = settings.EBAY_ENVIRONMENT
-    settings.EBAY_ENVIRONMENT = current_user.ebay_environment
+    settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        result = await ebay_service.sync_all_offers(
-            current_user.id,
-            current_user.ebay_access_token
-        )
-        return result
+        event_logger.log_start(f"Starting offers sync for user {user_id}")
+        await ebay_service.sync_all_offers(user_id, access_token, event_logger=event_logger)
+        event_logger.log_done("Offers sync completed successfully", 0, 0, 0)
     except Exception as e:
-        logger.error(f"Error syncing offers: {str(e)}")
-        raise
+        logger.error(f"Background offers sync failed for run_id {run_id}: {str(e)}")
+        event_logger.log_error(f"Offers sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
+        event_logger.close()
 
 
 @router.get("/export/all")
@@ -532,17 +649,31 @@ async def stream_sync_events(
 ):
     """
     Stream sync events in real-time using Server-Sent Events (SSE).
-    Client opens this endpoint to receive live updates during sync operations.
+    Continuously polls for new events and streams them until sync completes.
     """
     from app.services.sync_event_logger import get_sync_events_from_db
     import json
+    import asyncio
     
     async def event_generator():
-        events = get_sync_events_from_db(run_id, current_user.id)
+        last_event_count = 0
+        is_complete = False
         
-        for event in events:
-            yield f"event: {event['event_type']}\n"
-            yield f"data: {json.dumps(event)}\n\n"
+        while not is_complete:
+            events = get_sync_events_from_db(run_id, current_user.id)
+            
+            if len(events) > last_event_count:
+                for event in events[last_event_count:]:
+                    yield f"event: {event['event_type']}\n"
+                    yield f"data: {json.dumps(event)}\n\n"
+                    
+                    if event['event_type'] in ['done', 'error']:
+                        is_complete = True
+                
+                last_event_count = len(events)
+            
+            if not is_complete:
+                await asyncio.sleep(0.5)
         
         yield f"event: end\n"
         yield f"data: {json.dumps({'message': 'Stream complete'})}\n\n"
