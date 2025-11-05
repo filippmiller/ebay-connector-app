@@ -191,8 +191,16 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
     db = next(get_db())
     
     try:
-        event_logger.log_start("Starting Messages sync from eBay")
+        from app.config import settings
+        import asyncio
+        
+        event_logger.log_start(f"Starting Messages sync from eBay ({settings.EBAY_ENVIRONMENT})")
+        event_logger.log_info(f"API Configuration: Trading API (XML), message headers limit=200, bodies batch=10")
         logger.info(f"Enumerating message folders for user {user_id}")
+        
+        await asyncio.sleep(0.5)
+        
+        event_logger.log_info(f"→ Requesting: POST /ws/eBayISAPI.dll (GetMyMessages - ReturnSummary)")
         
         request_start = time.time()
         folders_response = await ebay_service.get_message_folders(access_token)
@@ -207,6 +215,8 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
             len(folders)
         )
         
+        event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(folders)} folders")
+        
         if not folders:
             logger.warning(f"No message folders found for user {user_id}")
             event_logger.log_warning("No message folders found")
@@ -218,6 +228,8 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
         total_messages = sum(f["total_count"] for f in folders)
         event_logger.log_info(f"Found {len(folders)} folders with {total_messages} total messages: {[f['folder_name'] for f in folders]}")
         logger.info(f"Found {len(folders)} folders: {[f['folder_name'] for f in folders]}")
+        
+        await asyncio.sleep(0.3)
         
         if dry_run:
             folder_counts = {f["folder_name"]: f["total_count"] for f in folders}
@@ -254,6 +266,7 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
             page_number = 1
             
             while True:
+                event_logger.log_info(f"→ Requesting headers page {page_number}: POST /ws/eBayISAPI.dll (GetMyMessages - {folder_name})")
                 logger.info(f"Fetching headers page {page_number} for folder {folder_name}")
                 
                 request_start = time.time()
@@ -280,12 +293,14 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                     len(message_ids) + len(alert_ids)
                 )
                 
+                event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Page {page_number}/{total_pages}: {len(message_ids)} messages, {len(alert_ids)} alerts")
                 logger.info(f"Page {page_number}/{total_pages}: Found {len(message_ids)} messages, {len(alert_ids)} alerts")
                 
                 if page_number >= total_pages:
                     break
                 
                 page_number += 1
+                await asyncio.sleep(0.5)
             
             event_logger.log_info(f"Folder {folder_name}: Collected {len(all_message_ids)} message IDs, fetching bodies...")
             logger.info(f"Folder {folder_name}: Collected {len(all_message_ids)} total message IDs")
@@ -297,6 +312,7 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
             for i in range(0, len(all_message_ids), 10):
                 batch_ids = all_message_ids[i:i+10]
                 batch_num = i//10 + 1
+                event_logger.log_info(f"→ Requesting bodies batch {batch_num}/{total_batches}: POST /ws/eBayISAPI.dll (GetMyMessages - {len(batch_ids)} IDs)")
                 logger.info(f"Fetching bodies for batch {batch_num} ({len(batch_ids)} messages)")
                 
                 try:
@@ -314,6 +330,8 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                         request_duration,
                         len(messages)
                     )
+                    
+                    event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(messages)} message bodies")
                     
                     folder_fetched += len(messages)
                     
@@ -367,9 +385,13 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                         folder_stored += 1
                     
                     db.commit()
+                    event_logger.log_info(f"← Database: Stored {len(messages)} messages from batch {batch_num}")
+                    
+                    await asyncio.sleep(0.4)
                     
                 except Exception as e:
                     logger.error(f"Failed to fetch/store batch {i//10 + 1}: {str(e)}")
+                    event_logger.log_error(f"Batch {batch_num} failed: {str(e)}", e)
                     db.rollback()
                     continue
             
