@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import timedelta
+from sqlalchemy.exc import SQLAlchemyError
 from app.models.user import UserCreate, UserLogin, UserResponse, Token, PasswordResetRequest, PasswordReset
 from app.services.auth import (
     register_user, 
@@ -33,22 +34,31 @@ async def register(user_data: UserCreate):
 @router.post("/login", response_model=Token)
 async def login(user_credentials: UserLogin):
     logger.info(f"Login attempt for email: {user_credentials.email}")
-    user = authenticate_user(user_credentials.email, user_credentials.password)
-    if not user:
-        logger.warning(f"Failed login attempt for: {user_credentials.email}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+    
+    try:
+        user = authenticate_user(user_credentials.email, user_credentials.password)
+        if not user:
+            logger.warning(f"Failed login attempt for: {user_credentials.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user.id}, expires_delta=access_token_expires
         )
+        
+        logger.info(f"✅ User logged in successfully: {user.email} (role: {user.role})")
+        return {"access_token": access_token, "token_type": "bearer"}
     
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.id}, expires_delta=access_token_expires
-    )
-    
-    logger.info(f"✅ User logged in successfully: {user.email} (role: {user.role})")
-    return {"access_token": access_token, "token_type": "bearer"}
+    except SQLAlchemyError as e:
+        logger.error(f"Database error during login for {user_credentials.email}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database unavailable. Please try again later.",
+        )
 
 
 @router.get("/me", response_model=UserResponse)

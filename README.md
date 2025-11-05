@@ -159,13 +159,131 @@ The frontend will be available at http://localhost:5173
 - `GET /ebay/logs` - Get eBay connection logs
 - `DELETE /ebay/logs` - Clear logs (admin only)
 
-## Security Notes
+## Authentication Implementation
 
-- JWT tokens are stored in localStorage
-- Passwords are hashed using Argon2
+### Overview
+
+This application uses **custom authentication** with a PostgreSQL/SQLite users table, **not Supabase Auth**. Authentication is handled via JWT tokens with Bearer authentication.
+
+### Auth Flow
+
+1. **User Registration**: POST `/auth/register` with `{email, username, password}`
+   - Passwords are hashed using SHA-256 (⚠️ **Security Note**: Migration to bcrypt/argon2 recommended)
+   - Admin emails are auto-assigned admin role (see `backend/app/services/auth.py:99-103`)
+   - Handler: `backend/app/routers/auth.py:18-30`
+
+2. **User Login**: POST `/auth/login` with `{email, password}`
+   - Returns `{access_token, token_type: "bearer"}`
+   - Token expires after `ACCESS_TOKEN_EXPIRE_MINUTES` (default: 30)
+   - Handler: `backend/app/routers/auth.py:34-61`
+
+3. **Authenticated Requests**: Include `Authorization: Bearer <token>` header
+   - Token verification: `backend/app/services/auth.py:46-69`
+   - Current user dependency: `backend/app/services/auth.py:72-79`
+
+### Files Handling Auth
+
+**Routes/Controllers:**
+- `backend/app/routers/auth.py:34-61` - POST `/auth/login` endpoint
+- `backend/app/routers/auth.py:18-30` - POST `/auth/register` endpoint
+- `backend/app/routers/auth.py:64-74` - GET `/auth/me` endpoint
+
+**Services/Helpers:**
+- `backend/app/services/auth.py:15-16` - `verify_password()` (SHA-256 verification)
+- `backend/app/services/auth.py:19-20` - `get_password_hash()` (SHA-256 hashing)
+- `backend/app/services/auth.py:23-31` - `create_access_token()` (JWT creation)
+- `backend/app/services/auth.py:34-43` - `authenticate_user()` (email/password verification)
+- `backend/app/services/auth.py:46-69` - `get_current_user()` (JWT verification)
+
+**Database:**
+- `backend/app/services/database.py:3-8` - Database selection (PostgreSQL vs SQLite)
+- `backend/app/services/postgres_database.py:53-61` - `get_user_by_email()`
+- `backend/app/services/postgres_database.py:63-71` - `get_user_by_id()`
+- `backend/app/models_sqlalchemy/models.py` - SQLAlchemy User model
+
+### Required Environment Variables for Auth (Production)
+
+**Backend (`backend/.env`):**
+```env
+# JWT Configuration
+SECRET_KEY=your-long-random-secret-key-here
+# OR (alias for ops compatibility):
+JWT_SECRET=your-long-random-secret-key-here
+
+# JWT Algorithm (default: HS256)
+ALGORITHM=HS256
+
+# Token expiration in minutes (default: 30)
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# Database connection (required)
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+
+# CORS configuration (required for frontend access)
+ALLOWED_ORIGINS=https://your-frontend-domain.com,http://localhost:5173
+
+# Frontend URL (for reference)
+FRONTEND_URL=https://your-frontend-domain.com
+```
+
+**Not Used by Auth:**
+- `COOKIE_DOMAIN`, `COOKIE_SAMESITE`, `COOKIE_SECURE` - We use Bearer tokens, not cookies
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` - No Supabase Auth integration
+
+### Testing Auth Locally
+
+1. **Create a test user:**
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","username":"testuser","password":"TestPassword123!"}'
+```
+
+2. **Login:**
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"TestPassword123!"}'
+```
+
+Response:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+3. **Access protected endpoints:**
+```bash
+curl -X GET http://localhost:8000/auth/me \
+  -H "Authorization: Bearer <your-token-here>"
+```
+
+### Error Handling
+
+**401 Unauthorized:**
+- Incorrect email or password
+- Invalid or expired JWT token
+- Missing Authorization header
+
+**403 Forbidden:**
+- Account is inactive
+- Insufficient permissions (e.g., non-admin accessing admin endpoint)
+
+**500 Internal Server Error:**
+- Database connection failure
+- Unexpected server errors
+
+All error responses include proper CORS headers when `ALLOWED_ORIGINS` is configured correctly.
+
+### Security Notes
+
+- JWT tokens are stored in localStorage on the frontend
+- Passwords are currently hashed using SHA-256 (⚠️ **Migration to bcrypt/argon2 strongly recommended**)
 - Sensitive credentials in logs are sanitized (showing only first and last 4 characters)
-- CORS is configured for local development
-- In-memory database (data not persisted to disk)
+- CORS is configured via `ALLOWED_ORIGINS` environment variable
+- Database connection errors are caught and return proper 500 responses with JSON body
 
 ## Production Deployment
 
