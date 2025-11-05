@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from app.models.ebay import EbayAuthRequest, EbayAuthCallback, EbayConnectionStatus
-from app.services.auth import get_current_active_user
+from app.services.auth import get_current_active_user, get_user_from_header_or_query
 from app.services.ebay import ebay_service
 from app.models.user import User
 from app.utils.logger import logger, ebay_logger
@@ -645,11 +645,14 @@ async def get_analytics_summary(current_user: User = Depends(get_current_active_
 @router.get("/sync/events/{run_id}")
 async def stream_sync_events(
     run_id: str,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_user_from_header_or_query)
 ):
     """
     Stream sync events in real-time using Server-Sent Events (SSE).
     Continuously polls for new events and streams them until sync completes.
+    
+    NOTE: This endpoint supports token query parameter for EventSource compatibility.
+    EventSource API cannot send custom headers, so we accept ?token=<jwt> as fallback.
     """
     from app.services.sync_event_logger import get_sync_events_from_db
     import json
