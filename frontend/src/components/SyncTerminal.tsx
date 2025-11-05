@@ -38,7 +38,8 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete })
   useEffect(() => {
     if (!runId || isPaused) return;
 
-    const eventSource = new EventSource(`/api/ebay/sync/events/${runId}`);
+    const token = localStorage.getItem('auth_token');
+    const eventSource = new EventSource(`/api/ebay/sync/events/${runId}?token=${encodeURIComponent(token || '')}`);
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
@@ -204,7 +205,7 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete })
         </div>
       </CardHeader>
       <CardContent>
-        <ScrollArea className="h-96 w-full rounded-md border bg-gray-950 p-4 font-mono text-sm" ref={scrollRef}>
+        <ScrollArea className="h-[600px] w-full rounded-md border bg-gray-950 p-4 font-mono text-sm" ref={scrollRef}>
           {events.length === 0 ? (
             <div className="text-gray-500">Waiting for sync to start...</div>
           ) : (

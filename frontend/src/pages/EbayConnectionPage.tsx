@@ -378,102 +378,57 @@ export const EbayConnectionPage: React.FC = () => {
                 </Alert>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Sync Orders</CardTitle>
-                    <CardDescription>
-                      Fetch ALL orders from eBay and store in database
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sync Operations</CardTitle>
+                  <CardDescription>
+                    Fetch data from eBay and store in database
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       onClick={handleSyncOrders}
                       disabled={syncing || !connectionStatus?.connected}
-                      className="w-full"
-                      size="lg"
+                      size="sm"
                     >
-                      {syncing ? 'Syncing Orders...' : 'Sync All Orders'}
+                      {syncing ? 'Syncing...' : 'Orders'}
                     </Button>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Sync Transactions</CardTitle>
-                    <CardDescription>
-                      Fetch transactions from last 90 days
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
                     <Button
                       onClick={handleSyncTransactions}
                       disabled={syncingTransactions || !connectionStatus?.connected}
-                      className="w-full"
+                      size="sm"
                       variant="secondary"
                     >
-                      {syncingTransactions ? 'Syncing...' : 'Sync Transactions'}
+                      {syncingTransactions ? 'Syncing...' : 'Transactions'}
                     </Button>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Sync Disputes</CardTitle>
-                    <CardDescription>
-                      Fetch all payment disputes from eBay
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
                     <Button
                       onClick={handleSyncDisputes}
                       disabled={syncingDisputes || !connectionStatus?.connected}
-                      className="w-full"
+                      size="sm"
                       variant="secondary"
                     >
-                      {syncingDisputes ? 'Syncing...' : 'Sync Disputes'}
+                      {syncingDisputes ? 'Syncing...' : 'Disputes'}
                     </Button>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Sync Messages</CardTitle>
-                    <CardDescription>
-                      Fetch all messages from eBay inbox
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
                     <Button
                       onClick={handleSyncMessages}
                       disabled={syncingMessages || !connectionStatus?.connected}
-                      className="w-full"
+                      size="sm"
                       variant="secondary"
                     >
-                      {syncingMessages ? 'Syncing...' : 'Sync Messages'}
+                      {syncingMessages ? 'Syncing...' : 'Messages'}
                     </Button>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Sync Offers</CardTitle>
-                    <CardDescription>
-                      Fetch all offers from listings
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
                     <Button
                       onClick={handleSyncOffers}
                       disabled={syncingOffers || !connectionStatus?.connected}
-                      className="w-full"
+                      size="sm"
                       variant="secondary"
                     >
-                      {syncingOffers ? 'Syncing...' : 'Sync Offers'}
+                      {syncingOffers ? 'Syncing...' : 'Offers'}
                     </Button>
-                  </CardContent>
-                </Card>
-              </div>
+                  </div>
+                </CardContent>
+              </Card>
 
               {ordersRunId && (
                 <div className="mt-6">
