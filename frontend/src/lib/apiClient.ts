@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from "axios";
 
 const getBaseURL = () => {
   if (import.meta.env.VITE_API_BASE_URL) {
@@ -26,7 +26,7 @@ const api = axios.create({
   timeout: 15000,
 });
 
-api.interceptors.request.use((config) => {
+api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem("auth_token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -35,8 +35,8 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
+  (response: AxiosResponse) => response,
+  (error: AxiosError) => {
     if (error?.response?.status === 401) {
       localStorage.removeItem("auth_token");
     }
