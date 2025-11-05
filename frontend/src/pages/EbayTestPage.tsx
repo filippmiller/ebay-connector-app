@@ -12,13 +12,11 @@ import { SyncTerminal } from '../components/SyncTerminal';
 export const EbayTestPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncingTransactions, setSyncingTransactions] = useState(false);
   const [syncingDisputes, setSyncingDisputes] = useState(false);
   const [syncingOffers, setSyncingOffers] = useState(false);
-  const [ordersData, setOrdersData] = useState<any>(null);
-  const [transactionsData, setTransactionsData] = useState<any>(null);
+  const [syncingMessages, setSyncingMessages] = useState(false);
   const [syncResult, setSyncResult] = useState<any>(null);
   const [transactionsSyncResult, setTransactionsSyncResult] = useState<any>(null);
   const [disputesSyncResult, setDisputesSyncResult] = useState<any>(null);
@@ -28,37 +26,10 @@ export const EbayTestPage: React.FC = () => {
   const [disputesRunId, setDisputesRunId] = useState<string | null>(null);
   const [messagesRunId, setMessagesRunId] = useState<string | null>(null);
   const [offersRunId, setOffersRunId] = useState<string | null>(null);
-  const [syncingMessages, setSyncingMessages] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
-  };
-
-  const handleFetchOrders = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      const data = await ebayApi.testFetchOrders(50);
-      setOrdersData(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch orders');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFetchTransactions = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      const data = await ebayApi.testFetchTransactions(50);
-      setTransactionsData(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch transactions');
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleSyncOrders = async () => {
@@ -347,76 +318,6 @@ export const EbayTestPage: React.FC = () => {
               <strong>Offers Synced!</strong> Fetched: {offersSyncResult.total_fetched}, Stored: {offersSyncResult.total_stored}
             </AlertDescription>
           </Alert>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Fetch Orders (Test)</CardTitle>
-              <CardDescription>
-                Test fetching a sample of orders from eBay Fulfillment API
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                onClick={handleFetchOrders}
-                disabled={loading}
-                className="w-full"
-              >
-                {loading ? 'Fetching...' : 'Fetch Orders'}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Fetch Transactions (Test)</CardTitle>
-              <CardDescription>
-                Test fetching transactions from eBay Finances API
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                onClick={handleFetchTransactions}
-                disabled={loading}
-                className="w-full"
-              >
-                {loading ? 'Fetching...' : 'Fetch Transactions'}
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {ordersData && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Orders Data</CardTitle>
-              <CardDescription>
-                {ordersData.total || 0} total orders found
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-96 w-full rounded-md border bg-gray-900 text-white p-4 font-mono text-sm">
-                <pre>{JSON.stringify(ordersData, null, 2)}</pre>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-        )}
-
-        {transactionsData && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Transactions Data</CardTitle>
-              <CardDescription>
-                {transactionsData.total || 0} total transactions found
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-96 w-full rounded-md border bg-gray-900 text-white p-4 font-mono text-sm">
-                <pre>{JSON.stringify(transactionsData, null, 2)}</pre>
-              </ScrollArea>
-            </CardContent>
-          </Card>
         )}
       </main>
     </div>

@@ -22,6 +22,7 @@ const TABS: HeaderTab[] = [
   { name: 'CASES/DISPUTES', path: '/cases' },
   { name: 'MESSAGES', path: '/messages' },
   { name: 'OFFERS', path: '/offers' },
+  { name: 'SYNC DATA', path: '/ebay/test' },
   { name: 'ADMIN', path: '/admin', adminOnly: true }
 ];
 
