@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     
     DATABASE_URL: str = "sqlite:///./ebay_connector.db"
     
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    FRONTEND_URL: str = "http://localhost:5173"
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

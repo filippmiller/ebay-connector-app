@@ -1,0 +1,1 @@
+{"error": "version.json not found on live site", "note": "Live site returns index.html, indicating old deployment without build metadata guardrail", "live_url": "https://ebay-connector-app-0uyvn1o1.devinapps.com"}

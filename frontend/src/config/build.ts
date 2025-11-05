@@ -1,3 +1,1 @@
-// Auto-generated build number - increments with each build
-export const BUILD_NUMBER = 6;
-export const BUILD_DATE = '2025-10-22 05:37:24';
+export { BUILD_NUMBER, BUILD_BRANCH, BUILD_COMMIT, BUILD_TIMESTAMP, BUILD_DOMAIN } from './build.generated';
