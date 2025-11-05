@@ -303,24 +303,16 @@ async def sync_all_orders(
 async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     """Background task to run orders sync with error handling"""
     from app.config import settings
-    from app.services.sync_event_logger import SyncEventLogger
-    
-    event_logger = SyncEventLogger(user_id, 'orders')
-    event_logger.run_id = run_id  # Use the pre-allocated run_id
     
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        event_logger.log_start(f"Starting orders sync for user {user_id}")
-        await ebay_service.sync_all_orders(user_id, access_token, event_logger=event_logger)
-        event_logger.log_done("Orders sync completed successfully", 0, 0, 0)
+        await ebay_service.sync_all_orders(user_id, access_token)
     except Exception as e:
         logger.error(f"Background orders sync failed for run_id {run_id}: {str(e)}")
-        event_logger.log_error(f"Orders sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
-        event_logger.close()
 
 
 @router.get("/orders")
@@ -392,24 +384,16 @@ async def sync_all_transactions(
 
 async def _run_transactions_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     from app.config import settings
-    from app.services.sync_event_logger import SyncEventLogger
-    
-    event_logger = SyncEventLogger(user_id, 'transactions')
-    event_logger.run_id = run_id
     
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        event_logger.log_start(f"Starting transactions sync for user {user_id}")
-        await ebay_service.sync_all_transactions(user_id, access_token, event_logger=event_logger)
-        event_logger.log_done("Transactions sync completed successfully", 0, 0, 0)
+        await ebay_service.sync_all_transactions(user_id, access_token)
     except Exception as e:
         logger.error(f"Background transactions sync failed for run_id {run_id}: {str(e)}")
-        event_logger.log_error(f"Transactions sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
-        event_logger.close()
 
 
 @router.post("/sync/disputes", status_code=status.HTTP_202_ACCEPTED)
@@ -447,24 +431,16 @@ async def sync_all_disputes(
 
 async def _run_disputes_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     from app.config import settings
-    from app.services.sync_event_logger import SyncEventLogger
-    
-    event_logger = SyncEventLogger(user_id, 'disputes')
-    event_logger.run_id = run_id
     
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        event_logger.log_start(f"Starting disputes sync for user {user_id}")
-        await ebay_service.sync_all_disputes(user_id, access_token, event_logger=event_logger)
-        event_logger.log_done("Disputes sync completed successfully", 0, 0, 0)
+        await ebay_service.sync_all_disputes(user_id, access_token)
     except Exception as e:
         logger.error(f"Background disputes sync failed for run_id {run_id}: {str(e)}")
-        event_logger.log_error(f"Disputes sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
-        event_logger.close()
 
 
 @router.get("/disputes")
@@ -564,24 +540,16 @@ async def sync_all_offers(
 
 async def _run_offers_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     from app.config import settings
-    from app.services.sync_event_logger import SyncEventLogger
-    
-    event_logger = SyncEventLogger(user_id, 'offers')
-    event_logger.run_id = run_id
     
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        event_logger.log_start(f"Starting offers sync for user {user_id}")
-        await ebay_service.sync_all_offers(user_id, access_token, event_logger=event_logger)
-        event_logger.log_done("Offers sync completed successfully", 0, 0, 0)
+        await ebay_service.sync_all_offers(user_id, access_token)
     except Exception as e:
         logger.error(f"Background offers sync failed for run_id {run_id}: {str(e)}")
-        event_logger.log_error(f"Offers sync failed: {str(e)}", e)
     finally:
         settings.EBAY_ENVIRONMENT = original_env
-        event_logger.close()
 
 
 @router.get("/export/all")
