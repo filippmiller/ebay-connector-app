@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BUILD_NUMBER } from '@/config/build';
+import { BUILD_NUMBER, BUILD_TIMESTAMP } from '@/config/build';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderTab {
@@ -38,6 +38,16 @@ export default function FixedHeader() {
 
   const visibleTabs = TABS.filter(tab => !tab.adminOnly || isAdmin);
 
+  const formatBuildTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${month}/${day}/${year} ${hours}:${minutes}`;
+  };
+
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 shadow-sm">
       <div className="flex items-center justify-between px-3 py-2">
@@ -61,7 +71,7 @@ export default function FixedHeader() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-xs font-mono text-gray-500">Build #{BUILD_NUMBER}</span>
+          <span className="text-xs font-mono text-gray-500">Build: {formatBuildTime(BUILD_TIMESTAMP)}</span>
           <span className="text-xs text-gray-600">{user?.email}</span>
           <Button
             onClick={handleLogout}
