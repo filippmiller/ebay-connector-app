@@ -203,7 +203,28 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
-  const handleSyncComplete = (type: string) => {
+  const handleSyncComplete = (type: string, doneEvent?: any) => {
+    // Extract counts from done event if available
+    if (doneEvent) {
+      const fetched = doneEvent.extra_data?.total_fetched ?? doneEvent.extra_data?.fetched ?? 0;
+      const stored = doneEvent.extra_data?.total_stored ?? doneEvent.extra_data?.stored ?? 0;
+      
+      switch (type) {
+        case 'messages':
+          setMessagesSyncResult({ total_fetched: fetched, total_stored: stored });
+          break;
+        case 'transactions':
+          setTransactionsSyncResult({ total_fetched: fetched, total_stored: stored });
+          break;
+        case 'disputes':
+          setDisputesSyncResult({ total_fetched: fetched, total_stored: stored });
+          break;
+        case 'offers':
+          setOffersSyncResult({ total_fetched: fetched, total_stored: stored });
+          break;
+      }
+    }
+    
     switch (type) {
       case 'orders':
         setSyncing(false);
@@ -435,6 +456,7 @@ export const EbayConnectionPage: React.FC = () => {
                   <SyncTerminal 
                     runId={ordersRunId}
                     onComplete={() => handleSyncComplete('orders')}
+                    onStop={() => setSyncing(false)}
                   />
                 </div>
               )}
@@ -443,7 +465,8 @@ export const EbayConnectionPage: React.FC = () => {
                 <div className="mt-6">
                   <SyncTerminal 
                     runId={transactionsRunId}
-                    onComplete={() => handleSyncComplete('transactions')}
+                    onComplete={(doneEvent) => handleSyncComplete('transactions', doneEvent)}
+                    onStop={() => setSyncingTransactions(false)}
                   />
                 </div>
               )}
@@ -452,7 +475,8 @@ export const EbayConnectionPage: React.FC = () => {
                 <div className="mt-6">
                   <SyncTerminal 
                     runId={disputesRunId}
-                    onComplete={() => handleSyncComplete('disputes')}
+                    onComplete={(doneEvent) => handleSyncComplete('disputes', doneEvent)}
+                    onStop={() => setSyncingDisputes(false)}
                   />
                 </div>
               )}
@@ -461,7 +485,8 @@ export const EbayConnectionPage: React.FC = () => {
                 <div className="mt-6">
                   <SyncTerminal 
                     runId={messagesRunId}
-                    onComplete={() => handleSyncComplete('messages')}
+                    onComplete={(doneEvent) => handleSyncComplete('messages', doneEvent)}
+                    onStop={() => setSyncingMessages(false)}
                   />
                 </div>
               )}
@@ -470,7 +495,8 @@ export const EbayConnectionPage: React.FC = () => {
                 <div className="mt-6">
                   <SyncTerminal 
                     runId={offersRunId}
-                    onComplete={() => handleSyncComplete('offers')}
+                    onComplete={(doneEvent) => handleSyncComplete('offers', doneEvent)}
+                    onStop={() => setSyncingOffers(false)}
                   />
                 </div>
               )}

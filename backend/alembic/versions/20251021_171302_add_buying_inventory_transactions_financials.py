@@ -1,7 +1,7 @@
 """Add buying inventory transactions financials tables
 
 Revision ID: add_core_ops_tables
-Revises: 20251021_155209_add_normalized_columns
+Revises: add_normalized_cols
 Create Date: 2025-10-21 17:00:00.000000
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import Numeric, CHAR
 
 revision = 'add_core_ops_tables'
-down_revision = '20251021_155209_add_normalized_columns'
+down_revision = 'add_normalized_cols'
 branch_labels = None
 depends_on = None
 

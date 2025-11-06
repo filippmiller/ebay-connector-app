@@ -25,7 +25,7 @@ interface SyncEvent {
 
 interface SyncTerminalProps {
   runId: string;
-  onComplete?: () => void;
+  onComplete?: (doneEvent?: any) => void;
   onStop?: () => void;
 }
 
@@ -106,7 +106,8 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
       setIsComplete(true);
       setIsConnected(false);
       eventSource.close();
-      if (onComplete) onComplete();
+      // Call onComplete with the done event data so parent can extract counts
+      if (onComplete) onComplete(event);
     });
 
     eventSource.addEventListener('cancelled', (e: MessageEvent) => {
