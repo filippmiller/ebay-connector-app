@@ -70,13 +70,22 @@ class EbayService:
         
         if not scopes:
             scopes = [
-                "https://api.ebay.com/oauth/api_scope",  # Base scope for Identity API
+                "https://api.ebay.com/oauth/api_scope",  # Base scope for Identity API (MUST be first)
                 "https://api.ebay.com/oauth/api_scope/sell.account",
                 "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
                 "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
                 "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
                 # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
             ]
+        
+        # Ensure base scope is first (required for Identity API)
+        base_scope = "https://api.ebay.com/oauth/api_scope"
+        if base_scope in scopes:
+            scopes.remove(base_scope)
+        scopes.insert(0, base_scope)
+        
+        # Remove any trailing spaces and empty strings
+        scopes = [s.strip() for s in scopes if s.strip()]
         
         params = {
             "client_id": settings.ebay_client_id,
