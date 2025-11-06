@@ -13,8 +13,10 @@ const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }
 const commit = execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
 const timestamp = new Date().toISOString();
 
-// Read BUILD_NUMBER from existing build.ts or default to 6
-const buildNumber = 6; // This should match the current BUILD_NUMBER in build.ts
+// Read BUILD_NUMBER from build-number.txt
+import { readFileSync } from 'fs';
+const buildNumberPath = join(frontendDir, 'build-number.txt');
+const buildNumber = parseInt(readFileSync(buildNumberPath, 'utf-8').trim()) || 1;
 
 // Target domain for production (read from environment)
 const domain = process.env.DEPLOY_DOMAIN || '';
