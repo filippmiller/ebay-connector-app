@@ -38,7 +38,7 @@ api.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error: AxiosError) => {
     const status = error?.response?.status;
-    const errorData = error?.response?.data;
+    const errorData = error?.response?.data as any; // Type assertion for error response data
     const errorMessage = errorData?.detail || errorData?.message || errorData?.error || error?.message || "Request failed";
     
     console.error("[API] Error:", {
