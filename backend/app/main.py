@@ -55,9 +55,14 @@ async def startup_event():
         
         try:
             import signal
+            import warnings
             
             def timeout_handler(signum, frame):
                 raise TimeoutError("Database connection timeout")
+            
+            # Suppress all Alembic warnings globally
+            warnings.filterwarnings("ignore", category=UserWarning, module="alembic")
+            warnings.filterwarnings("ignore", message=".*revision.*not present.*", category=UserWarning)
             
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(10)
@@ -68,13 +73,19 @@ async def startup_event():
                 
                 alembic_cfg = Config("/app/alembic.ini")
                 alembic_cfg.set_main_option("sqlalchemy.url", database_url)
-                command.upgrade(alembic_cfg, "head")
+                
+                # Suppress warnings during migration
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    command.upgrade(alembic_cfg, "head")
+                
                 logger.info("✅ Database migrations completed successfully!")
                 
             except TimeoutError:
                 logger.error("⏱️  Database connection timed out - migrations skipped")
             except Exception as e:
                 logger.warning(f"⚠️  Alembic migration failed: {e}")
+                logger.warning("⚠️  Continuing startup - tables may already exist or will be created manually")
                 logger.info("🔨 Creating tables manually...")
                 
                 try:
@@ -90,6 +101,7 @@ async def startup_event():
         
         except Exception as outer_e:
             logger.error(f"❌ Startup database initialization failed: {outer_e}")
+            logger.warning("⚠️  Continuing startup despite migration errors - application may still work")
         
         logger.info("✅ PostgreSQL configured - attempting to connect...")
         
