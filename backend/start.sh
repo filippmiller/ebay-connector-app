@@ -3,7 +3,8 @@ set -euo pipefail
 
 export PYTHONUNBUFFERED=1   # мгновенная запись логов в STDOUT
 echo "[entry] Starting backend service..."
-echo "[entry] PORT=${PORT:-8000} DB=${DATABASE_URL:-unset}"
+echo "[entry] PORT=${PORT:-8000}"
+echo "[entry] Database configured: ${DATABASE_URL:+yes}"
 
 # 1) Миграции (можно временно выключить RUN_MIGRATIONS=0 в Railway Variables)
 if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
