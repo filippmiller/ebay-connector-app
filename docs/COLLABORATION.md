@@ -220,6 +220,32 @@ This probably means the server terminated abnormally before or while processing 
 
 ---
 
+## Recent Work (2025-11-06)
+
+### Inventory & Offers Sync Implementation ✅
+
+**Status:** Implemented and ready for testing
+
+**Changes:**
+1. **Fixed offers sync** - Now correctly uses `getInventoryItems` → `getOffers` per SKU (as required by eBay API)
+2. **Added inventory sync** - New endpoint to sync all inventory items from eBay
+3. **Full documentation** - All methods documented with eBay API structures and data mapping
+4. **Comprehensive logging** - All API requests and responses logged to terminal via SSE
+
+**Files Modified:**
+- `backend/app/services/ebay.py` - Added `fetch_inventory_items()`, fixed `fetch_offers()`, rewrote `sync_all_offers()`, added `sync_all_inventory()`
+- `backend/app/services/postgres_ebay_database.py` - Added `upsert_inventory_item()` with full data mapping
+- `backend/app/routers/ebay.py` - Added `POST /ebay/sync/inventory` endpoint
+
+**Documentation:**
+- `docs/INVENTORY_OFFERS_SYNC.md` - Complete documentation of implementation
+
+**Testing:**
+- Ready to test after deployment
+- See `docs/INVENTORY_OFFERS_SYNC.md` for testing checklist
+
+---
+
 ## Git Workflow
 
 1. Friend commits notes: `git commit -m "Notes: [description]"`
