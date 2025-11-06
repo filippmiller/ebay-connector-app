@@ -256,27 +256,27 @@ def upgrade() -> None:
         # Update inventory table with new columns
         log_print("Updating inventory table...")
         if 'inventory' in existing_tables:
-        if 'sku_code' not in inventory_columns:
-            op.add_column('inventory', sa.Column('sku_code', sa.String(100), nullable=True))
-        if 'title' not in inventory_columns:
-            op.add_column('inventory', sa.Column('title', sa.Text(), nullable=True))
-        if 'condition' not in inventory_columns:
-            op.add_column('inventory', sa.Column('condition', sa.String(50), nullable=True))
-        if 'cost' not in inventory_columns:
-            op.add_column('inventory', sa.Column('cost', Numeric(14, 2), nullable=True))
-        if 'expected_price' not in inventory_columns:
-            op.add_column('inventory', sa.Column('expected_price', Numeric(14, 2), nullable=True))
-        if 'image_url' not in inventory_columns:
-            op.add_column('inventory', sa.Column('image_url', sa.Text(), nullable=True))
-        if 'notes' not in inventory_columns:
-            op.add_column('inventory', sa.Column('notes', sa.Text(), nullable=True))
-        
-        # Add indexes for new inventory columns
-        if 'inventory' not in existing_indexes:
-            existing_indexes['inventory'] = []
-        if 'idx_inventory_sku_code' not in existing_indexes['inventory']:
-            op.create_index('idx_inventory_sku_code', 'inventory', ['sku_code'])
-        # Check if storage column exists before creating index on it
+            if 'sku_code' not in inventory_columns:
+                op.add_column('inventory', sa.Column('sku_code', sa.String(100), nullable=True))
+            if 'title' not in inventory_columns:
+                op.add_column('inventory', sa.Column('title', sa.Text(), nullable=True))
+            if 'condition' not in inventory_columns:
+                op.add_column('inventory', sa.Column('condition', sa.String(50), nullable=True))
+            if 'cost' not in inventory_columns:
+                op.add_column('inventory', sa.Column('cost', Numeric(14, 2), nullable=True))
+            if 'expected_price' not in inventory_columns:
+                op.add_column('inventory', sa.Column('expected_price', Numeric(14, 2), nullable=True))
+            if 'image_url' not in inventory_columns:
+                op.add_column('inventory', sa.Column('image_url', sa.Text(), nullable=True))
+            if 'notes' not in inventory_columns:
+                op.add_column('inventory', sa.Column('notes', sa.Text(), nullable=True))
+            
+            # Add indexes for new inventory columns
+            if 'inventory' not in existing_indexes:
+                existing_indexes['inventory'] = []
+            if 'idx_inventory_sku_code' not in existing_indexes['inventory']:
+                op.create_index('idx_inventory_sku_code', 'inventory', ['sku_code'])
+            # Check if storage column exists before creating index on it
             if 'storage' in inventory_columns and 'idx_inventory_storage' not in existing_indexes['inventory']:
                 op.create_index('idx_inventory_storage', 'inventory', ['storage'])
             log_print("inventory table updated/verified")
