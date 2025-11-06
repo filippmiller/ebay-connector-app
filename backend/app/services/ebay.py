@@ -568,11 +568,71 @@ class EbayService:
                     "offset": offset
                 }
                 
+                # Check for cancellation BEFORE making the API request
+                from app.services.sync_event_logger import is_cancelled
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Order sync cancelled for run_id {event_logger.run_id} (before API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Orders sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/fulfillment/v1/order?limit={limit}&offset={offset}")
                 
                 request_start = time.time()
-                orders_response = await self.fetch_orders(access_token, filter_params)
+                try:
+                    orders_response = await self.fetch_orders(access_token, filter_params)
+                except Exception as e:
+                    # Check for cancellation after error (in case error took a long time)
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(f"Order sync cancelled for run_id {event_logger.run_id} (after API error)")
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Orders sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000)
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id
+                        }
+                    raise  # Re-raise if not cancelled
                 request_duration = int((time.time() - request_start) * 1000)
+                
+                # Check for cancellation AFTER the API request (in case request took a long time)
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Order sync cancelled for run_id {event_logger.run_id} (after API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Orders sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
                 
                 orders = orders_response.get('orders', [])
                 total = orders_response.get('total', 0)
@@ -1011,11 +1071,71 @@ class EbayService:
                     'offset': offset
                 }
                 
+                # Check for cancellation BEFORE making the API request
+                from app.services.sync_event_logger import is_cancelled
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (before API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/finances/v1/transaction?limit={limit}&offset={offset}")
                 
                 request_start = time.time()
-                transactions_response = await self.fetch_transactions(access_token, filter_params)
+                try:
+                    transactions_response = await self.fetch_transactions(access_token, filter_params)
+                except Exception as e:
+                    # Check for cancellation after error
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (after API error)")
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000)
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id
+                        }
+                    raise
                 request_duration = int((time.time() - request_start) * 1000)
+                
+                # Check for cancellation AFTER the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (after API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
                 
                 transactions = transactions_response.get('transactions', [])
                 total = transactions_response.get('total', 0)
@@ -1137,10 +1257,50 @@ class EbayService:
                     "run_id": event_logger.run_id
                 }
             
+            # Check for cancellation BEFORE making the API request
+            if is_cancelled(event_logger.run_id):
+                logger.info(f"Disputes sync cancelled for run_id {event_logger.run_id} (before API request)")
+                event_logger.log_warning("Sync operation cancelled by user")
+                event_logger.log_done(
+                    f"Disputes sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    int((time.time() - start_time) * 1000)
+                )
+                event_logger.close()
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id
+                }
+            
             event_logger.log_info(f"→ Requesting: GET /sell/fulfillment/v1/payment_dispute_summary/search")
             
             request_start = time.time()
-            disputes_response = await self.fetch_payment_disputes(access_token)
+            try:
+                disputes_response = await self.fetch_payment_disputes(access_token)
+            except Exception as e:
+                # Check for cancellation after error
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Disputes sync cancelled for run_id {event_logger.run_id} (after API error)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Disputes sync cancelled: 0 fetched, 0 stored",
+                        0,
+                        0,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": 0,
+                        "total_stored": 0,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                raise
             request_duration = int((time.time() - request_start) * 1000)
             
             # Check for cancellation after API call
@@ -1334,11 +1494,70 @@ class EbayService:
                         "run_id": event_logger.run_id
                     }
                 
+                # Check for cancellation BEFORE making the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Offers sync cancelled for run_id {event_logger.run_id} (before inventory API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 event_logger.log_info(f"→ Fetching inventory items page {inventory_page}: GET /sell/inventory/v1/inventory_item?limit={limit}&offset={offset}")
                 
                 request_start = time.time()
-                inventory_response = await self.fetch_inventory_items(access_token, limit=limit, offset=offset)
+                try:
+                    inventory_response = await self.fetch_inventory_items(access_token, limit=limit, offset=offset)
+                except Exception as e:
+                    # Check for cancellation after error
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(f"Offers sync cancelled for run_id {event_logger.run_id} (after inventory API error)")
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000)
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id
+                        }
+                    raise
                 request_duration = int((time.time() - request_start) * 1000)
+                
+                # Check for cancellation AFTER the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Offers sync cancelled for run_id {event_logger.run_id} (after inventory API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
                 
                 inventory_items = inventory_response.get('inventoryItems', [])
                 total_items = inventory_response.get('total', 0)
@@ -1401,12 +1620,50 @@ class EbayService:
                         "run_id": event_logger.run_id
                     }
                 
+                # Check for cancellation BEFORE making the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Offers sync cancelled for run_id {event_logger.run_id} (before offers API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 event_logger.log_info(f"→ [{sku_count}/{len(all_skus)}] Fetching offers for SKU: {sku}")
                 
                 try:
                     request_start = time.time()
                     offers_response = await self.fetch_offers(access_token, sku=sku)
                     request_duration = int((time.time() - request_start) * 1000)
+                    
+                    # Check for cancellation AFTER the API request
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(f"Offers sync cancelled for run_id {event_logger.run_id} (after offers API request)")
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000)
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id
+                        }
                     
                     offers = offers_response.get('offers', [])
                     total_fetched += len(offers)
@@ -1422,6 +1679,24 @@ class EbayService:
                     await asyncio.sleep(0.2)
                     
                 except Exception as e:
+                    # Check for cancellation after error
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(f"Offers sync cancelled for run_id {event_logger.run_id} (after offers API error)")
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000)
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id
+                        }
                     error_msg = f"Failed to fetch offers for SKU {sku}: {str(e)}"
                     event_logger.log_warning(error_msg)
                     logger.warning(error_msg)
@@ -1550,11 +1825,70 @@ class EbayService:
                         "run_id": event_logger.run_id
                     }
                 
+                # Check for cancellation BEFORE making the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Inventory sync cancelled for run_id {event_logger.run_id} (before API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Inventory sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/inventory/v1/inventory_item?limit={limit}&offset={offset}")
                 
                 request_start = time.time()
-                inventory_response = await self.fetch_inventory_items(access_token, limit=limit, offset=offset)
+                try:
+                    inventory_response = await self.fetch_inventory_items(access_token, limit=limit, offset=offset)
+                except Exception as e:
+                    # Check for cancellation after error
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(f"Inventory sync cancelled for run_id {event_logger.run_id} (after API error)")
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Inventory sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000)
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id
+                        }
+                    raise
                 request_duration = int((time.time() - request_start) * 1000)
+                
+                # Check for cancellation AFTER the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Inventory sync cancelled for run_id {event_logger.run_id} (after API request)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Inventory sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
                 
                 inventory_items = inventory_response.get('inventoryItems', [])
                 total_items = inventory_response.get('total', 0)
