@@ -1,22 +1,28 @@
 import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from "axios";
 
 const getBaseURL = () => {
+  // NEVER use Fly.dev or devinapps.com - we use Railway backend via Cloudflare proxy
+  // Only check environment variables, otherwise use /api (Cloudflare Pages proxy)
+  
   if (import.meta.env.VITE_API_BASE_URL) {
+    console.warn('[API] VITE_API_BASE_URL is set:', import.meta.env.VITE_API_BASE_URL);
+    console.warn('[API] This will bypass Cloudflare proxy! Consider removing this variable.');
     return import.meta.env.VITE_API_BASE_URL;
   }
   
   if (import.meta.env.VITE_API_URL) {
+    console.warn('[API] VITE_API_URL is set:', import.meta.env.VITE_API_URL);
+    console.warn('[API] This will bypass Cloudflare proxy! Consider removing this variable.');
     return import.meta.env.VITE_API_URL;
   }
   
   if (import.meta.env.VITE_API_PREFIX) {
+    console.warn('[API] VITE_API_PREFIX is set:', import.meta.env.VITE_API_PREFIX);
     return import.meta.env.VITE_API_PREFIX;
   }
   
-  if (typeof window !== 'undefined' && window.location.hostname.includes('devinapps.com')) {
-    return 'https://app-vatxxrtj.fly.dev';
-  }
-  
+  // Default: use /api which routes through Cloudflare Pages Function proxy to Railway
+  console.log('[API] Using /api (Cloudflare proxy -> Railway backend)');
   return "/api";
 };
 
