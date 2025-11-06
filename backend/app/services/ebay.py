@@ -759,8 +759,16 @@ class EbayService:
             params['limit'] = 200  # Max allowed by eBay
         if 'offset' not in params:
             params['offset'] = 0
-        # Remove any empty or None values that might cause validation errors
-        params = {k: v for k, v in params.items() if v is not None and v != ''}
+        
+        # CRITICAL: eBay /sell/inventory/v1/offer endpoint does NOT accept 'sku' parameter
+        # Only allowed params are: limit, offset, format
+        # Remove 'sku' and any other invalid params to prevent 400 errors
+        allowed_params = {'limit', 'offset', 'format'}
+        params = {k: v for k, v in params.items() 
+                  if k in allowed_params and v is not None and v != ''}
+        
+        # Log what we're sending to help debug
+        logger.info(f"fetch_offers params (after filtering): {params}")
         
         ebay_logger.log_ebay_event(
             "fetch_offers_request",
