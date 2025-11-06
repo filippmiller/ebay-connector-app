@@ -102,3 +102,4 @@ Login requests are going to `app-vatxxrtj.fly.dev` instead of Railway backend vi
 ## Files Changed
 - `frontend/src/lib/apiClient.ts` - Removed Fly.dev, added logging
 
+

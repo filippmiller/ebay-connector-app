@@ -635,7 +635,7 @@ class EbayService:
                     }
                 
                 orders = orders_response.get('orders', [])
-                total = orders_response.get('total', 0)
+                total = orders_response.get('total', 0) or 0  # Ensure total is always a number
                 total_pages = (total + limit - 1) // limit if total > 0 else 1
                 
                 event_logger.log_http_request(
@@ -708,8 +708,11 @@ class EbayService:
                         "run_id": event_logger.run_id
                     }
                 
+                # Update has_more BEFORE incrementing offset to prevent infinite loops
+                # Stop if: no more orders, or we've fetched all available, or offset would exceed total
+                has_more = len(orders) > 0 and len(orders) == limit and (offset + limit) < total
+                
                 offset += limit
-                has_more = len(orders) == limit and offset < total
                 
                 if has_more:
                     await asyncio.sleep(0.8)
@@ -1176,7 +1179,7 @@ class EbayService:
                     }
                 
                 transactions = transactions_response.get('transactions', [])
-                total = transactions_response.get('total', 0)
+                total = transactions_response.get('total', 0) or 0  # Ensure total is always a number
                 total_pages = (total + limit - 1) // limit if total > 0 else 1
                 
                 event_logger.log_http_request(
@@ -1193,17 +1196,38 @@ class EbayService:
                 
                 await asyncio.sleep(0.3)
                 
+                # Check for cancellation before storing
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (before storing)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 event_logger.log_info(f"→ Storing {len(transactions)} transactions in database...")
                 store_start = time.time()
+                batch_stored = 0
                 for transaction in transactions:
                     if ebay_db.upsert_transaction(user_id, transaction):
-                        total_stored += 1
+                        batch_stored += 1
+                total_stored += batch_stored
                 store_duration = int((time.time() - store_start) * 1000)
                 
-                event_logger.log_info(f"← Database: Stored {total_stored - (total_fetched - len(transactions))} transactions ({store_duration}ms)")
+                event_logger.log_info(f"← Database: Stored {batch_stored} transactions ({store_duration}ms)")
                 
                 event_logger.log_progress(
-                    f"Page {current_page}/{total_pages} complete: {len(transactions)} fetched, {total_stored - (total_fetched - len(transactions))} stored | Running total: {total_fetched}/{total} fetched, {total_stored} stored",
+                    f"Page {current_page}/{total_pages} complete: {len(transactions)} fetched, {batch_stored} stored | Running total: {total_fetched}/{total} fetched, {total_stored} stored",
                     current_page,
                     total_pages,
                     total_fetched,
@@ -1212,8 +1236,30 @@ class EbayService:
                 
                 logger.info(f"Synced batch: {len(transactions)} transactions (total: {total_fetched}/{total}, stored: {total_stored})")
                 
+                # Check for cancellation before continuing to next page
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (before next page)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
+                # Update has_more BEFORE incrementing offset to prevent infinite loops
+                # Stop if: no more transactions, or we've fetched all available, or offset would exceed total
+                has_more = len(transactions) > 0 and len(transactions) == limit and (offset + limit) < total
+                
                 offset += limit
-                has_more = len(transactions) == limit and offset < total
                 
                 if has_more:
                     await asyncio.sleep(0.8)

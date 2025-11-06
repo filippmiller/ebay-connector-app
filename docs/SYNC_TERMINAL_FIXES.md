@@ -72,3 +72,4 @@ The terminal component automatically loads historical logs on mount via `/api/eb
 - Messages sync has multiple safety mechanisms to prevent infinite loops
 - Cancellation checks are more frequent and should respond faster
 
+

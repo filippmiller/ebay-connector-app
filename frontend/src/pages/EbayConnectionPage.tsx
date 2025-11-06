@@ -119,6 +119,10 @@ export const EbayConnectionPage: React.FC = () => {
   };
 
   const handleSyncOrders = async () => {
+    if (syncing || ordersRunId) {
+      setError('Sync already in progress. Please wait or stop the current sync.');
+      return;
+    }
     setError('');
     setSyncing(true);
     setSyncResult(null);
@@ -136,6 +140,10 @@ export const EbayConnectionPage: React.FC = () => {
   };
 
   const handleSyncTransactions = async () => {
+    if (syncingTransactions || transactionsRunId) {
+      setError('Sync already in progress. Please wait or stop the current sync.');
+      return;
+    }
     setError('');
     setSyncingTransactions(true);
     setTransactionsSyncResult(null);
@@ -153,6 +161,10 @@ export const EbayConnectionPage: React.FC = () => {
   };
 
   const handleSyncDisputes = async () => {
+    if (syncingDisputes || disputesRunId) {
+      setError('Sync already in progress. Please wait or stop the current sync.');
+      return;
+    }
     setError('');
     setSyncingDisputes(true);
     setDisputesSyncResult(null);
@@ -170,6 +182,10 @@ export const EbayConnectionPage: React.FC = () => {
   };
 
   const handleSyncMessages = async () => {
+    if (syncingMessages || messagesRunId) {
+      setError('Sync already in progress. Please wait or stop the current sync.');
+      return;
+    }
     setError('');
     setSyncingMessages(true);
     setMessagesSyncResult(null);
@@ -187,6 +203,10 @@ export const EbayConnectionPage: React.FC = () => {
   };
 
   const handleSyncOffers = async () => {
+    if (syncingOffers || offersRunId) {
+      setError('Sync already in progress. Please wait or stop the current sync.');
+      return;
+    }
     setError('');
     setSyncingOffers(true);
     setOffersSyncResult(null);

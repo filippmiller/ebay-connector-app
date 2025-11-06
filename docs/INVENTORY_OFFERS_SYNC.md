@@ -492,3 +492,4 @@ All sync operations log to terminal via Server-Sent Events (SSE). Users will see
 - getInventoryItems: https://developer.ebay.com/api-docs/sell/inventory/resources/inventory_item/methods/getInventoryItems
 - getOffers: https://developer.ebay.com/api-docs/sell/inventory/resources/offer/methods/getOffers
 
+
