@@ -46,7 +46,7 @@ class Settings(BaseSettings):
         if self.EBAY_ENVIRONMENT == "sandbox":
             val = self.EBAY_SANDBOX_CLIENT_ID
         else:
-            val = self.EBAY_PRODUCTION_CLIENT_ID or self.EBAY_CLIENT_ID
+            val = self.EBAY_CLIENT_ID or self.EBAY_PRODUCTION_CLIENT_ID
         return val.strip() if val else None
     
     @property
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         if self.EBAY_ENVIRONMENT == "sandbox":
             val = self.EBAY_SANDBOX_CERT_ID
         else:
-            val = self.EBAY_PRODUCTION_CERT_ID or self.EBAY_CLIENT_SECRET
+            val = self.EBAY_CLIENT_SECRET or self.EBAY_PRODUCTION_CERT_ID
         return val.strip() if val else None
     
     @property
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
         if self.EBAY_ENVIRONMENT == "sandbox":
             val = self.EBAY_SANDBOX_RUNAME
         else:
-            val = self.EBAY_PRODUCTION_RUNAME or self.EBAY_RUNAME
+            val = self.EBAY_RUNAME or self.EBAY_PRODUCTION_RUNAME
         return val.strip() if val else None
 
 
