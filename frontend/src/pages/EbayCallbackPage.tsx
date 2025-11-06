@@ -38,15 +38,27 @@ export const EbayCallbackPage: React.FC = () => {
 
       try {
         const redirectUri = `${window.location.origin}/ebay/callback`;
-        const environment = localStorage.getItem('ebay_oauth_environment') || 'sandbox';
+        
+        let environment = 'production'; // Default to production
+        if (state) {
+          try {
+            const stateData = JSON.parse(state);
+            environment = stateData.environment || 'production';
+          } catch (e) {
+            console.warn('Failed to parse state parameter, using default environment:', e);
+          }
+        }
+        
         localStorage.removeItem('ebay_oauth_environment');
+        
         await ebayApi.handleCallback(code, redirectUri, environment, state || undefined);
         await refreshMe();
         setTimeout(() => {
           navigate('/dashboard');
         }, 1500);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to complete eBay authorization');
+      } catch (err: any) {
+        const errorMessage = err?.response?.data?.detail || err?.message || 'Failed to complete eBay authorization';
+        setError(errorMessage);
         setProcessing(false);
       }
     };
