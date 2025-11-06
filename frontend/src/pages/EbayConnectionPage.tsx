@@ -208,8 +208,12 @@ export const EbayConnectionPage: React.FC = () => {
     if (doneEvent) {
       const fetched = doneEvent.extra_data?.total_fetched ?? doneEvent.extra_data?.fetched ?? 0;
       const stored = doneEvent.extra_data?.total_stored ?? doneEvent.extra_data?.stored ?? 0;
+      const job_id = doneEvent.extra_data?.job_id ?? null;
       
       switch (type) {
+        case 'orders':
+          setSyncResult({ total_fetched: fetched, total_stored: stored, job_id });
+          break;
         case 'messages':
           setMessagesSyncResult({ total_fetched: fetched, total_stored: stored });
           break;
@@ -455,7 +459,7 @@ export const EbayConnectionPage: React.FC = () => {
                 <div className="mt-6">
                   <SyncTerminal 
                     runId={ordersRunId}
-                    onComplete={() => handleSyncComplete('orders')}
+                    onComplete={(doneEvent) => handleSyncComplete('orders', doneEvent)}
                     onStop={() => setSyncing(false)}
                   />
                 </div>
