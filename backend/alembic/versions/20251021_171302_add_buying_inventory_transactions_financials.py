@@ -19,9 +19,25 @@ depends_on = None
 def upgrade() -> None:
     """Add purchases, transactions, fees, payouts, and update inventory"""
     
+    from sqlalchemy import inspect
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    
+    # Get existing tables and indexes
+    existing_tables = inspector.get_table_names()
+    existing_indexes = {}
+    for table_name in existing_tables:
+        existing_indexes[table_name] = [idx['name'] for idx in inspector.get_indexes(table_name)]
+    
+    # Get existing columns for inventory
+    inventory_columns = []
+    if 'inventory' in existing_tables:
+        inventory_columns = [col['name'] for col in inspector.get_columns('inventory')]
+    
     # Create purchases table
-    op.create_table(
-        'purchases',
+    if 'purchases' not in existing_tables:
+        op.create_table(
+            'purchases',
         sa.Column('purchase_id', sa.String(100), primary_key=True),
         sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
         sa.Column('creation_date', sa.DateTime(timezone=True), nullable=True),
@@ -41,19 +57,28 @@ def upgrade() -> None:
         sa.Column('raw_payload', JSONB, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-    )
-    
-    # Create indexes for purchases
-    op.create_index('idx_purchase_creation_date', 'purchases', ['creation_date'])
-    op.create_index('idx_purchase_buyer', 'purchases', ['buyer_username'])
-    op.create_index('idx_purchase_seller', 'purchases', ['seller_username'])
-    op.create_index('idx_purchase_payment_status', 'purchases', ['payment_status'])
-    op.create_index('idx_purchase_fulfillment_status', 'purchases', ['fulfillment_status'])
-    op.create_index('idx_purchase_user_id', 'purchases', ['user_id'])
+        )
+        
+        # Create indexes for purchases
+        if 'purchases' not in existing_indexes:
+            existing_indexes['purchases'] = []
+        if 'idx_purchase_creation_date' not in existing_indexes['purchases']:
+            op.create_index('idx_purchase_creation_date', 'purchases', ['creation_date'])
+        if 'idx_purchase_buyer' not in existing_indexes['purchases']:
+            op.create_index('idx_purchase_buyer', 'purchases', ['buyer_username'])
+        if 'idx_purchase_seller' not in existing_indexes['purchases']:
+            op.create_index('idx_purchase_seller', 'purchases', ['seller_username'])
+        if 'idx_purchase_payment_status' not in existing_indexes['purchases']:
+            op.create_index('idx_purchase_payment_status', 'purchases', ['payment_status'])
+        if 'idx_purchase_fulfillment_status' not in existing_indexes['purchases']:
+            op.create_index('idx_purchase_fulfillment_status', 'purchases', ['fulfillment_status'])
+        if 'idx_purchase_user_id' not in existing_indexes['purchases']:
+            op.create_index('idx_purchase_user_id', 'purchases', ['user_id'])
     
     # Create purchase_line_items table
-    op.create_table(
-        'purchase_line_items',
+    if 'purchase_line_items' not in existing_tables:
+        op.create_table(
+            'purchase_line_items',
         sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column('purchase_id', sa.String(100), sa.ForeignKey('purchases.purchase_id'), nullable=False),
         sa.Column('line_item_id', sa.String(100), nullable=False),
@@ -65,16 +90,22 @@ def upgrade() -> None:
         sa.Column('raw_payload', JSONB, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-    )
-    
-    # Create indexes for purchase_line_items
-    op.create_index('idx_purch_line_purchase_id', 'purchase_line_items', ['purchase_id'])
-    op.create_index('idx_purch_line_sku', 'purchase_line_items', ['sku'])
-    op.create_index('idx_purch_line_unique', 'purchase_line_items', ['purchase_id', 'line_item_id'], unique=True)
+        )
+        
+        # Create indexes for purchase_line_items
+        if 'purchase_line_items' not in existing_indexes:
+            existing_indexes['purchase_line_items'] = []
+        if 'idx_purch_line_purchase_id' not in existing_indexes['purchase_line_items']:
+            op.create_index('idx_purch_line_purchase_id', 'purchase_line_items', ['purchase_id'])
+        if 'idx_purch_line_sku' not in existing_indexes['purchase_line_items']:
+            op.create_index('idx_purch_line_sku', 'purchase_line_items', ['sku'])
+        if 'idx_purch_line_unique' not in existing_indexes['purchase_line_items']:
+            op.create_index('idx_purch_line_unique', 'purchase_line_items', ['purchase_id', 'line_item_id'], unique=True)
     
     # Create transactions table
-    op.create_table(
-        'transactions',
+    if 'transactions' not in existing_tables:
+        op.create_table(
+            'transactions',
         sa.Column('transaction_id', sa.String(100), primary_key=True),
         sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
         sa.Column('order_id', sa.String(100), nullable=True),
@@ -94,18 +125,26 @@ def upgrade() -> None:
         sa.Column('raw_payload', JSONB, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-    )
-    
-    # Create indexes for transactions
-    op.create_index('idx_txn_order_id', 'transactions', ['order_id'])
-    op.create_index('idx_txn_sale_date', 'transactions', ['sale_date'])
-    op.create_index('idx_txn_buyer', 'transactions', ['buyer_username'])
-    op.create_index('idx_txn_sku', 'transactions', ['sku'])
-    op.create_index('idx_txn_user_id', 'transactions', ['user_id'])
+        )
+        
+        # Create indexes for transactions
+        if 'transactions' not in existing_indexes:
+            existing_indexes['transactions'] = []
+        if 'idx_txn_order_id' not in existing_indexes['transactions']:
+            op.create_index('idx_txn_order_id', 'transactions', ['order_id'])
+        if 'idx_txn_sale_date' not in existing_indexes['transactions']:
+            op.create_index('idx_txn_sale_date', 'transactions', ['sale_date'])
+        if 'idx_txn_buyer' not in existing_indexes['transactions']:
+            op.create_index('idx_txn_buyer', 'transactions', ['buyer_username'])
+        if 'idx_txn_sku' not in existing_indexes['transactions']:
+            op.create_index('idx_txn_sku', 'transactions', ['sku'])
+        if 'idx_txn_user_id' not in existing_indexes['transactions']:
+            op.create_index('idx_txn_user_id', 'transactions', ['user_id'])
     
     # Create fees table
-    op.create_table(
-        'fees',
+    if 'fees' not in existing_tables:
+        op.create_table(
+            'fees',
         sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
         sa.Column('source_type', sa.String(50), nullable=True),
@@ -117,17 +156,24 @@ def upgrade() -> None:
         sa.Column('raw_payload', JSONB, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-    )
-    
-    # Create indexes for fees
-    op.create_index('idx_fee_source_id', 'fees', ['source_id'])
-    op.create_index('idx_fee_type', 'fees', ['fee_type'])
-    op.create_index('idx_fee_assessed_at', 'fees', ['assessed_at'])
-    op.create_index('idx_fee_user_id', 'fees', ['user_id'])
+        )
+        
+        # Create indexes for fees
+        if 'fees' not in existing_indexes:
+            existing_indexes['fees'] = []
+        if 'idx_fee_source_id' not in existing_indexes['fees']:
+            op.create_index('idx_fee_source_id', 'fees', ['source_id'])
+        if 'idx_fee_type' not in existing_indexes['fees']:
+            op.create_index('idx_fee_type', 'fees', ['fee_type'])
+        if 'idx_fee_assessed_at' not in existing_indexes['fees']:
+            op.create_index('idx_fee_assessed_at', 'fees', ['assessed_at'])
+        if 'idx_fee_user_id' not in existing_indexes['fees']:
+            op.create_index('idx_fee_user_id', 'fees', ['user_id'])
     
     # Create payouts table
-    op.create_table(
-        'payouts',
+    if 'payouts' not in existing_tables:
+        op.create_table(
+            'payouts',
         sa.Column('payout_id', sa.String(100), primary_key=True),
         sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
         sa.Column('total_amount', Numeric(14, 2), nullable=True),
@@ -137,15 +183,20 @@ def upgrade() -> None:
         sa.Column('raw_payload', JSONB, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-    )
-    
-    # Create indexes for payouts
-    op.create_index('idx_payout_date', 'payouts', ['payout_date'])
-    op.create_index('idx_payout_user_id', 'payouts', ['user_id'])
+        )
+        
+        # Create indexes for payouts
+        if 'payouts' not in existing_indexes:
+            existing_indexes['payouts'] = []
+        if 'idx_payout_date' not in existing_indexes['payouts']:
+            op.create_index('idx_payout_date', 'payouts', ['payout_date'])
+        if 'idx_payout_user_id' not in existing_indexes['payouts']:
+            op.create_index('idx_payout_user_id', 'payouts', ['user_id'])
     
     # Create payout_items table
-    op.create_table(
-        'payout_items',
+    if 'payout_items' not in existing_tables:
+        op.create_table(
+            'payout_items',
         sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column('payout_id', sa.String(100), sa.ForeignKey('payouts.payout_id'), nullable=False),
         sa.Column('type', sa.String(50), nullable=True),
@@ -155,24 +206,41 @@ def upgrade() -> None:
         sa.Column('raw_payload', JSONB, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-    )
-    
-    # Create indexes for payout_items
-    op.create_index('idx_payout_item_payout_id', 'payout_items', ['payout_id'])
-    op.create_index('idx_payout_item_reference_id', 'payout_items', ['reference_id'])
+        )
+        
+        # Create indexes for payout_items
+        if 'payout_items' not in existing_indexes:
+            existing_indexes['payout_items'] = []
+        if 'idx_payout_item_payout_id' not in existing_indexes['payout_items']:
+            op.create_index('idx_payout_item_payout_id', 'payout_items', ['payout_id'])
+        if 'idx_payout_item_reference_id' not in existing_indexes['payout_items']:
+            op.create_index('idx_payout_item_reference_id', 'payout_items', ['reference_id'])
     
     # Update inventory table with new columns
-    op.add_column('inventory', sa.Column('sku_code', sa.String(100), nullable=True))
-    op.add_column('inventory', sa.Column('title', sa.Text(), nullable=True))
-    op.add_column('inventory', sa.Column('condition', sa.String(50), nullable=True))
-    op.add_column('inventory', sa.Column('cost', Numeric(14, 2), nullable=True))
-    op.add_column('inventory', sa.Column('expected_price', Numeric(14, 2), nullable=True))
-    op.add_column('inventory', sa.Column('image_url', sa.Text(), nullable=True))
-    op.add_column('inventory', sa.Column('notes', sa.Text(), nullable=True))
-    
-    # Add indexes for new inventory columns
-    op.create_index('idx_inventory_sku_code', 'inventory', ['sku_code'])
-    op.create_index('idx_inventory_storage', 'inventory', ['storage'])
+    if 'inventory' in existing_tables:
+        if 'sku_code' not in inventory_columns:
+            op.add_column('inventory', sa.Column('sku_code', sa.String(100), nullable=True))
+        if 'title' not in inventory_columns:
+            op.add_column('inventory', sa.Column('title', sa.Text(), nullable=True))
+        if 'condition' not in inventory_columns:
+            op.add_column('inventory', sa.Column('condition', sa.String(50), nullable=True))
+        if 'cost' not in inventory_columns:
+            op.add_column('inventory', sa.Column('cost', Numeric(14, 2), nullable=True))
+        if 'expected_price' not in inventory_columns:
+            op.add_column('inventory', sa.Column('expected_price', Numeric(14, 2), nullable=True))
+        if 'image_url' not in inventory_columns:
+            op.add_column('inventory', sa.Column('image_url', sa.Text(), nullable=True))
+        if 'notes' not in inventory_columns:
+            op.add_column('inventory', sa.Column('notes', sa.Text(), nullable=True))
+        
+        # Add indexes for new inventory columns
+        if 'inventory' not in existing_indexes:
+            existing_indexes['inventory'] = []
+        if 'idx_inventory_sku_code' not in existing_indexes['inventory']:
+            op.create_index('idx_inventory_sku_code', 'inventory', ['sku_code'])
+        # Check if storage column exists before creating index on it
+        if 'storage' in inventory_columns and 'idx_inventory_storage' not in existing_indexes['inventory']:
+            op.create_index('idx_inventory_storage', 'inventory', ['storage'])
 
 
 def downgrade() -> None:
