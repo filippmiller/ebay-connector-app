@@ -649,9 +649,9 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # Add date window filter with createdDate (correct filter name for Orders API)
+                # Add date window filter with lastModifiedDate (correct filter name for Orders API)
                 filter_params = {
-                    "filter": f"createdDate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
+                    "filter": f"lastModifiedDate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
                     "limit": limit,
                     "offset": offset,
                     "fieldGroups": "TAX_BREAKDOWN"
