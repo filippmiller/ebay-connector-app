@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     EBAY_PRODUCTION_REDIRECT_URI: Optional[str] = None
     EBAY_PRODUCTION_RUNAME: Optional[str] = None
     
+    EBAY_CLIENT_ID: Optional[str] = None
+    EBAY_CLIENT_SECRET: Optional[str] = None
+    EBAY_RUNAME: Optional[str] = None
+    
     DATABASE_URL: str = "sqlite:///./ebay_connector.db"
     
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
@@ -41,13 +45,13 @@ class Settings(BaseSettings):
     def ebay_client_id(self) -> Optional[str]:
         if self.EBAY_ENVIRONMENT == "sandbox":
             return self.EBAY_SANDBOX_CLIENT_ID
-        return self.EBAY_PRODUCTION_CLIENT_ID
+        return self.EBAY_PRODUCTION_CLIENT_ID or self.EBAY_CLIENT_ID
     
     @property
     def ebay_cert_id(self) -> Optional[str]:
         if self.EBAY_ENVIRONMENT == "sandbox":
             return self.EBAY_SANDBOX_CERT_ID
-        return self.EBAY_PRODUCTION_CERT_ID
+        return self.EBAY_PRODUCTION_CERT_ID or self.EBAY_CLIENT_SECRET
     
     @property
     def ebay_dev_id(self) -> Optional[str]:
@@ -77,7 +81,7 @@ class Settings(BaseSettings):
     def ebay_runame(self) -> Optional[str]:
         if self.EBAY_ENVIRONMENT == "sandbox":
             return self.EBAY_SANDBOX_RUNAME
-        return self.EBAY_PRODUCTION_RUNAME
+        return self.EBAY_PRODUCTION_RUNAME or self.EBAY_RUNAME
 
 
 settings = Settings()
