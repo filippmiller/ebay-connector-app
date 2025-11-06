@@ -784,3 +784,187 @@ class PostgresEbayDatabase:
             
         finally:
             session.close()
+    
+    def upsert_inventory_item(self, user_id: str, inventory_item_data: Dict[str, Any]) -> bool:
+        """
+        Insert or update an inventory item from eBay API into the inventory table.
+        
+        eBay API Response Structure (from getInventoryItems):
+        {
+            "sku": "string",
+            "product": {
+                "title": "string",
+                "categoryId": "string",
+                "aspects": {
+                    "Brand": "string",
+                    "Model": "string",
+                    "Part Number": "string",
+                    ...
+                },
+                "imageUrls": ["string"],
+                ...
+            },
+            "condition": "NEW|USED_GOOD|...",
+            "availability": {
+                "shipToLocationAvailability": {
+                    "quantity": 0
+                }
+            },
+            "pricingSummary": {
+                "price": {
+                    "value": "string",
+                    "currency": "USD"
+                }
+            },
+            "offers": [
+                {
+                    "offerId": "string",
+                    "status": "PUBLISHED|ENDED|..."
+                }
+            ]
+        }
+        
+        Maps to inventory table:
+        - sku -> sku_code (unique key)
+        - product.title -> title
+        - condition -> condition (enum)
+        - availability.shipToLocationAvailability.quantity -> quantity
+        - pricingSummary.price -> price_value, price_currency
+        - product.categoryId -> category
+        - product.aspects -> part_number, model
+        - offers[0].offerId -> ebay_listing_id
+        - offers status -> ebay_status (ACTIVE/ENDED)
+        - product.imageUrls.length -> photo_count
+        - Full inventory_item_data -> raw_payload (JSONB)
+        
+        Args:
+            user_id: User ID (currently not stored in inventory table, may need schema update)
+            inventory_item_data: Raw inventory item data from eBay API
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        session = self._get_session()
+        
+        try:
+            sku = inventory_item_data.get('sku')
+            if not sku:
+                logger.error("Inventory item data missing sku")
+                return False
+            
+            now = datetime.utcnow()
+            
+            # Extract data from eBay inventory item structure
+            product = inventory_item_data.get('product', {})
+            title = product.get('title')
+            
+            # Get condition - map eBay condition to our ConditionType enum
+            condition_str = inventory_item_data.get('condition', '')
+            condition = None
+            if condition_str:
+                condition_map = {
+                    'NEW': 'NEW',
+                    'NEW_OTHER': 'NEW_OTHER',
+                    'NEW_WITH_DEFECTS': 'NEW_WITH_DEFECTS',
+                    'MANUFACTURER_REFURBISHED': 'MANUFACTURER_REFURBISHED',
+                    'SELLER_REFURBISHED': 'SELLER_REFURBISHED',
+                    'USED_EXCELLENT': 'USED_EXCELLENT',
+                    'USED_VERY_GOOD': 'USED_VERY_GOOD',
+                    'USED_GOOD': 'USED_GOOD',
+                    'USED_ACCEPTABLE': 'USED_ACCEPTABLE',
+                    'FOR_PARTS_OR_NOT_WORKING': 'FOR_PARTS_OR_NOT_WORKING'
+                }
+                condition = condition_map.get(condition_str.upper())
+            
+            # Get availability/quantity
+            availability = inventory_item_data.get('availability', {})
+            quantity = availability.get('shipToLocationAvailability', {}).get('quantity', 0)
+            
+            # Get pricing if available
+            pricing_summary = inventory_item_data.get('pricingSummary', {})
+            price_obj = pricing_summary.get('price') or {}
+            price_value, price_currency = self._parse_money(price_obj)
+            
+            # Get category
+            category_id = product.get('categoryId')
+            category = str(category_id) if category_id else None
+            
+            # Get listing IDs (offers)
+            offers = inventory_item_data.get('offers', [])
+            listing_ids = [offer.get('offerId') for offer in offers if offer.get('offerId')]
+            ebay_listing_id = listing_ids[0] if listing_ids else None
+            
+            # Get image URLs count
+            image_urls = product.get('imageUrls', [])
+            photo_count = len(image_urls) if image_urls else 0
+            
+            # Get aspects for part_number, model, etc.
+            aspects = product.get('aspects', {})
+            part_number = aspects.get('Part Number') or aspects.get('MPN') or aspects.get('Brand Part Number')
+            model = aspects.get('Model') or aspects.get('Model Number')
+            
+            # Determine eBay status based on offers
+            ebay_status = 'UNKNOWN'
+            if offers:
+                active_offers = [o for o in offers if o.get('status') in ['PUBLISHED', 'PUBLISHED_IN_PROGRESS']]
+                if active_offers:
+                    ebay_status = 'ACTIVE'
+                else:
+                    ebay_status = 'ENDED'
+            
+            # Upsert using sku_code as unique key
+            # Note: Currently inventory table doesn't have user_id - may need schema update for multi-user
+            query = text("""
+                INSERT INTO inventory 
+                (sku_code, title, condition, part_number, model, category,
+                 price_value, price_currency, quantity, ebay_listing_id, ebay_status,
+                 photo_count, raw_payload, rec_created, rec_updated)
+                VALUES (:sku_code, :title, :condition, :part_number, :model, :category,
+                        :price_value, :price_currency, :quantity, :ebay_listing_id, :ebay_status,
+                        :photo_count, :raw_payload, :rec_created, :rec_updated)
+                ON CONFLICT (sku_code) 
+                DO UPDATE SET
+                    title = EXCLUDED.title,
+                    condition = EXCLUDED.condition,
+                    part_number = EXCLUDED.part_number,
+                    model = EXCLUDED.model,
+                    category = EXCLUDED.category,
+                    price_value = EXCLUDED.price_value,
+                    price_currency = EXCLUDED.price_currency,
+                    quantity = EXCLUDED.quantity,
+                    ebay_listing_id = EXCLUDED.ebay_listing_id,
+                    ebay_status = EXCLUDED.ebay_status,
+                    photo_count = EXCLUDED.photo_count,
+                    raw_payload = EXCLUDED.raw_payload,
+                    rec_updated = EXCLUDED.rec_updated
+            """)
+            
+            session.execute(query, {
+                'sku_code': sku,
+                'title': title,
+                'condition': condition,
+                'part_number': part_number,
+                'model': model,
+                'category': category,
+                'price_value': price_value,
+                'price_currency': price_currency,
+                'quantity': quantity,
+                'ebay_listing_id': ebay_listing_id,
+                'ebay_status': ebay_status,
+                'photo_count': photo_count,
+                'raw_payload': json.dumps(inventory_item_data),
+                'rec_created': now,
+                'rec_updated': now
+            })
+            
+            session.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error upserting inventory item: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            session.rollback()
+            return False
+        finally:
+            session.close()

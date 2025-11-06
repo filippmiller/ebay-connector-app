@@ -553,6 +553,65 @@ async def _run_offers_sync(user_id: str, access_token: str, ebay_environment: st
         settings.EBAY_ENVIRONMENT = original_env
 
 
+@router.post("/sync/inventory", status_code=status.HTTP_202_ACCEPTED)
+async def sync_all_inventory(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Start inventory sync from eBay to database.
+    
+    According to eBay API documentation:
+    - GET /sell/inventory/v1/inventory_item?limit=200&offset=0
+    - Fetches all inventory items with pagination
+    - Stores items in inventory table
+    
+    Returns:
+        Dict with run_id, status, message
+    """
+    if not current_user.ebay_connected or not current_user.ebay_access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="eBay account not connected. Please connect to eBay first."
+        )
+    
+    from app.services.sync_event_logger import SyncEventLogger
+    
+    event_logger = SyncEventLogger(current_user.id, 'inventory')
+    run_id = event_logger.run_id
+    
+    logger.info(f"Allocated run_id {run_id} for inventory sync, user: {current_user.email}")
+    
+    background_tasks.add_task(
+        _run_inventory_sync,
+        current_user.id,
+        current_user.ebay_access_token,
+        current_user.ebay_environment,
+        run_id
+    )
+    
+    return {
+        "run_id": run_id,
+        "status": "started",
+        "message": "Inventory sync started in background"
+    }
+
+
+async def _run_inventory_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
+    from app.config import settings
+    
+    original_env = settings.EBAY_ENVIRONMENT
+    settings.EBAY_ENVIRONMENT = ebay_environment
+    
+    try:
+        # Pass run_id to sync_all_inventory so it uses the same run_id for events
+        await ebay_service.sync_all_inventory(user_id, access_token, run_id=run_id)
+    except Exception as e:
+        logger.error(f"Background inventory sync failed for run_id {run_id}: {str(e)}")
+    finally:
+        settings.EBAY_ENVIRONMENT = original_env
+
+
 @router.get("/export/all")
 async def export_all_data(current_user: User = Depends(get_current_active_user)):
     from app.services.ebay_database import ebay_db

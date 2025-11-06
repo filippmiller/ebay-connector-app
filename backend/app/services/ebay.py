@@ -733,9 +733,107 @@ class EbayService:
                 detail=error_msg
             )
     
-    async def fetch_offers(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def fetch_inventory_items(self, access_token: str, limit: int = 200, offset: int = 0) -> Dict[str, Any]:
         """
-        Fetch offers from eBay Inventory API (listing offers, not buyer offers)
+        Fetch inventory items from eBay Inventory API
+        According to eBay API docs: GET /sell/inventory/v1/inventory_item
+        Parameters: limit (1-200, default 25), offset (default 0)
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        api_url = f"{settings.ebay_api_base_url}/sell/inventory/v1/inventory_item"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+        }
+        
+        # Validate limit (1-200 per eBay API docs)
+        limit = max(1, min(200, limit))
+        params = {
+            "limit": str(limit),
+            "offset": str(offset)
+        }
+        
+        ebay_logger.log_ebay_event(
+            "fetch_inventory_items_request",
+            f"Fetching inventory items from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "params": params
+            }
+        )
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    api_url,
+                    headers=headers,
+                    params=params,
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    try:
+                        error_json = response.json()
+                        error_detail = str(error_json)
+                    except:
+                        pass
+                    
+                    ebay_logger.log_ebay_event(
+                        "fetch_inventory_items_failed",
+                        f"Failed to fetch inventory items: {response.status_code}",
+                        response_data={"error": error_detail},
+                        status="error",
+                        error=error_detail
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch inventory items: {error_detail}"
+                    )
+                
+                inventory_data = response.json()
+                
+                ebay_logger.log_ebay_event(
+                    "fetch_inventory_items_success",
+                    f"Successfully fetched inventory items from eBay",
+                    response_data={
+                        "total": inventory_data.get('total', 0),
+                        "count": len(inventory_data.get('inventoryItems', []))
+                    },
+                    status="success"
+                )
+                
+                logger.info(f"Successfully fetched {len(inventory_data.get('inventoryItems', []))} inventory items from eBay")
+                
+                return inventory_data
+                
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_inventory_items_error",
+                "HTTP request error during inventory items fetch",
+                status="error",
+                error=error_msg
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+
+    async def fetch_offers(self, access_token: str, sku: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Fetch offers from eBay Inventory API for a specific SKU
+        According to eBay API docs: GET /sell/inventory/v1/offer requires 'sku' parameter (Required)
+        Parameters: sku (required), limit (optional), offset (optional), format (optional), marketplace_id (optional)
         """
         if not access_token:
             raise HTTPException(
@@ -751,24 +849,26 @@ class EbayService:
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
         }
         
-        # Default pagination parameters - eBay requires limit and offset for listing offers
-        # Note: The /offer endpoint lists all offers, but may require specific query params
-        params = filter_params or {}
-        # Only add limit/offset if not already specified
+        # According to eBay API docs: sku is REQUIRED parameter
+        # Allowed params: sku (required), limit (optional), offset (optional), format (optional), marketplace_id (optional)
+        params = {
+            "sku": sku
+        }
+        
+        # Add optional params from filter_params
+        if filter_params:
+            allowed_optional_params = {'limit', 'offset', 'format', 'marketplace_id'}
+            for key, value in filter_params.items():
+                if key in allowed_optional_params and value is not None and value != '':
+                    params[key] = value
+        
+        # Set defaults for pagination if not provided
         if 'limit' not in params:
             params['limit'] = 200  # Max allowed by eBay
         if 'offset' not in params:
             params['offset'] = 0
         
-        # CRITICAL: eBay /sell/inventory/v1/offer endpoint does NOT accept 'sku' parameter
-        # Only allowed params are: limit, offset, format
-        # Remove 'sku' and any other invalid params to prevent 400 errors
-        allowed_params = {'limit', 'offset', 'format'}
-        params = {k: v for k, v in params.items() 
-                  if k in allowed_params and v is not None and v != ''}
-        
-        # Log what we're sending to help debug
-        logger.info(f"fetch_offers params (after filtering): {params}")
+        logger.info(f"fetch_offers params: sku={sku}, limit={params.get('limit')}, offset={params.get('offset')}")
         
         ebay_logger.log_ebay_event(
             "fetch_offers_request",
@@ -1126,7 +1226,26 @@ class EbayService:
 
     async def sync_all_offers(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        Synchronize all offers from eBay to database with comprehensive logging
+        Synchronize all offers from eBay to database.
+        
+        According to eBay API documentation:
+        - getOffers endpoint requires 'sku' parameter (Required)
+        - To get all offers, we must:
+          1. First get all inventory items via getInventoryItems (paginated)
+          2. For each SKU, call getOffers to get offers for that SKU
+        
+        API Flow:
+        1. GET /sell/inventory/v1/inventory_item?limit=200&offset=0 (get all SKUs)
+        2. For each SKU: GET /sell/inventory/v1/offer?sku={sku}&limit=200&offset=0
+        3. Store all offers in database
+        
+        Args:
+            user_id: User ID
+            access_token: eBay OAuth access token
+            run_id: Optional run_id for sync event logging
+            
+        Returns:
+            Dict with status, total_fetched, total_stored, job_id, run_id
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
@@ -1140,9 +1259,11 @@ class EbayService:
         try:
             total_fetched = 0
             total_stored = 0
+            all_skus = []
             
             event_logger.log_start(f"Starting Offers sync from eBay ({settings.EBAY_ENVIRONMENT})")
-            event_logger.log_info(f"API Configuration: Inventory API v1, listing offers endpoint")
+            event_logger.log_info(f"API Configuration: Inventory API v1 - getInventoryItems → getOffers per SKU")
+            event_logger.log_info(f"Step 1: Fetching all inventory items to get SKU list...")
             logger.info(f"Starting offers sync for user {user_id}")
             
             await asyncio.sleep(0.5)
@@ -1167,50 +1288,16 @@ class EbayService:
                     "run_id": event_logger.run_id
                 }
             
-            event_logger.log_info(f"→ Requesting: GET /sell/inventory/v1/offer")
+            # Step 1: Get all inventory items (SKUs) with pagination
+            limit = 200
+            offset = 0
+            has_more_items = True
+            inventory_page = 0
             
-            request_start = time.time()
-            offers_response = await self.fetch_offers(access_token)
-            request_duration = int((time.time() - request_start) * 1000)
-            
-            # Check for cancellation after API call
-            if is_cancelled(event_logger.run_id):
-                logger.info(f"Offers sync cancelled for run_id {event_logger.run_id}")
-                event_logger.log_warning("Sync operation cancelled by user")
-                event_logger.log_done(
-                    f"Offers sync cancelled: 0 fetched, 0 stored",
-                    0,
-                    0,
-                    int((time.time() - start_time) * 1000)
-                )
-                event_logger.close()
-                return {
-                    "status": "cancelled",
-                    "total_fetched": 0,
-                    "total_stored": 0,
-                    "job_id": job_id,
-                    "run_id": event_logger.run_id
-                }
-            
-            offers = offers_response.get('offers', [])
-            total_fetched = len(offers)
-            
-            event_logger.log_http_request(
-                'GET',
-                '/sell/inventory/v1/offer',
-                200,
-                request_duration,
-                total_fetched
-            )
-            
-            event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {total_fetched} offers")
-            
-            await asyncio.sleep(0.3)
-            
-            event_logger.log_info(f"→ Storing {total_fetched} offers in database...")
-            store_start = time.time()
-            for offer in offers:
-                # Check for cancellation during storage
+            while has_more_items:
+                inventory_page += 1
+                
+                # Check for cancellation
                 if is_cancelled(event_logger.run_id):
                     logger.info(f"Offers sync cancelled for run_id {event_logger.run_id}")
                     event_logger.log_warning("Sync operation cancelled by user")
@@ -1229,31 +1316,113 @@ class EbayService:
                         "run_id": event_logger.run_id
                     }
                 
-                if ebay_db.upsert_offer(user_id, offer):
-                    total_stored += 1
-            store_duration = int((time.time() - store_start) * 1000)
+                event_logger.log_info(f"→ Fetching inventory items page {inventory_page}: GET /sell/inventory/v1/inventory_item?limit={limit}&offset={offset}")
+                
+                request_start = time.time()
+                inventory_response = await self.fetch_inventory_items(access_token, limit=limit, offset=offset)
+                request_duration = int((time.time() - request_start) * 1000)
+                
+                inventory_items = inventory_response.get('inventoryItems', [])
+                total_items = inventory_response.get('total', 0)
+                
+                # Extract SKUs from inventory items
+                page_skus = [item.get('sku') for item in inventory_items if item.get('sku')]
+                all_skus.extend(page_skus)
+                
+                event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(inventory_items)} items, {len(page_skus)} SKUs (Total: {total_items})")
+                
+                # Check if more pages
+                offset += limit
+                has_more_items = len(inventory_items) == limit and offset < total_items
+                
+                if has_more_items:
+                    await asyncio.sleep(0.3)
             
-            event_logger.log_info(f"← Database: Stored {total_stored} offers ({store_duration}ms)")
+            event_logger.log_info(f"✓ Step 1 complete: Found {len(all_skus)} unique SKUs")
             
-            event_logger.log_progress(
-                f"Offers sync complete: {total_fetched} fetched, {total_stored} stored",
-                1,
-                1,
-                total_fetched,
-                total_stored
-            )
+            if not all_skus:
+                event_logger.log_warning("No SKUs found in inventory - no offers to sync")
+                event_logger.log_done(
+                    f"Offers sync completed: 0 SKUs found, 0 offers fetched, 0 stored",
+                    0,
+                    0,
+                    int((time.time() - start_time) * 1000)
+                )
+                ebay_db.update_sync_job(job_id, 'completed', 0, 0)
+                return {
+                    "status": "completed",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id
+                }
+            
+            # Step 2: For each SKU, get offers
+            event_logger.log_info(f"Step 2: Fetching offers for {len(all_skus)} SKUs...")
+            sku_count = 0
+            
+            for sku in all_skus:
+                sku_count += 1
+                
+                # Check for cancellation
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Offers sync cancelled for run_id {event_logger.run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
+                event_logger.log_info(f"→ [{sku_count}/{len(all_skus)}] Fetching offers for SKU: {sku}")
+                
+                try:
+                    request_start = time.time()
+                    offers_response = await self.fetch_offers(access_token, sku=sku)
+                    request_duration = int((time.time() - request_start) * 1000)
+                    
+                    offers = offers_response.get('offers', [])
+                    total_fetched += len(offers)
+                    
+                    event_logger.log_info(f"← [{sku_count}/{len(all_skus)}] SKU {sku}: {len(offers)} offers ({request_duration}ms)")
+                    
+                    # Store offers
+                    for offer in offers:
+                        if ebay_db.upsert_offer(user_id, offer):
+                            total_stored += 1
+                    
+                    # Rate limiting - small delay between SKU requests
+                    await asyncio.sleep(0.2)
+                    
+                except Exception as e:
+                    error_msg = f"Failed to fetch offers for SKU {sku}: {str(e)}"
+                    event_logger.log_warning(error_msg)
+                    logger.warning(error_msg)
+                    # Continue with next SKU
+                    continue
+            
+            event_logger.log_info(f"✓ Step 2 complete: Processed {sku_count} SKUs")
             
             duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
             
             event_logger.log_done(
-                f"Offers sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                f"Offers sync completed: {total_fetched} offers fetched, {total_stored} stored from {sku_count} SKUs in {duration_ms}ms",
                 total_fetched,
                 total_stored,
                 duration_ms
             )
             
-            logger.info(f"Offers sync completed: fetched={total_fetched}, stored={total_stored}")
+            logger.info(f"Offers sync completed: fetched={total_fetched}, stored={total_stored} from {sku_count} SKUs")
             
             return {
                 "status": "completed",
@@ -1267,6 +1436,197 @@ class EbayService:
             error_msg = str(e)
             event_logger.log_error(f"Offers sync failed: {error_msg}", e)
             logger.error(f"Offers sync failed: {error_msg}")
+            ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
+            raise
+        finally:
+            event_logger.close()
+    
+    async def sync_all_inventory(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Synchronize all inventory items from eBay to database with pagination and incremental sync support.
+        
+        According to eBay API documentation:
+        - GET /sell/inventory/v1/inventory_item?limit=200&offset=0
+        - Parameters: limit (1-200, default 25), offset (default 0)
+        - Returns paginated list of inventory items
+        
+        API Flow:
+        1. GET /sell/inventory/v1/inventory_item?limit=200&offset=0 (paginated)
+        2. For each inventory item, extract and store in database
+        3. Support incremental sync via cursor tracking (future enhancement)
+        
+        Args:
+            user_id: User ID
+            access_token: eBay OAuth access token
+            run_id: Optional run_id for sync event logging
+            
+        Returns:
+            Dict with status, total_fetched, total_stored, job_id, run_id
+        """
+        from app.services.postgres_ebay_database import PostgresEbayDatabase
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
+        
+        ebay_db = PostgresEbayDatabase()
+        
+        # Use provided run_id if available, otherwise create new one
+        event_logger = SyncEventLogger(user_id, 'inventory', run_id=run_id)
+        job_id = ebay_db.create_sync_job(user_id, 'inventory')
+        start_time = time.time()
+        
+        try:
+            total_fetched = 0
+            total_stored = 0
+            
+            event_logger.log_start(f"Starting Inventory sync from eBay ({settings.EBAY_ENVIRONMENT})")
+            event_logger.log_info(f"API Configuration: Inventory API v1 - getInventoryItems with pagination")
+            logger.info(f"Starting inventory sync for user {user_id}")
+            
+            await asyncio.sleep(0.5)
+            
+            # Check for cancellation before starting
+            from app.services.sync_event_logger import is_cancelled
+            if is_cancelled(event_logger.run_id):
+                logger.info(f"Inventory sync cancelled for run_id {event_logger.run_id}")
+                event_logger.log_warning("Sync operation cancelled by user")
+                event_logger.log_done(
+                    f"Inventory sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    int((time.time() - start_time) * 1000)
+                )
+                event_logger.close()
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id
+                }
+            
+            # Pagination loop
+            limit = 200  # Max allowed by eBay API
+            offset = 0
+            has_more = True
+            current_page = 0
+            
+            while has_more:
+                current_page += 1
+                
+                # Check for cancellation
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Inventory sync cancelled for run_id {event_logger.run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Inventory sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
+                event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/inventory/v1/inventory_item?limit={limit}&offset={offset}")
+                
+                request_start = time.time()
+                inventory_response = await self.fetch_inventory_items(access_token, limit=limit, offset=offset)
+                request_duration = int((time.time() - request_start) * 1000)
+                
+                inventory_items = inventory_response.get('inventoryItems', [])
+                total_items = inventory_response.get('total', 0)
+                total_pages = (total_items + limit - 1) // limit if total_items > 0 else 1
+                
+                event_logger.log_http_request(
+                    'GET',
+                    f'/sell/inventory/v1/inventory_item?limit={limit}&offset={offset}',
+                    200,
+                    request_duration,
+                    len(inventory_items)
+                )
+                
+                event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(inventory_items)} items (Total available: {total_items})")
+                
+                total_fetched += len(inventory_items)
+                
+                await asyncio.sleep(0.3)
+                
+                event_logger.log_info(f"→ Storing {len(inventory_items)} inventory items in database...")
+                store_start = time.time()
+                
+                for item in inventory_items:
+                    # Check for cancellation during storage
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(f"Inventory sync cancelled for run_id {event_logger.run_id}")
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Inventory sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000)
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id
+                        }
+                    
+                    if ebay_db.upsert_inventory_item(user_id, item):
+                        total_stored += 1
+                
+                store_duration = int((time.time() - store_start) * 1000)
+                
+                event_logger.log_info(f"← Database: Stored {total_stored - (total_fetched - len(inventory_items))} items ({store_duration}ms)")
+                
+                event_logger.log_progress(
+                    f"Page {current_page}/{total_pages} complete: {len(inventory_items)} fetched, {total_stored - (total_fetched - len(inventory_items))} stored | Running total: {total_fetched}/{total_items} fetched, {total_stored} stored",
+                    current_page,
+                    total_pages,
+                    total_fetched,
+                    total_stored
+                )
+                
+                logger.info(f"Synced batch: {len(inventory_items)} items (total: {total_fetched}/{total_items}, stored: {total_stored})")
+                
+                # Check if more pages
+                offset += limit
+                has_more = len(inventory_items) == limit and offset < total_items
+                
+                if has_more:
+                    await asyncio.sleep(0.8)
+            
+            duration_ms = int((time.time() - start_time) * 1000)
+            ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
+            
+            event_logger.log_done(
+                f"Inventory sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms
+            )
+            
+            logger.info(f"Inventory sync completed: fetched={total_fetched}, stored={total_stored}")
+            
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "job_id": job_id,
+                "run_id": event_logger.run_id
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            event_logger.log_error(f"Inventory sync failed: {error_msg}", e)
+            logger.error(f"Inventory sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
             raise
         finally:
