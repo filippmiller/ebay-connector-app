@@ -3,6 +3,14 @@ interface Env {
 }
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
+  // Log all requests for debugging
+  console.log('[CF Proxy] Request received:', {
+    method: request.method,
+    url: request.url,
+    pathname: new URL(request.url).pathname,
+    hasApiBase: !!env.API_PUBLIC_BASE_URL
+  });
+  
   // Handle CORS preflight
   if (request.method === 'OPTIONS') {
     return new Response(null, {
@@ -19,8 +27,12 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const apiBase = env.API_PUBLIC_BASE_URL;
   
   if (!apiBase) {
+    console.error('[CF Proxy] API_PUBLIC_BASE_URL not configured!');
     return new Response(
-      JSON.stringify({ error: 'API_PUBLIC_BASE_URL not configured' }),
+      JSON.stringify({ 
+        error: 'API_PUBLIC_BASE_URL not configured',
+        message: 'The API_PUBLIC_BASE_URL environment variable must be set in Cloudflare Pages settings'
+      }),
       { 
         status: 500,
         headers: { 
@@ -61,7 +73,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   }
   
   try {
+    console.log('[CF Proxy] Proxying to:', upstream.toString());
     const response = await fetch(upstream.toString(), init);
+    console.log('[CF Proxy] Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      url: upstream.toString()
+    });
     
     // Clone response to modify headers
     const responseHeaders = new Headers(response.headers);
