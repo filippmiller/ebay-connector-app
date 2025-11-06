@@ -54,7 +54,7 @@ async def login(user_credentials: UserLogin, request: Request):
         logger.info(f"✅ User logged in successfully: {user.email} (role: {user.role})")
         return {"access_token": access_token, "token_type": "bearer"}
     
-    except HTTPException:
+    except HTTPException as e:
         # Re-raise HTTP exceptions (like 401) as-is, but add RID to headers if not present
         if "X-Request-ID" not in e.headers:
             e.headers["X-Request-ID"] = rid
