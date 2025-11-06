@@ -4,25 +4,37 @@ const getBaseURL = () => {
   // NEVER use Fly.dev or devinapps.com - we use Railway backend via Cloudflare proxy
   // Only check environment variables, otherwise use /api (Cloudflare Pages proxy)
   
+  // Debug: Log ALL environment variables to see what's set
+  console.log('[API] Environment check:', {
+    VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL || '(not set)',
+    VITE_API_URL: import.meta.env.VITE_API_URL || '(not set)',
+    VITE_API_PREFIX: import.meta.env.VITE_API_PREFIX || '(not set)',
+    MODE: import.meta.env.MODE,
+    PROD: import.meta.env.PROD,
+    DEV: import.meta.env.DEV
+  });
+  
   if (import.meta.env.VITE_API_BASE_URL) {
-    console.warn('[API] VITE_API_BASE_URL is set:', import.meta.env.VITE_API_BASE_URL);
-    console.warn('[API] This will bypass Cloudflare proxy! Consider removing this variable.');
+    console.error('[API] ❌ VITE_API_BASE_URL is set:', import.meta.env.VITE_API_BASE_URL);
+    console.error('[API] ❌ This will bypass Cloudflare proxy!');
+    console.error('[API] ❌ DELETE this variable in Cloudflare Pages → Settings → Environment Variables');
     return import.meta.env.VITE_API_BASE_URL;
   }
   
   if (import.meta.env.VITE_API_URL) {
-    console.warn('[API] VITE_API_URL is set:', import.meta.env.VITE_API_URL);
-    console.warn('[API] This will bypass Cloudflare proxy! Consider removing this variable.');
+    console.error('[API] ❌ VITE_API_URL is set:', import.meta.env.VITE_API_URL);
+    console.error('[API] ❌ This will bypass Cloudflare proxy!');
+    console.error('[API] ❌ DELETE this variable in Cloudflare Pages → Settings → Environment Variables');
     return import.meta.env.VITE_API_URL;
   }
   
   if (import.meta.env.VITE_API_PREFIX) {
-    console.warn('[API] VITE_API_PREFIX is set:', import.meta.env.VITE_API_PREFIX);
+    console.warn('[API] ⚠️ VITE_API_PREFIX is set:', import.meta.env.VITE_API_PREFIX);
     return import.meta.env.VITE_API_PREFIX;
   }
   
   // Default: use /api which routes through Cloudflare Pages Function proxy to Railway
-  console.log('[API] Using /api (Cloudflare proxy -> Railway backend)');
+  console.log('[API] ✅ Using /api (Cloudflare proxy -> Railway backend)');
   return "/api";
 };
 
