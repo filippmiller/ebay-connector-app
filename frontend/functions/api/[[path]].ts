@@ -75,17 +75,26 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       headers: responseHeaders
     });
   } catch (error: any) {
-    console.error('[CF Proxy] Error proxying request:', {
+    const errorDetails = {
       url: upstream.toString(),
       method: request.method,
-      error: error.message
-    });
+      error: error.message,
+      errorName: error.name,
+      apiBase: apiBase,
+      path: strippedPath
+    };
+    
+    console.error('[CF Proxy] Error proxying request:', errorDetails);
     
     return new Response(
       JSON.stringify({ 
         error: 'Backend request failed',
         message: error.message,
-        url: upstream.toString()
+        details: errorDetails,
+        troubleshooting: {
+          check: 'Verify API_PUBLIC_BASE_URL is set in Cloudflare Pages environment variables',
+          expectedFormat: 'https://your-backend-url.up.railway.app'
+        }
       }),
       { 
         status: 502,
