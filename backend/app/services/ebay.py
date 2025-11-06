@@ -1,6 +1,7 @@
 import base64
 import httpx
 import asyncio
+import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -27,21 +28,191 @@ MESSAGES_CONCURRENCY = 5
 class EbayService:
     
     def __init__(self):
-        self.sandbox_auth_url = "https://auth.sandbox.ebay.com/oauth2/authorize"
-        self.sandbox_token_url = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
-        
         self.production_auth_url = "https://auth.ebay.com/oauth2/authorize"
         self.production_token_url = "https://api.ebay.com/identity/v1/oauth2/token"
     
     @property
     def auth_url(self) -> str:
-        is_sandbox = settings.EBAY_ENVIRONMENT == "sandbox"
-        return self.sandbox_auth_url if is_sandbox else self.production_auth_url
+        return self.production_auth_url
     
     @property
     def token_url(self) -> str:
-        is_sandbox = settings.EBAY_ENVIRONMENT == "sandbox"
-        return self.sandbox_token_url if is_sandbox else self.production_token_url
+        return self.production_token_url
+    
+    def _log_http_request(self, method: str, url: str, headers: Dict[str, str], 
+                         data: Optional[Dict] = None, params: Optional[Dict] = None,
+                         correlation_id: Optional[str] = None):
+        """Log comprehensive details of outgoing HTTP request to eBay"""
+        safe_headers = {k: v if k.lower() not in ['authorization', 'x-ebay-api-app-name'] 
+                       else f"{v[:20]}..." if len(v) > 20 else "***" 
+                       for k, v in headers.items()}
+        
+        log_data = {
+            "method": method,
+            "url": url,
+            "headers": safe_headers,
+            "params": params,
+            "data": data,
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        ebay_logger.log_ebay_event(
+            "http_request_sent",
+            f"→ {method} {url}",
+            request_data=log_data
+        )
+        logger.info(f"eBay API Request: {method} {url} | correlation_id={correlation_id}")
+    
+    def _log_http_response(self, method: str, url: str, status_code: int, 
+                          response_body: str, response_headers: Dict[str, str],
+                          duration_ms: int, correlation_id: Optional[str] = None):
+        """Log comprehensive details of HTTP response from eBay"""
+        try:
+            response_json = json.loads(response_body) if response_body else {}
+        except:
+            response_json = {"raw": response_body[:500]}  # Truncate long responses
+        
+        log_data = {
+            "method": method,
+            "url": url,
+            "status_code": status_code,
+            "response_body": response_json,
+            "response_headers": dict(response_headers),
+            "duration_ms": duration_ms,
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        event_type = "http_response_success" if 200 <= status_code < 300 else "http_response_error"
+        ebay_logger.log_ebay_event(
+            event_type,
+            f"← {status_code} {method} {url} ({duration_ms}ms)",
+            response_data=log_data,
+            status="success" if 200 <= status_code < 300 else "error"
+        )
+        logger.info(f"eBay API Response: {status_code} {method} {url} | {duration_ms}ms | correlation_id={correlation_id}")
+    
+    async def test_client_credentials(self, correlation_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Test client credentials using client_credentials grant type.
+        This validates that the CLIENT_ID and CLIENT_SECRET (CERT_ID) are correct
+        without requiring the full OAuth authorization code flow.
+        """
+        import time
+        
+        if not settings.ebay_client_id or not settings.ebay_cert_id:
+            return {
+                "success": False,
+                "error": "eBay credentials not configured",
+                "details": {
+                    "has_client_id": bool(settings.ebay_client_id),
+                    "has_cert_id": bool(settings.ebay_cert_id)
+                }
+            }
+        
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        
+        data = {
+            "grant_type": "client_credentials",
+            "scope": "https://api.ebay.com/oauth/api_scope"
+        }
+        
+        correlation_id = correlation_id or f"test-creds-{int(time.time())}"
+        
+        self._log_http_request(
+            "POST",
+            self.token_url,
+            headers,
+            data=data,
+            correlation_id=correlation_id
+        )
+        
+        try:
+            start_time = time.time()
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.token_url,
+                    headers=headers,
+                    data=data,
+                    auth=(settings.ebay_client_id, settings.ebay_cert_id),
+                    timeout=30.0
+                )
+            
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            self._log_http_response(
+                "POST",
+                self.token_url,
+                response.status_code,
+                response.text,
+                response.headers,
+                duration_ms,
+                correlation_id
+            )
+            
+            if response.status_code == 200:
+                token_data = response.json()
+                return {
+                    "success": True,
+                    "status_code": response.status_code,
+                    "token_type": token_data.get("token_type"),
+                    "expires_in": token_data.get("expires_in"),
+                    "scope": token_data.get("scope"),
+                    "message": "Client credentials are valid! eBay accepted the CLIENT_ID and CLIENT_SECRET."
+                }
+            else:
+                try:
+                    error_data = response.json()
+                except:
+                    error_data = {"raw_error": response.text}
+                
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": error_data.get("error", "unknown"),
+                    "error_description": error_data.get("error_description", response.text),
+                    "message": "Client credentials are INVALID. The CLIENT_ID and CLIENT_SECRET do not match or are incorrect."
+                }
+        
+        except httpx.RequestError as e:
+            return {
+                "success": False,
+                "error": "HTTP request failed",
+                "details": str(e)
+            }
+    
+    def get_config_status(self) -> Dict[str, Any]:
+        """
+        Return safe configuration status showing which credentials are configured
+        and their sources (which env var was used).
+        """
+        return {
+            "environment": "production",  # Force production only
+            "token_url": self.token_url,
+            "auth_url": self.auth_url,
+            "credentials": {
+                "client_id": {
+                    "configured": bool(settings.ebay_client_id),
+                    "length": len(settings.ebay_client_id) if settings.ebay_client_id else 0,
+                    "last_4": settings.ebay_client_id[-4:] if settings.ebay_client_id and len(settings.ebay_client_id) >= 4 else None,
+                    "source_env_var": "EBAY_PRODUCTION_CLIENT_ID or EBAY_CLIENT_ID"
+                },
+                "cert_id": {
+                    "configured": bool(settings.ebay_cert_id),
+                    "length": len(settings.ebay_cert_id) if settings.ebay_cert_id else 0,
+                    "source_env_var": "EBAY_PRODUCTION_CERT_ID or EBAY_CLIENT_SECRET"
+                },
+                "runame": {
+                    "configured": bool(settings.ebay_runame),
+                    "value": settings.ebay_runame,
+                    "source_env_var": "EBAY_PRODUCTION_RUNAME or EBAY_RUNAME"
+                }
+            },
+            "api_base_url": settings.ebay_api_base_url
+        }
     
     def get_authorization_url(self, redirect_uri: str, state: Optional[str] = None, scopes: Optional[List[str]] = None) -> str:
         if not settings.ebay_client_id:
@@ -104,7 +275,9 @@ class EbayService:
         logger.info(f"Generated eBay {settings.EBAY_ENVIRONMENT} authorization URL with RuName: {settings.ebay_runame} (frontend callback: {redirect_uri})")
         return auth_url
     
-    async def exchange_code_for_token(self, code: str, redirect_uri: str) -> EbayTokenResponse:
+    async def exchange_code_for_token(self, code: str, redirect_uri: str, correlation_id: Optional[str] = None) -> EbayTokenResponse:
+        import time
+        
         if not settings.ebay_client_id or not settings.ebay_cert_id:
             ebay_logger.log_ebay_event(
                 "token_exchange_error",
@@ -116,6 +289,8 @@ class EbayService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="eBay credentials not configured"
             )
+        
+        correlation_id = correlation_id or f"token-exchange-{int(time.time())}"
         
         headers = {
             "Content-Type": "application/x-www-form-urlencoded"
@@ -129,20 +304,30 @@ class EbayService:
         
         ebay_logger.log_ebay_event(
             "token_exchange_request",
-            f"Exchanging authorization code for access token ({settings.EBAY_ENVIRONMENT})",
+            f"Exchanging authorization code for access token (production)",
             request_data={
-                "environment": settings.EBAY_ENVIRONMENT,
+                "environment": "production",
                 "grant_type": "authorization_code",
                 "redirect_uri": settings.ebay_runame,
                 "token_url": self.token_url,
                 "code": code[:10] + "..." if len(code) > 10 else code,
                 "client_id": settings.ebay_client_id,
                 "client_id_length": len(settings.ebay_client_id) if settings.ebay_client_id else 0,
-                "client_secret_length": len(settings.ebay_cert_id) if settings.ebay_cert_id else 0
+                "client_secret_length": len(settings.ebay_cert_id) if settings.ebay_cert_id else 0,
+                "correlation_id": correlation_id
             }
         )
         
+        self._log_http_request(
+            "POST",
+            self.token_url,
+            headers,
+            data=data,
+            correlation_id=correlation_id
+        )
+        
         try:
+            start_time = time.time()
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     self.token_url,
@@ -151,47 +336,61 @@ class EbayService:
                     auth=(settings.ebay_client_id, settings.ebay_cert_id),
                     timeout=30.0
                 )
-                
+            
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            self._log_http_response(
+                "POST",
+                self.token_url,
+                response.status_code,
+                response.text,
+                response.headers,
+                duration_ms,
+                correlation_id
+            )
+            
+            ebay_logger.log_ebay_event(
+                "token_exchange_response",
+                f"Received token exchange response with status {response.status_code}",
+                response_data={
+                    "status_code": response.status_code,
+                    "response_body": response.text,
+                    "correlation_id": correlation_id
+                }
+            )
+            
+            if response.status_code != 200:
+                error_detail = response.text
                 ebay_logger.log_ebay_event(
-                    "token_exchange_response",
-                    f"Received token exchange response with status {response.status_code}",
-                    response_data={
-                        "status_code": response.status_code,
-                        "response_body": response.text
-                    }
+                    "token_exchange_failed",
+                    f"Token exchange failed with status {response.status_code}",
+                    response_data={"error": error_detail, "correlation_id": correlation_id},
+                    status="error",
+                    error=error_detail
                 )
-                
-                if response.status_code != 200:
-                    error_detail = response.text
-                    ebay_logger.log_ebay_event(
-                        "token_exchange_failed",
-                        f"Token exchange failed with status {response.status_code}",
-                        response_data={"error": error_detail},
-                        status="error",
-                        error=error_detail
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Failed to exchange code for token: {error_detail}"
-                    )
-                
-                token_data = response.json()
-                
-                ebay_logger.log_ebay_event(
-                    "token_exchange_success",
-                    "Successfully obtained eBay access token",
-                    response_data={
-                        "access_token": token_data.get("access_token"),
-                        "token_type": token_data.get("token_type"),
-                        "expires_in": token_data.get("expires_in"),
-                        "has_refresh_token": "refresh_token" in token_data
-                    },
-                    status="success"
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to exchange code for token: {error_detail}"
                 )
-                
-                logger.info("Successfully exchanged authorization code for eBay access token")
-                
-                return EbayTokenResponse(**token_data)
+            
+            token_data = response.json()
+            
+            ebay_logger.log_ebay_event(
+                "token_exchange_success",
+                "Successfully obtained eBay access token",
+                response_data={
+                    "access_token": token_data.get("access_token"),
+                    "token_type": token_data.get("token_type"),
+                    "expires_in": token_data.get("expires_in"),
+                    "has_refresh_token": "refresh_token" in token_data,
+                    "correlation_id": correlation_id
+                },
+                status="success"
+            )
+            
+            logger.info(f"Successfully exchanged authorization code for eBay access token | correlation_id={correlation_id}")
+            
+            return EbayTokenResponse(**token_data)
                 
         except httpx.RequestError as e:
             error_msg = f"HTTP request failed: {str(e)}"

@@ -94,9 +94,11 @@ async def ebay_auth_callback(
     settings.EBAY_ENVIRONMENT = environment
     
     try:
+        correlation_id = state_data.get("nonce") if state_data else None
         token_response = await ebay_service.exchange_code_for_token(
             code=callback_data.code,
-            redirect_uri=redirect_uri
+            redirect_uri=redirect_uri,
+            correlation_id=correlation_id
         )
         
         ebay_user_id = await ebay_service.get_ebay_user_id(token_response.access_token)
@@ -207,6 +209,38 @@ async def clear_ebay_logs(current_user: User = Depends(get_current_active_user))
     
     ebay_logger.clear_logs()
     return {"message": "Logs cleared successfully"}
+
+
+@router.post("/diagnostics/test-credentials")
+async def test_client_credentials(current_user: User = Depends(get_current_active_user)):
+    """
+    Test eBay client credentials using client_credentials grant type.
+    This validates that CLIENT_ID and CLIENT_SECRET are correct without requiring
+    the full OAuth authorization code flow.
+    """
+    logger.info(f"Testing eBay client credentials for user: {current_user.email}")
+    
+    result = await ebay_service.test_client_credentials()
+    
+    if result.get("success"):
+        logger.info(f"Client credentials test PASSED for user: {current_user.email}")
+    else:
+        logger.warning(f"Client credentials test FAILED for user: {current_user.email} - {result.get('error')}")
+    
+    return result
+
+
+@router.get("/diagnostics/config-status")
+async def get_config_status(current_user: User = Depends(get_current_active_user)):
+    """
+    Get safe configuration status showing which credentials are configured
+    and their sources (which env var was used).
+    """
+    logger.info(f"Retrieving eBay config status for user: {current_user.email}")
+    
+    config_status = ebay_service.get_config_status()
+    
+    return config_status
 
 
 @router.get("/test/orders")
