@@ -308,7 +308,8 @@ async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: st
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        await ebay_service.sync_all_orders(user_id, access_token)
+        # Pass run_id to sync_all_orders so it uses the same run_id for events
+        await ebay_service.sync_all_orders(user_id, access_token, run_id=run_id)
     except Exception as e:
         logger.error(f"Background orders sync failed for run_id {run_id}: {str(e)}")
     finally:
@@ -389,7 +390,8 @@ async def _run_transactions_sync(user_id: str, access_token: str, ebay_environme
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        await ebay_service.sync_all_transactions(user_id, access_token)
+        # Pass run_id to sync_all_transactions so it uses the same run_id for events
+        await ebay_service.sync_all_transactions(user_id, access_token, run_id=run_id)
     except Exception as e:
         logger.error(f"Background transactions sync failed for run_id {run_id}: {str(e)}")
     finally:
@@ -436,7 +438,8 @@ async def _run_disputes_sync(user_id: str, access_token: str, ebay_environment: 
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        await ebay_service.sync_all_disputes(user_id, access_token)
+        # Pass run_id to sync_all_disputes so it uses the same run_id for events
+        await ebay_service.sync_all_disputes(user_id, access_token, run_id=run_id)
     except Exception as e:
         logger.error(f"Background disputes sync failed for run_id {run_id}: {str(e)}")
     finally:
@@ -747,26 +750,23 @@ async def cancel_sync_operation(
 ):
     """
     Cancel a running sync operation.
+    Works even if sync hasn't started logging events yet.
     """
     from app.services.sync_event_logger import cancel_sync, get_sync_events_from_db
     
-    # Verify the run_id belongs to the current user
+    # Try to get events, but don't fail if none exist yet (sync might not have started)
     events = get_sync_events_from_db(run_id, current_user.id)
-    if not events:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sync run not found"
-        )
     
-    # Check if already complete
-    last_event = events[-1] if events else None
-    if last_event and last_event.get('event_type') in ['done', 'error', 'cancelled']:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sync operation is already complete"
-        )
+    # If events exist, check if already complete
+    if events:
+        last_event = events[-1]
+        if last_event and last_event.get('event_type') in ['done', 'error', 'cancelled']:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sync operation is already complete"
+            )
     
-    # Cancel the sync
+    # Cancel the sync (this will work even if no events exist yet)
     success = cancel_sync(run_id, current_user.id)
     if not success:
         raise HTTPException(

@@ -55,9 +55,36 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
           if (lastEvent?.message?.toLowerCase().includes('cancelled')) {
             setIsCancelled(true);
           }
+        } else if (response.data?.events?.length === 0) {
+          // No events yet - sync might not have started
+          setEvents([{
+            run_id: runId,
+            event_type: 'log',
+            level: 'info',
+            message: 'Waiting for sync to start...',
+            timestamp: new Date().toISOString()
+          }]);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load historical events:', error);
+        // Show authentication error if applicable
+        if (error?.response?.status === 401 || error?.response?.status === 403) {
+          setEvents([{
+            run_id: runId,
+            event_type: 'error',
+            level: 'error',
+            message: 'Authentication error: Please log out and log back in to refresh your session.',
+            timestamp: new Date().toISOString()
+          }]);
+        } else {
+          setEvents([{
+            run_id: runId,
+            event_type: 'error',
+            level: 'error',
+            message: `Failed to load logs: ${error?.response?.data?.detail || error?.message || 'Unknown error'}`,
+            timestamp: new Date().toISOString()
+          }]);
+        }
       }
     };
     
@@ -125,9 +152,46 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
       eventSource.close();
     });
 
-    eventSource.onerror = () => {
+    eventSource.onerror = (error) => {
+      console.error('[SyncTerminal] EventSource error:', error);
       setIsConnected(false);
       eventSource.close();
+      
+      // Check if it's an authentication error by trying to load logs
+      // If we get 401/403, show authentication error message
+      const checkAuth = async () => {
+        try {
+          const response = await api.get(`/ebay/sync/logs/${runId}`);
+          // If we get here, auth is OK, so it's a different error
+          setEvents((prev) => [...prev, {
+            run_id: runId,
+            event_type: 'error',
+            level: 'error',
+            message: 'Connection error: Failed to stream events. Check network connection.',
+            timestamp: new Date().toISOString()
+          }]);
+        } catch (err: any) {
+          // Authentication error
+          if (err?.response?.status === 401 || err?.response?.status === 403) {
+            setEvents((prev) => [...prev, {
+              run_id: runId,
+              event_type: 'error',
+              level: 'error',
+              message: 'Authentication error: Please log out and log back in to refresh your session.',
+              timestamp: new Date().toISOString()
+            }]);
+          } else {
+            setEvents((prev) => [...prev, {
+              run_id: runId,
+              event_type: 'error',
+              level: 'error',
+              message: `Connection error: ${err?.response?.data?.detail || err?.message || 'Unknown error'}`,
+              timestamp: new Date().toISOString()
+            }]);
+          }
+        }
+      };
+      checkAuth();
     };
 
     return () => {

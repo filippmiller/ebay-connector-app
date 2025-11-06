@@ -509,15 +509,21 @@ class EbayService:
             )
 
 
-    async def sync_all_orders(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_orders(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Synchronize all orders from eBay to database with pagination (limit=200)
+        
+        Args:
+            user_id: User ID
+            access_token: eBay OAuth access token
+            run_id: Optional run_id for sync event logging
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
         
-        event_logger = SyncEventLogger(user_id, 'orders')
+        # Use provided run_id if available, otherwise create new one
+        event_logger = SyncEventLogger(user_id, 'orders', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'orders')
         start_time = time.time()
         
@@ -939,15 +945,21 @@ class EbayService:
             )
 
 
-    async def sync_all_transactions(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_transactions(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Synchronize all transactions from eBay to database with pagination (limit=200)
+        
+        Args:
+            user_id: User ID
+            access_token: eBay OAuth access token
+            run_id: Optional run_id for sync event logging
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
         
-        event_logger = SyncEventLogger(user_id, 'transactions')
+        # Use provided run_id if available, otherwise create new one
+        event_logger = SyncEventLogger(user_id, 'transactions', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'transactions')
         start_time = time.time()
         
@@ -1077,15 +1089,21 @@ class EbayService:
         finally:
             event_logger.close()
 
-    async def sync_all_disputes(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_disputes(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Synchronize all payment disputes from eBay to database with comprehensive logging
+        
+        Args:
+            user_id: User ID
+            access_token: eBay OAuth access token
+            run_id: Optional run_id for sync event logging
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
         
-        event_logger = SyncEventLogger(user_id, 'disputes')
+        # Use provided run_id if available, otherwise create new one
+        event_logger = SyncEventLogger(user_id, 'disputes', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'disputes')
         start_time = time.time()
         
