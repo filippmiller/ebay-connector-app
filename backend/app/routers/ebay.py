@@ -638,7 +638,7 @@ async def stream_sync_events(
                     yield f"event: {event['event_type']}\n"
                     yield f"data: {json.dumps(event)}\n\n"
                     
-                    if event['event_type'] in ['done', 'error']:
+                    if event['event_type'] in ['done', 'error', 'cancelled']:
                         is_complete = True
                 
                 last_event_count = len(events)
@@ -677,6 +677,47 @@ async def get_sync_logs(
         "run_id": run_id,
         "events": events,
         "total": len(events)
+    }
+
+
+@router.post("/sync/cancel/{run_id}")
+async def cancel_sync_operation(
+    run_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Cancel a running sync operation.
+    """
+    from app.services.sync_event_logger import cancel_sync, get_sync_events_from_db
+    
+    # Verify the run_id belongs to the current user
+    events = get_sync_events_from_db(run_id, current_user.id)
+    if not events:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sync run not found"
+        )
+    
+    # Check if already complete
+    last_event = events[-1] if events else None
+    if last_event and last_event.get('event_type') in ['done', 'error', 'cancelled']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sync operation is already complete"
+        )
+    
+    # Cancel the sync
+    success = cancel_sync(run_id, current_user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel sync operation"
+        )
+    
+    return {
+        "run_id": run_id,
+        "status": "cancelled",
+        "message": "Sync operation cancelled"
     }
 
 

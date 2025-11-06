@@ -12,6 +12,9 @@ from app.utils.logger import logger
 import asyncio
 import json
 
+# In-memory cancellation flags (fast lookup)
+_cancelled_run_ids: set = set()
+
 
 class SyncEventLogger:
     """
@@ -19,10 +22,10 @@ class SyncEventLogger:
     Emits structured log events that can be streamed via SSE and persisted to database.
     """
     
-    def __init__(self, user_id: str, sync_type: str):
+    def __init__(self, user_id: str, sync_type: str, run_id: Optional[str] = None):
         self.user_id = user_id
         self.sync_type = sync_type
-        self.run_id = f"{sync_type}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        self.run_id = run_id or f"{sync_type}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         self.db: Optional[Session] = None
         self.events = []
         
@@ -182,6 +185,67 @@ class SyncEventLogger:
                 break
             
             await asyncio.sleep(0.1)
+
+
+def is_cancelled(run_id: str) -> bool:
+    """Check if a sync run has been cancelled"""
+    if run_id in _cancelled_run_ids:
+        return True
+    # Also check database for persistence
+    db = SessionLocal()
+    try:
+        cancelled_event = db.query(SyncEventLog).filter(
+            SyncEventLog.run_id == run_id,
+            SyncEventLog.event_type == 'cancelled'
+        ).first()
+        if cancelled_event:
+            _cancelled_run_ids.add(run_id)
+            return True
+        return False
+    finally:
+        db.close()
+
+
+def cancel_sync(run_id: str, user_id: str) -> bool:
+    """Mark a sync run as cancelled"""
+    _cancelled_run_ids.add(run_id)
+    # Also persist to database
+    db = SessionLocal()
+    try:
+        # Check if already cancelled
+        existing = db.query(SyncEventLog).filter(
+            SyncEventLog.run_id == run_id,
+            SyncEventLog.event_type == 'cancelled'
+        ).first()
+        if existing:
+            return True
+        
+        # Get sync_type from existing events
+        first_event = db.query(SyncEventLog).filter(
+            SyncEventLog.run_id == run_id
+        ).first()
+        sync_type = first_event.sync_type if first_event else 'unknown'
+        
+        # Create cancellation event
+        cancel_event = SyncEventLog(
+            run_id=run_id,
+            user_id=user_id,
+            sync_type=sync_type,
+            event_type='cancelled',
+            level='warning',
+            message='Sync operation cancelled by user',
+            timestamp=datetime.utcnow()
+        )
+        db.add(cancel_event)
+        db.commit()
+        logger.info(f"Marked sync run {run_id} as cancelled")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to cancel sync {run_id}: {str(e)}")
+        db.rollback()
+        return False
+    finally:
+        db.close()
 
 
 def get_sync_events_from_db(run_id: str, user_id: str) -> list:

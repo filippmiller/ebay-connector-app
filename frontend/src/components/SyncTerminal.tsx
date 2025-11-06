@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
-import { Download, Pause, Play, Trash2 } from 'lucide-react';
+import { Download, Pause, Play, Trash2, Square } from 'lucide-react';
+import api from '../lib/apiClient';
 
 interface SyncEvent {
   run_id: string;
@@ -25,15 +26,43 @@ interface SyncEvent {
 interface SyncTerminalProps {
   runId: string;
   onComplete?: () => void;
+  onStop?: () => void;
 }
 
-export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete }) => {
+export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, onStop }) => {
   const [events, setEvents] = useState<SyncEvent[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [isCancelled, setIsCancelled] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Load historical events on mount
+  useEffect(() => {
+    if (!runId) return;
+    
+    const loadHistoricalEvents = async () => {
+      try {
+        const response = await api.get(`/ebay/sync/logs/${runId}`);
+        if (response.data?.events) {
+          setEvents(response.data.events);
+          // Check if already complete or cancelled
+          const lastEvent = response.data.events[response.data.events.length - 1];
+          if (lastEvent?.event_type === 'done' || lastEvent?.event_type === 'error') {
+            setIsComplete(true);
+          }
+          if (lastEvent?.message?.toLowerCase().includes('cancelled')) {
+            setIsCancelled(true);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load historical events:', error);
+      }
+    };
+    
+    loadHistoricalEvents();
+  }, [runId]);
 
   useEffect(() => {
     if (!runId || isPaused) return;
@@ -80,6 +109,16 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete })
       if (onComplete) onComplete();
     });
 
+    eventSource.addEventListener('cancelled', (e: MessageEvent) => {
+      const event = JSON.parse(e.data);
+      setEvents((prev) => [...prev, event]);
+      setIsCancelled(true);
+      setIsComplete(true);
+      setIsConnected(false);
+      eventSource.close();
+      if (onComplete) onComplete();
+    });
+
     eventSource.addEventListener('end', () => {
       setIsConnected(false);
       eventSource.close();
@@ -111,6 +150,20 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete })
 
   const handleClear = () => {
     setEvents([]);
+  };
+
+  const handleStop = async () => {
+    try {
+      await api.post(`/ebay/sync/cancel/${runId}`);
+      setIsCancelled(true);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        setIsConnected(false);
+      }
+      if (onStop) onStop();
+    } catch (error) {
+      console.error('Failed to cancel sync:', error);
+    }
   };
 
   const handleDownload = async () => {
@@ -169,18 +222,35 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete })
                 Live
               </span>
             )}
-            {isComplete && (
+            {isComplete && !isCancelled && (
               <span className="text-xs text-gray-500">
                 Complete
               </span>
             )}
+            {isCancelled && (
+              <span className="text-xs text-red-500">
+                Cancelled
+              </span>
+            )}
           </CardTitle>
           <div className="flex items-center gap-2">
+            {!isComplete && !isCancelled && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleStop}
+                title="Stop sync"
+                className="text-red-500 hover:text-red-700"
+              >
+                <Square className="w-4 h-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
               onClick={handlePauseToggle}
               title={isPaused ? 'Resume' : 'Pause'}
+              disabled={isComplete || isCancelled}
             >
               {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             </Button>
@@ -197,7 +267,7 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete })
               size="sm"
               onClick={handleDownload}
               title="Download logs"
-              disabled={!isComplete}
+              disabled={!isComplete && !isCancelled}
             >
               <Download className="w-4 h-4" />
             </Button>

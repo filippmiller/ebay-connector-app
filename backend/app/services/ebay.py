@@ -536,6 +536,26 @@ class EbayService:
             await asyncio.sleep(0.5)
             
             while has_more:
+                # Check for cancellation
+                from app.services.sync_event_logger import is_cancelled
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Order sync cancelled for run_id {event_logger.run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Orders sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 current_page += 1
                 filter_params = {
                     "limit": limit,
@@ -829,6 +849,26 @@ class EbayService:
             await asyncio.sleep(0.5)
             
             while has_more:
+                # Check for cancellation
+                from app.services.sync_event_logger import is_cancelled
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Transaction sync cancelled for run_id {event_logger.run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 current_page += 1
                 filter_params = {
                     'filter': f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
@@ -936,11 +976,50 @@ class EbayService:
             
             await asyncio.sleep(0.5)
             
+            # Check for cancellation before starting
+            from app.services.sync_event_logger import is_cancelled
+            if is_cancelled(event_logger.run_id):
+                logger.info(f"Disputes sync cancelled for run_id {event_logger.run_id}")
+                event_logger.log_warning("Sync operation cancelled by user")
+                event_logger.log_done(
+                    f"Disputes sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    int((time.time() - start_time) * 1000)
+                )
+                event_logger.close()
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id
+                }
+            
             event_logger.log_info(f"→ Requesting: GET /sell/fulfillment/v1/payment_dispute_summary/search")
             
             request_start = time.time()
             disputes_response = await self.fetch_payment_disputes(access_token)
             request_duration = int((time.time() - request_start) * 1000)
+            
+            # Check for cancellation after API call
+            if is_cancelled(event_logger.run_id):
+                logger.info(f"Disputes sync cancelled for run_id {event_logger.run_id}")
+                event_logger.log_warning("Sync operation cancelled by user")
+                event_logger.log_done(
+                    f"Disputes sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    int((time.time() - start_time) * 1000)
+                )
+                event_logger.close()
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id
+                }
             
             disputes = disputes_response.get('paymentDisputeSummaries', [])
             total_fetched = len(disputes)
@@ -960,6 +1039,25 @@ class EbayService:
             event_logger.log_info(f"→ Storing {total_fetched} disputes in database...")
             store_start = time.time()
             for dispute in disputes:
+                # Check for cancellation during storage
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Disputes sync cancelled for run_id {event_logger.run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Disputes sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 if ebay_db.upsert_dispute(user_id, dispute):
                     total_stored += 1
             store_duration = int((time.time() - store_start) * 1000)
@@ -1025,11 +1123,50 @@ class EbayService:
             
             await asyncio.sleep(0.5)
             
+            # Check for cancellation before starting
+            from app.services.sync_event_logger import is_cancelled
+            if is_cancelled(event_logger.run_id):
+                logger.info(f"Offers sync cancelled for run_id {event_logger.run_id}")
+                event_logger.log_warning("Sync operation cancelled by user")
+                event_logger.log_done(
+                    f"Offers sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    int((time.time() - start_time) * 1000)
+                )
+                event_logger.close()
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id
+                }
+            
             event_logger.log_info(f"→ Requesting: GET /sell/inventory/v1/offer")
             
             request_start = time.time()
             offers_response = await self.fetch_offers(access_token)
             request_duration = int((time.time() - request_start) * 1000)
+            
+            # Check for cancellation after API call
+            if is_cancelled(event_logger.run_id):
+                logger.info(f"Offers sync cancelled for run_id {event_logger.run_id}")
+                event_logger.log_warning("Sync operation cancelled by user")
+                event_logger.log_done(
+                    f"Offers sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    int((time.time() - start_time) * 1000)
+                )
+                event_logger.close()
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id
+                }
             
             offers = offers_response.get('offers', [])
             total_fetched = len(offers)
@@ -1049,6 +1186,25 @@ class EbayService:
             event_logger.log_info(f"→ Storing {total_fetched} offers in database...")
             store_start = time.time()
             for offer in offers:
+                # Check for cancellation during storage
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Offers sync cancelled for run_id {event_logger.run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Offers sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 if ebay_db.upsert_offer(user_id, offer):
                     total_stored += 1
             store_duration = int((time.time() - store_start) * 1000)

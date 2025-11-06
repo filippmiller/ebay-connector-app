@@ -244,6 +244,21 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
         folder_index = 0
         
         for folder in folders:
+            # Check for cancellation
+            from app.services.sync_event_logger import is_cancelled
+            if is_cancelled(run_id):
+                logger.info(f"Messages sync cancelled for run_id {run_id}")
+                event_logger.log_warning("Sync operation cancelled by user")
+                duration_ms = int((time.time() - start_time) * 1000)
+                event_logger.log_done(
+                    f"Messages sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                    total_fetched,
+                    total_stored,
+                    duration_ms
+                )
+                event_logger.close()
+                return
+            
             folder_index += 1
             folder_id = folder["folder_id"]
             folder_name = folder["folder_name"]
@@ -266,6 +281,21 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
             page_number = 1
             
             while True:
+                # Check for cancellation
+                from app.services.sync_event_logger import is_cancelled
+                if is_cancelled(run_id):
+                    logger.info(f"Messages sync cancelled for run_id {run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        f"Messages sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        duration_ms
+                    )
+                    event_logger.close()
+                    return
+                
                 event_logger.log_info(f"→ Requesting headers page {page_number}: POST /ws/eBayISAPI.dll (GetMyMessages - {folder_name})")
                 logger.info(f"Fetching headers page {page_number} for folder {folder_name}")
                 
@@ -310,6 +340,21 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
             total_batches = (len(all_message_ids) + 9) // 10
             
             for i in range(0, len(all_message_ids), 10):
+                # Check for cancellation
+                from app.services.sync_event_logger import is_cancelled
+                if is_cancelled(run_id):
+                    logger.info(f"Messages sync cancelled for run_id {run_id}")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        f"Messages sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        duration_ms
+                    )
+                    event_logger.close()
+                    return
+                
                 batch_ids = all_message_ids[i:i+10]
                 batch_num = i//10 + 1
                 event_logger.log_info(f"→ Requesting bodies batch {batch_num}/{total_batches}: POST /ws/eBayISAPI.dll (GetMyMessages - {len(batch_ids)} IDs)")

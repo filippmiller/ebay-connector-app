@@ -13,10 +13,20 @@ const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }
 const commit = execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
 const timestamp = new Date().toISOString();
 
-// Read BUILD_NUMBER from build-number.txt
-import { readFileSync } from 'fs';
+// Read and increment BUILD_NUMBER from build-number.txt
+import { readFileSync, writeFileSync } from 'fs';
 const buildNumberPath = join(frontendDir, 'build-number.txt');
-const buildNumber = parseInt(readFileSync(buildNumberPath, 'utf-8').trim()) || 1;
+let buildNumber = 1;
+try {
+  const currentBuild = parseInt(readFileSync(buildNumberPath, 'utf-8').trim()) || 0;
+  buildNumber = currentBuild + 1;
+  // Write incremented number back to file
+  writeFileSync(buildNumberPath, buildNumber.toString(), 'utf-8');
+} catch (e) {
+  // File doesn't exist, start from 1 and create it
+  writeFileSync(buildNumberPath, '1', 'utf-8');
+  buildNumber = 1;
+}
 
 // Target domain for production (read from environment)
 const domain = process.env.DEPLOY_DOMAIN || '';
