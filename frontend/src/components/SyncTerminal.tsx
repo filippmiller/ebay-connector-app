@@ -291,6 +291,7 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
   const getEventColor = (event: SyncEvent) => {
     if (event.level === 'error') return 'text-red-400';
     if (event.level === 'warning') return 'text-yellow-400';
+    if (event.level === 'debug') return 'text-purple-400';
     if (event.event_type === 'start') return 'text-green-400';
     if (event.event_type === 'done') return 'text-green-400 font-bold';
     if (event.event_type === 'http') return 'text-blue-400';
@@ -310,6 +311,11 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
     if (event.event_type === 'progress' && event.progress_pct !== undefined) {
       const progressBar = '█'.repeat(Math.floor(event.progress_pct / 5)) + '░'.repeat(20 - Math.floor(event.progress_pct / 5));
       message += ` [${progressBar}] ${event.progress_pct.toFixed(1)}%`;
+    }
+
+    // For debug messages, preserve multi-line format
+    if (event.level === 'debug' && message.includes('\n')) {
+      return `[${time}] ${message}`;
     }
 
     return `[${time}] ${message}`;
@@ -387,7 +393,10 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
           ) : (
             <div className="space-y-1">
               {events.map((event, index) => (
-                <div key={index} className={getEventColor(event)}>
+                <div 
+                  key={index} 
+                  className={`${getEventColor(event)} ${event.level === 'debug' && event.message.includes('\n') ? 'whitespace-pre' : ''}`}
+                >
                   {formatEvent(event)}
                 </div>
               ))}
