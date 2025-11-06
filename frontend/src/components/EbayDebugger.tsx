@@ -10,7 +10,7 @@ import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import api from '../lib/apiClient';
-import { Loader2, Play, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Loader2, Play } from 'lucide-react';
 
 interface DebugTemplate {
   name: string;
