@@ -12,8 +12,8 @@ if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
   poetry run alembic current || echo "[entry] No current revision found"
   echo "[entry] alembic heads:"
   poetry run alembic heads || echo "[entry] No heads found"
-  echo "[entry] alembic upgrade head..."
-  poetry run alembic upgrade head || {
+  echo "[entry] alembic upgrade heads..."
+  poetry run alembic upgrade heads || {
     echo "[entry] WARNING: Migrations failed, continuing anyway..."
   }
 fi
