@@ -1116,7 +1116,7 @@ class EbayService:
         finally:
             event_logger.close()
 
-    async def sync_all_offers(self, user_id: str, access_token: str) -> Dict[str, Any]:
+    async def sync_all_offers(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Synchronize all offers from eBay to database with comprehensive logging
         """
@@ -1124,7 +1124,8 @@ class EbayService:
         from app.services.sync_event_logger import SyncEventLogger
         import time
         
-        event_logger = SyncEventLogger(user_id, 'offers')
+        # Use provided run_id if available, otherwise create new one
+        event_logger = SyncEventLogger(user_id, 'offers', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'offers')
         start_time = time.time()
         

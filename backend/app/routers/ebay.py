@@ -545,7 +545,8 @@ async def _run_offers_sync(user_id: str, access_token: str, ebay_environment: st
     settings.EBAY_ENVIRONMENT = ebay_environment
     
     try:
-        await ebay_service.sync_all_offers(user_id, access_token)
+        # Pass run_id to sync_all_offers so it uses the same run_id for events
+        await ebay_service.sync_all_offers(user_id, access_token, run_id=run_id)
     except Exception as e:
         logger.error(f"Background offers sync failed for run_id {run_id}: {str(e)}")
     finally:
