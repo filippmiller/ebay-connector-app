@@ -19,11 +19,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshMe = useCallback(async () => {
     try {
+      console.log("[Auth] Fetching /auth/me...");
       const { data } = await api.get("/auth/me");
+      console.log("[Auth] User data received:", data?.email);
       setUser(data);
-    } catch {
+    } catch (error) {
+      console.error("[Auth] Failed to fetch user data:", error);
       setUser(null);
       localStorage.removeItem("auth_token");
+      throw error; // Re-throw so caller knows it failed
     }
   }, []);
 
@@ -44,11 +48,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = useCallback(async (email: string, password: string) => {
     setLoading(true);
     try {
+      console.log("[Auth] Attempting login for:", email);
       const { data } = await api.post("/auth/login", { email, password });
       const token: string = data?.access_token;
-      if (!token) throw new Error("No access_token in response");
+      if (!token) {
+        console.error("[Auth] No access_token in login response:", data);
+        throw new Error("No access_token in response");
+      }
+      console.log("[Auth] Login successful, token received");
       localStorage.setItem("auth_token", token);
-      refreshMe().catch(() => {});
+      
+      // Await refreshMe to ensure user is set before login completes
+      console.log("[Auth] Fetching user data...");
+      await refreshMe();
+      console.log("[Auth] User data fetched successfully");
+    } catch (error) {
+      console.error("[Auth] Login error:", error);
+      // Clear token if login failed
+      localStorage.removeItem("auth_token");
+      throw error;
     } finally {
       setLoading(false);
     }
