@@ -649,9 +649,9 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # Add date window filter with lastModifiedDate (case-sensitive!)
+                # Add date window filter with createdDate (correct filter name for Orders API)
                 filter_params = {
-                    "filter": f"lastModifiedDate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
+                    "filter": f"createdDate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
                     "limit": limit,
                     "offset": offset,
                     "fieldGroups": "TAX_BREAKDOWN"
@@ -852,7 +852,8 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/payment_dispute_summary/search"
+        # FIXED: Correct endpoint is /payment_dispute (not /payment_dispute_summary/search)
+        api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/payment_dispute"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -1434,7 +1435,7 @@ class EbayService:
             total_stored = 0
             
             event_logger.log_start(f"Starting Disputes sync from eBay ({settings.EBAY_ENVIRONMENT})")
-            event_logger.log_info(f"API Configuration: Fulfillment API v1 payment_dispute_summary/search")
+            event_logger.log_info(f"API Configuration: Fulfillment API v1 payment_dispute")
             logger.info(f"Starting disputes sync for user {user_id}")
             
             await asyncio.sleep(0.5)
@@ -1478,7 +1479,7 @@ class EbayService:
                     "run_id": event_logger.run_id
                 }
             
-            event_logger.log_info(f"→ Requesting: GET /sell/fulfillment/v1/payment_dispute_summary/search")
+            event_logger.log_info(f"→ Requesting: GET /sell/fulfillment/v1/payment_dispute")
             
             request_start = time.time()
             try:
@@ -1529,7 +1530,7 @@ class EbayService:
             
             event_logger.log_http_request(
                 'GET',
-                '/sell/fulfillment/v1/payment_dispute_summary/search',
+                '/sell/fulfillment/v1/payment_dispute',
                 200,
                 request_duration,
                 total_fetched
