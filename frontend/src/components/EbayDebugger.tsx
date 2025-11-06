@@ -68,10 +68,17 @@ export const EbayDebugger: React.FC = () => {
   const handleTemplateSelect = (templateName: string) => {
     setSelectedTemplate(templateName);
     const template = templates[templateName];
-    if (template) {
+    if (template && templateName !== "custom") {
       setMethod(template.method);
       setPath(template.path);
       setParams(Object.entries(template.params).map(([k, v]) => `${k}=${v}`).join('&'));
+      setHeaders('');
+      setBody('');
+    } else if (templateName === "custom") {
+      // Clear fields for custom request
+      setMethod('GET');
+      setPath('');
+      setParams('');
       setHeaders('');
       setBody('');
     }
@@ -114,7 +121,7 @@ export const EbayDebugger: React.FC = () => {
         ...(params ? { params: Object.entries(paramsObj).map(([k, v]) => `${k}=${v}`).join('&') } : {}),
         ...(headers ? { headers: Object.entries(headersObj).map(([k, v]) => `${k}: ${v}`).join(', ') } : {}),
         ...(body ? { body } : {}),
-        ...(selectedTemplate ? { template: selectedTemplate } : {})
+        ...(selectedTemplate && selectedTemplate !== "custom" ? { template: selectedTemplate } : {})
       });
 
       const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
@@ -153,12 +160,12 @@ export const EbayDebugger: React.FC = () => {
           {/* Template Selection */}
           <div className="space-y-2">
             <Label>Quick Templates</Label>
-            <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
+            <Select value={selectedTemplate || "custom"} onValueChange={handleTemplateSelect}>
               <SelectTrigger>
                 <SelectValue placeholder="Select a template or use custom" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Custom Request</SelectItem>
+                <SelectItem value="custom">Custom Request</SelectItem>
                 {Object.entries(templates).map(([key, template]) => (
                   <SelectItem key={key} value={key}>
                     {template.name} - {template.description}
