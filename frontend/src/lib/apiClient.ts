@@ -41,7 +41,7 @@ const getBaseURL = () => {
 const api = axios.create({
   baseURL: getBaseURL(),
   withCredentials: false,
-  timeout: 15000,
+  timeout: 30000, // Increased to 30s to handle cold starts (CF Functions + Railway backend)
 });
 
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
