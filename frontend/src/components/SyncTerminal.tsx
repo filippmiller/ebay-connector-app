@@ -161,7 +161,7 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
       // If we get 401/403, show authentication error message
       const checkAuth = async () => {
         try {
-          const response = await api.get(`/ebay/sync/logs/${runId}`);
+          await api.get(`/ebay/sync/logs/${runId}`);
           // If we get here, auth is OK, so it's a different error
           setEvents((prev) => [...prev, {
             run_id: runId,
