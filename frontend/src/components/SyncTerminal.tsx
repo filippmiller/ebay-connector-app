@@ -92,7 +92,7 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
   }, [runId]);
 
   useEffect(() => {
-    if (!runId || isPaused) return;
+    if (!runId || isPaused || isComplete || isCancelled) return; // Don't reconnect if already complete/cancelled
 
     const token = localStorage.getItem('auth_token');
     const eventSource = new EventSource(`/api/ebay/sync/events/${runId}?token=${encodeURIComponent(token || '')}`);
@@ -102,29 +102,53 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
       setIsConnected(true);
     };
 
+    // Helper function to check if event already exists (prevent duplicates)
+    const eventExists = (events: any[], newEvent: any): boolean => {
+      return events.some(e => 
+        e.timestamp === newEvent.timestamp && 
+        e.message === newEvent.message &&
+        e.event_type === newEvent.event_type
+      );
+    };
+
     eventSource.addEventListener('start', (e: MessageEvent) => {
       const event = JSON.parse(e.data);
-      setEvents((prev) => [...prev, event]);
+      setEvents((prev) => {
+        if (eventExists(prev, event)) return prev;
+        return [...prev, event];
+      });
     });
 
     eventSource.addEventListener('log', (e: MessageEvent) => {
       const event = JSON.parse(e.data);
-      setEvents((prev) => [...prev, event]);
+      setEvents((prev) => {
+        if (eventExists(prev, event)) return prev;
+        return [...prev, event];
+      });
     });
 
     eventSource.addEventListener('http', (e: MessageEvent) => {
       const event = JSON.parse(e.data);
-      setEvents((prev) => [...prev, event]);
+      setEvents((prev) => {
+        if (eventExists(prev, event)) return prev;
+        return [...prev, event];
+      });
     });
 
     eventSource.addEventListener('progress', (e: MessageEvent) => {
       const event = JSON.parse(e.data);
-      setEvents((prev) => [...prev, event]);
+      setEvents((prev) => {
+        if (eventExists(prev, event)) return prev;
+        return [...prev, event];
+      });
     });
 
     eventSource.addEventListener('error', (e: MessageEvent) => {
       const event = JSON.parse(e.data);
-      setEvents((prev) => [...prev, event]);
+      setEvents((prev) => {
+        if (eventExists(prev, event)) return prev;
+        return [...prev, event];
+      });
     });
 
     eventSource.addEventListener('done', (e: MessageEvent) => {
@@ -157,37 +181,47 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
       setIsConnected(false);
       eventSource.close();
       
+      // Don't reconnect if already complete or cancelled
+      if (isComplete || isCancelled) {
+        return;
+      }
+      
       // Check if it's an authentication error by trying to load logs
       // If we get 401/403, show authentication error message
       const checkAuth = async () => {
         try {
           await api.get(`/ebay/sync/logs/${runId}`);
           // If we get here, auth is OK, so it's a different error
-          setEvents((prev) => [...prev, {
-            run_id: runId,
-            event_type: 'error',
-            level: 'error',
-            message: 'Connection error: Failed to stream events. Check network connection.',
-            timestamp: new Date().toISOString()
-          }]);
+          // Only add error if not already complete
+          if (!isComplete && !isCancelled) {
+            setEvents((prev) => [...prev, {
+              run_id: runId,
+              event_type: 'error',
+              level: 'error',
+              message: 'Connection error: Failed to stream events. Check network connection.',
+              timestamp: new Date().toISOString()
+            }]);
+          }
         } catch (err: any) {
           // Authentication error
-          if (err?.response?.status === 401 || err?.response?.status === 403) {
-            setEvents((prev) => [...prev, {
-              run_id: runId,
-              event_type: 'error',
-              level: 'error',
-              message: 'Authentication error: Please log out and log back in to refresh your session.',
-              timestamp: new Date().toISOString()
-            }]);
-          } else {
-            setEvents((prev) => [...prev, {
-              run_id: runId,
-              event_type: 'error',
-              level: 'error',
-              message: `Connection error: ${err?.response?.data?.detail || err?.message || 'Unknown error'}`,
-              timestamp: new Date().toISOString()
-            }]);
+          if (!isComplete && !isCancelled) {
+            if (err?.response?.status === 401 || err?.response?.status === 403) {
+              setEvents((prev) => [...prev, {
+                run_id: runId,
+                event_type: 'error',
+                level: 'error',
+                message: 'Authentication error: Please log out and log back in to refresh your session.',
+                timestamp: new Date().toISOString()
+              }]);
+            } else {
+              setEvents((prev) => [...prev, {
+                run_id: runId,
+                event_type: 'error',
+                level: 'error',
+                message: `Connection error: ${err?.response?.data?.detail || err?.message || 'Unknown error'}`,
+                timestamp: new Date().toISOString()
+              }]);
+            }
           }
         }
       };
@@ -195,9 +229,12 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
     };
 
     return () => {
-      eventSource.close();
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
     };
-  }, [runId, isPaused, onComplete]);
+  }, [runId, isPaused, isComplete, isCancelled]);
 
   useEffect(() => {
     if (scrollRef.current && !isPaused) {

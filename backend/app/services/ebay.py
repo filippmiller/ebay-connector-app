@@ -652,6 +652,25 @@ class EbayService:
                 
                 await asyncio.sleep(0.3)
                 
+                # Check for cancellation before storing
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Order sync cancelled for run_id {event_logger.run_id} (before storing)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Orders sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
+                
                 event_logger.log_info(f"→ Storing {len(orders)} orders in database...")
                 store_start = time.time()
                 batch_stored = ebay_db.batch_upsert_orders(user_id, orders)
@@ -669,6 +688,25 @@ class EbayService:
                 )
                 
                 logger.info(f"Synced batch: {len(orders)} orders (total: {total_fetched}/{total}, stored: {total_stored})")
+                
+                # Check for cancellation before continuing to next page
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Order sync cancelled for run_id {event_logger.run_id} (before next page)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Orders sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000)
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id
+                    }
                 
                 offset += limit
                 has_more = len(orders) == limit and offset < total
