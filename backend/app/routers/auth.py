@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from datetime import timedelta
 from sqlalchemy.exc import SQLAlchemyError
 from app.models.user import UserCreate, UserLogin, UserResponse, Token, PasswordResetRequest, PasswordReset
@@ -39,11 +39,11 @@ async def login(user_credentials: UserLogin, request: Request):
     try:
         user = authenticate_user(user_credentials.email, user_credentials.password)
         if not user:
-            logger.warning(f"Failed login attempt for: {user_credentials.email}")
+            logger.warning(f"Failed login attempt for: {user_credentials.email} rid={rid}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": "Bearer", "X-Request-ID": rid},
             )
         
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -55,20 +55,24 @@ async def login(user_credentials: UserLogin, request: Request):
         return {"access_token": access_token, "token_type": "bearer"}
     
     except HTTPException:
-        # Re-raise HTTP exceptions (like 401) as-is
+        # Re-raise HTTP exceptions (like 401) as-is, but add RID to headers if not present
+        if "X-Request-ID" not in e.headers:
+            e.headers["X-Request-ID"] = rid
         raise
     except SQLAlchemyError as e:
-        logger.error(f"Database error during login for {user_credentials.email}: {type(e).__name__}: {str(e)}")
+        logger.error(f"Database error during login for {user_credentials.email} rid={rid}: {type(e).__name__}: {str(e)}")
         logger.exception("Full database error traceback:")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
+            headers={"X-Request-ID": rid},
         )
     except Exception as e:
-        logger.exception(f"Unexpected error during login for {user_credentials.email}: {type(e).__name__}: {str(e)}")
+        logger.exception(f"Unexpected error during login for {user_credentials.email} rid={rid}: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {type(e).__name__}: {str(e)}",
+            headers={"X-Request-ID": rid},
         )
 
 
