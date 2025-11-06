@@ -21,28 +21,36 @@ def upgrade() -> None:
     
     from sqlalchemy import inspect
     import logging
+    import sys
+    
     logger = logging.getLogger(__name__)
     
-    conn = op.get_bind()
-    inspector = inspect(conn)
+    # Also print to stdout for Railway logs
+    def log_print(msg):
+        print(f"[migration] {msg}", flush=True)
+        logger.info(f"[migration] {msg}")
     
-    # Get existing tables and indexes
-    logger.info("[migration] Checking existing tables...")
-    existing_tables = inspector.get_table_names()
-    logger.info(f"[migration] Found {len(existing_tables)} existing tables")
-    existing_indexes = {}
-    for table_name in existing_tables:
-        existing_indexes[table_name] = [idx['name'] for idx in inspector.get_indexes(table_name)]
-    
-    # Get existing columns for inventory
-    inventory_columns = []
-    if 'inventory' in existing_tables:
-        inventory_columns = [col['name'] for col in inspector.get_columns('inventory')]
-    
-    # Create purchases table
-    if 'purchases' not in existing_tables:
-        logger.info("[migration] Creating purchases table...")
-        op.create_table(
+    try:
+        conn = op.get_bind()
+        inspector = inspect(conn)
+        
+        # Get existing tables and indexes
+        log_print("Checking existing tables...")
+        existing_tables = inspector.get_table_names()
+        log_print(f"Found {len(existing_tables)} existing tables")
+        existing_indexes = {}
+        for table_name in existing_tables:
+            existing_indexes[table_name] = [idx['name'] for idx in inspector.get_indexes(table_name)]
+        
+        # Get existing columns for inventory
+        inventory_columns = []
+        if 'inventory' in existing_tables:
+            inventory_columns = [col['name'] for col in inspector.get_columns('inventory')]
+        
+        # Create purchases table
+        if 'purchases' not in existing_tables:
+            log_print("Creating purchases table...")
+            op.create_table(
             'purchases',
             sa.Column('purchase_id', sa.String(100), primary_key=True),
             sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
@@ -80,14 +88,14 @@ def upgrade() -> None:
             op.create_index('idx_purchase_fulfillment_status', 'purchases', ['fulfillment_status'])
         if 'idx_purchase_user_id' not in existing_indexes['purchases']:
             op.create_index('idx_purchase_user_id', 'purchases', ['user_id'])
-        logger.info("[migration] purchases table created/verified")
-    else:
-        logger.info("[migration] purchases table already exists, skipping")
-    
-    # Create purchase_line_items table
-    if 'purchase_line_items' not in existing_tables:
-        logger.info("[migration] Creating purchase_line_items table...")
-        op.create_table(
+            log_print("purchases table created/verified")
+        else:
+            log_print("purchases table already exists, skipping")
+        
+        # Create purchase_line_items table
+        if 'purchase_line_items' not in existing_tables:
+            log_print("Creating purchase_line_items table...")
+            op.create_table(
             'purchase_line_items',
             sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
             sa.Column('purchase_id', sa.String(100), sa.ForeignKey('purchases.purchase_id'), nullable=False),
@@ -111,14 +119,14 @@ def upgrade() -> None:
             op.create_index('idx_purch_line_sku', 'purchase_line_items', ['sku'])
         if 'idx_purch_line_unique' not in existing_indexes['purchase_line_items']:
             op.create_index('idx_purch_line_unique', 'purchase_line_items', ['purchase_id', 'line_item_id'], unique=True)
-        logger.info("[migration] purchase_line_items table created/verified")
-    else:
-        logger.info("[migration] purchase_line_items table already exists, skipping")
-    
-    # Create transactions table
-    if 'transactions' not in existing_tables:
-        logger.info("[migration] Creating transactions table...")
-        op.create_table(
+            log_print("purchase_line_items table created/verified")
+        else:
+            log_print("purchase_line_items table already exists, skipping")
+        
+        # Create transactions table
+        if 'transactions' not in existing_tables:
+            log_print("Creating transactions table...")
+            op.create_table(
             'transactions',
             sa.Column('transaction_id', sa.String(100), primary_key=True),
             sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
@@ -154,14 +162,14 @@ def upgrade() -> None:
             op.create_index('idx_txn_sku', 'transactions', ['sku'])
         if 'idx_txn_user_id' not in existing_indexes['transactions']:
             op.create_index('idx_txn_user_id', 'transactions', ['user_id'])
-        logger.info("[migration] transactions table created/verified")
-    else:
-        logger.info("[migration] transactions table already exists, skipping")
-    
-    # Create fees table
-    if 'fees' not in existing_tables:
-        logger.info("[migration] Creating fees table...")
-        op.create_table(
+            log_print("transactions table created/verified")
+        else:
+            log_print("transactions table already exists, skipping")
+        
+        # Create fees table
+        if 'fees' not in existing_tables:
+            log_print("Creating fees table...")
+            op.create_table(
             'fees',
             sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
             sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
@@ -187,14 +195,14 @@ def upgrade() -> None:
             op.create_index('idx_fee_assessed_at', 'fees', ['assessed_at'])
         if 'idx_fee_user_id' not in existing_indexes['fees']:
             op.create_index('idx_fee_user_id', 'fees', ['user_id'])
-        logger.info("[migration] fees table created/verified")
-    else:
-        logger.info("[migration] fees table already exists, skipping")
-    
-    # Create payouts table
-    if 'payouts' not in existing_tables:
-        logger.info("[migration] Creating payouts table...")
-        op.create_table(
+            log_print("fees table created/verified")
+        else:
+            log_print("fees table already exists, skipping")
+        
+        # Create payouts table
+        if 'payouts' not in existing_tables:
+            log_print("Creating payouts table...")
+            op.create_table(
             'payouts',
             sa.Column('payout_id', sa.String(100), primary_key=True),
             sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
@@ -214,14 +222,14 @@ def upgrade() -> None:
             op.create_index('idx_payout_date', 'payouts', ['payout_date'])
         if 'idx_payout_user_id' not in existing_indexes['payouts']:
             op.create_index('idx_payout_user_id', 'payouts', ['user_id'])
-        logger.info("[migration] payouts table created/verified")
-    else:
-        logger.info("[migration] payouts table already exists, skipping")
-    
-    # Create payout_items table
-    if 'payout_items' not in existing_tables:
-        logger.info("[migration] Creating payout_items table...")
-        op.create_table(
+            log_print("payouts table created/verified")
+        else:
+            log_print("payouts table already exists, skipping")
+        
+        # Create payout_items table
+        if 'payout_items' not in existing_tables:
+            log_print("Creating payout_items table...")
+            op.create_table(
             'payout_items',
             sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
             sa.Column('payout_id', sa.String(100), sa.ForeignKey('payouts.payout_id'), nullable=False),
@@ -241,13 +249,13 @@ def upgrade() -> None:
             op.create_index('idx_payout_item_payout_id', 'payout_items', ['payout_id'])
         if 'idx_payout_item_reference_id' not in existing_indexes['payout_items']:
             op.create_index('idx_payout_item_reference_id', 'payout_items', ['reference_id'])
-        logger.info("[migration] payout_items table created/verified")
-    else:
-        logger.info("[migration] payout_items table already exists, skipping")
-    
-    # Update inventory table with new columns
-    logger.info("[migration] Updating inventory table...")
-    if 'inventory' in existing_tables:
+            log_print("payout_items table created/verified")
+        else:
+            log_print("payout_items table already exists, skipping")
+        
+        # Update inventory table with new columns
+        log_print("Updating inventory table...")
+        if 'inventory' in existing_tables:
         if 'sku_code' not in inventory_columns:
             op.add_column('inventory', sa.Column('sku_code', sa.String(100), nullable=True))
         if 'title' not in inventory_columns:
@@ -269,13 +277,18 @@ def upgrade() -> None:
         if 'idx_inventory_sku_code' not in existing_indexes['inventory']:
             op.create_index('idx_inventory_sku_code', 'inventory', ['sku_code'])
         # Check if storage column exists before creating index on it
-        if 'storage' in inventory_columns and 'idx_inventory_storage' not in existing_indexes['inventory']:
-            op.create_index('idx_inventory_storage', 'inventory', ['storage'])
-        logger.info("[migration] inventory table updated/verified")
-    else:
-        logger.info("[migration] inventory table not found, skipping column updates")
-    
-    logger.info("[migration] add_core_ops_tables migration completed successfully")
+            if 'storage' in inventory_columns and 'idx_inventory_storage' not in existing_indexes['inventory']:
+                op.create_index('idx_inventory_storage', 'inventory', ['storage'])
+            log_print("inventory table updated/verified")
+        else:
+            log_print("inventory table not found, skipping column updates")
+        
+        log_print("add_core_ops_tables migration completed successfully")
+    except Exception as e:
+        log_print(f"ERROR in migration: {type(e).__name__}: {str(e)}")
+        import traceback
+        log_print(f"Traceback: {traceback.format_exc()}")
+        raise
 
 
 def downgrade() -> None:
