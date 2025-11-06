@@ -69,16 +69,16 @@ def upgrade():
     if 'ebay_tokens' not in existing_tables:
         op.create_table(
             'ebay_tokens',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('ebay_account_id', sa.String(36), nullable=False),
-        sa.Column('access_token', sa.Text(), nullable=True),
-        sa.Column('refresh_token', sa.Text(), nullable=True),
-        sa.Column('token_type', sa.Text(), nullable=True),
-        sa.Column('expires_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('last_refreshed_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('refresh_error', sa.Text(), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('id', sa.String(36), primary_key=True),
+            sa.Column('ebay_account_id', sa.String(36), nullable=False),
+            sa.Column('access_token', sa.Text(), nullable=True),
+            sa.Column('refresh_token', sa.Text(), nullable=True),
+            sa.Column('token_type', sa.Text(), nullable=True),
+            sa.Column('expires_at', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('last_refreshed_at', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('refresh_error', sa.Text(), nullable=True),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.ForeignKeyConstraint(['ebay_account_id'], ['ebay_accounts.id'], ondelete='CASCADE'),
         )
         op.create_index('idx_ebay_tokens_account_id', 'ebay_tokens', ['ebay_account_id'])
@@ -87,11 +87,11 @@ def upgrade():
     if 'ebay_authorizations' not in existing_tables:
         op.create_table(
             'ebay_authorizations',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('ebay_account_id', sa.String(36), nullable=False),
-        sa.Column('scopes', ARRAY(sa.Text()), nullable=False, server_default='{}'),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('id', sa.String(36), primary_key=True),
+            sa.Column('ebay_account_id', sa.String(36), nullable=False),
+            sa.Column('scopes', ARRAY(sa.Text()), nullable=False, server_default='{}'),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.ForeignKeyConstraint(['ebay_account_id'], ['ebay_accounts.id'], ondelete='CASCADE'),
         )
         op.create_index('idx_ebay_authorizations_account_id', 'ebay_authorizations', ['ebay_account_id'])
@@ -99,12 +99,12 @@ def upgrade():
     if 'ebay_sync_cursors' not in existing_tables:
         op.create_table(
             'ebay_sync_cursors',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('ebay_account_id', sa.String(36), nullable=False),
-        sa.Column('resource', sa.Text(), nullable=False),
-        sa.Column('checkpoint', JSONB, nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('id', sa.String(36), primary_key=True),
+            sa.Column('ebay_account_id', sa.String(36), nullable=False),
+            sa.Column('resource', sa.Text(), nullable=False),
+            sa.Column('checkpoint', JSONB, nullable=True),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.ForeignKeyConstraint(['ebay_account_id'], ['ebay_accounts.id'], ondelete='CASCADE'),
         )
         op.create_index('idx_ebay_sync_cursors_account_id', 'ebay_sync_cursors', ['ebay_account_id'])
@@ -114,15 +114,15 @@ def upgrade():
     if 'ebay_health_events' not in existing_tables:
         op.create_table(
             'ebay_health_events',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('ebay_account_id', sa.String(36), nullable=False),
-        sa.Column('checked_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column('is_healthy', sa.Boolean(), nullable=False),
-        sa.Column('http_status', sa.Integer(), nullable=True),
-        sa.Column('ack', sa.Text(), nullable=True),
-        sa.Column('error_code', sa.Text(), nullable=True),
-        sa.Column('error_message', sa.Text(), nullable=True),
-        sa.Column('response_time_ms', sa.Integer(), nullable=True),
+            sa.Column('id', sa.String(36), primary_key=True),
+            sa.Column('ebay_account_id', sa.String(36), nullable=False),
+            sa.Column('checked_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('is_healthy', sa.Boolean(), nullable=False),
+            sa.Column('http_status', sa.Integer(), nullable=True),
+            sa.Column('ack', sa.Text(), nullable=True),
+            sa.Column('error_code', sa.Text(), nullable=True),
+            sa.Column('error_message', sa.Text(), nullable=True),
+            sa.Column('response_time_ms', sa.Integer(), nullable=True),
             sa.ForeignKeyConstraint(['ebay_account_id'], ['ebay_accounts.id'], ondelete='CASCADE'),
         )
         op.create_index('idx_ebay_health_events_account_id', 'ebay_health_events', ['ebay_account_id'])
