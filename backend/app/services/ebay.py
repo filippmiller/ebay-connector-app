@@ -117,12 +117,8 @@ class EbayService:
                 detail="eBay credentials not configured"
             )
         
-        credentials = f"{settings.ebay_client_id}:{settings.ebay_cert_id}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
-        
         headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {encoded_credentials}"
+            "Content-Type": "application/x-www-form-urlencoded"
         }
         
         data = {
@@ -137,9 +133,12 @@ class EbayService:
             request_data={
                 "environment": settings.EBAY_ENVIRONMENT,
                 "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
+                "redirect_uri": settings.ebay_runame,
+                "token_url": self.token_url,
                 "code": code[:10] + "..." if len(code) > 10 else code,
-                "client_id": settings.ebay_client_id
+                "client_id": settings.ebay_client_id,
+                "client_id_length": len(settings.ebay_client_id) if settings.ebay_client_id else 0,
+                "client_secret_length": len(settings.ebay_cert_id) if settings.ebay_cert_id else 0
             }
         )
         
@@ -149,6 +148,7 @@ class EbayService:
                     self.token_url,
                     headers=headers,
                     data=data,
+                    auth=(settings.ebay_client_id, settings.ebay_cert_id),
                     timeout=30.0
                 )
                 
