@@ -37,9 +37,27 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error: AxiosError) => {
-    if (error?.response?.status === 401) {
+    const status = error?.response?.status;
+    const errorData = error?.response?.data;
+    const errorMessage = errorData?.detail || errorData?.message || errorData?.error || error?.message || "Request failed";
+    
+    console.error("[API] Error:", {
+      status,
+      message: errorMessage,
+      url: error?.config?.url,
+      data: errorData,
+      type: errorData?.type
+    });
+    
+    if (status === 401) {
       localStorage.removeItem("auth_token");
     }
+    
+    // Show error in console with full details
+    if (errorData?.rid) {
+      console.error(`[API] Request ID: ${errorData.rid}`);
+    }
+    
     return Promise.reject(error);
   }
 );

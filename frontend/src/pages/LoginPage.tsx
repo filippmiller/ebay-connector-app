@@ -23,8 +23,30 @@ export const LoginPage: React.FC = () => {
     try {
       await login(email, password);
       navigate('/buying');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+    } catch (err: any) {
+      // Extract error message from Axios error response
+      let errorMessage = 'Login failed';
+      if (err?.response?.data?.detail) {
+        errorMessage = err.response.data.detail;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err?.response?.data?.error) {
+        errorMessage = err.response.data.error;
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      // Add request ID if available
+      if (err?.response?.data?.rid) {
+        errorMessage += ` (Request ID: ${err.response.data.rid})`;
+      }
+      
+      setError(errorMessage);
+      console.error('[LoginPage] Login error details:', {
+        status: err?.response?.status,
+        data: err?.response?.data,
+        message: errorMessage
+      });
     }
   };
 

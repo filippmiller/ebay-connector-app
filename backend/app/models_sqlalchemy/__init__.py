@@ -7,8 +7,9 @@ DATABASE_URL = settings.DATABASE_URL
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
-    echo=False
+    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {"connect_timeout": 5},
+    echo=True,  # Enable SQL query logging for debugging
+    pool_pre_ping=True  # Verify connections before using
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

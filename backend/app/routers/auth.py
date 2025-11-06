@@ -32,8 +32,9 @@ async def register(user_data: UserCreate):
 
 
 @router.post("/login", response_model=Token)
-async def login(user_credentials: UserLogin):
-    logger.info(f"Login attempt for email: {user_credentials.email}")
+async def login(user_credentials: UserLogin, request: Request):
+    rid = getattr(request.state, "rid", "unknown")
+    logger.info(f"Login attempt email={user_credentials.email} rid={rid}")
     
     try:
         user = authenticate_user(user_credentials.email, user_credentials.password)

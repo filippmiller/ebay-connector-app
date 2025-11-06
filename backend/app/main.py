@@ -1,16 +1,34 @@
-from fastapi import FastAPI
+import logging
+import sys
+import uuid
+import traceback
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts
 from app.utils.logger import logger
 import os
 import asyncio
 from sqlalchemy import create_engine, text, inspect
 
+# Global logging configuration
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
+)
+
 app = FastAPI(title="eBay Connector API", version="1.0.0")
 
 from app.config import settings
 
+# CORS configuration - include Cloudflare Pages URL
 origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+# Add Cloudflare Pages URL if not already included
+cloudflare_url = os.getenv("FRONTEND_URL", "https://ebay-connector-frontend.pages.dev")
+if cloudflare_url not in origins:
+    origins.append(cloudflare_url)
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,6 +39,23 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,
 )
+
+# Request logging middleware with request ID
+@app.middleware("http")
+async def request_logger(request: Request, call_next):
+    rid = uuid.uuid4().hex[:8]
+    request.state.rid = rid
+    logging.info("→ %s %s rid=%s", request.method, request.url.path, rid)
+    try:
+        resp = await call_next(request)
+        logging.info("← %s status=%s rid=%s", request.url.path, resp.status_code, rid)
+        return resp
+    except Exception as e:
+        logging.exception("Unhandled error rid=%s: %s", rid, str(e))
+        return JSONResponse(
+            {"error": "internal_error", "rid": rid, "message": str(e), "type": type(e).__name__},
+            status_code=500
+        )
 
 app.include_router(auth.router)
 app.include_router(ebay.router)
@@ -131,16 +166,14 @@ async def healthz_db():
     """Database health check endpoint"""
     from fastapi import HTTPException, status
     try:
-        from app.models_sqlalchemy import get_db
-        db = next(get_db())
-        db.execute(text("SELECT 1"))
-        db.close()
+        from app.models_sqlalchemy import engine
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
+            result.fetchone()
         return {"status": "ok", "database": "connected"}
     except Exception as e:
         logger.exception("Database health check failed")
-        error_detail = "Database unavailable"
-        if settings.DEBUG:
-            error_detail = f"Database unavailable: {type(e).__name__}: {str(e)}"
+        error_detail = f"Database unavailable: {type(e).__name__}: {str(e)}"
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=error_detail
