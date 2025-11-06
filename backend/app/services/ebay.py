@@ -431,6 +431,9 @@ class EbayService:
             async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
                 response = await client.get(api_url, headers=headers)
                 
+                logger.info(f"Identity API response status: {response.status_code}")
+                logger.info(f"Identity API response headers: {dict(response.headers)}")
+                
                 if response.status_code != 200:
                     error_detail = response.text
                     try:
@@ -442,16 +445,32 @@ class EbayService:
                     logger.warning(f"Failed to get user identity: {response.status_code} - {error_detail}")
                     return {"username": None, "userId": None, "error": error_detail}
                 
-                identity_data = response.json()
+                # Log raw response for debugging
+                response_text = response.text
+                logger.info(f"Identity API raw response: {response_text[:500]}")  # First 500 chars
+                
+                try:
+                    identity_data = response.json()
+                    logger.info(f"Identity API parsed JSON: {identity_data}")
+                except Exception as json_error:
+                    logger.error(f"Failed to parse Identity API response as JSON: {json_error}, raw: {response_text[:200]}")
+                    return {"username": None, "userId": None, "error": f"Invalid JSON response: {str(json_error)}"}
+                
                 # eBay Identity API returns user_id (not userId) and username
+                username = identity_data.get("username")
+                user_id = identity_data.get("user_id") or identity_data.get("userId")
+                
+                logger.info(f"Extracted from Identity API - username: {username}, userId: {user_id}")
+                
                 return {
-                    "username": identity_data.get("username"),
-                    "userId": identity_data.get("user_id") or identity_data.get("userId"),  # Support both formats
+                    "username": username,
+                    "userId": user_id,
                     "accountType": identity_data.get("accountType"),
-                    "registrationMarketplaceId": identity_data.get("registrationMarketplaceId")
+                    "registrationMarketplaceId": identity_data.get("registrationMarketplaceId"),
+                    "raw_response": identity_data  # Include for debugging
                 }
         except Exception as e:
-            logger.error(f"Error getting user identity: {str(e)}")
+            logger.error(f"Error getting user identity: {str(e)}", exc_info=True)
             return {"username": None, "userId": None, "error": str(e)}
 
     async def fetch_transactions(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
