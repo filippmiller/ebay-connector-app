@@ -49,13 +49,17 @@ async def request_logger(request: Request, call_next):
     try:
         resp = await call_next(request)
         logging.info("← %s status=%s rid=%s", request.url.path, resp.status_code, rid)
+        # Add Request ID to response headers for easier debugging
+        resp.headers["X-Request-ID"] = rid
         return resp
     except Exception as e:
         logging.exception("Unhandled error rid=%s: %s", rid, str(e))
-        return JSONResponse(
+        error_resp = JSONResponse(
             {"error": "internal_error", "rid": rid, "message": str(e), "type": type(e).__name__},
             status_code=500
         )
+        error_resp.headers["X-Request-ID"] = rid
+        return error_resp
 
 app.include_router(auth.router)
 app.include_router(ebay.router)

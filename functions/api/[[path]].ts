@@ -81,11 +81,28 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       url: upstream.toString()
     });
     
-    // Clone response to modify headers
+    // Clone ALL headers from backend response (including Set-Cookie, X-Request-ID, etc.)
     const responseHeaders = new Headers(response.headers);
-    responseHeaders.set('Access-Control-Allow-Origin', url.origin);
-    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    responseHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    
+    // Add CORS headers (but don't override existing ones)
+    if (!responseHeaders.has('Access-Control-Allow-Origin')) {
+      responseHeaders.set('Access-Control-Allow-Origin', url.origin);
+    }
+    if (!responseHeaders.has('Access-Control-Allow-Methods')) {
+      responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    }
+    if (!responseHeaders.has('Access-Control-Allow-Headers')) {
+      responseHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+    if (!responseHeaders.has('Access-Control-Allow-Credentials')) {
+      responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+    }
+    
+    // Log Set-Cookie headers for debugging
+    const setCookieHeaders = responseHeaders.get('set-cookie');
+    if (setCookieHeaders) {
+      console.log('[CF Proxy] Set-Cookie header:', setCookieHeaders);
+    }
     
     return new Response(response.body, {
       status: response.status,
