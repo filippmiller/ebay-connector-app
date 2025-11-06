@@ -15,12 +15,36 @@ branch_labels = None
 depends_on = None
 
 def upgrade():
+    # Create ENUM types if they don't exist
+    from sqlalchemy import text
+    conn = op.get_bind()
+    
+    # Check and create offerdirection type
+    result = conn.execute(text("SELECT 1 FROM pg_type WHERE typname = 'offerdirection'"))
+    if result.fetchone() is None:
+        conn.execute(text("CREATE TYPE offerdirection AS ENUM ('INBOUND', 'OUTBOUND')"))
+    
+    # Check and create offerstate type
+    result = conn.execute(text("SELECT 1 FROM pg_type WHERE typname = 'offerstate'"))
+    if result.fetchone() is None:
+        conn.execute(text("CREATE TYPE offerstate AS ENUM ('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN', 'COUNTERED', 'SENT')"))
+    
+    # Check and create offeraction type
+    result = conn.execute(text("SELECT 1 FROM pg_type WHERE typname = 'offeraction'"))
+    if result.fetchone() is None:
+        conn.execute(text("CREATE TYPE offeraction AS ENUM ('SEND', 'ACCEPT', 'DECLINE', 'COUNTER', 'EXPIRE', 'WITHDRAW')"))
+    
+    # Check and create offeractor type
+    result = conn.execute(text("SELECT 1 FROM pg_type WHERE typname = 'offeractor'"))
+    if result.fetchone() is None:
+        conn.execute(text("CREATE TYPE offeractor AS ENUM ('SYSTEM', 'ADMIN')"))
+    
     op.create_table(
         'offers',
         sa.Column('offer_id', sa.String(100), primary_key=True),
         sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=False),
-        sa.Column('direction', sa.Enum('INBOUND', 'OUTBOUND', name='offerdirection'), nullable=False),
-        sa.Column('state', sa.Enum('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN', 'COUNTERED', 'SENT', name='offerstate'), nullable=False, server_default='PENDING'),
+        sa.Column('direction', sa.Enum('INBOUND', 'OUTBOUND', name='offerdirection', create_type=False), nullable=False),
+        sa.Column('state', sa.Enum('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN', 'COUNTERED', 'SENT', name='offerstate', create_type=False), nullable=False, server_default='PENDING'),
         sa.Column('item_id', sa.String(100), nullable=True),
         sa.Column('sku', sa.String(100), nullable=True),
         sa.Column('buyer_username', sa.String(100), nullable=True),
@@ -48,10 +72,10 @@ def upgrade():
         'offer_actions',
         sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column('offer_id', sa.String(100), sa.ForeignKey('offers.offer_id', ondelete='CASCADE'), nullable=False),
-        sa.Column('action', sa.Enum('SEND', 'ACCEPT', 'DECLINE', 'COUNTER', 'EXPIRE', 'WITHDRAW', name='offeraction'), nullable=False),
-        sa.Column('actor', sa.Enum('SYSTEM', 'ADMIN', name='offeractor'), nullable=False, server_default='SYSTEM'),
+        sa.Column('action', sa.Enum('SEND', 'ACCEPT', 'DECLINE', 'COUNTER', 'EXPIRE', 'WITHDRAW', name='offeraction', create_type=False), nullable=False),
+        sa.Column('actor', sa.Enum('SYSTEM', 'ADMIN', name='offeractor', create_type=False), nullable=False, server_default='SYSTEM'),
         sa.Column('notes', sa.Text(), nullable=True),
-        sa.Column('result_state', sa.Enum('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN', 'COUNTERED', 'SENT', name='offerstate'), nullable=True),
+        sa.Column('result_state', sa.Enum('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN', 'COUNTERED', 'SENT', name='offerstate', create_type=False), nullable=True),
         sa.Column('raw_payload', JSONB, nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
