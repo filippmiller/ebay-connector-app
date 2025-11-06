@@ -668,9 +668,10 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # Add date window filter with lastModifiedDate (correct filter name for Orders API)
+                # Use orderStatus filter instead of date filter (lastModifiedDate and createdDate are not supported)
+                # For date filtering, we'll fetch all orders and filter client-side if needed
                 filter_params = {
-                    "filter": f"lastModifiedDate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
+                    "filter": "orderStatus:COMPLETED",  # Filter by order status instead of date
                     "limit": limit,
                     "offset": offset,
                     "fieldGroups": "TAX_BREAKDOWN"
