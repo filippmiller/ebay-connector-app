@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execSync } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -14,7 +14,6 @@ const commit = execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).tri
 const timestamp = new Date().toISOString();
 
 // Read and increment BUILD_NUMBER from build-number.txt
-import { readFileSync, writeFileSync } from 'fs';
 const buildNumberPath = join(frontendDir, 'build-number.txt');
 let buildNumber = 1;
 try {

@@ -665,16 +665,22 @@ class EbayService:
             request_data={
                 "environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
-                "params": params
+                "method": "POST",
+                "body": params
             }
         )
         
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
+                # Payment dispute search requires POST with body, not GET
+                search_body = {}
+                if filter_params:
+                    search_body.update(filter_params)
+                
+                response = await client.post(
                     api_url,
                     headers=headers,
-                    params=params,
+                    json=search_body,
                     timeout=30.0
                 )
                 
@@ -745,7 +751,16 @@ class EbayService:
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
         }
         
+        # Default pagination parameters - eBay requires limit and offset for listing offers
+        # Note: The /offer endpoint lists all offers, but may require specific query params
         params = filter_params or {}
+        # Only add limit/offset if not already specified
+        if 'limit' not in params:
+            params['limit'] = 200  # Max allowed by eBay
+        if 'offset' not in params:
+            params['offset'] = 0
+        # Remove any empty or None values that might cause validation errors
+        params = {k: v for k, v in params.items() if v is not None and v != ''}
         
         ebay_logger.log_ebay_event(
             "fetch_offers_request",
