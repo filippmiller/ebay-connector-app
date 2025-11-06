@@ -23,10 +23,7 @@ export const EbayConnectionPage: React.FC = () => {
   const [logs, setLogs] = useState<EbayLog[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
-    const saved = localStorage.getItem('ebay_environment');
-    return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
-  });
+  const environment = 'production';
   
   const [syncing, setSyncing] = useState(false);
   const [syncingTransactions, setSyncingTransactions] = useState(false);
@@ -79,8 +76,8 @@ export const EbayConnectionPage: React.FC = () => {
 
     try {
       const redirectUri = `${window.location.origin}/ebay/callback`;
-      localStorage.setItem('ebay_oauth_environment', environment);
-      const response = await ebayApi.startAuth(redirectUri, environment);
+      localStorage.setItem('ebay_oauth_environment', 'production');
+      const response = await ebayApi.startAuth(redirectUri, 'production');
       window.location.href = response.authorization_url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start eBay authorization');
@@ -266,40 +263,14 @@ export const EbayConnectionPage: React.FC = () => {
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border">
                     <div className="flex items-center gap-3">
-                      <Label htmlFor="env-switch" className="font-medium">
+                      <Label className="font-medium">
                         Environment:
                       </Label>
-                      <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
-                        {environment === 'sandbox' ? 'Sandbox (Testing)' : 'Production (Live)'}
+                      <Badge variant="destructive">
+                        Production (Live)
                       </Badge>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <Label htmlFor="env-switch" className="text-sm text-gray-600">
-                        Sandbox
-                      </Label>
-                      <Switch
-                        id="env-switch"
-                        checked={environment === 'production'}
-                        onCheckedChange={(checked) => {
-                          const newEnv = checked ? 'production' : 'sandbox';
-                          setEnvironment(newEnv);
-                          localStorage.setItem('ebay_environment', newEnv);
-                        }}
-                        disabled={connectionStatus?.connected}
-                      />
-                      <Label htmlFor="env-switch" className="text-sm text-gray-600">
-                        Production
-                      </Label>
-                    </div>
                   </div>
-
-                  {connectionStatus?.connected && (
-                    <Alert>
-                      <AlertDescription>
-                        Disconnect to change environment. Currently using: <strong>{environment}</strong>
-                      </AlertDescription>
-                    </Alert>
-                  )}
 
                   <div className="flex items-center gap-4">
                     <div>
@@ -527,7 +498,7 @@ export const EbayConnectionPage: React.FC = () => {
                   <div>
                     <CardTitle>eBay Connection Terminal</CardTitle>
                     <CardDescription>
-                      Real-time log of all eBay API credential exchanges and requests
+                      Real-time log of EVERY eBay API request and response with full details
                     </CardDescription>
                   </div>
                   <Button variant="outline" size="sm" onClick={handleClearLogs}>
@@ -535,35 +506,45 @@ export const EbayConnectionPage: React.FC = () => {
                   </Button>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="h-96 w-full rounded-md border bg-black text-white p-4 font-mono text-sm">
+                  <ScrollArea className="h-[600px] w-full rounded-md border bg-black text-white p-4 font-mono text-xs">
                     {logs.length === 0 ? (
-                      <div className="text-gray-400">No logs yet. Connect to eBay to see credential exchanges.</div>
+                      <div className="text-gray-400">No logs yet. Connect to eBay to see all HTTP requests and responses.</div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         {logs.map((log, index) => (
-                          <div key={index} className="pb-2 border-b border-gray-800">
+                          <div key={index} className="pb-3 border-b border-gray-800">
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="text-gray-500">
+                              <span className="text-gray-500 text-xs">
                                 {new Date(log.timestamp).toLocaleTimeString()}
                               </span>
                               <Badge className={getStatusColor(log.status)}>
                                 {log.event_type}
                               </Badge>
-                              <span className="text-gray-400">{log.status}</span>
+                              <span className="text-gray-400 text-xs">{log.status}</span>
                             </div>
-                            <div className="text-gray-300">{log.description}</div>
+                            <div className="text-gray-300 mb-2">{log.description}</div>
                             {log.request_data && Object.keys(log.request_data).length > 0 && (
-                              <div className="mt-1 text-yellow-400">
-                                → Request: {JSON.stringify(log.request_data, null, 2)}
-                              </div>
+                              <details className="mt-2">
+                                <summary className="text-yellow-400 cursor-pointer hover:text-yellow-300">
+                                  → Request Details (click to expand)
+                                </summary>
+                                <pre className="mt-1 text-yellow-400 text-xs overflow-x-auto whitespace-pre-wrap">
+                                  {JSON.stringify(log.request_data, null, 2)}
+                                </pre>
+                              </details>
                             )}
                             {log.response_data && Object.keys(log.response_data).length > 0 && (
-                              <div className="mt-1 text-green-400">
-                                ← Response: {JSON.stringify(log.response_data, null, 2)}
-                              </div>
+                              <details className="mt-2">
+                                <summary className="text-green-400 cursor-pointer hover:text-green-300">
+                                  ← Response Details (click to expand)
+                                </summary>
+                                <pre className="mt-1 text-green-400 text-xs overflow-x-auto whitespace-pre-wrap">
+                                  {JSON.stringify(log.response_data, null, 2)}
+                                </pre>
+                              </details>
                             )}
                             {log.error && (
-                              <div className="mt-1 text-red-400">
+                              <div className="mt-2 text-red-400 font-bold">
                                 ✗ Error: {log.error}
                               </div>
                             )}
