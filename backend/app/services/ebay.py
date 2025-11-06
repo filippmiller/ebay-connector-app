@@ -78,7 +78,7 @@ class EbayService:
         
         params = {
             "client_id": settings.ebay_client_id,
-            "redirect_uri": redirect_uri,
+            "redirect_uri": settings.ebay_runame,
             "response_type": "code",
             "scope": " ".join(scopes)
         }
@@ -90,18 +90,18 @@ class EbayService:
         
         ebay_logger.log_ebay_event(
             "authorization_url_generated",
-            f"Generated eBay authorization URL ({settings.EBAY_ENVIRONMENT}) for redirect_uri: {redirect_uri}",
+            f"Generated eBay authorization URL ({settings.EBAY_ENVIRONMENT}) with RuName: {settings.ebay_runame}",
             request_data={
                 "environment": settings.EBAY_ENVIRONMENT,
-                "redirect_uri": redirect_uri,
-                "runame": settings.ebay_runame,
+                "redirect_uri": settings.ebay_runame,
+                "frontend_callback": redirect_uri,
                 "scopes": scopes,
                 "state": state
             },
             status="success"
         )
         
-        logger.info(f"Generated eBay {settings.EBAY_ENVIRONMENT} authorization URL with redirect_uri: {redirect_uri}, RuName: {settings.ebay_runame}")
+        logger.info(f"Generated eBay {settings.EBAY_ENVIRONMENT} authorization URL with RuName: {settings.ebay_runame} (frontend callback: {redirect_uri})")
         return auth_url
     
     async def exchange_code_for_token(self, code: str, redirect_uri: str) -> EbayTokenResponse:
@@ -128,7 +128,7 @@ class EbayService:
         data = {
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": redirect_uri
+            "redirect_uri": settings.ebay_runame
         }
         
         ebay_logger.log_ebay_event(
