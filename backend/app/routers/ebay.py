@@ -805,3 +805,163 @@ async def export_sync_logs(
             "Content-Disposition": f"attachment; filename=sync_logs_{run_id}.ndjson"
         }
     )
+
+
+@router.post("/debug")
+async def debug_ebay_api(
+    method: str = Query("GET", description="HTTP method"),
+    path: str = Query(..., description="API path (e.g., /sell/fulfillment/v1/order)"),
+    params: Optional[str] = Query(None, description="Query parameters (key1=value1&key2=value2)"),
+    headers: Optional[str] = Query(None, description="Additional headers (Header1: Value1, Header2: Value2)"),
+    body: Optional[str] = Query(None, description="Request body (JSON string)"),
+    template: Optional[str] = Query(None, description="Use predefined template (identity, orders, transactions, etc.)"),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Debug eBay API requests - make a test request and return full response."""
+    from app.utils.ebay_debugger import EbayAPIDebugger
+    from urllib.parse import urlencode
+    import time
+    
+    if not current_user.ebay_connected or not current_user.ebay_access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not connected to eBay"
+        )
+    
+    debugger = EbayAPIDebugger(current_user.id, raw_mode=False, save_history=False)
+    
+    # Load user token
+    if not debugger.load_user_token():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to load user token"
+        )
+    
+    # Get template if specified
+    if template:
+        template_data = debugger.get_template(template)
+        if not template_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown template: {template}"
+            )
+        method = method or template_data["method"]
+        path = path or template_data["path"]
+        params_dict = debugger.parse_params(params) if params else template_data["params"]
+        headers_dict = debugger.parse_headers(headers) if headers else template_data["headers"]
+        body_str = body or template_data["body"]
+    else:
+        params_dict = debugger.parse_params(params) if params else {}
+        headers_dict = debugger.parse_headers(headers) if headers else {}
+        body_str = body
+    
+    # Build URL
+    base_url = debugger.base_url
+    if path.startswith('/'):
+        url = f"{base_url}{path}"
+    elif path.startswith('http'):
+        url = path
+    else:
+        url = f"{base_url}/{path}"
+    
+    # Add query parameters
+    if params_dict:
+        query_string = urlencode(params_dict)
+        url = f"{url}?{query_string}" if query_string else url
+    
+    # Prepare headers
+    request_headers = {
+        "Authorization": f"Bearer {debugger.access_token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    if headers_dict:
+        request_headers.update(headers_dict)
+    
+    # Make request
+    start_time = time.time()
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            if method.upper() == "GET":
+                response = await client.get(url, headers=request_headers)
+            elif method.upper() == "POST":
+                response = await client.post(url, headers=request_headers, content=body_str or "")
+            elif method.upper() == "PUT":
+                response = await client.put(url, headers=request_headers, content=body_str or "")
+            elif method.upper() == "DELETE":
+                response = await client.delete(url, headers=request_headers)
+            elif method.upper() == "PATCH":
+                response = await client.patch(url, headers=request_headers, content=body_str or "")
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unsupported HTTP method: {method}"
+                )
+            
+            response_time_ms = (time.time() - start_time) * 1000
+            
+            # Parse response body
+            try:
+                response_body = response.json()
+            except:
+                response_body = response.text
+            
+            # Get eBay headers
+            ebay_headers = {k: v for k, v in response.headers.items() 
+                           if k.lower().startswith('x-ebay')}
+            
+            return {
+                "request": {
+                    "method": method,
+                    "url": url,
+                    "headers": {k: (debugger._mask_token(v) if k.lower() == "authorization" else v) 
+                               for k, v in request_headers.items()},
+                    "params": params_dict,
+                    "body": body_str
+                },
+                "response": {
+                    "status_code": response.status_code,
+                    "status_text": response.reason_phrase,
+                    "headers": dict(response.headers),
+                    "ebay_headers": ebay_headers,
+                    "body": response_body,
+                    "response_time_ms": round(response_time_ms, 2)
+                },
+                "success": 200 <= response.status_code < 300
+            }
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"HTTP error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error making request: {str(e)}"
+        )
+
+
+@router.get("/debug/templates")
+async def get_debug_templates(
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get list of available debug templates."""
+    from app.utils.ebay_debugger import EbayAPIDebugger
+    
+    debugger = EbayAPIDebugger(current_user.id)
+    templates = {}
+    
+    for template_name in ["identity", "orders", "transactions", "inventory", "offers", "disputes", "messages"]:
+        template = debugger.get_template(template_name)
+        if template:
+            templates[template_name] = {
+                "name": template["name"],
+                "description": template["description"],
+                "method": template["method"],
+                "path": template["path"],
+                "params": template["params"]
+            }
+    
+    return {"templates": templates}

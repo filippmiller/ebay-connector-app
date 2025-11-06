@@ -12,6 +12,7 @@ import { ScrollArea } from '../components/ui/scroll-area';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 import { SyncTerminal } from '../components/SyncTerminal';
+import { EbayDebugger } from '../components/EbayDebugger';
 import type { EbayConnectionStatus, EbayLog } from '../types';
 import { Link as LinkIcon, Unlink } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
@@ -291,6 +292,7 @@ export const EbayConnectionPage: React.FC = () => {
             <TabsList>
               <TabsTrigger value="connection">eBay Connection</TabsTrigger>
               <TabsTrigger value="sync">Sync Data</TabsTrigger>
+              <TabsTrigger value="debugger">🔧 API Debugger</TabsTrigger>
               <TabsTrigger value="terminal">Connection Terminal</TabsTrigger>
             </TabsList>
 
@@ -581,6 +583,10 @@ export const EbayConnectionPage: React.FC = () => {
                   </AlertDescription>
                 </Alert>
               )}
+            </TabsContent>
+
+            <TabsContent value="debugger" className="space-y-4">
+              <EbayDebugger />
             </TabsContent>
 
             <TabsContent value="terminal" className="space-y-4">
