@@ -87,9 +87,30 @@ This probably means the server terminated abnormally before or while processing 
 
 ### Next Steps
 1. ✅ **ROOT CAUSE FOUND**: Supabase connection issues, not migration code
-2. Add connection retry logic to migrations
-3. Consider running migrations as a separate Railway job instead of during startup
-4. Check Supabase connection pool settings
+2. ✅ **IMPLEMENTED**: Connection retry logic with exponential backoff in start.sh
+3. ✅ **IMPLEMENTED**: Improved SQLAlchemy connection settings (timeout, keepalive, pool size)
+4. ✅ **IMPLEMENTED**: Updated Alembic env.py with same connection settings
+5. ⏳ **TODO**: Test the changes on Railway
+6. ⏳ **TODO**: Consider using direct connection URL instead of pooler (if issues persist)
+
+### 2025-11-06 15:30 - Solutions Implemented
+**✅ Changes Made:**
+
+1. **SQLAlchemy Engine Settings** (`backend/app/models_sqlalchemy/__init__.py`):
+   - Increased `connect_timeout` to 10s
+   - Added TCP keepalive settings (keepalives, keepalives_idle, keepalives_interval, keepalives_count)
+   - Reduced `pool_size` to 5 (Supabase free tier limit)
+   - Set `pool_recycle=3600` (1 hour, matches Supabase idle timeout)
+   - Added `pool_timeout=30s`
+
+2. **Migration Retry Logic** (`backend/start.sh`):
+   - Added `run_migrations_with_retry()` function
+   - 3 attempts with exponential backoff (2s, 4s, 8s delays)
+   - Clear logging for each attempt
+
+3. **Alembic Connection Settings** (`backend/alembic/env.py`):
+   - Added same keepalive and timeout settings as SQLAlchemy engine
+   - Ensures consistent connection behavior during migrations
 
 ---
 

@@ -35,11 +35,28 @@ if "postgresql" in DATABASE_URL or "postgres" in DATABASE_URL:
         parsed.fragment
     ))
 
+# Configure connection args based on database type
+if "sqlite" in DATABASE_URL:
+    connect_args = {"check_same_thread": False}
+else:
+    # Supabase/PostgreSQL connection settings
+    connect_args = {
+        "connect_timeout": 10,  # Increased timeout for Supabase
+        "keepalives": 1,  # Enable TCP keepalive
+        "keepalives_idle": 30,  # Start keepalive after 30s idle
+        "keepalives_interval": 10,  # Send keepalive every 10s
+        "keepalives_count": 5,  # Max 5 keepalive packets before considering dead
+    }
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {"connect_timeout": 5},
+    connect_args=connect_args,
     echo=True,  # Enable SQL query logging for debugging
-    pool_pre_ping=True  # Verify connections before using
+    pool_pre_ping=True,  # Verify connections before using
+    pool_size=5,  # Reduced pool size for Supabase (free tier limit ~60 connections)
+    max_overflow=10,  # Allow up to 10 additional connections
+    pool_recycle=3600,  # Recycle connections after 1 hour (Supabase idle timeout)
+    pool_timeout=30,  # Wait up to 30s for a connection from pool
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
