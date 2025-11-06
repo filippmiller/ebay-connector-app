@@ -57,10 +57,39 @@ Use clear sections and be specific about what you're seeing or thinking.
 - The other two migrations might be hanging or taking too long
 - We need to add logging to ALL migrations, not just one
 
+### 2025-11-06 15:25 - BREAKTHROUGH! log9.txt shows real error
+**🎯 ROOT CAUSE IDENTIFIED:**
+
+```
+psycopg2.OperationalError: connection to server at "aws-1-us-east-1.pooler.supabase.com" 
+(3.227.209.82), port 5432 failed: server closed the connection unexpectedly
+This probably means the server terminated abnormally before or while processing the request.
+```
+
+**The Problem:**
+- **Supabase connection is being closed unexpectedly** during migration attempts
+- This is NOT a migration code issue - it's a database connection issue
+- The startup script handles it gracefully: `[entry] WARNING: Migrations failed, continuing anyway...`
+- Server still starts, but migrations don't run
+
+**Possible Causes:**
+1. **Supabase Connection Pool Limits**: Supabase free tier has connection limits (typically 60-100 connections)
+2. **Connection Pool Exhaustion**: Multiple migration attempts might be exhausting the pool
+3. **Supabase Pooler Issues**: The pooler might be closing idle connections
+4. **Network/Timeout Issues**: Connection might be timing out before migration completes
+
+**Solutions to Try:**
+1. **Add connection retry logic** with exponential backoff
+2. **Use direct connection** instead of pooler (if Supabase allows)
+3. **Reduce connection pool size** in SQLAlchemy
+4. **Add connection timeout/keepalive settings**
+5. **Run migrations separately** (not during startup) - use a one-time migration job
+
 ### Next Steps
-1. Add logging to the other two migration files (`add_raw_payload_line_items`, `multi_account_001`)
-2. Check Railway timeout settings
-3. Consider adding a timeout to migrations or running them separately
+1. ✅ **ROOT CAUSE FOUND**: Supabase connection issues, not migration code
+2. Add connection retry logic to migrations
+3. Consider running migrations as a separate Railway job instead of during startup
+4. Check Supabase connection pool settings
 
 ---
 
