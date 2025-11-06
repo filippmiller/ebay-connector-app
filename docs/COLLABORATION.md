@@ -12,8 +12,10 @@ Railway backend deployment is experiencing migration issues. The migrations appe
 ### Symptoms
 - Migrations start (`alembic upgrade heads`)
 - Logs show "Will assume transactional DDL" then cut off
-- Server eventually starts but we can't see migration progress
+- **Container restart loop**: Railway keeps stopping and restarting the container
+- **No migration logs**: Print statements from `add_core_ops_tables` don't appear (likely because it's already applied and skipped)
 - Multiple head revisions: `add_raw_payload_line_items`, `add_core_ops_tables`, `multi_account_001`
+- Current revision shows `add_core_ops_tables (head)` - this migration is already applied
 
 ### Recent Changes
 - Made migrations idempotent (check for existing tables/columns/indexes before creating)
@@ -41,10 +43,24 @@ Use clear sections and be specific about what you're seeing or thinking.
 - Wrapped migration in try/except for better error handling
 - All table creation now uses `log_print()` function that prints to stdout
 
+### 2025-11-06 15:20 - Analysis of log8.txt
+**Critical Observations:**
+1. **Container Restart Loop**: Log shows "Stopping Container" multiple times - Railway is killing and restarting the container
+2. **No Migration Logs**: Still no `[migration]` print statements appearing, even though migrations are running
+3. **Current Revision**: Log shows `add_core_ops_tables (head)` is already applied - this migration might be skipped
+4. **Multiple Heads**: Three head revisions exist, but we're not seeing which ones are being applied
+
+**Key Insight**: If `add_core_ops_tables` is already the current revision, Alembic will skip it and only run the other two heads (`add_raw_payload_line_items` and `multi_account_001`). Our print statements are in `add_core_ops_tables`, so they won't execute if that migration is skipped!
+
+**Possible Issues:**
+- Railway might have a timeout that kills containers during long migrations
+- The other two migrations might be hanging or taking too long
+- We need to add logging to ALL migrations, not just one
+
 ### Next Steps
-1. Wait for Railway deployment to complete
-2. Check logs for `[migration]` prefixed messages
-3. If still no logs, investigate Alembic logging configuration
+1. Add logging to the other two migration files (`add_raw_payload_line_items`, `multi_account_001`)
+2. Check Railway timeout settings
+3. Consider adding a timeout to migrations or running them separately
 
 ---
 
