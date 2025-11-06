@@ -142,11 +142,11 @@ This probably means the server terminated abnormally before or while processing 
 
 ### Phase 1: Critical Functionality (Start Here)
 1. **✅ Backend Health Check**
-   - [ ] Test `/healthz` endpoint
-   - [ ] Test `/healthz/db` endpoint
-   - [ ] Verify server is running
+   - [x] Test `/healthz` endpoint ✅
+   - [x] Test `/healthz/db` endpoint ✅ (database connected)
+   - [x] Verify server is running ✅
 
-2. **🔐 Authentication**
+2. **🔐 Authentication** (IN PROGRESS)
    - [ ] Login with existing user
    - [ ] Check if login works (was broken before)
    - [ ] Verify JWT token is received
