@@ -47,13 +47,16 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
         const response = await api.get(`/ebay/sync/logs/${runId}`);
         if (response.data?.events) {
           setEvents(response.data.events);
-          // Check if already complete or cancelled
-          const lastEvent = response.data.events[response.data.events.length - 1];
-          if (lastEvent?.event_type === 'done' || lastEvent?.event_type === 'error') {
+          // Check if already complete or cancelled - but only if we have a 'done' or 'cancelled' event
+          const hasDoneEvent = response.data.events.some((e: SyncEvent) => e.event_type === 'done');
+          const hasCancelledEvent = response.data.events.some((e: SyncEvent) => e.event_type === 'cancelled');
+          
+          if (hasDoneEvent) {
             setIsComplete(true);
           }
-          if (lastEvent?.message?.toLowerCase().includes('cancelled')) {
+          if (hasCancelledEvent) {
             setIsCancelled(true);
+            setIsComplete(true);
           }
         } else if (response.data?.events?.length === 0) {
           // No events yet - sync might not have started
@@ -336,13 +339,14 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
             )}
           </CardTitle>
           <div className="flex items-center gap-2">
-            {!isComplete && !isCancelled && (
+            {(!isComplete || isConnected) && !isCancelled && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleStop}
                 title="Stop sync"
-                className="text-red-500 hover:text-red-700"
+                className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                disabled={isComplete && !isConnected}
               >
                 <Square className="w-4 h-4" />
               </Button>
