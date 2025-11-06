@@ -138,6 +138,55 @@ This probably means the server terminated abnormally before or while processing 
 
 ---
 
+## Testing Plan
+
+### Phase 1: Critical Functionality (Start Here)
+1. **✅ Backend Health Check**
+   - [ ] Test `/healthz` endpoint
+   - [ ] Test `/healthz/db` endpoint
+   - [ ] Verify server is running
+
+2. **🔐 Authentication**
+   - [ ] Login with existing user
+   - [ ] Check if login works (was broken before)
+   - [ ] Verify JWT token is received
+   - [ ] Test `/auth/me` endpoint
+
+3. **📊 Database State**
+   - [ ] Verify migrations were applied
+   - [ ] Check if all tables exist
+   - [ ] Verify no duplicate table errors
+
+### Phase 2: eBay Integration
+4. **🔗 eBay OAuth Connection**
+   - [ ] Test eBay connection flow
+   - [ ] Verify OAuth callback works
+   - [ ] Check if tokens are stored
+
+5. **🔄 Data Synchronization**
+   - [ ] Test Orders sync
+   - [ ] Test Messages sync
+   - [ ] Test Transactions sync
+   - [ ] Test Disputes sync
+   - [ ] Test Offers sync
+   - [ ] Verify STOP button works
+   - [ ] Check persistent logs
+
+### Phase 3: UI/UX
+6. **💻 Frontend**
+   - [ ] Verify build number increments
+   - [ ] Check if Cloudflare Pages proxy works
+   - [ ] Test error messages display
+   - [ ] Verify loading states
+
+---
+
+## Current Testing Status
+
+**Ready to start:** Phase 1 - Critical Functionality
+
+---
+
 ## Questions for Discussion
 
 1. **Migration Logging**: Why aren't migration logs appearing in Railway? Is it a buffering issue or something else?
