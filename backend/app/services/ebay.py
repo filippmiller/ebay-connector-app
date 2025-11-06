@@ -75,7 +75,7 @@ class EbayService:
                 "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
                 "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
                 "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
-                "https://api.ebay.com/oauth/api_scope/trading"  # For Messages
+                # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
             ]
         
         params = {
