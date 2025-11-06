@@ -135,6 +135,42 @@ class SyncEventLogger:
             'extra_data': extra_data
         })
     
+    def log_debug(self, message: str, http_method: Optional[str] = None, 
+                  http_url: Optional[str] = None, token: Optional[str] = None,
+                  scopes: Optional[list] = None, headers: Optional[dict] = None):
+        """Log debug event with request details"""
+        from app.utils.token_utils import mask_token, format_scopes_for_display
+        
+        debug_message = message
+        if token:
+            masked = mask_token(token)
+            debug_message += f"\n        Token: {masked}"
+        if scopes:
+            scopes_display = format_scopes_for_display(scopes)
+            debug_message += f"\n        Scopes: {scopes_display}"
+        if headers:
+            # Mask token in headers
+            headers_display = {}
+            for k, v in headers.items():
+                if k.lower() == "authorization" and "Bearer" in str(v):
+                    headers_display[k] = f"Bearer {mask_token(str(v).replace('Bearer ', ''))}"
+                else:
+                    headers_display[k] = v
+            debug_message += f"\n        Headers: {headers_display}"
+        
+        self.emit_event({
+            'event_type': 'log',
+            'level': 'debug',
+            'message': debug_message,
+            'http_method': http_method,
+            'http_url': http_url,
+            'extra_data': {
+                'token_masked': mask_token(token) if token else None,
+                'scopes': scopes,
+                'scopes_display': format_scopes_for_display(scopes) if scopes else None
+            }
+        })
+    
     def log_error(self, message: str, error: Optional[Exception] = None, 
                  extra_data: Optional[Dict[str, Any]] = None):
         """Log error message"""
