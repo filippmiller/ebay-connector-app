@@ -402,10 +402,54 @@ class EbayService:
                 detail=error_msg
             )
     
+    async def get_user_identity(self, access_token: str) -> Dict[str, Any]:
+        """
+        Get eBay user identity (username, userId) from access token using Identity API
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required"
+            )
+        
+        api_url = f"{settings.ebay_api_base_url}/identity/v1/user"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+                response = await client.get(api_url, headers=headers)
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    try:
+                        error_json = response.json()
+                        error_detail = str(error_json)
+                    except:
+                        pass
+                    logger.warning(f"Failed to get user identity: {response.status_code} - {error_detail}")
+                    return {"username": None, "userId": None, "error": error_detail}
+                
+                identity_data = response.json()
+                return {
+                    "username": identity_data.get("username"),
+                    "userId": identity_data.get("userId"),
+                    "accountType": identity_data.get("accountType"),
+                    "registrationMarketplaceId": identity_data.get("registrationMarketplaceId")
+                }
+        except Exception as e:
+            logger.error(f"Error getting user identity: {str(e)}")
+            return {"username": None, "userId": None, "error": str(e)}
+
     async def fetch_transactions(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Fetch transaction records from eBay Finances API
         By default, fetches transactions from the last 90 days
+        
+        FIXED: Changed from filter=transactionDate:[..] to transactionDateRange=.. (correct Finances API format)
         """
         if not access_token:
             raise HTTPException(
@@ -417,16 +461,24 @@ class EbayService:
         
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
+            "Accept": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"  # Optional but recommended
         }
         
         params = filter_params or {}
         
-        if 'filter' not in params:
+        # FIXED: Use transactionDateRange instead of filter
+        if 'transactionDateRange' not in params:
             from datetime import datetime, timedelta
             end_date = datetime.utcnow()
             start_date = end_date - timedelta(days=90)
-            params['filter'] = f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
+            # Format: YYYY-MM-DDTHH:MM:SS.SSSZ..YYYY-MM-DDTHH:MM:SS.SSSZ
+            params['transactionDateRange'] = f"{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
+        
+        # Optional: filter by transaction type
+        if 'transactionType' not in params:
+            # params['transactionType'] = 'SALE'  # Uncomment if you want only sales
+            pass
         
         ebay_logger.log_ebay_event(
             "fetch_transactions_request",
@@ -439,12 +491,11 @@ class EbayService:
         )
         
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
                 response = await client.get(
                     api_url,
                     headers=headers,
-                    params=params,
-                    timeout=30.0
+                    params=params
                 )
                 
                 if response.status_code == 204:
@@ -534,14 +585,38 @@ class EbayService:
             offset = 0
             has_more = True
             current_page = 0
+            max_pages = 200  # Safety limit to prevent infinite loops
+            
+            # Get user identity for logging "who we are"
+            identity = await self.get_user_identity(access_token)
+            username = identity.get("username", "unknown")
+            ebay_user_id = identity.get("userId", "unknown")
+            
+            # Date window with 5-10 minute cushion
+            from datetime import datetime, timedelta
+            until_date = datetime.utcnow()
+            since_date = until_date - timedelta(days=90)  # Default 90 days, can be adjusted
+            # Add 5 minute cushion
+            since_date = since_date - timedelta(minutes=5)
             
             event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
+            event_logger.log_info(f"=== WHO WE ARE ===")
+            event_logger.log_info(f"Connected as: {username} (eBay UserID: {ebay_user_id})")
+            event_logger.log_info(f"Environment: {settings.EBAY_ENVIRONMENT}")
             event_logger.log_info(f"API Configuration: Fulfillment API v1, max batch size: {limit} orders per request")
-            logger.info(f"Starting full order sync for user {user_id} with limit={limit}")
+            event_logger.log_info(f"Date window: {since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}")
+            event_logger.log_info(f"Safety limit: max {max_pages} pages")
+            logger.info(f"Starting full order sync for user {user_id} ({username}) with limit={limit}")
             
             await asyncio.sleep(0.5)
             
             while has_more:
+                # Safety check: max pages limit
+                if current_page >= max_pages:
+                    event_logger.log_warning(f"Reached safety limit of {max_pages} pages. Stopping to prevent infinite loop.")
+                    logger.warning(f"Order sync reached max_pages limit ({max_pages}) for run_id {event_logger.run_id}")
+                    break
+                
                 # Check for cancellation
                 from app.services.sync_event_logger import is_cancelled
                 if is_cancelled(event_logger.run_id):
@@ -563,9 +638,12 @@ class EbayService:
                     }
                 
                 current_page += 1
+                # Add date window filter with lastmodifieddate
                 filter_params = {
+                    "filter": f"lastmodifieddate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
                     "limit": limit,
-                    "offset": offset
+                    "offset": offset,
+                    "fieldGroups": "TAX_BREAKDOWN"
                 }
                 
                 # Check for cancellation BEFORE making the API request
@@ -647,6 +725,12 @@ class EbayService:
                 )
                 
                 event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(orders)} orders (Total available: {total})")
+                
+                # Early exit if total == 0 (no orders in window)
+                if total == 0 and current_page == 1:
+                    event_logger.log_info(f"✓ No orders found in date window. Total available: 0")
+                    event_logger.log_warning("No orders in window - check date range, account, or environment")
+                    break
                 
                 total_fetched += len(orders)
                 
@@ -1076,15 +1160,31 @@ class EbayService:
             offset = 0
             has_more = True
             current_page = 0
+            max_pages = 200  # Safety limit to prevent infinite loops
+            
+            # Get user identity for logging "who we are"
+            identity = await self.get_user_identity(access_token)
+            username = identity.get("username", "unknown")
+            ebay_user_id = identity.get("userId", "unknown")
             
             event_logger.log_start(f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
+            event_logger.log_info(f"=== WHO WE ARE ===")
+            event_logger.log_info(f"Connected as: {username} (eBay UserID: {ebay_user_id})")
+            event_logger.log_info(f"Environment: {settings.EBAY_ENVIRONMENT}")
             event_logger.log_info(f"API Configuration: Finances API v1, max batch size: {limit} transactions per request")
             event_logger.log_info(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} (90 days)")
-            logger.info(f"Starting transaction sync for user {user_id} with limit={limit}")
+            event_logger.log_info(f"Window: {start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}")
+            event_logger.log_info(f"Safety limit: max {max_pages} pages")
+            logger.info(f"Starting transaction sync for user {user_id} ({username}) with limit={limit}")
             
             await asyncio.sleep(0.5)
             
             while has_more:
+                # Safety check: max pages limit
+                if current_page >= max_pages:
+                    event_logger.log_warning(f"Reached safety limit of {max_pages} pages. Stopping to prevent infinite loop.")
+                    logger.warning(f"Transactions sync reached max_pages limit ({max_pages}) for run_id {event_logger.run_id}")
+                    break
                 # Check for cancellation
                 from app.services.sync_event_logger import is_cancelled
                 if is_cancelled(event_logger.run_id):
@@ -1106,8 +1206,9 @@ class EbayService:
                     }
                 
                 current_page += 1
+                # FIXED: Use transactionDateRange instead of filter
                 filter_params = {
-                    'filter': f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
+                    'transactionDateRange': f"{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}",
                     'limit': limit,
                     'offset': offset
                 }
@@ -1191,6 +1292,12 @@ class EbayService:
                 )
                 
                 event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(transactions)} transactions (Total available: {total})")
+                
+                # Early exit if total == 0 (no transactions in window)
+                if total == 0 and current_page == 1:
+                    event_logger.log_info(f"✓ No transactions found in date window. Total available: 0")
+                    event_logger.log_warning("No transactions in window - check date range, account, or environment")
+                    break
                 
                 total_fetched += len(transactions)
                 
