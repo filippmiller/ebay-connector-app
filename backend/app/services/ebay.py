@@ -70,10 +70,12 @@ class EbayService:
         
         if not scopes:
             scopes = [
-                "https://api.ebay.com/oauth/api_scope",
+                "https://api.ebay.com/oauth/api_scope",  # Base scope for Identity API
                 "https://api.ebay.com/oauth/api_scope/sell.account",
-                "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-                "https://api.ebay.com/oauth/api_scope/sell.inventory"
+                "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
+                "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
+                "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
+                "https://api.ebay.com/oauth/api_scope/trading"  # For Messages
             ]
         
         params = {
@@ -360,6 +362,12 @@ class EbayService:
                 
                 if response.status_code != 200:
                     error_detail = response.text
+                    try:
+                        error_json = response.json()
+                        error_detail = str(error_json)
+                        logger.error(f"Orders API error {response.status_code}: {error_json}")
+                    except:
+                        logger.error(f"Orders API error {response.status_code}: {error_detail}")
                     ebay_logger.log_ebay_event(
                         "fetch_orders_failed",
                         f"Failed to fetch orders: {response.status_code}",
@@ -412,7 +420,7 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        api_url = f"{settings.ebay_api_base_url}/identity/v1/user"
+        api_url = f"{settings.ebay_api_base_url}/identity/v1/oauth2/userinfo"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -428,15 +436,17 @@ class EbayService:
                     try:
                         error_json = response.json()
                         error_detail = str(error_json)
+                        logger.error(f"Identity API error {response.status_code}: {error_json}")
                     except:
-                        pass
+                        logger.error(f"Identity API error {response.status_code}: {error_detail}")
                     logger.warning(f"Failed to get user identity: {response.status_code} - {error_detail}")
                     return {"username": None, "userId": None, "error": error_detail}
                 
                 identity_data = response.json()
+                # eBay Identity API returns user_id (not userId) and username
                 return {
                     "username": identity_data.get("username"),
-                    "userId": identity_data.get("userId"),
+                    "userId": identity_data.get("user_id") or identity_data.get("userId"),  # Support both formats
                     "accountType": identity_data.get("accountType"),
                     "registrationMarketplaceId": identity_data.get("registrationMarketplaceId")
                 }
@@ -449,7 +459,7 @@ class EbayService:
         Fetch transaction records from eBay Finances API
         By default, fetches transactions from the last 90 days
         
-        FIXED: Changed from filter=transactionDate:[..] to transactionDateRange=.. (correct Finances API format)
+        FIXED: Use RSQL filter format: filter=transactionDate:[...] (correct Finances API format)
         """
         if not access_token:
             raise HTTPException(
@@ -467,13 +477,13 @@ class EbayService:
         
         params = filter_params or {}
         
-        # FIXED: Use transactionDateRange instead of filter
-        if 'transactionDateRange' not in params:
+        # FIXED: Use RSQL filter format: filter=transactionDate:[...]
+        if 'filter' not in params:
             from datetime import datetime, timedelta
             end_date = datetime.utcnow()
             start_date = end_date - timedelta(days=90)
-            # Format: YYYY-MM-DDTHH:MM:SS.SSSZ..YYYY-MM-DDTHH:MM:SS.SSSZ
-            params['transactionDateRange'] = f"{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
+            # Format: YYYY-MM-DDTHH:MM:SS.000Z (RSQL format with brackets)
+            params['filter'] = f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
         
         # Optional: filter by transaction type
         if 'transactionType' not in params:
@@ -511,8 +521,9 @@ class EbayService:
                     try:
                         error_json = response.json()
                         error_detail = str(error_json)
+                        logger.error(f"Transactions API error {response.status_code}: {error_json}")
                     except:
-                        pass
+                        logger.error(f"Transactions API error {response.status_code}: {error_detail}")
                     
                     ebay_logger.log_ebay_event(
                         "fetch_transactions_failed",
@@ -638,9 +649,9 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # Add date window filter with lastmodifieddate
+                # Add date window filter with lastModifiedDate (case-sensitive!)
                 filter_params = {
-                    "filter": f"lastmodifieddate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
+                    "filter": f"lastModifiedDate:[{since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
                     "limit": limit,
                     "offset": offset,
                     "fieldGroups": "TAX_BREAKDOWN"
@@ -1206,9 +1217,9 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # FIXED: Use transactionDateRange instead of filter
+                # FIXED: Use RSQL filter format: filter=transactionDate:[...]
                 filter_params = {
-                    'transactionDateRange': f"{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}",
+                    'filter': f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
                     'limit': limit,
                     'offset': offset
                 }
