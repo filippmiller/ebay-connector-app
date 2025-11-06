@@ -71,6 +71,7 @@ def run_migrations_online() -> None:
     """
     # Get connection args for Supabase (same as in models_sqlalchemy)
     connect_args = {}
+    # database_url is set above from settings.DATABASE_URL
     if "postgresql" in database_url or "postgres" in database_url:
         connect_args = {
             "connect_timeout": 10,
@@ -80,12 +81,18 @@ def run_migrations_online() -> None:
             "keepalives_count": 5,
         }
     
+    # Get config section and add connect_args
+    configuration = config.get_section(config.config_ini_section, {})
+    if connect_args:
+        # Add connect_args to configuration (engine_from_config will use them)
+        for key, value in connect_args.items():
+            configuration[f"connect_args.{key}"] = str(value)
+    
     # Create engine with optimized settings for Supabase
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,  # Use NullPool for migrations (single connection)
-        connect_args=connect_args,
     )
 
     with connectable.connect() as connection:
