@@ -345,7 +345,9 @@ class EbayService:
         
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"  # Required for all eBay APIs
         }
         
         params = filter_params or {}
@@ -434,7 +436,8 @@ class EbayService:
         
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"  # Required for all eBay APIs
         }
         
         # Log request context
@@ -953,7 +956,9 @@ class EbayService:
         
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"  # Required for all eBay APIs
         }
         
         params = filter_params or {}
