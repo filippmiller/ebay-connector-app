@@ -20,7 +20,21 @@ interface DebugTemplate {
   params: Record<string, string>;
 }
 
+interface RequestContext {
+  user_email: string;
+  user_id: string;
+  token: string;
+  token_version?: string;
+  token_expires_at?: string;
+  scopes: string[];
+  scopes_display: string;
+  environment: string;
+  missing_scopes: string[];
+  has_all_required?: boolean;
+}
+
 interface DebugResponse {
+  request_context?: RequestContext;
   request: {
     method: string;
     url: string;
@@ -261,6 +275,42 @@ export const EbayDebugger: React.FC = () => {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Request Context */}
+      {response && response.request_context && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardHeader>
+            <CardTitle className="text-lg">🔍 REQUEST CONTEXT</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="font-semibold">User:</span> {response.request_context.user_email} (ID: {response.request_context.user_id})
+              </div>
+              <div>
+                <span className="font-semibold">Environment:</span> {response.request_context.environment}
+              </div>
+              <div className="col-span-2">
+                <span className="font-semibold">eBay Token:</span> {response.request_context.token}
+                {response.request_context.token_version && (
+                  <span className="text-gray-500 ml-2">(v{response.request_context.token_version})</span>
+                )}
+                {response.request_context.token_expires_at && (
+                  <span className="text-gray-500 ml-2">(expires: {new Date(response.request_context.token_expires_at).toLocaleDateString()})</span>
+                )}
+              </div>
+              <div className="col-span-2">
+                <span className="font-semibold">Scopes:</span> {response.request_context.scopes_display || "None"}
+              </div>
+              {response.request_context.missing_scopes && response.request_context.missing_scopes.length > 0 && (
+                <div className="col-span-2">
+                  <span className="font-semibold text-red-600">⚠️ Missing:</span> {response.request_context.missing_scopes.join(", ")}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Response */}
       {response && (

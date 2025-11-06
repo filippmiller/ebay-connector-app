@@ -410,7 +410,8 @@ class EbayService:
                 detail=error_msg
             )
     
-    async def get_user_identity(self, access_token: str) -> Dict[str, Any]:
+    async def get_user_identity(self, access_token: str, user_scopes: Optional[List[str]] = None, 
+                                user_email: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get eBay user identity (username, userId) from access token using Identity API
         """
@@ -426,6 +427,19 @@ class EbayService:
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json"
         }
+        
+        # Log request context
+        from app.utils.token_utils import log_request_context
+        log_request_context(
+            api_name="identity",
+            method="GET",
+            url=api_url,
+            token=access_token,
+            user_scopes=user_scopes,
+            user_email=user_email,
+            user_id=user_id,
+            environment=settings.EBAY_ENVIRONMENT
+        )
         
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
@@ -617,8 +631,34 @@ class EbayService:
             current_page = 0
             max_pages = 200  # Safety limit to prevent infinite loops
             
+            # Get user scopes from user object if available
+            from app.services.database import db
+            user_obj = db.get_user_by_id(user_id)
+            user_scopes = []
+            user_email = None
+            if user_obj:
+                user_email = user_obj.email
+                # Try to get scopes from ebay_account if available
+                from app.services.ebay_account_service import ebay_account_service
+                from app.models_sqlalchemy import get_db
+                db_session = next(get_db())
+                try:
+                    accounts = ebay_account_service.get_accounts_by_org(db_session, user_id)
+                    if accounts:
+                        # Get scopes from first account's authorizations
+                        from app.models_sqlalchemy.models import EbayAuthorization
+                        auths = db_session.query(EbayAuthorization).filter(
+                            EbayAuthorization.ebay_account_id == accounts[0].id
+                        ).all()
+                        user_scopes = [auth.scope for auth in auths] if auths else []
+                except Exception as e:
+                    logger.warning(f"Could not retrieve scopes from account: {e}")
+                finally:
+                    db_session.close()
+            
             # Get user identity for logging "who we are"
-            identity = await self.get_user_identity(access_token)
+            identity = await self.get_user_identity(access_token, user_scopes=user_scopes, 
+                                                   user_email=user_email, user_id=user_id)
             username = identity.get("username", "unknown")
             ebay_user_id = identity.get("userId", "unknown")
             
@@ -626,6 +666,13 @@ class EbayService:
             if identity.get("error"):
                 event_logger.log_error(f"Identity API error: {identity.get('error')}")
                 event_logger.log_warning("⚠️ Token may be invalid or missing required scopes. Please reconnect to eBay.")
+            
+            # Validate scopes and log warnings
+            from app.utils.token_utils import validate_scopes, format_scopes_for_display
+            scope_validation = validate_scopes(user_scopes, "orders")
+            if scope_validation["missing_scopes"]:
+                missing_display = format_scopes_for_display(scope_validation["missing_scopes"])
+                event_logger.log_warning(f"⚠️ Missing required scopes for Orders API: {missing_display}")
             
             # Date window with 5-10 minute cushion
             from datetime import datetime, timedelta
@@ -701,6 +748,21 @@ class EbayService:
                         "job_id": job_id,
                         "run_id": event_logger.run_id
                     }
+                
+                # Build full URL for logging
+                api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/order"
+                query_string = "&".join([f"{k}={v}" for k, v in filter_params.items()])
+                full_url = f"{api_url}?{query_string}"
+                
+                # Log request context before API call
+                event_logger.log_debug(
+                    f"[DEBUG] → GET {api_url}",
+                    http_method="GET",
+                    http_url=full_url,
+                    token=access_token,
+                    scopes=user_scopes,
+                    headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+                )
                 
                 event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/fulfillment/v1/order?limit={limit}&offset={offset}")
                 

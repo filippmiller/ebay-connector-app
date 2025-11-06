@@ -837,6 +837,42 @@ async def debug_ebay_api(
             detail="Failed to load user token"
         )
     
+    # Get user scopes from account
+    user_scopes = []
+    from app.services.ebay_account_service import ebay_account_service
+    from app.models_sqlalchemy import get_db
+    db_session = next(get_db())
+    try:
+        accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
+        if accounts:
+            from app.models_sqlalchemy.models import EbayAuthorization
+            auths = db_session.query(EbayAuthorization).filter(
+                EbayAuthorization.ebay_account_id == accounts[0].id
+            ).all()
+            user_scopes = [auth.scope for auth in auths] if auths else []
+    except:
+        pass
+    finally:
+        db_session.close()
+    
+    # Get token info
+    from app.utils.token_utils import extract_token_info, mask_token, validate_scopes, format_scopes_for_display
+    token_info = extract_token_info(debugger.access_token)
+    masked_token = mask_token(debugger.access_token)
+    
+    # Determine API name from path
+    api_name = "custom"
+    if "identity" in path:
+        api_name = "identity"
+    elif "fulfillment" in path or "order" in path:
+        api_name = "orders"
+    elif "finances" in path or "transaction" in path:
+        api_name = "transactions"
+    elif "inventory" in path:
+        api_name = "inventory"
+    
+    scope_validation = validate_scopes(user_scopes, api_name) if api_name != "custom" else None
+    
     # Get template if specified
     if template:
         template_data = debugger.get_template(template)
@@ -912,10 +948,22 @@ async def debug_ebay_api(
                            if k.lower().startswith('x-ebay')}
             
             return {
+                "request_context": {
+                    "user_email": current_user.email,
+                    "user_id": current_user.id[:8] + "..." if len(current_user.id) > 8 else current_user.id,
+                    "token": masked_token,
+                    "token_version": token_info.get("version"),
+                    "token_expires_at": current_user.ebay_token_expires_at.isoformat() if current_user.ebay_token_expires_at else None,
+                    "scopes": user_scopes,
+                    "scopes_display": format_scopes_for_display(user_scopes),
+                    "environment": current_user.ebay_environment or "sandbox",
+                    "missing_scopes": scope_validation["missing_scopes"] if scope_validation else [],
+                    "has_all_required": scope_validation["has_all_required"] if scope_validation else None
+                },
                 "request": {
                     "method": method,
                     "url": url,
-                    "headers": {k: (debugger._mask_token(v) if k.lower() == "authorization" else v) 
+                    "headers": {k: (masked_token if k.lower() == "authorization" and "Bearer" in v else v) 
                                for k, v in request_headers.items()},
                     "params": params_dict,
                     "body": body_str
