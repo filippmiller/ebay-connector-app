@@ -279,9 +279,12 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
             
             all_message_ids = []
             page_number = 1
+            max_pages = 1000  # Safety limit to prevent infinite loops
+            consecutive_empty_pages = 0
+            max_empty_pages = 3  # Stop if we get 3 consecutive empty pages
             
-            while True:
-                # Check for cancellation
+            while page_number <= max_pages:
+                # Check for cancellation BEFORE each request
                 from app.services.sync_event_logger import is_cancelled
                 if is_cancelled(run_id):
                     logger.info(f"Messages sync cancelled for run_id {run_id}")
@@ -299,38 +302,68 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                 event_logger.log_info(f"→ Requesting headers page {page_number}: POST /ws/eBayISAPI.dll (GetMyMessages - {folder_name})")
                 logger.info(f"Fetching headers page {page_number} for folder {folder_name}")
                 
-                request_start = time.time()
-                headers_response = await ebay_service.get_message_headers(
-                    access_token,
-                    folder_id,
-                    page_number=page_number,
-                    entries_per_page=200
-                )
-                request_duration = int((time.time() - request_start) * 1000)
-                
-                message_ids = headers_response.get("message_ids", [])
-                alert_ids = headers_response.get("alert_ids", [])
-                total_pages = headers_response.get("total_pages", 1)
-                
-                all_message_ids.extend(message_ids)
-                all_message_ids.extend(alert_ids)
-                
-                event_logger.log_http_request(
-                    'POST',
-                    f'/ws/eBayISAPI.dll (GetMyMessages - {folder_name} page {page_number})',
-                    200,
-                    request_duration,
-                    len(message_ids) + len(alert_ids)
-                )
-                
-                event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Page {page_number}/{total_pages}: {len(message_ids)} messages, {len(alert_ids)} alerts")
-                logger.info(f"Page {page_number}/{total_pages}: Found {len(message_ids)} messages, {len(alert_ids)} alerts")
-                
-                if page_number >= total_pages:
-                    break
-                
-                page_number += 1
-                await asyncio.sleep(0.5)
+                try:
+                    request_start = time.time()
+                    headers_response = await ebay_service.get_message_headers(
+                        access_token,
+                        folder_id,
+                        page_number=page_number,
+                        entries_per_page=200
+                    )
+                    request_duration = int((time.time() - request_start) * 1000)
+                    
+                    message_ids = headers_response.get("message_ids", [])
+                    alert_ids = headers_response.get("alert_ids", [])
+                    total_pages = headers_response.get("total_pages", 1)
+                    
+                    # Safety check: if total_pages is 0 or None, set it to 1
+                    if not total_pages or total_pages < 1:
+                        total_pages = 1
+                        logger.warning(f"Invalid total_pages value, setting to 1 for folder {folder_name}")
+                    
+                    all_message_ids.extend(message_ids)
+                    all_message_ids.extend(alert_ids)
+                    
+                    event_logger.log_http_request(
+                        'POST',
+                        f'/ws/eBayISAPI.dll (GetMyMessages - {folder_name} page {page_number})',
+                        200,
+                        request_duration,
+                        len(message_ids) + len(alert_ids)
+                    )
+                    
+                    event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Page {page_number}/{total_pages}: {len(message_ids)} messages, {len(alert_ids)} alerts")
+                    logger.info(f"Page {page_number}/{total_pages}: Found {len(message_ids)} messages, {len(alert_ids)} alerts")
+                    
+                    # Check if we got an empty page
+                    if len(message_ids) == 0 and len(alert_ids) == 0:
+                        consecutive_empty_pages += 1
+                        if consecutive_empty_pages >= max_empty_pages:
+                            logger.warning(f"Got {consecutive_empty_pages} consecutive empty pages, stopping pagination for folder {folder_name}")
+                            event_logger.log_warning(f"Stopping pagination after {consecutive_empty_pages} consecutive empty pages")
+                            break
+                    else:
+                        consecutive_empty_pages = 0  # Reset counter if we got results
+                    
+                    # Break if we've reached the last page
+                    if page_number >= total_pages:
+                        break
+                    
+                    page_number += 1
+                    await asyncio.sleep(0.5)
+                    
+                except Exception as e:
+                    error_msg = f"Error fetching headers page {page_number} for folder {folder_name}: {str(e)}"
+                    logger.error(error_msg)
+                    event_logger.log_error(error_msg, e)
+                    # Don't break on error - continue to next page, but log the error
+                    page_number += 1
+                    await asyncio.sleep(0.5)
+                    continue
+            
+            if page_number > max_pages:
+                logger.warning(f"Reached max_pages limit ({max_pages}) for folder {folder_name}, stopping pagination")
+                event_logger.log_warning(f"Reached safety limit of {max_pages} pages, stopping pagination")
             
             event_logger.log_info(f"Folder {folder_name}: Collected {len(all_message_ids)} message IDs, fetching bodies...")
             logger.info(f"Folder {folder_name}: Collected {len(all_message_ids)} total message IDs")

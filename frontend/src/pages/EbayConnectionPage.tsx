@@ -485,8 +485,14 @@ export const EbayConnectionPage: React.FC = () => {
                 <div className="mt-6">
                   <SyncTerminal 
                     runId={messagesRunId}
-                    onComplete={(doneEvent) => handleSyncComplete('messages', doneEvent)}
-                    onStop={() => setSyncingMessages(false)}
+                    onComplete={(doneEvent) => {
+                      handleSyncComplete('messages', doneEvent);
+                      // DO NOT clear runId - keep terminal visible so user can view logs
+                    }}
+                    onStop={() => {
+                      setSyncingMessages(false);
+                      // DO NOT clear runId - keep terminal visible even after stop
+                    }}
                   />
                 </div>
               )}
@@ -497,14 +503,11 @@ export const EbayConnectionPage: React.FC = () => {
                     runId={offersRunId}
                     onComplete={(doneEvent) => {
                       handleSyncComplete('offers', doneEvent);
-                      // Clear runId after completion to hide terminal
-                      setOffersRunId(null);
+                      // DO NOT clear runId - keep terminal visible so user can view logs
                     }}
                     onStop={() => {
                       setSyncingOffers(false);
-                      // Clear runId and result after stop to hide terminal and reset button
-                      setOffersRunId(null);
-                      setOffersSyncResult(null);
+                      // DO NOT clear runId - keep terminal visible even after stop
                     }}
                   />
                 </div>
