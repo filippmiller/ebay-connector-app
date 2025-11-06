@@ -57,6 +57,9 @@ class PostgresDatabase:
             if db_user:
                 return self._db_to_model(db_user)
             return None
+        except Exception as e:
+            logger.error(f"Database error in get_user_by_email for {email}: {type(e).__name__}: {str(e)}")
+            raise
         finally:
             db.close()
     

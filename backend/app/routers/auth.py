@@ -53,17 +53,21 @@ async def login(user_credentials: UserLogin):
         logger.info(f"✅ User logged in successfully: {user.email} (role: {user.role})")
         return {"access_token": access_token, "token_type": "bearer"}
     
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401) as-is
+        raise
     except SQLAlchemyError as e:
-        logger.error(f"Database error during login for {user_credentials.email}: {str(e)}")
+        logger.error(f"Database error during login for {user_credentials.email}: {type(e).__name__}: {str(e)}")
+        logger.exception("Full database error traceback:")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database unavailable. Please try again later.",
+            detail=f"Database error: {str(e)}",
         )
     except Exception as e:
-        logger.exception(f"Unexpected error during login for {user_credentials.email}: {type(e).__name__}")
+        logger.exception(f"Unexpected error during login for {user_credentials.email}: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error. Please try again later.",
+            detail=f"Internal server error: {type(e).__name__}: {str(e)}",
         )
 
 
