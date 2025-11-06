@@ -41,7 +41,7 @@ interface DebugResponse {
 
 export const EbayDebugger: React.FC = () => {
   const [templates, setTemplates] = useState<Record<string, DebugTemplate>>({});
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('');
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('custom');
   const [method, setMethod] = useState<string>('GET');
   const [path, setPath] = useState<string>('');
   const [params, setParams] = useState<string>('');
