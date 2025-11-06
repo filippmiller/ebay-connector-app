@@ -622,6 +622,11 @@ class EbayService:
             username = identity.get("username", "unknown")
             ebay_user_id = identity.get("userId", "unknown")
             
+            # Log Identity API errors if any
+            if identity.get("error"):
+                event_logger.log_error(f"Identity API error: {identity.get('error')}")
+                event_logger.log_warning("⚠️ Token may be invalid or missing required scopes. Please reconnect to eBay.")
+            
             # Date window with 5-10 minute cushion
             from datetime import datetime, timedelta
             until_date = datetime.utcnow()
@@ -1198,6 +1203,11 @@ class EbayService:
             identity = await self.get_user_identity(access_token)
             username = identity.get("username", "unknown")
             ebay_user_id = identity.get("userId", "unknown")
+            
+            # Log Identity API errors if any
+            if identity.get("error"):
+                event_logger.log_error(f"Identity API error: {identity.get('error')}")
+                event_logger.log_warning("⚠️ Token may be invalid or missing required scopes. Please reconnect to eBay.")
             
             event_logger.log_start(f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
             event_logger.log_info(f"=== WHO WE ARE ===")
