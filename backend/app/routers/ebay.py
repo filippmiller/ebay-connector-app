@@ -164,6 +164,57 @@ async def get_ebay_status(current_user: User = Depends(get_current_active_user))
     )
 
 
+@router.get("/token-info")
+async def get_token_info(current_user: User = Depends(get_current_active_user)):
+    """
+    Get full token information for current user (for debugging).
+    Returns unmasked token and all related data.
+    """
+    if not current_user.ebay_connected or not current_user.ebay_access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not connected to eBay"
+        )
+    
+    # Get scopes from account
+    user_scopes = []
+    from app.services.ebay_account_service import ebay_account_service
+    from app.models_sqlalchemy import get_db
+    db_session = next(get_db())
+    try:
+        accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
+        if accounts:
+            from app.models_sqlalchemy.models import EbayAuthorization
+            auths = db_session.query(EbayAuthorization).filter(
+                EbayAuthorization.ebay_account_id == accounts[0].id
+            ).all()
+            user_scopes = [auth.scope for auth in auths] if auths else []
+    except Exception as e:
+        logger.error(f"Error getting scopes: {e}")
+    finally:
+        db_session.close()
+    
+    # Get token info
+    from app.utils.token_utils import extract_token_info, format_scopes_for_display
+    token_info = extract_token_info(current_user.ebay_access_token)
+    
+    return {
+        "user_email": current_user.email,
+        "user_id": current_user.id,
+        "ebay_environment": current_user.ebay_environment or "sandbox",
+        "token_full": current_user.ebay_access_token,  # UNMASKED TOKEN
+        "token_length": len(current_user.ebay_access_token),
+        "token_version": token_info.get("version"),
+        "token_expires_at": current_user.ebay_token_expires_at.isoformat() if current_user.ebay_token_expires_at else None,
+        "scopes": user_scopes,
+        "scopes_display": format_scopes_for_display(user_scopes),
+        "scopes_count": len(user_scopes),
+        "ebay_connected": current_user.ebay_connected,
+        "ebay_user_id": current_user.ebay_user_id,
+        "ebay_username": current_user.ebay_username
+    }
+
+
 @router.post("/disconnect")
 async def disconnect_ebay(current_user: User = Depends(get_current_active_user)):
     logger.info(f"Disconnecting eBay for user: {current_user.email}")
