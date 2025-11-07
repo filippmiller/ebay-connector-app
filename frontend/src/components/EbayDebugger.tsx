@@ -167,6 +167,16 @@ export const EbayDebugger: React.FC = () => {
     }
   };
 
+const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
+  if (environment === newEnv) return;
+  setEnvironment(newEnv);
+  localStorage.setItem('ebay_environment', newEnv);
+  setError('');
+  if (activeTab === 'token-info') {
+    void loadTokenInfo(newEnv);
+  }
+};
+
   const testIdentityAPI = async (env: 'sandbox' | 'production', token: string) => {
     setTokenInfoRequestLoading(true);
     const timestamp = new Date().toISOString();
@@ -431,8 +441,7 @@ export const EbayDebugger: React.FC = () => {
                 checked={environment === 'production'}
                 onCheckedChange={(checked) => {
                   const newEnv = checked ? 'production' : 'sandbox';
-                  setEnvironment(newEnv);
-                  localStorage.setItem('ebay_environment', newEnv);
+                  handleEnvironmentChange(newEnv);
                 }}
               />
               <Label htmlFor="debugger-env" className="text-sm text-gray-600">
@@ -843,12 +852,7 @@ export const EbayDebugger: React.FC = () => {
                     checked={environment === 'production'}
                     onCheckedChange={(checked) => {
                       const newEnv = checked ? 'production' : 'sandbox';
-                      setEnvironment(newEnv);
-                      localStorage.setItem('ebay_environment', newEnv);
-                      // Reload token info for new environment
-                      if (activeTab === 'token-info') {
-                        loadTokenInfo();
-                      }
+                      handleEnvironmentChange(newEnv);
                     }}
                   />
                   <Label htmlFor="token-info-env" className="text-sm text-gray-600">

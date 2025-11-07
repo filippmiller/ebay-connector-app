@@ -26,6 +26,9 @@ export const LoginPage: React.FC = () => {
     } catch (err: any) {
       // Extract error message from Axios error response
       let errorMessage = 'Login failed';
+      if (err?.response?.status === 401) {
+        errorMessage = 'Incorrect email or password';
+      }
       if (err?.response?.data?.detail) {
         errorMessage = err.response.data.detail;
       } else if (err?.response?.data?.message) {
