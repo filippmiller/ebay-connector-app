@@ -141,10 +141,15 @@ class User(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     ebay_connected = Column(Boolean, default=False)
-    ebay_access_token = Column(Text, nullable=True)
-    ebay_refresh_token = Column(Text, nullable=True)
-    ebay_token_expires_at = Column(DateTime, nullable=True)
+    ebay_access_token = Column(Text, nullable=True)  # Production token
+    ebay_refresh_token = Column(Text, nullable=True)  # Production refresh token
+    ebay_token_expires_at = Column(DateTime, nullable=True)  # Production token expires
     ebay_environment = Column(String(20), default="sandbox")
+    
+    # Sandbox tokens (separate from production)
+    ebay_sandbox_access_token = Column(Text, nullable=True)
+    ebay_sandbox_refresh_token = Column(Text, nullable=True)
+    ebay_sandbox_token_expires_at = Column(DateTime, nullable=True)
     
     sync_logs = relationship("SyncLog", back_populates="user")
     sync_event_logs = relationship("SyncEventLog", back_populates="user")

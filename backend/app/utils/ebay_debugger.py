@@ -63,13 +63,21 @@ class EbayAPIDebugger:
                 self._print_error(f"User with ID {self.user_id} not found")
                 return False
             
-            if not self.user.ebay_connected or not self.user.ebay_access_token:
-                self._print_error(f"User {self.user.email} is not connected to eBay or has no access token")
+            from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
+            
+            env = self.user.ebay_environment or "sandbox"
+            
+            if not is_user_ebay_connected(self.user, env):
+                self._print_error(f"User {self.user.email} is not connected to eBay ({env}) or has no access token")
                 return False
             
-            self.access_token = self.user.ebay_access_token
+            self.access_token = get_user_ebay_token(self.user, env)
+            if not self.access_token:
+                self._print_error(f"User {self.user.email} has no access token for {env} environment")
+                return False
+            
             self._print_success(f"✅ Loaded token for user: {self.user.email}")
-            self._print_info(f"   Environment: {self.user.ebay_environment or 'sandbox'}")
+            self._print_info(f"   Environment: {env}")
             self._print_info(f"   Base URL: {self.base_url}")
             return True
         except Exception as e:

@@ -43,77 +43,97 @@ class EbayService:
         is_sandbox = settings.EBAY_ENVIRONMENT == "sandbox"
         return self.sandbox_token_url if is_sandbox else self.production_token_url
     
-    def get_authorization_url(self, redirect_uri: str, state: Optional[str] = None, scopes: Optional[List[str]] = None) -> str:
-        if not settings.ebay_client_id:
-            ebay_logger.log_ebay_event(
-                "authorization_url_error",
-                "eBay Client ID not configured",
-                status="error",
-                error="EBAY_CLIENT_ID not set in environment"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="eBay credentials not configured"
-            )
+    def get_authorization_url(self, redirect_uri: str, state: Optional[str] = None, scopes: Optional[List[str]] = None, environment: str = "production") -> str:
+        """
+        Generate eBay OAuth authorization URL.
         
-        if not settings.ebay_runame:
-            ebay_logger.log_ebay_event(
-                "authorization_url_error",
-                "eBay RuName not configured",
-                status="error",
-                error="EBAY_RUNAME not set in environment"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="eBay RuName not configured"
-            )
+        Args:
+            redirect_uri: OAuth redirect URI
+            state: OAuth state parameter
+            scopes: List of OAuth scopes (if None, uses default)
+            environment: 'sandbox' or 'production' (default: 'production')
+        """
+        # Temporarily set environment to get correct credentials
+        original_env = settings.EBAY_ENVIRONMENT
+        settings.EBAY_ENVIRONMENT = environment
         
-        if not scopes:
-            scopes = [
-                "https://api.ebay.com/oauth/api_scope",  # Base scope for Identity API (MUST be first)
-                "https://api.ebay.com/oauth/api_scope/sell.account",
-                "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
-                "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
-                "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
-                # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
-            ]
-        
-        # Ensure base scope is first (required for Identity API)
-        base_scope = "https://api.ebay.com/oauth/api_scope"
-        if base_scope in scopes:
-            scopes.remove(base_scope)
-        scopes.insert(0, base_scope)
-        
-        # Remove any trailing spaces and empty strings
-        scopes = [s.strip() for s in scopes if s.strip()]
-        
-        params = {
-            "client_id": settings.ebay_client_id,
-            "redirect_uri": settings.ebay_runame,
-            "response_type": "code",
-            "scope": " ".join(scopes)
-        }
-        
-        if state:
-            params["state"] = state
-        
-        auth_url = f"{self.auth_url}?{urlencode(params)}"
-        
-        ebay_logger.log_ebay_event(
-            "authorization_url_generated",
-            f"Generated eBay authorization URL ({settings.EBAY_ENVIRONMENT}) with RuName: {settings.ebay_runame}",
-            request_data={
-                "environment": settings.EBAY_ENVIRONMENT,
+        try:
+            if not settings.ebay_client_id:
+                ebay_logger.log_ebay_event(
+                    "authorization_url_error",
+                    "eBay Client ID not configured",
+                    status="error",
+                    error="EBAY_CLIENT_ID not set in environment"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="eBay credentials not configured"
+                )
+            
+            if not settings.ebay_runame:
+                ebay_logger.log_ebay_event(
+                    "authorization_url_error",
+                    "eBay RuName not configured",
+                    status="error",
+                    error="EBAY_RUNAME not set in environment"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="eBay RuName not configured"
+                )
+            
+            if not scopes:
+                scopes = [
+                    "https://api.ebay.com/oauth/api_scope",  # Base scope for Identity API (MUST be first)
+                    "https://api.ebay.com/oauth/api_scope/sell.account",
+                    "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
+                    "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
+                    "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
+                    # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
+                ]
+            
+            # Ensure base scope is first (required for Identity API)
+            base_scope = "https://api.ebay.com/oauth/api_scope"
+            if base_scope in scopes:
+                scopes.remove(base_scope)
+            scopes.insert(0, base_scope)
+            
+            # Remove any trailing spaces and empty strings
+            scopes = [s.strip() for s in scopes if s.strip()]
+            
+            params = {
+                "client_id": settings.ebay_client_id,
                 "redirect_uri": settings.ebay_runame,
-                "frontend_callback": redirect_uri,
-                "scopes": scopes,
-                "state": state
-            },
-            status="success"
-        )
-        
-        logger.info(f"Generated eBay {settings.EBAY_ENVIRONMENT} authorization URL with RuName: {settings.ebay_runame} (frontend callback: {redirect_uri})")
-        return auth_url
+                "response_type": "code",
+                "scope": " ".join(scopes)
+            }
+            
+            if state:
+                params["state"] = state
+            
+            # Use correct auth URL based on environment
+            if environment == "sandbox":
+                auth_base_url = self.sandbox_auth_url
+            else:
+                auth_base_url = self.production_auth_url
+            
+            auth_url = f"{auth_base_url}?{urlencode(params)}"
+            
+            ebay_logger.log_ebay_event(
+                "authorization_url_generated",
+                f"Generated eBay authorization URL ({environment}) with RuName: {settings.ebay_runame}",
+                request_data={
+                    "environment": environment,
+                    "redirect_uri": settings.ebay_runame,
+                    "frontend_callback": redirect_uri,
+                    "scopes": scopes,
+                    "state": state
+                },
+                status="success"
+            )
+            
+            logger.info(f"Generated eBay {environment} authorization URL with RuName: {settings.ebay_runame} (frontend callback: {redirect_uri})")
+            return auth_url
     
     async def exchange_code_for_token(self, code: str, redirect_uri: str) -> EbayTokenResponse:
         if not settings.ebay_client_id or not settings.ebay_cert_id:
@@ -306,16 +326,34 @@ class EbayService:
                 detail=error_msg
             )
     
-    def save_user_tokens(self, user_id: str, token_response: EbayTokenResponse):
+    def save_user_tokens(self, user_id: str, token_response: EbayTokenResponse, environment: Optional[str] = None):
+        """
+        Save eBay tokens to user record based on environment.
+        
+        Args:
+            user_id: User ID
+            token_response: Token response from eBay
+            environment: 'sandbox' or 'production'. If None, uses settings.EBAY_ENVIRONMENT
+        """
+        env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
         expires_at = datetime.utcnow() + timedelta(seconds=token_response.expires_in)
         
-        updates = {
-            "ebay_connected": True,
-            "ebay_access_token": token_response.access_token,
-            "ebay_refresh_token": token_response.refresh_token,
-            "ebay_token_expires_at": expires_at,
-            "ebay_environment": settings.EBAY_ENVIRONMENT
-        }
+        if env == "sandbox":
+            updates = {
+                "ebay_connected": True,
+                "ebay_sandbox_access_token": token_response.access_token,
+                "ebay_sandbox_refresh_token": token_response.refresh_token,
+                "ebay_sandbox_token_expires_at": expires_at,
+                "ebay_environment": env
+            }
+        else:
+            updates = {
+                "ebay_connected": True,
+                "ebay_access_token": token_response.access_token,
+                "ebay_refresh_token": token_response.refresh_token,
+                "ebay_token_expires_at": expires_at,
+                "ebay_environment": env
+            }
         
         db.update_user(user_id, updates)
         

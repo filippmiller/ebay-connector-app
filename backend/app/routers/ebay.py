@@ -44,7 +44,8 @@ async def start_ebay_auth(
         auth_url = ebay_service.get_authorization_url(
             redirect_uri=redirect_uri,
             state=state,
-            scopes=auth_request.scopes
+            scopes=auth_request.scopes,
+            environment=environment
         )
         
         return {
@@ -133,7 +134,7 @@ async def ebay_auth_callback(
             if scopes:
                 ebay_account_service.save_authorizations(db, account.id, scopes)
             
-            ebay_service.save_user_tokens(current_user.id, token_response)
+            ebay_service.save_user_tokens(current_user.id, token_response, environment=environment)
             
             logger.info(f"Successfully connected eBay account: {account.id} ({house_name})")
             
@@ -165,16 +166,26 @@ async def get_ebay_status(current_user: User = Depends(get_current_active_user))
 
 
 @router.get("/token-info")
-async def get_token_info(current_user: User = Depends(get_current_active_user)):
+async def get_token_info(
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
+    current_user: User = Depends(get_current_active_user)
+):
     """
     Get full token information for current user (for debugging).
     Returns unmasked token and all related data.
     """
-    if not current_user.ebay_connected or not current_user.ebay_access_token:
+    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected, get_user_ebay_token_expires_at
+    
+    env = environment or current_user.ebay_environment or "sandbox"
+    
+    if not is_user_ebay_connected(current_user, env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User is not connected to eBay"
+            detail=f"User is not connected to eBay ({env})"
         )
+    
+    access_token = get_user_ebay_token(current_user, env)
+    token_expires_at = get_user_ebay_token_expires_at(current_user, env)
     
     # Get scopes and account info from database
     user_scopes = []
@@ -202,20 +213,20 @@ async def get_token_info(current_user: User = Depends(get_current_active_user)):
     
     # Get token info
     from app.utils.token_utils import extract_token_info, format_scopes_for_display
-    token_info = extract_token_info(current_user.ebay_access_token)
+    token_info = extract_token_info(access_token) if access_token else {}
     
     return {
         "user_email": current_user.email,
         "user_id": current_user.id,
-        "ebay_environment": current_user.ebay_environment or "sandbox",
-        "token_full": current_user.ebay_access_token,  # UNMASKED TOKEN
-        "token_length": len(current_user.ebay_access_token),
+        "ebay_environment": env,
+        "token_full": access_token,  # UNMASKED TOKEN
+        "token_length": len(access_token) if access_token else 0,
         "token_version": token_info.get("version"),
-        "token_expires_at": current_user.ebay_token_expires_at.isoformat() if current_user.ebay_token_expires_at else None,
+        "token_expires_at": token_expires_at.isoformat() if token_expires_at else None,
         "scopes": user_scopes,
         "scopes_display": format_scopes_for_display(user_scopes),
         "scopes_count": len(user_scopes),
-        "ebay_connected": current_user.ebay_connected,
+        "ebay_connected": is_user_ebay_connected(current_user, env),
         "ebay_user_id": ebay_user_id,
         "ebay_username": ebay_username
     }
@@ -323,37 +334,48 @@ async def test_fetch_transactions(
 @router.post("/sync/orders", status_code=status.HTTP_202_ACCEPTED)
 async def sync_all_orders(
     background_tasks: BackgroundTasks,
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     Start orders sync in background and return run_id immediately.
     Client can use run_id to stream live progress via SSE endpoint.
     """
-    if not current_user.ebay_connected or not current_user.ebay_access_token:
+    from app.services.sync_event_logger import SyncEventLogger
+    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
+    
+    env = environment or current_user.ebay_environment or "sandbox"
+    
+    if not is_user_ebay_connected(current_user, env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="eBay account not connected. Please connect to eBay first."
+            detail=f"eBay account not connected ({env}). Please connect to eBay first."
         )
     
-    from app.services.sync_event_logger import SyncEventLogger
+    access_token = get_user_ebay_token(current_user, env)
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"eBay access token not found for {env} environment"
+        )
     
     event_logger = SyncEventLogger(current_user.id, 'orders')
     run_id = event_logger.run_id
     
-    logger.info(f"Allocated run_id {run_id} for order sync, user: {current_user.email}")
+    logger.info(f"Allocated run_id {run_id} for order sync, user: {current_user.email}, environment: {env}")
     
     background_tasks.add_task(
         _run_orders_sync,
         current_user.id,
-        current_user.ebay_access_token,
-        current_user.ebay_environment,
+        access_token,
+        env,
         run_id
     )
     
     return {
         "run_id": run_id,
         "status": "started",
-        "message": "Orders sync started in background"
+        "message": f"Orders sync started in background ({env})"
     }
 
 
@@ -410,12 +432,24 @@ async def get_sync_jobs(
 @router.post("/sync/transactions", status_code=status.HTTP_202_ACCEPTED)
 async def sync_all_transactions(
     background_tasks: BackgroundTasks,
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
     current_user: User = Depends(get_current_active_user)
 ):
-    if not current_user.ebay_connected or not current_user.ebay_access_token:
+    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
+    
+    env = environment or current_user.ebay_environment or "sandbox"
+    
+    if not is_user_ebay_connected(current_user, env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="eBay account not connected. Please connect to eBay first."
+            detail=f"eBay account not connected ({env}). Please connect to eBay first."
+        )
+    
+    access_token = get_user_ebay_token(current_user, env)
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"eBay access token not found for {env} environment"
         )
     
     from app.services.sync_event_logger import SyncEventLogger
@@ -423,20 +457,20 @@ async def sync_all_transactions(
     event_logger = SyncEventLogger(current_user.id, 'transactions')
     run_id = event_logger.run_id
     
-    logger.info(f"Allocated run_id {run_id} for transaction sync, user: {current_user.email}")
+    logger.info(f"Allocated run_id {run_id} for transaction sync, user: {current_user.email}, environment: {env}")
     
     background_tasks.add_task(
         _run_transactions_sync,
         current_user.id,
-        current_user.ebay_access_token,
-        current_user.ebay_environment,
+        access_token,
+        env,
         run_id
     )
     
     return {
         "run_id": run_id,
         "status": "started",
-        "message": "Transactions sync started in background"
+        "message": f"Transactions sync started in background ({env})"
     }
 
 
@@ -458,33 +492,44 @@ async def _run_transactions_sync(user_id: str, access_token: str, ebay_environme
 @router.post("/sync/disputes", status_code=status.HTTP_202_ACCEPTED)
 async def sync_all_disputes(
     background_tasks: BackgroundTasks,
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
     current_user: User = Depends(get_current_active_user)
 ):
-    if not current_user.ebay_connected or not current_user.ebay_access_token:
+    from app.services.sync_event_logger import SyncEventLogger
+    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
+    
+    env = environment or current_user.ebay_environment or "sandbox"
+    
+    if not is_user_ebay_connected(current_user, env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="eBay account not connected. Please connect to eBay first."
+            detail=f"eBay account not connected ({env}). Please connect to eBay first."
         )
     
-    from app.services.sync_event_logger import SyncEventLogger
+    access_token = get_user_ebay_token(current_user, env)
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"eBay access token not found for {env} environment"
+        )
     
     event_logger = SyncEventLogger(current_user.id, 'disputes')
     run_id = event_logger.run_id
     
-    logger.info(f"Allocated run_id {run_id} for disputes sync, user: {current_user.email}")
+    logger.info(f"Allocated run_id {run_id} for disputes sync, user: {current_user.email}, environment: {env}")
     
     background_tasks.add_task(
         _run_disputes_sync,
         current_user.id,
-        current_user.ebay_access_token,
-        current_user.ebay_environment,
+        access_token,
+        env,
         run_id
     )
     
     return {
         "run_id": run_id,
         "status": "started",
-        "message": "Disputes sync started in background"
+        "message": f"Disputes sync started in background ({env})"
     }
 
 
@@ -568,33 +613,44 @@ async def get_disputes(
 @router.post("/sync/offers", status_code=status.HTTP_202_ACCEPTED)
 async def sync_all_offers(
     background_tasks: BackgroundTasks,
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
     current_user: User = Depends(get_current_active_user)
 ):
-    if not current_user.ebay_connected or not current_user.ebay_access_token:
+    from app.services.sync_event_logger import SyncEventLogger
+    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
+    
+    env = environment or current_user.ebay_environment or "sandbox"
+    
+    if not is_user_ebay_connected(current_user, env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="eBay account not connected. Please connect to eBay first."
+            detail=f"eBay account not connected ({env}). Please connect to eBay first."
         )
     
-    from app.services.sync_event_logger import SyncEventLogger
+    access_token = get_user_ebay_token(current_user, env)
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"eBay access token not found for {env} environment"
+        )
     
     event_logger = SyncEventLogger(current_user.id, 'offers')
     run_id = event_logger.run_id
     
-    logger.info(f"Allocated run_id {run_id} for offers sync, user: {current_user.email}")
+    logger.info(f"Allocated run_id {run_id} for offers sync, user: {current_user.email}, environment: {env}")
     
     background_tasks.add_task(
         _run_offers_sync,
         current_user.id,
-        current_user.ebay_access_token,
-        current_user.ebay_environment,
+        access_token,
+        env,
         run_id
     )
     
     return {
         "run_id": run_id,
         "status": "started",
-        "message": "Offers sync started in background"
+        "message": f"Offers sync started in background ({env})"
     }
 
 
@@ -616,6 +672,7 @@ async def _run_offers_sync(user_id: str, access_token: str, ebay_environment: st
 @router.post("/sync/inventory", status_code=status.HTTP_202_ACCEPTED)
 async def sync_all_inventory(
     background_tasks: BackgroundTasks,
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -629,31 +686,41 @@ async def sync_all_inventory(
     Returns:
         Dict with run_id, status, message
     """
-    if not current_user.ebay_connected or not current_user.ebay_access_token:
+    from app.services.sync_event_logger import SyncEventLogger
+    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
+    
+    env = environment or current_user.ebay_environment or "sandbox"
+    
+    if not is_user_ebay_connected(current_user, env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="eBay account not connected. Please connect to eBay first."
+            detail=f"eBay account not connected ({env}). Please connect to eBay first."
         )
     
-    from app.services.sync_event_logger import SyncEventLogger
+    access_token = get_user_ebay_token(current_user, env)
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"eBay access token not found for {env} environment"
+        )
     
     event_logger = SyncEventLogger(current_user.id, 'inventory')
     run_id = event_logger.run_id
     
-    logger.info(f"Allocated run_id {run_id} for inventory sync, user: {current_user.email}")
+    logger.info(f"Allocated run_id {run_id} for inventory sync, user: {current_user.email}, environment: {env}")
     
     background_tasks.add_task(
         _run_inventory_sync,
         current_user.id,
-        current_user.ebay_access_token,
-        current_user.ebay_environment,
+        access_token,
+        env,
         run_id
     )
     
     return {
         "run_id": run_id,
         "status": "started",
-        "message": "Inventory sync started in background"
+        "message": f"Inventory sync started in background ({env})"
     }
 
 

@@ -18,10 +18,15 @@ class User(BaseModel):
     is_active: bool = True
     created_at: datetime
     ebay_connected: bool = False
-    ebay_access_token: Optional[str] = None
-    ebay_refresh_token: Optional[str] = None
-    ebay_token_expires_at: Optional[datetime] = None
+    ebay_access_token: Optional[str] = None  # Production token
+    ebay_refresh_token: Optional[str] = None  # Production refresh token
+    ebay_token_expires_at: Optional[datetime] = None  # Production token expires
     ebay_environment: str = "sandbox"
+    
+    # Sandbox tokens (separate from production)
+    ebay_sandbox_access_token: Optional[str] = None
+    ebay_sandbox_refresh_token: Optional[str] = None
+    ebay_sandbox_token_expires_at: Optional[datetime] = None
 
 
 class UserCreate(BaseModel):
