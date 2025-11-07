@@ -949,20 +949,27 @@ async def debug_ebay_api(
     headers: Optional[str] = Query(None, description="Additional headers (Header1: Value1, Header2: Value2)"),
     body: Optional[str] = Query(None, description="Request body (JSON string)"),
     template: Optional[str] = Query(None, description="Use predefined template (identity, orders, transactions, etc.)"),
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
     current_user: User = Depends(get_current_active_user)
 ):
     """Debug eBay API requests - make a test request and return full response."""
     from app.utils.ebay_debugger import EbayAPIDebugger
+    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
     from urllib.parse import urlencode
     import time
     
-    if not current_user.ebay_connected or not current_user.ebay_access_token:
+    env = environment or current_user.ebay_environment or "sandbox"
+    
+    if not is_user_ebay_connected(current_user, env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User is not connected to eBay"
+            detail=f"User is not connected to eBay ({env})"
         )
     
     debugger = EbayAPIDebugger(current_user.id, raw_mode=False, save_history=False)
+    
+    # Set environment for debugger
+    debugger.user.ebay_environment = env
     
     # Load user token
     if not debugger.load_user_token():
