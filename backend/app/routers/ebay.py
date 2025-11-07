@@ -176,21 +176,27 @@ async def get_token_info(current_user: User = Depends(get_current_active_user)):
             detail="User is not connected to eBay"
         )
     
-    # Get scopes from account
+    # Get scopes and account info from database
     user_scopes = []
+    ebay_user_id = None
+    ebay_username = None
     from app.services.ebay_account_service import ebay_account_service
     from app.models_sqlalchemy import get_db
     db_session = next(get_db())
     try:
         accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
         if accounts:
+            account = accounts[0]
+            ebay_user_id = account.ebay_user_id
+            ebay_username = account.username
+            
             from app.models_sqlalchemy.models import EbayAuthorization
             auths = db_session.query(EbayAuthorization).filter(
-                EbayAuthorization.ebay_account_id == accounts[0].id
+                EbayAuthorization.ebay_account_id == account.id
             ).all()
             user_scopes = [auth.scope for auth in auths] if auths else []
     except Exception as e:
-        logger.error(f"Error getting scopes: {e}")
+        logger.error(f"Error getting account info: {e}")
     finally:
         db_session.close()
     
@@ -210,8 +216,8 @@ async def get_token_info(current_user: User = Depends(get_current_active_user)):
         "scopes_display": format_scopes_for_display(user_scopes),
         "scopes_count": len(user_scopes),
         "ebay_connected": current_user.ebay_connected,
-        "ebay_user_id": current_user.ebay_user_id,
-        "ebay_username": current_user.ebay_username
+        "ebay_user_id": ebay_user_id,
+        "ebay_username": ebay_username
     }
 
 
