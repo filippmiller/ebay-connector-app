@@ -107,7 +107,7 @@ export const EbayDebugger: React.FC = () => {
     if (activeTab === 'token-info') {
       loadTokenInfo();
     }
-  }, [activeTab]);
+  }, [activeTab, environment]);
 
   const loadTokenInfo = async () => {
     setTokenInfoLoading(true);
