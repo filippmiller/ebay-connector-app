@@ -232,6 +232,29 @@ export const EbayDebugger: React.FC = () => {
 
   return (
     <div className="space-y-4">
+      {/* Quick Token Info Button */}
+      <Card className="border-blue-200 bg-blue-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-lg">🔑 Quick Token Info</h3>
+              <p className="text-sm text-gray-600">View full token details, scopes, and connection information</p>
+            </div>
+            <Button 
+              onClick={() => {
+                setActiveTab('token-info');
+                if (!tokenInfo) {
+                  loadTokenInfo();
+                }
+              }}
+              variant="default"
+            >
+              View Token Info
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Tabs for Debugger and Token Info */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'debugger' | 'token-info')}>
         <TabsList className="grid w-full grid-cols-2">
