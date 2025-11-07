@@ -103,7 +103,7 @@ export const EbayDebugger: React.FC = () => {
   });
   
   // Token Info API Request/Response History
-  const [tokenInfoHistory, setTokenInfoHistory] = useState<Array<{
+  type TokenInfoHistoryEntry = {
     timestamp: string;
     environment: string;
     request: {
@@ -115,8 +115,10 @@ export const EbayDebugger: React.FC = () => {
       status: number;
       headers: Record<string, string>;
       body: any;
+      ebay_headers?: Record<string, string>;
     };
-  }>>([]);
+  };
+  const [tokenInfoHistory, setTokenInfoHistory] = useState<TokenInfoHistoryEntry[]>([]);
   const [tokenInfoRequestLoading, setTokenInfoRequestLoading] = useState(false);
 
   useEffect(() => {
@@ -193,7 +195,7 @@ export const EbayDebugger: React.FC = () => {
       
       const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
       
-      const historyEntry = {
+      const historyEntry: TokenInfoHistoryEntry = {
         timestamp,
         environment: env,
         request,
