@@ -34,6 +34,144 @@ Use clear sections and be specific about what you're seeing or thinking.
 
 ### [Add your notes here]
 
+### 2025-11-07 P0 Tasking (Filipp)
+
+```
+[P0] eBay OAuth callback + TokenInfo аудит + подготовка к Sync Orders
+
+Контекст (по скриншотам и текущему состоянию)
+
+При нажатии Connect to eBay → авторизация на eBay проходит, после редиректа обратно иногда ловили 502 Bad Gateway на GET /api/ebay/oauth/callback?... (Cloudflare Pages proxy → Railway).
+
+На вкладке Admin → eBay Connection при запросе логов API видны 403 Not authenticated на GET /api/ebay/logs?limit=100 — вероятно, не уходит Authorization или гвард не принимает токен.
+
+Сейчас авторизация успешно отработала, токен получен. Нужно подтвердить это в базе (TokenInfo), зафиксировать точное время создания/обновления и проверить логи/терминалы.
+
+Цель
+
+Сделать стабильным круг eBay OAuth (без 502) и удостовериться, что фронт → прокси → бэкенд отрабатывают всегда.
+
+Провести аудит TokenInfo: найти самую свежую запись токена (prod), зафиксировать created_at/updated_at/expires_at, наличие refresh-token, scopes.
+
+Починить доступ к логам (/api/ebay/logs) — убрать 403 для авторизованного админа.
+
+Подготовить «зелёный свет» к запуску Sync Orders.
+
+Acceptance Criteria (что считаем готовым)
+
+GET /healthz и /healthz/db → 200.
+
+eBay OAuth: после логина на eBay — возврат в UI без 5xx, токен записан в БД; в логах есть запись с RID «oauth success».
+
+GET /api/ebay/logs?limit=100 для авторизованного админа → 200 (не 403), записи видны.
+
+В отчёте агента: таблица с полями свежей записи TokenInfo (env=Production): account/user, created_at, updated_at, expires_at(utc), scopes, has_refresh_token.
+
+Подтверждение, что refresh-flow работает (пробный refresh не меняет expires_at в прошлом, или выполняется dry-run).
+
+Готов чек-лист к тесту Sync Orders (endpoint, параметры, пагинация, лимиты, expected 200/401/422).
+
+Что прочитать сначала
+
+docs/COLLABORATION.md и последние записи (TL;DR инцидентов).
+
+docs/RAILWAY_SETUP.md (Start Command, переменные окружения).
+
+functions/api/[[path]].ts (Cloudflare Pages proxy, проброс заголовков/Set-Cookie).
+
+frontend/src/lib/apiClient.ts (база URL, добавление Authorization, обработка ошибок).
+
+Бэкенд-роуты: backend/app/routers/ebay.py (или аналог), особенно GET /ebay/oauth/callback, /ebay/logs, хендлеры сохранения токена.
+
+Диагностика и фиксы — шаги (пиши отчётом по каждому шагу)
+
+Проверка окружения
+
+Напечатай используемые URL’ы (замаскируй секреты): VITE_API_BASE_URL/используемый /api-proxy; на Railway — DATABASE_URL (pooler) и MIGRATIONS_URL (прямой db.).
+
+Выполни:
+
+curl -i $BACKEND/healthz
+
+curl -i $BACKEND/healthz/db
+
+
+
+Приложи статус + 10–20 строк логов.
+
+Репро/стабилизация OAuth
+
+Пройди Connect→eBay→Callback. Зафиксируй RID из ответа/заголовка X-Request-ID.
+
+Если где-то 5xx/502:
+
+Проверь Cloudflare Function: возвращает ли как есть статус/тело/заголовки бэкенда (не перезаписывает).
+
+Убедись, что /api/ebay/oauth/callback проксируется на тот же путь Railway.
+
+В бэкенде логируй: начало/конец callback, полученный code, state, и результат обмена на токен (без секретов).
+
+Отчёт: где именно случился 502 (CF Functions или бэкенд), выдержка логов с RID.
+
+Аудит TokenInfo (prod)
+
+Найди таблицу (например, token_info / ebay_tokens — посмотри в моделях).
+
+Выгрузи 1–3 последних записей (prod) и распечатай:
+
+id | account_id | environment | created_at | updated_at | expires_at | scopes | has_refresh_token
+
+
+
+Отдельно укажи точное UTC-время появления свежей записи (то, о чём просил Filipp), и совпадает ли оно с твоей сегодняшней авторизацией.
+
+Если прямого админ-эндпоинта нет — добавь временный скрипт backend/scripts/print_token_info.py или ограниченный GET /admin/debug/tokeninfo/latest (защищён ADMIN-ролл). После отчёта — оставь выключенным по фиче-флагу.
+
+Починить 403 на /api/ebay/logs
+
+Проверь, что фронт отправляет Authorization: Bearer <token> на /api/*.
+
+Проверь гвард на бэкенде: маршрут помечен как requires_admin? Совместим ли формат токена?
+
+Дай короткий вывод: что именно не так (хедер не приклеивался? роль? CORS?). Исправь и покажи 200.
+
+Проверка refresh-flow
+
+Вызови безопасно (или dry-run) путь refresh для этого токена.
+
+Убедись, что expires_at > now() и хранится корректно, запись обновляется.
+
+Не стирай рабочий токен.
+
+Подготовь запуск Sync Orders
+
+Укажи точный endpoint (через proxy и напрямую), параметры (дата/пагинация), ожидаемые ответы.
+
+Приведи 2–3 примерных curl/Axios вызова для smoke-теста, но не запускай массовую синхронизацию, пока не будет go-ahead.
+
+Технические заметки, на что обратить внимание
+
+В proxy (functions/api/[[path]].ts) прозрачно пробрасывай status, body, все заголовки (включая set-cookie/x-request-id).
+
+На фронте убедись, что базовый клиент кладёт Authorization для /api/* и показывает ошибки с RID.
+
+В бэкенде у логов есть RID; по каждому сбою прикладывай 20–40 строк вокруг RID.
+
+Для Alembic — одна голова; миграции только из backend/start.sh.
+
+Что приложить в отчёт
+
+Снимок health-чеков и логи.
+
+Снимок/таблица свежей записи TokenInfo (prod) с датами/скоупами.
+
+Причина и фикс 403 для /api/ebay/logs.
+
+Подтверждение успешного OAuth (без 5xx) с RID.
+
+План/эндпоинты для Sync Orders (готово к запуску).
+```
+
 ---
 
 ## Notes from AI Assistant (Auto)
