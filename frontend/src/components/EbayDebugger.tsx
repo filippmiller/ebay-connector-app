@@ -59,6 +59,22 @@ interface DebugResponse {
   success: boolean;
 }
 
+interface TokenInfo {
+  user_email: string;
+  user_id: string;
+  ebay_environment: string;
+  token_full: string;
+  token_length: number;
+  token_version?: string;
+  token_expires_at?: string;
+  scopes: string[];
+  scopes_display: string;
+  scopes_count: number;
+  ebay_connected: boolean;
+  ebay_user_id?: string;
+  ebay_username?: string;
+}
+
 export const EbayDebugger: React.FC = () => {
   const [templates, setTemplates] = useState<Record<string, DebugTemplate>>({});
   const [selectedTemplate, setSelectedTemplate] = useState<string>('custom');
@@ -75,10 +91,32 @@ export const EbayDebugger: React.FC = () => {
   const [totalTestingMode, setTotalTestingMode] = useState(false);
   const [rawRequest, setRawRequest] = useState<string>('');
   const [copied, setCopied] = useState<string>('');
+  
+  // Token Info
+  const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
+  const [tokenInfoLoading, setTokenInfoLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'debugger' | 'token-info'>('debugger');
 
   useEffect(() => {
     loadTemplates();
-  }, []);
+    if (activeTab === 'token-info') {
+      loadTokenInfo();
+    }
+  }, [activeTab]);
+
+  const loadTokenInfo = async () => {
+    setTokenInfoLoading(true);
+    setError('');
+    try {
+      const res = await api.get('/ebay/token-info');
+      setTokenInfo(res.data);
+    } catch (err: any) {
+      console.error('Failed to load token info:', err);
+      setError(err.response?.data?.detail || 'Failed to load token info');
+    } finally {
+      setTokenInfoLoading(false);
+    }
+  };
 
   const loadTemplates = async () => {
     try {
@@ -194,7 +232,16 @@ export const EbayDebugger: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <Card>
+      {/* Tabs for Debugger and Token Info */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'debugger' | 'token-info')}>
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="debugger">🔧 API Debugger</TabsTrigger>
+          <TabsTrigger value="token-info">🔑 Token Info</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="debugger" className="space-y-4">
+          {/* Existing Debugger Content */}
+          <Card>
         <CardHeader>
           <CardTitle>🔧 eBay API Debugger</CardTitle>
           <CardDescription>
@@ -571,7 +618,132 @@ export const EbayDebugger: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-      )}
+        )}
+        </TabsContent>
+
+        <TabsContent value="token-info" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>🔑 eBay Token Information</CardTitle>
+              <CardDescription>
+                Full token details, scopes, and connection information
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {tokenInfoLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                  Loading token information...
+                </div>
+              ) : error ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : tokenInfo ? (
+                <div className="space-y-4">
+                  {/* User Info */}
+                  <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <div>
+                      <Label className="text-xs text-gray-500">User Email</Label>
+                      <p className="font-semibold">{tokenInfo.user_email}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">User ID</Label>
+                      <p className="font-mono text-sm">{tokenInfo.user_id}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">eBay Environment</Label>
+                      <Badge variant={tokenInfo.ebay_environment === 'production' ? 'default' : 'secondary'}>
+                        {tokenInfo.ebay_environment}
+                      </Badge>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Connection Status</Label>
+                      <Badge variant={tokenInfo.ebay_connected ? 'default' : 'destructive'}>
+                        {tokenInfo.ebay_connected ? 'Connected' : 'Not Connected'}
+                      </Badge>
+                    </div>
+                    {tokenInfo.ebay_username && (
+                      <div>
+                        <Label className="text-xs text-gray-500">eBay Username</Label>
+                        <p className="font-semibold">{tokenInfo.ebay_username}</p>
+                      </div>
+                    )}
+                    {tokenInfo.ebay_user_id && (
+                      <div>
+                        <Label className="text-xs text-gray-500">eBay User ID</Label>
+                        <p className="font-mono text-sm">{tokenInfo.ebay_user_id}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Full Token */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-semibold">Full Access Token (Unmasked)</Label>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => copyToClipboard(tokenInfo.token_full, 'token-full')}
+                      >
+                        {copied === 'token-full' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded border font-mono text-xs break-all">
+                      {tokenInfo.token_full}
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                      <span>Length: {tokenInfo.token_length} characters</span>
+                      {tokenInfo.token_version && <span>Version: {tokenInfo.token_version}</span>}
+                      {tokenInfo.token_expires_at && (
+                        <span>Expires: {new Date(tokenInfo.token_expires_at).toLocaleString()}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Scopes */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">
+                      Scopes ({tokenInfo.scopes_count})
+                    </Label>
+                    <div className="p-3 bg-gray-50 rounded border">
+                      <div className="text-sm mb-2">
+                        <span className="font-semibold">Display:</span> {tokenInfo.scopes_display || 'None'}
+                      </div>
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-blue-600 hover:text-blue-800 text-sm font-semibold">
+                          Show Full Scope List
+                        </summary>
+                        <ul className="list-disc list-inside mt-2 space-y-1">
+                          {tokenInfo.scopes.length > 0 ? (
+                            tokenInfo.scopes.map((scope, idx) => (
+                              <li key={idx} className="font-mono text-xs text-gray-700">{scope}</li>
+                            ))
+                          ) : (
+                            <li className="text-red-600 text-sm">No scopes found</li>
+                          )}
+                        </ul>
+                      </details>
+                    </div>
+                  </div>
+
+                  {/* Refresh Button */}
+                  <Button onClick={loadTokenInfo} variant="outline" className="w-full">
+                    <Loader2 className={`h-4 w-4 mr-2 ${tokenInfoLoading ? 'animate-spin' : ''}`} />
+                    Refresh Token Info
+                  </Button>
+                </div>
+              ) : (
+                <Alert>
+                  <AlertDescription>
+                    Click "Refresh Token Info" to load token information.
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };
