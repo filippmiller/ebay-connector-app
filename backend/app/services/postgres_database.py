@@ -42,7 +42,10 @@ class PostgresDatabase:
                 ebay_access_token=db_user.ebay_access_token,
                 ebay_refresh_token=db_user.ebay_refresh_token,
                 ebay_token_expires_at=db_user.ebay_token_expires_at,
-                ebay_environment=db_user.ebay_environment or 'sandbox'
+                ebay_environment=db_user.ebay_environment or 'sandbox',
+                ebay_sandbox_access_token=getattr(db_user, 'ebay_sandbox_access_token', None),
+                ebay_sandbox_refresh_token=getattr(db_user, 'ebay_sandbox_refresh_token', None),
+                ebay_sandbox_token_expires_at=getattr(db_user, 'ebay_sandbox_token_expires_at', None)
             )
             
             logger.info(f"Created user: {user.email} with role: {user.role}")
@@ -121,5 +124,8 @@ class PostgresDatabase:
             ebay_access_token=db_user.ebay_access_token,
             ebay_refresh_token=db_user.ebay_refresh_token,
             ebay_token_expires_at=db_user.ebay_token_expires_at,
-            ebay_environment=db_user.ebay_environment or 'sandbox'
+            ebay_environment=db_user.ebay_environment or 'sandbox',
+            ebay_sandbox_access_token=getattr(db_user, 'ebay_sandbox_access_token', None),
+            ebay_sandbox_refresh_token=getattr(db_user, 'ebay_sandbox_refresh_token', None),
+            ebay_sandbox_token_expires_at=getattr(db_user, 'ebay_sandbox_token_expires_at', None)
         )
