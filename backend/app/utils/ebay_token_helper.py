@@ -21,7 +21,7 @@ def get_user_ebay_token(user: User, environment: Optional[str] = None) -> Option
     env = environment or user.ebay_environment or "sandbox"
     
     if env == "sandbox":
-        return user.ebay_sandbox_access_token if hasattr(user, 'ebay_sandbox_access_token') else None
+        return getattr(user, 'ebay_sandbox_access_token', None)
     else:
         return user.ebay_access_token
 
@@ -41,7 +41,7 @@ def get_user_ebay_refresh_token(user: User, environment: Optional[str] = None) -
     env = environment or user.ebay_environment or "sandbox"
     
     if env == "sandbox":
-        return user.ebay_sandbox_refresh_token if hasattr(user, 'ebay_sandbox_refresh_token') else None
+        return getattr(user, 'ebay_sandbox_refresh_token', None)
     else:
         return user.ebay_refresh_token
 
@@ -61,7 +61,7 @@ def get_user_ebay_token_expires_at(user: User, environment: Optional[str] = None
     env = environment or user.ebay_environment or "sandbox"
     
     if env == "sandbox":
-        return user.ebay_sandbox_token_expires_at if hasattr(user, 'ebay_sandbox_token_expires_at') else None
+        return getattr(user, 'ebay_sandbox_token_expires_at', None)
     else:
         return user.ebay_token_expires_at
 
