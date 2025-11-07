@@ -134,6 +134,9 @@ class EbayService:
             
             logger.info(f"Generated eBay {environment} authorization URL with RuName: {settings.ebay_runame} (frontend callback: {redirect_uri})")
             return auth_url
+        finally:
+            # Restore original environment
+            settings.EBAY_ENVIRONMENT = original_env
     
     async def exchange_code_for_token(self, code: str, redirect_uri: str) -> EbayTokenResponse:
         if not settings.ebay_client_id or not settings.ebay_cert_id:
