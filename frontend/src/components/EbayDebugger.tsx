@@ -109,6 +109,25 @@ export const EbayDebugger: React.FC = () => {
     }
   }, [activeTab, environment]);
 
+  // Update rawRequest URL when environment changes
+  useEffect(() => {
+    if (totalTestingMode && rawRequest) {
+      const apiBaseUrl = environment === 'sandbox' 
+        ? 'https://api.sandbox.ebay.com' 
+        : 'https://api.ebay.com';
+      
+      // Replace URL in rawRequest if it contains eBay API URL
+      const updatedRequest = rawRequest.replace(
+        /https:\/\/api\.(sandbox\.)?ebay\.com/g,
+        apiBaseUrl
+      );
+      
+      if (updatedRequest !== rawRequest) {
+        setRawRequest(updatedRequest);
+      }
+    }
+  }, [environment, totalTestingMode]);
+
   const loadTokenInfo = async () => {
     setTokenInfoLoading(true);
     setError('');
@@ -330,7 +349,9 @@ export const EbayDebugger: React.FC = () => {
             <div className="space-y-2">
               <Label>Raw Request (Full URL + Headers + Body)</Label>
               <Textarea
-                placeholder="GET https://api.ebay.com/identity/v1/oauth2/userinfo&#10;Authorization: Bearer v^1.1#...&#10;X-EBAY-C-MARKETPLACE-ID: EBAY_US"
+                placeholder={environment === 'sandbox' 
+                  ? "GET https://api.sandbox.ebay.com/identity/v1/oauth2/userinfo\nAuthorization: Bearer v^1.1#...\nX-EBAY-C-MARKETPLACE-ID: EBAY_US"
+                  : "GET https://api.ebay.com/identity/v1/oauth2/userinfo\nAuthorization: Bearer v^1.1#...\nX-EBAY-C-MARKETPLACE-ID: EBAY_US"}
                 value={rawRequest}
                 onChange={(e) => setRawRequest(e.target.value)}
                 rows={8}
