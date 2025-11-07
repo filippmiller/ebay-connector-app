@@ -96,6 +96,10 @@ export const EbayDebugger: React.FC = () => {
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
   const [tokenInfoLoading, setTokenInfoLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'debugger' | 'token-info'>('debugger');
+  const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
+    const saved = localStorage.getItem('ebay_environment');
+    return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
+  });
 
   useEffect(() => {
     loadTemplates();
@@ -108,7 +112,7 @@ export const EbayDebugger: React.FC = () => {
     setTokenInfoLoading(true);
     setError('');
     try {
-      const res = await api.get('/ebay/token-info');
+      const res = await api.get(`/ebay/token-info?environment=${environment}`);
       setTokenInfo(res.data);
     } catch (err: any) {
       console.error('Failed to load token info:', err);
@@ -201,6 +205,7 @@ export const EbayDebugger: React.FC = () => {
       const queryParams = new URLSearchParams({
         method,
         path,
+        environment: environment,
         ...(params ? { params: Object.entries(paramsObj).map(([k, v]) => `${k}=${v}`).join('&') } : {}),
         ...(headers ? { headers: Object.entries(headersObj).map(([k, v]) => `${k}: ${v}`).join(', ') } : {}),
         ...(body ? { body } : {}),
@@ -272,6 +277,35 @@ export const EbayDebugger: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Environment Selector */}
+          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
+            <div className="flex items-center gap-3">
+              <Label htmlFor="debugger-env" className="font-medium">
+                Environment:
+              </Label>
+              <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-3">
+              <Label htmlFor="debugger-env" className="text-sm text-gray-600">
+                Sandbox
+              </Label>
+              <Switch
+                id="debugger-env"
+                checked={environment === 'production'}
+                onCheckedChange={(checked) => {
+                  const newEnv = checked ? 'production' : 'sandbox';
+                  setEnvironment(newEnv);
+                  localStorage.setItem('ebay_environment', newEnv);
+                }}
+              />
+              <Label htmlFor="debugger-env" className="text-sm text-gray-600">
+                Production
+              </Label>
+            </div>
+          </div>
+
           {/* Mode Toggle */}
           <div className="flex items-center space-x-4">
             <Button

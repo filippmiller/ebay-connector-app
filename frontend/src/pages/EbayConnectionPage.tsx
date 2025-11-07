@@ -129,7 +129,7 @@ export const EbayConnectionPage: React.FC = () => {
     setSyncResult(null);
     setOrdersRunId(null);
     try {
-      const data = await ebayApi.syncAllOrders();
+      const data = await ebayApi.syncAllOrders(environment);
       setSyncResult(data);
       if (data.run_id) {
         setOrdersRunId(data.run_id);
@@ -150,10 +150,10 @@ export const EbayConnectionPage: React.FC = () => {
     setTransactionsSyncResult(null);
     setTransactionsRunId(null);
     try {
-      const response = await api.post('/ebay/sync/transactions');
-      setTransactionsSyncResult(response.data);
-      if (response.data.run_id) {
-        setTransactionsRunId(response.data.run_id);
+      const data = await ebayApi.syncAllTransactions(environment);
+      setTransactionsSyncResult(data);
+      if (data.run_id) {
+        setTransactionsRunId(data.run_id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync transactions');
@@ -171,10 +171,10 @@ export const EbayConnectionPage: React.FC = () => {
     setDisputesSyncResult(null);
     setDisputesRunId(null);
     try {
-      const response = await api.post('/ebay/sync/disputes');
-      setDisputesSyncResult(response.data);
-      if (response.data.run_id) {
-        setDisputesRunId(response.data.run_id);
+      const data = await ebayApi.syncAllDisputes(environment);
+      setDisputesSyncResult(data);
+      if (data.run_id) {
+        setDisputesRunId(data.run_id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync disputes');
@@ -213,10 +213,10 @@ export const EbayConnectionPage: React.FC = () => {
     setOffersSyncResult(null);
     setOffersRunId(null);
     try {
-      const response = await api.post('/ebay/sync/offers');
-      setOffersSyncResult(response.data);
-      if (response.data.run_id) {
-        setOffersRunId(response.data.run_id);
+      const data = await ebayApi.syncAllOffers(environment);
+      setOffersSyncResult(data);
+      if (data.run_id) {
+        setOffersRunId(data.run_id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync offers');
@@ -433,6 +433,17 @@ export const EbayConnectionPage: React.FC = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  <div className="mb-4 p-3 bg-gray-50 rounded-lg border">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-700">Environment:</span>
+                      <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                        {environment === 'sandbox' ? '🧪 Sandbox (Testing)' : '🚀 Production (Live)'}
+                      </Badge>
+                      <span className="text-xs text-gray-500">
+                        All sync operations will use {environment} environment
+                      </span>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       onClick={handleSyncOrders}

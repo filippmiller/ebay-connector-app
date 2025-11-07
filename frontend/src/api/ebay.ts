@@ -51,8 +51,33 @@ export const ebayApi = {
     return response.data;
   },
 
-  async syncAllOrders(): Promise<any> {
-    const response = await apiClient.post('/ebay/sync/orders');
+  async syncAllOrders(environment?: 'sandbox' | 'production'): Promise<any> {
+    const params = environment ? `?environment=${environment}` : '';
+    const response = await apiClient.post(`/ebay/sync/orders${params}`);
+    return response.data;
+  },
+
+  async syncAllTransactions(environment?: 'sandbox' | 'production'): Promise<any> {
+    const params = environment ? `?environment=${environment}` : '';
+    const response = await apiClient.post(`/ebay/sync/transactions${params}`);
+    return response.data;
+  },
+
+  async syncAllDisputes(environment?: 'sandbox' | 'production'): Promise<any> {
+    const params = environment ? `?environment=${environment}` : '';
+    const response = await apiClient.post(`/ebay/sync/disputes${params}`);
+    return response.data;
+  },
+
+  async syncAllOffers(environment?: 'sandbox' | 'production'): Promise<any> {
+    const params = environment ? `?environment=${environment}` : '';
+    const response = await apiClient.post(`/ebay/sync/offers${params}`);
+    return response.data;
+  },
+
+  async syncAllInventory(environment?: 'sandbox' | 'production'): Promise<any> {
+    const params = environment ? `?environment=${environment}` : '';
+    const response = await apiClient.post(`/ebay/sync/inventory${params}`);
     return response.data;
   },
 
