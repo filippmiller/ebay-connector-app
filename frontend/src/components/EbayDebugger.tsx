@@ -10,7 +10,7 @@ import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import api from '../lib/apiClient';
-import { Loader2, Play } from 'lucide-react';
+import { Loader2, Play, Copy, Check } from 'lucide-react';
 
 interface DebugTemplate {
   name: string;
@@ -24,10 +24,13 @@ interface RequestContext {
   user_email: string;
   user_id: string;
   token: string;
+  token_masked?: string;
+  token_full?: string;
   token_version?: string;
   token_expires_at?: string;
   scopes: string[];
   scopes_display: string;
+  scopes_full?: string[];
   environment: string;
   missing_scopes: string[];
   has_all_required?: boolean;
@@ -38,9 +41,12 @@ interface DebugResponse {
   request: {
     method: string;
     url: string;
+    url_full?: string;
     headers: Record<string, string>;
+    headers_full?: Record<string, string>;
     params: Record<string, string>;
     body?: string;
+    curl_command?: string;
   };
   response: {
     status_code: number;
@@ -64,6 +70,11 @@ export const EbayDebugger: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<DebugResponse | null>(null);
   const [error, setError] = useState<string>('');
+  
+  // Total Testing Mode
+  const [totalTestingMode, setTotalTestingMode] = useState(false);
+  const [rawRequest, setRawRequest] = useState<string>('');
+  const [copied, setCopied] = useState<string>('');
 
   useEffect(() => {
     loadTemplates();
@@ -89,7 +100,6 @@ export const EbayDebugger: React.FC = () => {
       setHeaders('');
       setBody('');
     } else if (templateName === "custom") {
-      // Clear fields for custom request
       setMethod('GET');
       setPath('');
       setParams('');
@@ -98,7 +108,28 @@ export const EbayDebugger: React.FC = () => {
     }
   };
 
+  const copyToClipboard = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(id);
+      setTimeout(() => setCopied(''), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
   const handleDebug = async () => {
+    if (totalTestingMode) {
+      // Handle raw request
+      if (!rawRequest.trim()) {
+        setError('Raw request is required');
+        return;
+      }
+      // TODO: Parse raw request and send
+      setError('Total Testing Mode - raw request parsing not yet implemented');
+      return;
+    }
+
     if (!path) {
       setError('Path is required');
       return;
@@ -171,85 +202,123 @@ export const EbayDebugger: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Template Selection */}
-          <div className="space-y-2">
-            <Label>Quick Templates</Label>
-            <Select value={selectedTemplate || "custom"} onValueChange={handleTemplateSelect}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a template or use custom" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="custom">Custom Request</SelectItem>
-                {Object.entries(templates).map(([key, template]) => (
-                  <SelectItem key={key} value={key}>
-                    {template.name} - {template.description}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Mode Toggle */}
+          <div className="flex items-center space-x-4">
+            <Button
+              variant={!totalTestingMode ? "default" : "outline"}
+              onClick={() => setTotalTestingMode(false)}
+              size="sm"
+            >
+              Standard Mode
+            </Button>
+            <Button
+              variant={totalTestingMode ? "default" : "outline"}
+              onClick={() => setTotalTestingMode(true)}
+              size="sm"
+            >
+              Total Testing Mode
+            </Button>
           </div>
 
-          {/* Method and Path */}
-          <div className="grid grid-cols-4 gap-4">
+          {totalTestingMode ? (
+            /* Total Testing Mode */
             <div className="space-y-2">
-              <Label>Method</Label>
-              <Select value={method} onValueChange={setMethod}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="GET">GET</SelectItem>
-                  <SelectItem value="POST">POST</SelectItem>
-                  <SelectItem value="PUT">PUT</SelectItem>
-                  <SelectItem value="DELETE">DELETE</SelectItem>
-                  <SelectItem value="PATCH">PATCH</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-3 space-y-2">
-              <Label>API Path *</Label>
-              <Input
-                placeholder="/sell/fulfillment/v1/order"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Query Parameters */}
-          <div className="space-y-2">
-            <Label>Query Parameters</Label>
-            <Input
-              placeholder="limit=1&filter=orderStatus:COMPLETED"
-              value={params}
-              onChange={(e) => setParams(e.target.value)}
-            />
-            <p className="text-xs text-gray-500">Format: key1=value1&key2=value2</p>
-          </div>
-
-          {/* Headers */}
-          <div className="space-y-2">
-            <Label>Additional Headers (optional)</Label>
-            <Input
-              placeholder="X-EBAY-C-MARKETPLACE-ID: EBAY_US"
-              value={headers}
-              onChange={(e) => setHeaders(e.target.value)}
-            />
-            <p className="text-xs text-gray-500">Format: Header1: Value1, Header2: Value2</p>
-          </div>
-
-          {/* Body */}
-          {(method === 'POST' || method === 'PUT' || method === 'PATCH') && (
-            <div className="space-y-2">
-              <Label>Request Body (JSON)</Label>
+              <Label>Raw Request (Full URL + Headers + Body)</Label>
               <Textarea
-                placeholder='{"key": "value"}'
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={4}
+                placeholder="GET https://api.ebay.com/identity/v1/oauth2/userinfo&#10;Authorization: Bearer v^1.1#...&#10;X-EBAY-C-MARKETPLACE-ID: EBAY_US"
+                value={rawRequest}
+                onChange={(e) => setRawRequest(e.target.value)}
+                rows={8}
                 className="font-mono text-sm"
               />
+              <p className="text-xs text-gray-500">
+                Paste full request here (method, URL, headers, body). One line per header.
+              </p>
             </div>
+          ) : (
+            /* Standard Mode */
+            <>
+              {/* Template Selection */}
+              <div className="space-y-2">
+                <Label>Quick Templates</Label>
+                <Select value={selectedTemplate || "custom"} onValueChange={handleTemplateSelect}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a template or use custom" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="custom">Custom Request</SelectItem>
+                    {Object.entries(templates).map(([key, template]) => (
+                      <SelectItem key={key} value={key}>
+                        {template.name} - {template.description}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Method and Path */}
+              <div className="grid grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label>Method</Label>
+                  <Select value={method} onValueChange={setMethod}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="GET">GET</SelectItem>
+                      <SelectItem value="POST">POST</SelectItem>
+                      <SelectItem value="PUT">PUT</SelectItem>
+                      <SelectItem value="DELETE">DELETE</SelectItem>
+                      <SelectItem value="PATCH">PATCH</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-3 space-y-2">
+                  <Label>API Path *</Label>
+                  <Input
+                    placeholder="/sell/fulfillment/v1/order"
+                    value={path}
+                    onChange={(e) => setPath(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Query Parameters */}
+              <div className="space-y-2">
+                <Label>Query Parameters</Label>
+                <Input
+                  placeholder="limit=1&filter=orderStatus:COMPLETED"
+                  value={params}
+                  onChange={(e) => setParams(e.target.value)}
+                />
+                <p className="text-xs text-gray-500">Format: key1=value1&key2=value2</p>
+              </div>
+
+              {/* Headers */}
+              <div className="space-y-2">
+                <Label>Additional Headers (optional)</Label>
+                <Input
+                  placeholder="X-EBAY-C-MARKETPLACE-ID: EBAY_US"
+                  value={headers}
+                  onChange={(e) => setHeaders(e.target.value)}
+                />
+                <p className="text-xs text-gray-500">Format: Header1: Value1, Header2: Value2</p>
+              </div>
+
+              {/* Body */}
+              {(method === 'POST' || method === 'PUT' || method === 'PATCH') && (
+                <div className="space-y-2">
+                  <Label>Request Body (JSON)</Label>
+                  <Textarea
+                    placeholder='{"key": "value"}'
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    rows={4}
+                    className="font-mono text-sm"
+                  />
+                </div>
+              )}
+            </>
           )}
 
           {/* Error */}
@@ -260,7 +329,7 @@ export const EbayDebugger: React.FC = () => {
           )}
 
           {/* Submit Button */}
-          <Button onClick={handleDebug} disabled={loading || !path}>
+          <Button onClick={handleDebug} disabled={loading || (!totalTestingMode && !path) || (totalTestingMode && !rawRequest.trim())}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -282,7 +351,7 @@ export const EbayDebugger: React.FC = () => {
           <CardHeader>
             <CardTitle className="text-lg">🔍 REQUEST CONTEXT</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-3">
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="font-semibold">User:</span> {response.request_context.user_email} (ID: {response.request_context.user_id})
@@ -291,20 +360,60 @@ export const EbayDebugger: React.FC = () => {
                 <span className="font-semibold">Environment:</span> {response.request_context.environment}
               </div>
               <div className="col-span-2">
-                <span className="font-semibold">eBay Token:</span> {response.request_context.token}
-                {response.request_context.token_version && (
-                  <span className="text-gray-500 ml-2">(v{response.request_context.token_version})</span>
-                )}
-                {response.request_context.token_expires_at && (
-                  <span className="text-gray-500 ml-2">(expires: {new Date(response.request_context.token_expires_at).toLocaleDateString()})</span>
-                )}
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="font-semibold">eBay Token:</span>
+                    <div className="font-mono text-xs mt-1 break-all bg-white p-2 rounded border">
+                      {response.request_context.token_full || response.request_context.token}
+                    </div>
+                    {response.request_context.token_version && (
+                      <span className="text-gray-500 ml-2">(v{response.request_context.token_version})</span>
+                    )}
+                    {response.request_context.token_expires_at && (
+                      <span className="text-gray-500 ml-2">(expires: {new Date(response.request_context.token_expires_at).toLocaleDateString()})</span>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(response.request_context?.token_full || response.request_context?.token || '', 'token')}
+                  >
+                    {copied === 'token' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
               </div>
               <div className="col-span-2">
-                <span className="font-semibold">Scopes:</span> {response.request_context.scopes_display || "None"}
+                <span className="font-semibold">Scopes:</span>
+                <div className="mt-1">
+                  {response.request_context.scopes_full && response.request_context.scopes_full.length > 0 ? (
+                    <div className="space-y-1">
+                      <div className="text-xs text-gray-600">{response.request_context.scopes_display}</div>
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-blue-600 hover:text-blue-800">Show full scope list</summary>
+                        <ul className="list-disc list-inside mt-1 space-y-1">
+                          {response.request_context.scopes_full.map((scope, idx) => (
+                            <li key={idx} className="font-mono">{scope}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    </div>
+                  ) : (
+                    <span className="text-red-600">None</span>
+                  )}
+                </div>
               </div>
               {response.request_context.missing_scopes && response.request_context.missing_scopes.length > 0 && (
                 <div className="col-span-2">
-                  <span className="font-semibold text-red-600">⚠️ Missing:</span> {response.request_context.missing_scopes.join(", ")}
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      <span className="font-semibold">⚠️ Missing required scopes:</span>
+                      <ul className="list-disc list-inside mt-1">
+                        {response.request_context.missing_scopes.map((scope, idx) => (
+                          <li key={idx} className="font-mono text-xs">{scope}</li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
                 </div>
               )}
             </div>
@@ -312,7 +421,7 @@ export const EbayDebugger: React.FC = () => {
         </Card>
       )}
 
-      {/* Response */}
+      {/* Response - COLUMNS instead of TABS */}
       {response && (
         <Card>
           <CardHeader>
@@ -327,103 +436,142 @@ export const EbayDebugger: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="request" className="w-full">
-              <TabsList>
-                <TabsTrigger value="request">Request</TabsTrigger>
-                <TabsTrigger value="response">Response</TabsTrigger>
-                <TabsTrigger value="ebay-headers">eBay Headers</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="request" className="space-y-2">
-                <div className="space-y-2">
-                  <div>
-                    <Label className="text-xs text-gray-500">Method</Label>
-                    <p className="font-mono text-sm">{response.request.method}</p>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">URL</Label>
-                    <p className="font-mono text-sm break-all">{response.request.url}</p>
-                  </div>
-                  {Object.keys(response.request.params).length > 0 && (
-                    <div>
-                      <Label className="text-xs text-gray-500">Query Parameters</Label>
-                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto">
-                        {JSON.stringify(response.request.params, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                  <div>
-                    <Label className="text-xs text-gray-500">Headers</Label>
-                    <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto">
-                      {JSON.stringify(response.request.headers, null, 2)}
-                    </pre>
-                  </div>
-                  {response.request.body && (
-                    <div>
-                      <Label className="text-xs text-gray-500">Body</Label>
-                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto">
-                        {typeof response.request.body === 'string' 
-                          ? response.request.body 
-                          : JSON.stringify(response.request.body, null, 2)}
-                      </pre>
-                    </div>
-                  )}
+            {/* Full URL in one line */}
+            <div className="mb-4 p-3 bg-gray-50 rounded border">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <Label className="text-xs text-gray-500 mb-1 block">Full Request URL (one line)</Label>
+                  <p className="font-mono text-sm break-all">{response.request.url_full || response.request.url}</p>
                 </div>
-              </TabsContent>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => copyToClipboard(response.request.url_full || response.request.url, 'url')}
+                  className="ml-2"
+                >
+                  {copied === 'url' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
 
-              <TabsContent value="response" className="space-y-2">
-                <div className="space-y-2">
-                  <div>
-                    <Label className="text-xs text-gray-500">Status</Label>
-                    <p className="font-mono text-sm">
-                      {response.response.status_code} {response.response.status_text}
-                    </p>
+            {/* Three Columns: Request | Response | eBay Headers */}
+            <div className="grid grid-cols-3 gap-4">
+              {/* Column 1: Request */}
+              <div className="space-y-2">
+                <h3 className="font-semibold text-sm border-b pb-2">Request</h3>
+                <ScrollArea className="h-[600px] w-full rounded-md border bg-gray-50 p-3">
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-xs text-gray-500">Method</Label>
+                      <p className="font-mono text-xs">{response.request.method}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">URL</Label>
+                      <p className="font-mono text-xs break-all">{response.request.url}</p>
+                    </div>
+                    {Object.keys(response.request.params).length > 0 && (
+                      <div>
+                        <Label className="text-xs text-gray-500">Query Parameters</Label>
+                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                          {JSON.stringify(response.request.params, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    <div>
+                      <Label className="text-xs text-gray-500">Headers</Label>
+                      <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        {JSON.stringify(response.request.headers, null, 2)}
+                      </pre>
+                    </div>
+                    {response.request.body && (
+                      <div>
+                        <Label className="text-xs text-gray-500">Body</Label>
+                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                          {typeof response.request.body === 'string' 
+                            ? response.request.body 
+                            : JSON.stringify(response.request.body, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    {response.request.curl_command && (
+                      <div>
+                        <Label className="text-xs text-gray-500">cURL Command</Label>
+                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                          {response.request.curl_command}
+                        </pre>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Response Body</Label>
-                    <ScrollArea className="h-96 w-full rounded-md border bg-gray-50 p-4">
-                      <pre className="text-xs font-mono overflow-auto">
+                </ScrollArea>
+              </div>
+
+              {/* Column 2: Response */}
+              <div className="space-y-2">
+                <h3 className="font-semibold text-sm border-b pb-2">Response</h3>
+                <ScrollArea className="h-[600px] w-full rounded-md border bg-gray-50 p-3">
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-xs text-gray-500">Status</Label>
+                      <p className="font-mono text-xs">
+                        {response.response.status_code} {response.response.status_text}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500">Response Body</Label>
+                      <pre className="text-xs bg-white p-2 rounded overflow-auto border max-h-[500px]">
                         {typeof response.response.body === 'string'
                           ? response.response.body
                           : JSON.stringify(response.response.body, null, 2)}
                       </pre>
-                    </ScrollArea>
+                    </div>
+                    {response.response.status_code >= 400 && (
+                      <Alert variant="destructive" className="text-xs">
+                        <AlertDescription>
+                          {typeof response.response.body === 'object' && response.response.body.errors
+                            ? JSON.stringify(response.response.body.errors, null, 2)
+                            : 'Request failed. Check response body for details.'}
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
-                  {response.response.status_code >= 400 && (
-                    <Alert variant="destructive">
-                      <AlertDescription>
-                        {typeof response.response.body === 'object' && response.response.body.errors
-                          ? JSON.stringify(response.response.body.errors, null, 2)
-                          : 'Request failed. Check response body for details.'}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </div>
-              </TabsContent>
+                </ScrollArea>
+              </div>
 
-              <TabsContent value="ebay-headers" className="space-y-2">
-                <div className="space-y-2">
-                  <Label className="text-xs text-gray-500">eBay-Specific Headers</Label>
-                  {Object.keys(response.response.ebay_headers).length > 0 ? (
-                    <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto">
-                      {JSON.stringify(response.response.ebay_headers, null, 2)}
-                    </pre>
-                  ) : (
-                    <p className="text-xs text-gray-500">No eBay-specific headers found</p>
-                  )}
-                  <div className="mt-4">
-                    <Label className="text-xs text-gray-500">All Headers</Label>
-                    <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto">
-                      {JSON.stringify(response.response.headers, null, 2)}
-                    </pre>
+              {/* Column 3: eBay Headers */}
+              <div className="space-y-2">
+                <h3 className="font-semibold text-sm border-b pb-2">eBay Headers</h3>
+                <ScrollArea className="h-[600px] w-full rounded-md border bg-gray-50 p-3">
+                  <div className="space-y-3">
+                    {Object.keys(response.response.ebay_headers).length > 0 ? (
+                      <>
+                        <div>
+                          <Label className="text-xs text-gray-500">eBay-Specific Headers</Label>
+                          <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                            {JSON.stringify(response.response.ebay_headers, null, 2)}
+                          </pre>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-gray-500">All Response Headers</Label>
+                          <pre className="text-xs bg-white p-2 rounded overflow-auto border max-h-[400px]">
+                            {JSON.stringify(response.response.headers, null, 2)}
+                          </pre>
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <Label className="text-xs text-gray-500">All Response Headers</Label>
+                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                          {JSON.stringify(response.response.headers, null, 2)}
+                        </pre>
+                      </div>
+                    )}
                   </div>
-                </div>
-              </TabsContent>
-            </Tabs>
+                </ScrollArea>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
     </div>
   );
 };
-

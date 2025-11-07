@@ -951,8 +951,10 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        # FIXED: Correct endpoint is /payment_dispute (not /payment_dispute_summary/search)
-        api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/payment_dispute"
+        # FIXED: Payment Disputes API uses POST method with search criteria
+        # Endpoint: POST /sell/fulfillment/v1/payment_dispute_summary/search
+        # According to eBay API docs, disputes are fetched via search endpoint
+        api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/payment_dispute_summary/search"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -961,7 +963,11 @@ class EbayService:
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"  # Required for all eBay APIs
         }
         
-        params = filter_params or {}
+        # Payment disputes search requires POST with search criteria in body
+        search_criteria = filter_params or {}
+        if not search_criteria:
+            # Default: search for all disputes
+            search_criteria = {}
         
         ebay_logger.log_ebay_event(
             "fetch_disputes_request",
@@ -970,7 +976,7 @@ class EbayService:
                 "environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
                 "method": "POST",
-                "body": params
+                "body": search_criteria
             }
         )
         
@@ -1585,7 +1591,7 @@ class EbayService:
                     "run_id": event_logger.run_id
                 }
             
-            event_logger.log_info(f"→ Requesting: GET /sell/fulfillment/v1/payment_dispute")
+            event_logger.log_info(f"→ Requesting: POST /sell/fulfillment/v1/payment_dispute_summary/search")
             
             request_start = time.time()
             try:

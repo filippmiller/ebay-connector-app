@@ -758,17 +758,27 @@ async def cancel_sync_operation(
     events = get_sync_events_from_db(run_id, current_user.id)
     
     # If events exist, check if already complete
+    # But allow cancellation even if complete (user might want to stop a new sync with same run_id pattern)
     if events:
         last_event = events[-1]
         if last_event and last_event.get('event_type') in ['done', 'error', 'cancelled']:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sync operation is already complete"
-            )
+            # Operation is already complete, but we'll still mark it as cancelled for consistency
+            logger.info(f"Sync operation {run_id} is already complete, but marking as cancelled per user request")
+            # Don't raise error, just mark as cancelled
     
     # Cancel the sync (this will work even if no events exist yet)
     success = cancel_sync(run_id, current_user.id)
     if not success:
+        # If cancellation failed, check if it's because operation is already complete
+        if events:
+            last_event = events[-1]
+            if last_event and last_event.get('event_type') in ['done', 'error', 'cancelled']:
+                return {
+                    "message": "Sync operation was already complete",
+                    "run_id": run_id,
+                    "status": "already_complete"
+                }
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to cancel sync operation"
@@ -947,15 +957,24 @@ async def debug_ebay_api(
             ebay_headers = {k: v for k, v in response.headers.items() 
                            if k.lower().startswith('x-ebay')}
             
+            # Show more of the token (first 30 and last 30 chars for visibility)
+            def show_more_token(token: str) -> str:
+                if len(token) <= 60:
+                    return token
+                return token[:30] + "..." + token[-30:]
+            
             return {
                 "request_context": {
                     "user_email": current_user.email,
                     "user_id": current_user.id[:8] + "..." if len(current_user.id) > 8 else current_user.id,
-                    "token": masked_token,
+                    "token": show_more_token(debugger.access_token),  # Show more of token
+                    "token_masked": masked_token,  # Fully masked version
+                    "token_full": debugger.access_token,  # Full token (for display only, not in response by default)
                     "token_version": token_info.get("version"),
                     "token_expires_at": current_user.ebay_token_expires_at.isoformat() if current_user.ebay_token_expires_at else None,
                     "scopes": user_scopes,
                     "scopes_display": format_scopes_for_display(user_scopes),
+                    "scopes_full": user_scopes,  # Full list of scopes
                     "environment": current_user.ebay_environment or "sandbox",
                     "missing_scopes": scope_validation["missing_scopes"] if scope_validation else [],
                     "has_all_required": scope_validation["has_all_required"] if scope_validation else None
@@ -963,10 +982,15 @@ async def debug_ebay_api(
                 "request": {
                     "method": method,
                     "url": url,
+                    "url_full": url,  # Full URL in one line for copying
                     "headers": {k: (masked_token if k.lower() == "authorization" and "Bearer" in v else v) 
                                for k, v in request_headers.items()},
+                    "headers_full": request_headers,  # Full headers with actual token (masked in display)
                     "params": params_dict,
-                    "body": body_str
+                    "body": body_str,
+                    "curl_command": f"curl -X {method} '{url}' " + 
+                                   " ".join([f"-H '{k}: {v}'" for k, v in request_headers.items()]) +
+                                   (f" -d '{body_str}'" if body_str else "")
                 },
                 "response": {
                     "status_code": response.status_code,
