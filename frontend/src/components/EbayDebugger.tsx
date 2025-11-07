@@ -128,11 +128,12 @@ export const EbayDebugger: React.FC = () => {
     }
   }, [environment, totalTestingMode]);
 
-  const loadTokenInfo = async () => {
+  const loadTokenInfo = async (env?: 'sandbox' | 'production') => {
+    const targetEnv = env || environment;
     setTokenInfoLoading(true);
     setError('');
     try {
-      const res = await api.get(`/ebay/token-info?environment=${environment}`);
+      const res = await api.get(`/ebay/token-info?environment=${targetEnv}`);
       setTokenInfo(res.data);
     } catch (err: any) {
       console.error('Failed to load token info:', err);
@@ -709,6 +710,39 @@ export const EbayDebugger: React.FC = () => {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* Environment Selector */}
+              <div className="mb-4 flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
+                <div className="flex items-center gap-3">
+                  <Label htmlFor="token-info-env" className="font-medium">
+                    Environment:
+                  </Label>
+                  <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                    {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Label htmlFor="token-info-env" className="text-sm text-gray-600">
+                    Sandbox
+                  </Label>
+                  <Switch
+                    id="token-info-env"
+                    checked={environment === 'production'}
+                    onCheckedChange={(checked) => {
+                      const newEnv = checked ? 'production' : 'sandbox';
+                      setEnvironment(newEnv);
+                      localStorage.setItem('ebay_environment', newEnv);
+                      // Reload token info for new environment
+                      if (activeTab === 'token-info') {
+                        loadTokenInfo();
+                      }
+                    }}
+                  />
+                  <Label htmlFor="token-info-env" className="text-sm text-gray-600">
+                    Production
+                  </Label>
+                </div>
+              </div>
+
               {tokenInfoLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin mr-2" />
