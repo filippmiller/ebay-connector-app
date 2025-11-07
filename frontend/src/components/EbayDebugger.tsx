@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Switch } from './ui/switch';
 import api from '../lib/apiClient';
 import { Loader2, Play, Copy, Check } from 'lucide-react';
 
