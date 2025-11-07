@@ -101,6 +101,23 @@ export const EbayDebugger: React.FC = () => {
     const saved = localStorage.getItem('ebay_environment');
     return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
   });
+  
+  // Token Info API Request/Response History
+  const [tokenInfoHistory, setTokenInfoHistory] = useState<Array<{
+    timestamp: string;
+    environment: string;
+    request: {
+      method: string;
+      url: string;
+      headers: Record<string, string>;
+    };
+    response: {
+      status: number;
+      headers: Record<string, string>;
+      body: any;
+    };
+  }>>([]);
+  const [tokenInfoRequestLoading, setTokenInfoRequestLoading] = useState(false);
 
   useEffect(() => {
     loadTemplates();
@@ -135,6 +152,11 @@ export const EbayDebugger: React.FC = () => {
     try {
       const res = await api.get(`/ebay/token-info?environment=${targetEnv}`);
       setTokenInfo(res.data);
+      
+      // Automatically test Identity API call if token is available
+      if (res.data.token_full && res.data.ebay_connected) {
+        await testIdentityAPI(targetEnv, res.data.token_full);
+      }
     } catch (err: any) {
       console.error('Failed to load token info:', err);
       setError(err.response?.data?.detail || 'Failed to load token info');
@@ -142,6 +164,96 @@ export const EbayDebugger: React.FC = () => {
       setTokenInfoLoading(false);
     }
   };
+
+  const testIdentityAPI = async (env: 'sandbox' | 'production', token: string) => {
+    setTokenInfoRequestLoading(true);
+    const timestamp = new Date().toISOString();
+    const apiBaseUrl = env === 'sandbox' 
+      ? 'https://api.sandbox.ebay.com' 
+      : 'https://api.ebay.com';
+    const url = `${apiBaseUrl}/identity/v1/oauth2/userinfo`;
+    
+    const request = {
+      method: 'GET',
+      url: url,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US'
+      }
+    };
+
+    try {
+      // Make actual API call through our debug endpoint
+      const queryParams = new URLSearchParams({
+        method: 'GET',
+        path: '/identity/v1/oauth2/userinfo',
+        environment: env
+      });
+      
+      const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
+      
+      const historyEntry = {
+        timestamp,
+        environment: env,
+        request,
+        response: {
+          status: res.data.response.status_code,
+          headers: res.data.response.headers,
+          body: res.data.response.body,
+          ebay_headers: res.data.response.ebay_headers || {}
+        }
+      };
+      
+      // Add to history
+      const newHistory = [historyEntry, ...tokenInfoHistory].slice(0, 50); // Keep last 50
+      setTokenInfoHistory(newHistory);
+      
+      // Save to localStorage
+      try {
+        const savedHistory = JSON.parse(localStorage.getItem('token_info_history') || '[]');
+        const updatedHistory = [historyEntry, ...savedHistory].slice(0, 50);
+        localStorage.setItem('token_info_history', JSON.stringify(updatedHistory));
+      } catch (e) {
+        console.error('Failed to save history to localStorage:', e);
+      }
+      
+    } catch (err: any) {
+      const historyEntry: TokenInfoHistoryEntry = {
+        timestamp,
+        environment: env,
+        request,
+        response: {
+          status: err.response?.status || 0,
+          headers: err.response?.headers || {},
+          body: err.response?.data || { error: err.message }
+        }
+      };
+      
+      const newHistory = [historyEntry, ...tokenInfoHistory].slice(0, 50);
+      setTokenInfoHistory(newHistory);
+      
+      try {
+        const savedHistory = JSON.parse(localStorage.getItem('token_info_history') || '[]');
+        const updatedHistory = [historyEntry, ...savedHistory].slice(0, 50);
+        localStorage.setItem('token_info_history', JSON.stringify(updatedHistory));
+      } catch (e) {
+        console.error('Failed to save history to localStorage:', e);
+      }
+    } finally {
+      setTokenInfoRequestLoading(false);
+    }
+  };
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedHistory = JSON.parse(localStorage.getItem('token_info_history') || '[]');
+      setTokenInfoHistory(savedHistory.slice(0, 50));
+    } catch (e) {
+      console.error('Failed to load history from localStorage:', e);
+    }
+  }, []);
 
   const loadTemplates = async () => {
     try {
@@ -841,9 +953,14 @@ export const EbayDebugger: React.FC = () => {
                   </div>
 
                   {/* Refresh Button */}
-                  <Button onClick={loadTokenInfo} variant="outline" className="w-full">
-                    <Loader2 className={`h-4 w-4 mr-2 ${tokenInfoLoading ? 'animate-spin' : ''}`} />
-                    Refresh Token Info
+                  <Button 
+                    onClick={() => loadTokenInfo()} 
+                    variant="outline" 
+                    className="w-full"
+                    disabled={tokenInfoLoading || tokenInfoRequestLoading}
+                  >
+                    <Loader2 className={`h-4 w-4 mr-2 ${(tokenInfoLoading || tokenInfoRequestLoading) ? 'animate-spin' : ''}`} />
+                    {tokenInfoRequestLoading ? 'Testing API...' : 'Refresh Token Info & Test API'}
                   </Button>
                 </div>
               ) : (
@@ -853,6 +970,134 @@ export const EbayDebugger: React.FC = () => {
                   </AlertDescription>
                 </Alert>
               )}
+
+              {/* API Request/Response Terminal */}
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle>📡 eBay API Request/Response Terminal</CardTitle>
+                  <CardDescription>
+                    Live API calls and response history. Automatically tests Identity API when token is loaded.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {/* Preview of next request */}
+                  {tokenInfo && tokenInfo.token_full && (
+                    <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <Label className="text-sm font-semibold">Next Request (when environment changes or refresh):</Label>
+                        <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                          {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
+                        </Badge>
+                      </div>
+                      <div className="space-y-2 text-xs font-mono">
+                        <div>
+                          <span className="text-gray-600">Method:</span> <span className="font-bold text-green-700">GET</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">URL:</span>{' '}
+                          <span className="text-blue-700">
+                            {environment === 'sandbox' 
+                              ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/userinfo'
+                              : 'https://api.ebay.com/identity/v1/oauth2/userinfo'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Headers:</span>
+                          <pre className="mt-1 p-2 bg-white rounded border text-xs overflow-auto">
+{`Authorization: Bearer ${tokenInfo.token_full.substring(0, 30)}...${tokenInfo.token_full.substring(tokenInfo.token_full.length - 30)}
+Accept: application/json
+X-EBAY-C-MARKETPLACE-ID: EBAY_US`}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Request/Response History Terminal */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-semibold">Request/Response History ({tokenInfoHistory.length})</Label>
+                      {tokenInfoHistory.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setTokenInfoHistory([]);
+                            localStorage.removeItem('token_info_history');
+                          }}
+                        >
+                          Clear History
+                        </Button>
+                      )}
+                    </div>
+                    <ScrollArea className="h-[400px] w-full rounded-md border bg-gray-900 p-4 font-mono text-xs">
+                      {tokenInfoRequestLoading && (
+                        <div className="text-yellow-400 mb-2">
+                          ⏳ Testing Identity API...
+                        </div>
+                      )}
+                      {tokenInfoHistory.length === 0 ? (
+                        <div className="text-gray-400">
+                          No API calls yet. Token info will automatically test Identity API when loaded.
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {tokenInfoHistory.map((entry, idx) => (
+                            <div key={idx} className="border-b border-gray-700 pb-4 last:border-0">
+                              <div className="text-gray-400 mb-2">
+                                [{new Date(entry.timestamp).toLocaleString()}] {entry.environment === 'sandbox' ? '🧪' : '🚀'} {entry.environment.toUpperCase()}
+                              </div>
+                              
+                              {/* Request */}
+                              <div className="mb-3">
+                                <div className="text-green-400 font-bold mb-1">→ REQUEST:</div>
+                                <div className="text-green-300 ml-2">
+                                  <div>{entry.request.method} {entry.request.url}</div>
+                                  <div className="mt-1 text-gray-300">
+                                    {Object.entries(entry.request.headers).map(([key, value]) => (
+                                      <div key={key}>
+                                        {key}: {key === 'Authorization' && value.startsWith('Bearer ') 
+                                          ? `Bearer ${value.substring(7, 37)}...${value.substring(value.length - 30)}`
+                                          : value}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Response */}
+                              <div>
+                                <div className={`font-bold mb-1 ${
+                                  entry.response.status >= 200 && entry.response.status < 300 ? 'text-green-400' :
+                                  entry.response.status >= 400 ? 'text-red-400' : 'text-yellow-400'
+                                }`}>
+                                  ← RESPONSE: {entry.response.status} {entry.response.status >= 200 && entry.response.status < 300 ? '✅' : '❌'}
+                                </div>
+                                <div className="text-gray-300 ml-2">
+                                  <div className="mb-1">
+                                    <span className="text-gray-400">Headers:</span>
+                                    <pre className="mt-1 p-2 bg-gray-800 rounded text-xs overflow-auto max-h-32">
+                                      {JSON.stringify(entry.response.headers, null, 2)}
+                                    </pre>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">Body:</span>
+                                    <pre className="mt-1 p-2 bg-gray-800 rounded text-xs overflow-auto max-h-48">
+                                      {typeof entry.response.body === 'object' 
+                                        ? JSON.stringify(entry.response.body, null, 2)
+                                        : String(entry.response.body)}
+                                    </pre>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </div>
+                </CardContent>
+              </Card>
             </CardContent>
           </Card>
         </TabsContent>

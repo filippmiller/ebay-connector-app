@@ -55,6 +55,26 @@ class SQLiteDatabase:
                 created_at TEXT NOT NULL
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ebay_connect_logs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT,
+                environment TEXT,
+                action TEXT,
+                request_method TEXT,
+                request_url TEXT,
+                request_headers TEXT,
+                request_body TEXT,
+                response_status INTEGER,
+                response_headers TEXT,
+                response_body TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_connect_logs_user_env ON ebay_connect_logs (user_id, environment)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_connect_logs_created ON ebay_connect_logs (created_at DESC)')
         
         conn.commit()
         conn.close()
@@ -208,6 +228,103 @@ class SQLiteDatabase:
             ebay_token_expires_at=expires_at,
             ebay_environment=ebay_env
         )
+
+    def create_connect_log(
+        self,
+        *,
+        user_id: Optional[str],
+        environment: str,
+        action: str,
+        request: Optional[Dict] = None,
+        response: Optional[Dict] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO ebay_connect_logs (
+                    id, user_id, environment, action,
+                    request_method, request_url, request_headers, request_body,
+                    response_status, response_headers, response_body,
+                    error, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                str(uuid.uuid4()),
+                user_id,
+                environment or 'sandbox',
+                action,
+                (request or {}).get('method'),
+                (request or {}).get('url'),
+                json.dumps((request or {}).get('headers')) if (request or {}).get('headers') else None,
+                json.dumps((request or {}).get('body')) if (request or {}).get('body') else None,
+                (response or {}).get('status'),
+                json.dumps((response or {}).get('headers')) if (response or {}).get('headers') else None,
+                json.dumps((response or {}).get('body')) if (response or {}).get('body') else None,
+                error,
+                datetime.utcnow().isoformat()
+            ))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to create SQLite connect log: {type(e).__name__}: {str(e)}")
+        finally:
+            conn.close()
+
+    def get_connect_logs(
+        self,
+        user_id: str,
+        environment: Optional[str] = None,
+        limit: int = 100
+    ) -> list:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            query = 'SELECT * FROM ebay_connect_logs WHERE user_id = ?'
+            params = [user_id]
+            if environment:
+                query += ' AND environment = ?'
+                params.append(environment)
+            query += ' ORDER BY datetime(created_at) DESC LIMIT ?'
+            params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            results = []
+
+            def _load_json(value):
+                if not value:
+                    return None
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    return value
+
+            for row in rows:
+                results.append({
+                    "id": row['id'],
+                    "user_id": row['user_id'],
+                    "environment": row['environment'],
+                    "action": row['action'],
+                    "request": {
+                        "method": row['request_method'],
+                        "url": row['request_url'],
+                        "headers": _load_json(row['request_headers']),
+                        "body": _load_json(row['request_body'])
+                    },
+                    "response": {
+                        "status": row['response_status'],
+                        "headers": _load_json(row['response_headers']),
+                        "body": _load_json(row['response_body'])
+                    },
+                    "error": row['error'],
+                    "created_at": row['created_at']
+                })
+
+            return results
+        finally:
+            conn.close()
 
 
 db = SQLiteDatabase()

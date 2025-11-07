@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from app.config import settings
 from app.models.ebay import EbayTokenResponse
 from app.services.database import db
+from app.services.ebay_connect_logger import ebay_connect_logger
 from app.utils.logger import logger, ebay_logger
 
 ORDERS_PAGE_LIMIT = 200          # Fulfillment API max
@@ -138,79 +139,114 @@ class EbayService:
             # Restore original environment
             settings.EBAY_ENVIRONMENT = original_env
     
-    async def exchange_code_for_token(self, code: str, redirect_uri: str) -> EbayTokenResponse:
-        if not settings.ebay_client_id or not settings.ebay_cert_id:
-            ebay_logger.log_ebay_event(
-                "token_exchange_error",
-                "eBay credentials not configured",
-                status="error",
-                error="EBAY_CLIENT_ID or EBAY_CERT_ID not set"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="eBay credentials not configured"
-            )
-        
-        credentials = f"{settings.ebay_client_id}:{settings.ebay_cert_id}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
-        
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {encoded_credentials}"
-        }
-        
-        data = {
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": settings.ebay_runame
-        }
-        
-        ebay_logger.log_ebay_event(
-            "token_exchange_request",
-            f"Exchanging authorization code for access token ({settings.EBAY_ENVIRONMENT})",
-            request_data={
-                "environment": settings.EBAY_ENVIRONMENT,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-                "code": code[:10] + "..." if len(code) > 10 else code,
-                "client_id": settings.ebay_client_id
-            }
-        )
-        
+    async def exchange_code_for_token(
+        self,
+        code: str,
+        redirect_uri: str,
+        *,
+        user_id: Optional[str] = None,
+        environment: Optional[str] = None
+    ) -> EbayTokenResponse:
+        target_env = environment or settings.EBAY_ENVIRONMENT
+        original_env = settings.EBAY_ENVIRONMENT
+        settings.EBAY_ENVIRONMENT = target_env
+
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.token_url,
-                    headers=headers,
-                    data=data,
-                    timeout=30.0
+            if not settings.ebay_client_id or not settings.ebay_cert_id:
+                ebay_logger.log_ebay_event(
+                    "token_exchange_error",
+                    "eBay credentials not configured",
+                    status="error",
+                    error="EBAY_CLIENT_ID or EBAY_CERT_ID not set"
                 )
-                
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="eBay credentials not configured"
+                )
+
+            credentials = f"{settings.ebay_client_id}:{settings.ebay_cert_id}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {encoded_credentials}"
+            }
+
+            data = {
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": settings.ebay_runame
+            }
+
+            masked_headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": "Basic **** (masked)"
+            }
+
+            request_payload = {
+                "method": "POST",
+                "url": self.token_url,
+                "headers": masked_headers,
+                "body": {"grant_type": "authorization_code", "redirect_uri": redirect_uri, "code": code[:6] + "..." if len(code) > 6 else code}
+            }
+
+            ebay_logger.log_ebay_event(
+                "token_exchange_request",
+                f"Exchanging authorization code for access token ({target_env})",
+                request_data={
+                    "environment": target_env,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": redirect_uri,
+                    "code": code[:10] + "..." if len(code) > 10 else code,
+                    "client_id": settings.ebay_client_id
+                }
+            )
+
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        self.token_url,
+                        headers=headers,
+                        data=data,
+                        timeout=30.0
+                    )
+
+                response_body: Any
+                try:
+                    response_body = response.json()
+                except ValueError:
+                    response_body = response.text
+
                 ebay_logger.log_ebay_event(
                     "token_exchange_response",
                     f"Received token exchange response with status {response.status_code}",
                     response_data={
                         "status_code": response.status_code,
-                        "response_body": response.text
+                        "response_body": response_body if isinstance(response_body, (dict, list)) else str(response_body)[:5000]
                     }
                 )
-                
+
                 if response.status_code != 200:
-                    error_detail = response.text
-                    ebay_logger.log_ebay_event(
-                        "token_exchange_failed",
-                        f"Token exchange failed with status {response.status_code}",
-                        response_data={"error": error_detail},
-                        status="error",
-                        error=error_detail
+                    error_detail = response_body if isinstance(response_body, str) else response.text
+                    ebay_connect_logger.log_event(
+                        user_id=user_id,
+                        environment=target_env,
+                        action="token_exchange_failed",
+                        request=request_payload,
+                        response={
+                            "status": response.status_code,
+                            "headers": dict(response.headers),
+                            "body": response_body,
+                        },
+                        error=str(error_detail)[:2000]
                     )
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Failed to exchange code for token: {error_detail}"
                     )
-                
-                token_data = response.json()
-                
+
+                token_data = response_body if isinstance(response_body, dict) else response.json()
+
                 ebay_logger.log_ebay_event(
                     "token_exchange_success",
                     "Successfully obtained eBay access token",
@@ -222,24 +258,46 @@ class EbayService:
                     },
                     status="success"
                 )
-                
+
+                ebay_connect_logger.log_event(
+                    user_id=user_id,
+                    environment=target_env,
+                    action="exchange_code_for_token",
+                    request=request_payload,
+                    response={
+                        "status": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": token_data,
+                    }
+                )
+
                 logger.info("Successfully exchanged authorization code for eBay access token")
-                
+
                 return EbayTokenResponse(**token_data)
-                
-        except httpx.RequestError as e:
-            error_msg = f"HTTP request failed: {str(e)}"
-            ebay_logger.log_ebay_event(
-                "token_exchange_error",
-                "HTTP request error during token exchange",
-                status="error",
-                error=error_msg
-            )
-            logger.error(error_msg)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg
-            )
+
+            except httpx.RequestError as e:
+                error_msg = f"HTTP request failed: {str(e)}"
+                ebay_logger.log_ebay_event(
+                    "token_exchange_error",
+                    "HTTP request error during token exchange",
+                    status="error",
+                    error=error_msg
+                )
+                ebay_connect_logger.log_event(
+                    user_id=user_id,
+                    environment=target_env,
+                    action="token_exchange_error",
+                    request=request_payload,
+                    response=None,
+                    error=error_msg
+                )
+                logger.error(error_msg)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=error_msg
+                )
+        finally:
+            settings.EBAY_ENVIRONMENT = original_env
     
     async def refresh_access_token(self, refresh_token: str) -> EbayTokenResponse:
         if not settings.ebay_client_id or not settings.ebay_cert_id:
@@ -2340,11 +2398,18 @@ class EbayService:
         finally:
             event_logger.close()
     
-    async def get_ebay_user_id(self, access_token: str) -> str:
+    async def get_ebay_user_id(
+        self,
+        access_token: str,
+        *,
+        user_id: Optional[str] = None,
+        environment: Optional[str] = None
+    ) -> str:
         """Get eBay user ID from access token using GetUser Trading API call"""
         import xml.etree.ElementTree as ET
         
-        api_url = "https://api.ebay.com/ws/api.dll" if settings.EBAY_ENVIRONMENT == "production" else "https://api.sandbox.ebay.com/ws/api.dll"
+        target_env = environment or settings.EBAY_ENVIRONMENT
+        api_url = "https://api.ebay.com/ws/api.dll" if target_env == "production" else "https://api.sandbox.ebay.com/ws/api.dll"
         
         xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
 <GetUserRequest xmlns="urn:ebay:apis:eBLBaseComponents">
@@ -2361,6 +2426,16 @@ class EbayService:
             "Content-Type": "text/xml"
         }
         
+        request_payload = {
+            "method": "POST",
+            "url": api_url,
+            "headers": {k: headers[k] for k in headers},
+            "body": "<GetUserRequest ...>"  # simplified for logging purposes
+        }
+        request_payload["headers"]["Authorization"] = "Bearer **** (token masked)"
+        request_payload["headers"]["Content-Type"] = "text/xml"
+        request_payload["body"] = xml_request.replace(access_token, "<hidden-token>")
+        
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(api_url, content=xml_request, headers=headers)
@@ -2369,18 +2444,55 @@ class EbayService:
             user_id_elem = root.find(".//{urn:ebay:apis:eBLBaseComponents}UserID")
             
             if user_id_elem is not None and user_id_elem.text:
+                ebay_connect_logger.log_event(
+                    user_id=user_id,
+                    environment=target_env,
+                    action="get_user_id",
+                    request=request_payload,
+                    response={
+                        "status": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": user_id_elem.text
+                    }
+                )
                 return user_id_elem.text
             
+            ebay_connect_logger.log_event(
+                user_id=user_id,
+                environment=target_env,
+                action="get_user_id",
+                request=request_payload,
+                response={
+                    "status": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.text[:2000]
+                },
+                error="UserID not found"
+            )
             return "unknown"
         except Exception as e:
             logger.error(f"Failed to get eBay user ID: {str(e)}")
+            ebay_connect_logger.log_event(
+                user_id=user_id,
+                environment=target_env,
+                action="get_user_id_error",
+                request=request_payload,
+                error=str(e)
+            )
             return "unknown"
     
-    async def get_ebay_username(self, access_token: str) -> Optional[str]:
+    async def get_ebay_username(
+        self,
+        access_token: str,
+        *,
+        user_id: Optional[str] = None,
+        environment: Optional[str] = None
+    ) -> Optional[str]:
         """Get eBay username from access token using GetUser Trading API call"""
         import xml.etree.ElementTree as ET
         
-        api_url = "https://api.ebay.com/ws/api.dll" if settings.EBAY_ENVIRONMENT == "production" else "https://api.sandbox.ebay.com/ws/api.dll"
+        target_env = environment or settings.EBAY_ENVIRONMENT
+        api_url = "https://api.ebay.com/ws/api.dll" if target_env == "production" else "https://api.sandbox.ebay.com/ws/api.dll"
         
         xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
 <GetUserRequest xmlns="urn:ebay:apis:eBLBaseComponents">
@@ -2396,6 +2508,12 @@ class EbayService:
             "X-EBAY-API-SITEID": "0",
             "Content-Type": "text/xml"
         }
+        request_payload = {
+            "method": "POST",
+            "url": api_url,
+            "headers": {k: headers[k] for k in headers},
+            "body": xml_request.replace(access_token, "<hidden-token>")
+        }
         
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -2405,11 +2523,41 @@ class EbayService:
             user_id_elem = root.find(".//{urn:ebay:apis:eBLBaseComponents}UserID")
             
             if user_id_elem is not None and user_id_elem.text:
+                ebay_connect_logger.log_event(
+                    user_id=user_id,
+                    environment=target_env,
+                    action="get_user_username",
+                    request=request_payload,
+                    response={
+                        "status": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": user_id_elem.text
+                    }
+                )
                 return user_id_elem.text
             
+            ebay_connect_logger.log_event(
+                user_id=user_id,
+                environment=target_env,
+                action="get_user_username",
+                request=request_payload,
+                response={
+                    "status": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.text[:2000]
+                },
+                error="Username not found"
+            )
             return None
         except Exception as e:
             logger.error(f"Failed to get eBay username: {str(e)}")
+            ebay_connect_logger.log_event(
+                user_id=user_id,
+                environment=target_env,
+                action="get_user_username_error",
+                request=request_payload,
+                error=str(e)
+            )
             return None
     
     async def get_message_folders(self, access_token: str) -> Dict[str, Any]:

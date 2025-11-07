@@ -431,6 +431,35 @@ class SyncEventLog(Base):
     )
 
 
+class EbayConnectLog(Base):
+    __tablename__ = "ebay_connect_logs"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=True, index=True)
+    environment = Column(String(20), nullable=False, default="sandbox", index=True)
+    action = Column(String(50), nullable=False, index=True)
+
+    request_method = Column(String(10), nullable=True)
+    request_url = Column(Text, nullable=True)
+    request_headers = Column(JSONB, nullable=True)
+    request_body = Column(JSONB, nullable=True)
+
+    response_status = Column(Integer, nullable=True)
+    response_headers = Column(JSONB, nullable=True)
+    response_body = Column(JSONB, nullable=True)
+
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    user = relationship("User", backref="ebay_connect_logs")
+
+    __table_args__ = (
+        Index('idx_ebay_connect_logs_user_env', 'user_id', 'environment'),
+        Index('idx_ebay_connect_logs_action', 'action'),
+        Index('idx_ebay_connect_logs_created', 'created_at'),
+    )
+
+
 class Report(Base):
     __tablename__ = "reports"
     

@@ -35,6 +35,27 @@ export interface EbayLog {
   error?: string;
 }
 
+export interface EbayConnectLog {
+  id: string;
+  user_id?: string;
+  environment: string;
+  action: string;
+  request?: {
+    method?: string;
+    url?: string;
+    headers?: Record<string, any>;
+    body?: any;
+    query?: Record<string, any>;
+  };
+  response?: {
+    status?: number;
+    headers?: Record<string, any>;
+    body?: any;
+  };
+  error?: string;
+  created_at: string;
+}
+
 export interface EbayConnectionStatus {
   connected: boolean;
   user_id?: string;

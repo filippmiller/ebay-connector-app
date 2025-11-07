@@ -4,6 +4,7 @@ from typing import Optional, List
 from app.models.ebay import EbayAuthRequest, EbayAuthCallback, EbayConnectionStatus
 from app.services.auth import get_current_active_user, get_user_from_header_or_query
 from app.services.ebay import ebay_service
+from app.services.ebay_connect_logger import ebay_connect_logger
 from app.models.user import User
 from app.utils.logger import logger, ebay_logger
 
@@ -47,6 +48,40 @@ async def start_ebay_auth(
             scopes=auth_request.scopes,
             environment=environment
         )
+
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(auth_url)
+            query_params = parse_qs(parsed.query)
+            scope_value = query_params.get("scope", [""])[0]
+        except Exception:
+            scope_value = ""
+            query_params = {}
+
+        request_preview = {
+            "method": "GET",
+            "url": auth_url,
+            "headers": {
+                "scope": scope_value
+            },
+            "query": query_params
+        }
+
+        response_preview = {
+            "status": 200,
+            "body": {
+                "authorization_url": auth_url,
+                "state": state
+            }
+        }
+
+        ebay_connect_logger.log_event(
+            user_id=current_user.id,
+            environment=environment,
+            action="start_auth",
+            request=request_preview,
+            response=response_preview
+        )
         
         return {
             "authorization_url": auth_url,
@@ -54,6 +89,16 @@ async def start_ebay_auth(
         }
     except Exception as e:
         logger.error(f"Error starting eBay auth: {str(e)}")
+        ebay_connect_logger.log_event(
+            user_id=current_user.id,
+            environment=environment,
+            action="start_auth_error",
+            request={
+                "method": "GET",
+                "url": "https://auth.ebay.com/oauth2/authorize" if environment == 'production' else "https://auth.sandbox.ebay.com/oauth2/authorize",
+            },
+            error=str(e)
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
@@ -95,13 +140,38 @@ async def ebay_auth_callback(
     settings.EBAY_ENVIRONMENT = environment
     
     try:
+        masked_code = callback_data.code[:6] + "..." if callback_data.code and len(callback_data.code) > 6 else callback_data.code
+        ebay_connect_logger.log_event(
+            user_id=current_user.id,
+            environment=environment,
+            action="callback_received",
+            request={
+                "method": "POST",
+                "url": f"/ebay/auth/callback?environment={environment}",
+                "body": {
+                    "code": masked_code,
+                    "state": callback_data.state
+                }
+            }
+        )
+
         token_response = await ebay_service.exchange_code_for_token(
             code=callback_data.code,
-            redirect_uri=redirect_uri
+            redirect_uri=redirect_uri,
+            user_id=current_user.id,
+            environment=environment
         )
         
-        ebay_user_id = await ebay_service.get_ebay_user_id(token_response.access_token)
-        username = await ebay_service.get_ebay_username(token_response.access_token)
+        ebay_user_id = await ebay_service.get_ebay_user_id(
+            token_response.access_token,
+            user_id=current_user.id,
+            environment=environment
+        )
+        username = await ebay_service.get_ebay_username(
+            token_response.access_token,
+            user_id=current_user.id,
+            environment=environment
+        )
         
         house_name = state_data.get("house_name") if state_data else None
         if not house_name:
@@ -137,6 +207,21 @@ async def ebay_auth_callback(
             ebay_service.save_user_tokens(current_user.id, token_response, environment=environment)
             
             logger.info(f"Successfully connected eBay account: {account.id} ({house_name})")
+            ebay_connect_logger.log_event(
+                user_id=current_user.id,
+                environment=environment,
+                action="connect_success",
+                response={
+                    "status": 200,
+                    "body": {
+                        "account_id": account.id,
+                        "house_name": house_name,
+                        "ebay_user_id": ebay_user_id,
+                        "username": username,
+                        "expires_in": token_response.expires_in
+                    }
+                }
+            )
             
             return {
                 "message": "Successfully connected to eBay",
@@ -151,6 +236,12 @@ async def ebay_auth_callback(
         
     except Exception as e:
         logger.error(f"Error in eBay OAuth callback: {str(e)}")
+        ebay_connect_logger.log_event(
+            user_id=current_user.id,
+            environment=environment,
+            action="connect_error",
+            error=str(e)
+        )
         raise
     finally:
         settings.EBAY_ENVIRONMENT = original_env
@@ -230,6 +321,16 @@ async def get_token_info(
         "ebay_user_id": ebay_user_id,
         "ebay_username": ebay_username
     }
+
+
+@router.get("/connect/logs")
+async def get_connect_logs(
+    environment: Optional[str] = Query(None, description="Filter logs by environment"),
+    limit: int = Query(100, ge=1, le=500, description="Number of log entries to return"),
+    current_user: User = Depends(get_current_active_user)
+):
+    logs = ebay_connect_logger.get_logs(current_user.id, environment, limit)
+    return {"logs": logs}
 
 
 @router.post("/disconnect")

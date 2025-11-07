@@ -1,9 +1,9 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 from sqlalchemy.orm import Session
 from app.models.user import User as UserModel, UserCreate, UserRole
-from app.models_sqlalchemy.models import User as UserDB
+from app.models_sqlalchemy.models import User as UserDB, EbayConnectLog
 from app.models_sqlalchemy import get_db
 from app.utils.logger import logger
 
@@ -129,3 +129,83 @@ class PostgresDatabase:
             ebay_sandbox_refresh_token=getattr(db_user, 'ebay_sandbox_refresh_token', None),
             ebay_sandbox_token_expires_at=getattr(db_user, 'ebay_sandbox_token_expires_at', None)
         )
+
+    def create_connect_log(
+        self,
+        *,
+        user_id: Optional[str],
+        environment: str,
+        action: str,
+        request: Optional[Dict[str, Any]] = None,
+        response: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        db: Session = next(get_db())
+        try:
+            log_entry = EbayConnectLog(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                environment=environment or 'sandbox',
+                action=action,
+                request_method=(request or {}).get('method'),
+                request_url=(request or {}).get('url'),
+                request_headers=(request or {}).get('headers'),
+                request_body=(request or {}).get('body'),
+                response_status=(response or {}).get('status'),
+                response_headers=(response or {}).get('headers'),
+                response_body=(response or {}).get('body'),
+                error=error,
+                created_at=datetime.utcnow()
+            )
+            db.add(log_entry)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to create connect log: {type(e).__name__}: {str(e)}")
+        finally:
+            db.close()
+
+    def get_connect_logs(
+        self,
+        user_id: str,
+        environment: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        db: Session = next(get_db())
+        try:
+            query = db.query(EbayConnectLog).filter(EbayConnectLog.user_id == user_id)
+            if environment:
+                query = query.filter(EbayConnectLog.environment == environment)
+
+            logs = (
+                query
+                .order_by(EbayConnectLog.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+            results: List[Dict[str, Any]] = []
+            for log in logs:
+                results.append({
+                    "id": log.id,
+                    "user_id": log.user_id,
+                    "environment": log.environment,
+                    "action": log.action,
+                    "request": {
+                        "method": log.request_method,
+                        "url": log.request_url,
+                        "headers": log.request_headers,
+                        "body": log.request_body,
+                    },
+                    "response": {
+                        "status": log.response_status,
+                        "headers": log.response_headers,
+                        "body": log.response_body,
+                    },
+                    "error": log.error,
+                    "created_at": log.created_at.isoformat() if log.created_at else None,
+                })
+
+            return results
+        finally:
+            db.close()

@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { EbayConnectionStatus, EbayLog } from '../types';
+import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
 
 export const ebayApi = {
   async startAuth(redirectUri: string, environment: 'sandbox' | 'production' = 'sandbox', scopes?: string[]): Promise<{ authorization_url: string; state: string }> {
@@ -38,6 +38,14 @@ export const ebayApi = {
 
   async clearLogs(): Promise<{ message: string }> {
     const response = await apiClient.delete('/ebay/logs');
+    return response.data;
+  },
+
+  async getConnectLogs(environment?: 'sandbox' | 'production', limit: number = 100): Promise<{ logs: EbayConnectLog[] }> {
+    const params = new URLSearchParams();
+    if (environment) params.set('environment', environment);
+    params.set('limit', String(limit));
+    const response = await apiClient.get<{ logs: EbayConnectLog[] }>(`/ebay/connect/logs?${params.toString()}`);
     return response.data;
   },
 

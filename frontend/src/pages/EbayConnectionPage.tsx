@@ -13,9 +13,17 @@ import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 import { SyncTerminal } from '../components/SyncTerminal';
 import { EbayDebugger } from '../components/EbayDebugger';
-import type { EbayConnectionStatus, EbayLog } from '../types';
-import { Link as LinkIcon, Unlink } from 'lucide-react';
+import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
+import { Link as LinkIcon, Unlink, Loader2 } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
+
+const DEFAULT_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope',
+  'https://api.ebay.com/oauth/api_scope/sell.account',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+  'https://api.ebay.com/oauth/api_scope/sell.finances',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory',
+];
 
 export const EbayConnectionPage: React.FC = () => {
   const navigate = useNavigate();
@@ -44,6 +52,9 @@ export const EbayConnectionPage: React.FC = () => {
   const [disputesSyncResult, setDisputesSyncResult] = useState<any>(null);
   const [messagesSyncResult, setMessagesSyncResult] = useState<any>(null);
   const [offersSyncResult, setOffersSyncResult] = useState<any>(null);
+  const [connectLogs, setConnectLogs] = useState<EbayConnectLog[]>([]);
+  const [connectLogLoading, setConnectLogLoading] = useState(false);
+  const [connectLogError, setConnectLogError] = useState('');
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -53,8 +64,17 @@ export const EbayConnectionPage: React.FC = () => {
     loadConnectionStatus();
     loadLogs();
     const interval = setInterval(loadLogs, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+    };
   }, [user, navigate]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    loadConnectLogs(environment);
+    const interval = setInterval(() => loadConnectLogs(environment), 5000);
+    return () => clearInterval(interval);
+  }, [environment, user]);
 
   const loadConnectionStatus = async () => {
     try {
@@ -71,6 +91,20 @@ export const EbayConnectionPage: React.FC = () => {
       setLogs(response.logs);
     } catch (err) {
       console.error('Failed to load logs:', err);
+    }
+  };
+
+  const loadConnectLogs = async (env: 'sandbox' | 'production') => {
+    try {
+      setConnectLogLoading(true);
+      const response = await ebayApi.getConnectLogs(env, 100);
+      setConnectLogs(response.logs);
+      setConnectLogError('');
+    } catch (err) {
+      console.error('Failed to load connection logs:', err);
+      setConnectLogError('Failed to load connection logs');
+    } finally {
+      setConnectLogLoading(false);
     }
   };
 
@@ -406,6 +440,137 @@ export const EbayConnectionPage: React.FC = () => {
                       authorization page where you can grant access to your eBay account.
                     </p>
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Connection Request Preview</CardTitle>
+                  <CardDescription>
+                    Preview of the authorization request that will be sent to eBay for the selected environment.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold">Environment</h4>
+                      <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                        {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
+                      </Badge>
+                      <div className="text-xs text-gray-500">
+                        Redirect URI:{' '}
+                        <span className="font-mono">
+                          {typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                      <div><span className="font-semibold text-gray-700">Method:</span> GET</div>
+                      <div>
+                        <span className="font-semibold text-gray-700">URL:</span>{' '}
+                        <span className="font-mono text-blue-600 break-all">
+                          {environment === 'production'
+                            ? 'https://auth.ebay.com/oauth2/authorize'
+                            : 'https://auth.sandbox.ebay.com/oauth2/authorize'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <h4 className="text-sm font-semibold mb-2">Query Parameters</h4>
+                    <ScrollArea className="h-32 rounded border bg-gray-50 p-3 text-xs font-mono">
+                      {Array.from(
+                        new URLSearchParams({
+                          response_type: 'code',
+                          redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
+                          scope: DEFAULT_SCOPES.join(' '),
+                          state: 'generated server-side',
+                        }).entries()
+                      ).map(([key, value]) => (
+                        <div key={key} className="text-gray-700">
+                          {key}: <span className="text-gray-900">{value}</span>
+                        </div>
+                      ))}
+                    </ScrollArea>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Actual state and scope values are generated on the server and recorded in the terminal below.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Connection Terminal</CardTitle>
+                  <CardDescription>
+                    Real-time history of connect requests and responses. Data is stored in the database for diagnostics.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {connectLogError && (
+                    <Alert variant="destructive" className="mb-3">
+                      <AlertDescription>{connectLogError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {connectLogLoading && (
+                    <div className="flex items-center text-sm text-gray-600 mb-2">
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading connection logs...
+                    </div>
+                  )}
+                  <ScrollArea className="h-80 rounded border bg-gray-900 p-4 text-xs font-mono">
+                    {connectLogs.length === 0 ? (
+                      <div className="text-gray-400">
+                        No connection events yet. Click "Connect to eBay" to generate logs.
+                      </div>
+                    ) : (
+                      connectLogs.map((log) => (
+                        <div key={log.id} className="border-b border-gray-800 pb-4 mb-4 last:border-0 last:pb-0 last:mb-0">
+                          <div className="flex flex-wrap items-center justify-between text-gray-400">
+                            <span>[{new Date(log.created_at).toLocaleString()}]</span>
+                            <span>{log.environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'} • {log.action}</span>
+                          </div>
+                          {log.request && (
+                            <div className="mt-2">
+                              <div className="text-green-400 font-semibold">→ REQUEST</div>
+                              <div className="text-green-200 mt-1">
+                                {log.request.method} {log.request.url}
+                              </div>
+                              {log.request.headers && (
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100">
+                                  {JSON.stringify(log.request.headers, null, 2)}
+                                </pre>
+                              )}
+                              {log.request.body && (
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100">
+                                  {JSON.stringify(log.request.body, null, 2)}
+                                </pre>
+                              )}
+                            </div>
+                          )}
+                          {log.response && (
+                            <div className="mt-2">
+                              <div className={`font-semibold ${log.response.status && log.response.status >= 200 && log.response.status < 300 ? 'text-blue-300' : 'text-red-300'}`}>
+                                ← RESPONSE {log.response.status ?? ''}
+                              </div>
+                              {log.response.headers && (
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-blue-100">
+                                  {JSON.stringify(log.response.headers, null, 2)}
+                                </pre>
+                              )}
+                              {typeof log.response.body !== 'undefined' && (
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-48 text-blue-100">
+                                  {JSON.stringify(log.response.body, null, 2)}
+                                </pre>
+                              )}
+                            </div>
+                          )}
+                          {log.error && (
+                            <div className="mt-2 text-red-400">⚠️ {log.error}</div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </ScrollArea>
                 </CardContent>
               </Card>
             </TabsContent>
