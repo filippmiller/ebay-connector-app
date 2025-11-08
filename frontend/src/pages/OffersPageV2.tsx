@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Loader2, RefreshCw, CheckCircle2, XCircle, Clock, Download } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import FixedHeader from '@/components/FixedHeader';
+import api from '@/lib/apiClient';
 
 interface Offer {
   offer_id: string;
@@ -41,7 +42,6 @@ export default function OffersPageV2() {
   });
   
   const { toast } = useToast();
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
     fetchOffers();
@@ -57,24 +57,16 @@ export default function OffersPageV2() {
   const fetchOffers = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const params = new URLSearchParams();
-      if (filters.state) params.append('state', filters.state);
-      if (filters.direction) params.append('direction', filters.direction);
-      if (filters.buyer) params.append('buyer', filters.buyer);
-      if (filters.item_id) params.append('item_id', filters.item_id);
-      if (filters.sku) params.append('sku', filters.sku);
-      params.append('limit', '50');
-      
-      const response = await fetch(`${API_URL}/api/offers?${params}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setOffers(data.offers || []);
-        setTotal(data.total || 0);
-      }
+      const params: Record<string, string> = { limit: '50' };
+      if (filters.state) params.state = filters.state;
+      if (filters.direction) params.direction = filters.direction;
+      if (filters.buyer) params.buyer = filters.buyer;
+      if (filters.item_id) params.item_id = filters.item_id;
+      if (filters.sku) params.sku = filters.sku;
+
+      const { data } = await api.get('/offers', { params });
+      setOffers(data.offers || []);
+      setTotal(data.total || 0);
     } catch (error) {
       console.error('Failed to fetch offers:', error);
     } finally {
@@ -86,17 +78,9 @@ export default function OffersPageV2() {
     setSyncing(true);
     setSyncStatus('queued');
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/offers/admin/sync`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setJobId(data.job_id);
-        toast({ title: "Sync Started", description: "Offers sync job queued" });
-      }
+      const { data } = await api.post('/offers/admin/sync');
+      setJobId(data.job_id);
+      toast({ title: "Sync Started", description: "Offers sync job queued" });
     } catch (error) {
       setSyncing(false);
       toast({ title: "Sync Failed", variant: "destructive" });
@@ -105,21 +89,14 @@ export default function OffersPageV2() {
 
   const pollJobStatus = async (currentJobId: string) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/offers/admin/sync/jobs/${currentJobId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const { data } = await api.get(`/offers/admin/sync/jobs/${currentJobId}`);
+      setSyncStatus(data.status);
       
-      if (response.ok) {
-        const data = await response.json();
-        setSyncStatus(data.status);
-        
-        if (data.status === 'success' || data.status === 'error') {
-          setSyncing(false);
-          if (data.status === 'success') {
-            toast({ title: "Sync Complete", description: `Synced in ${data.duration_ms}ms` });
-            fetchOffers();
-          }
+      if (data.status === 'success' || data.status === 'error') {
+        setSyncing(false);
+        if (data.status === 'success') {
+          toast({ title: "Sync Complete", description: `Synced in ${data.duration_ms}ms` });
+          fetchOffers();
         }
       }
     } catch (error) {
@@ -127,16 +104,33 @@ export default function OffersPageV2() {
     }
   };
 
-  const exportCSV = () => {
-    const token = localStorage.getItem('token');
-    const params = new URLSearchParams();
-    if (filters.state) params.append('state', filters.state);
-    if (filters.direction) params.append('direction', filters.direction);
-    if (filters.buyer) params.append('buyer', filters.buyer);
-    if (filters.item_id) params.append('item_id', filters.item_id);
-    if (filters.sku) params.append('sku', filters.sku);
-    
-    window.open(`${API_URL}/api/offers/export.csv?${params}&token=${token}`, '_blank');
+  const exportCSV = async () => {
+    try {
+      const params: Record<string, string> = {};
+      if (filters.state) params.state = filters.state;
+      if (filters.direction) params.direction = filters.direction;
+      if (filters.buyer) params.buyer = filters.buyer;
+      if (filters.item_id) params.item_id = filters.item_id;
+      if (filters.sku) params.sku = filters.sku;
+
+      const response = await api.get('/offers/export.csv', {
+        params,
+        responseType: 'blob',
+      });
+
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `offers-${new Date().toISOString()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export offers:', error);
+      toast({ title: "Export Failed", variant: "destructive" });
+    }
   };
 
   const getStateBadge = (state: string) => {
@@ -183,12 +177,15 @@ export default function OffersPageV2() {
 
       <Card className="p-4 mb-4">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <Select value={filters.state} onValueChange={(v) => setFilters({...filters, state: v})}>
+          <Select
+            value={filters.state || '__all__'}
+            onValueChange={(v) => setFilters({ ...filters, state: v === '__all__' ? '' : v })}
+          >
             <SelectTrigger>
               <SelectValue placeholder="State" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All States</SelectItem>
+              <SelectItem value="__all__">All States</SelectItem>
               <SelectItem value="PENDING">Pending</SelectItem>
               <SelectItem value="ACCEPTED">Accepted</SelectItem>
               <SelectItem value="DECLINED">Declined</SelectItem>
@@ -197,12 +194,15 @@ export default function OffersPageV2() {
             </SelectContent>
           </Select>
 
-          <Select value={filters.direction} onValueChange={(v) => setFilters({...filters, direction: v})}>
+          <Select
+            value={filters.direction || '__all__'}
+            onValueChange={(v) => setFilters({ ...filters, direction: v === '__all__' ? '' : v })}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Direction" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Directions</SelectItem>
+              <SelectItem value="__all__">All Directions</SelectItem>
               <SelectItem value="INBOUND">Inbound</SelectItem>
               <SelectItem value="OUTBOUND">Outbound</SelectItem>
             </SelectContent>

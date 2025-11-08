@@ -315,6 +315,14 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  const formatTimestamp = (timestamp: string) => {
+    try {
+      return new Date(timestamp).toLocaleString(undefined, { hour12: false });
+    } catch {
+      return timestamp;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
@@ -788,7 +796,7 @@ export const EbayConnectionPage: React.FC = () => {
                           <div key={index} className="pb-2 border-b border-gray-800">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="text-gray-500">
-                                {new Date(log.timestamp).toLocaleTimeString()}
+                                {formatTimestamp(log.timestamp)}
                               </span>
                               <Badge className={getStatusColor(log.status)}>
                                 {log.event_type}
