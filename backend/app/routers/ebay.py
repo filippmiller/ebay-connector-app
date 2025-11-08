@@ -1069,11 +1069,8 @@ async def debug_ebay_api(
     
     debugger = EbayAPIDebugger(current_user.id, raw_mode=False, save_history=False)
     
-    # Set environment for debugger
-    debugger.user.ebay_environment = env
-    
-    # Load user token
-    if not debugger.load_user_token():
+    # Load user token (override environment explicitly)
+    if not debugger.load_user_token(env_override=env):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to load user token"

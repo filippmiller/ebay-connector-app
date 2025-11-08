@@ -55,8 +55,14 @@ class EbayAPIDebugger:
         self.history_dir = Path(__file__).parent.parent.parent / "debug_history"
         self.history_dir.mkdir(exist_ok=True)
         
-    def load_user_token(self) -> bool:
-        """Load user and access token from database."""
+    def load_user_token(self, env_override: Optional[str] = None) -> bool:
+        """Load user and access token from database.
+
+        Args:
+            env_override: Optional environment to force (sandbox|production). When
+                provided it overrides the stored user preference and ensures
+                base_url / token selection align with the caller.
+        """
         try:
             self.user = self.db.get_user_by_id(self.user_id)
             if not self.user:
@@ -65,7 +71,13 @@ class EbayAPIDebugger:
             
             from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected
             
-            env = self.user.ebay_environment or "sandbox"
+            env = env_override or self.user.ebay_environment or "sandbox"
+            # Persist override so callers reading debugger.user see the final env
+            self.user.ebay_environment = env
+            if env == "sandbox":
+                self.base_url = "https://api.sandbox.ebay.com"
+            else:
+                self.base_url = "https://api.ebay.com"
             
             if not is_user_ebay_connected(self.user, env):
                 self._print_error(f"User {self.user.email} is not connected to eBay ({env}) or has no access token")
