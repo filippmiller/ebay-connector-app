@@ -1,0 +1,149 @@
+name: Railway Manage
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'What to do with Railway variables'
+        required: true
+        type: choice
+        options: [list, upsert]
+      project_id:
+        description: 'Override Railway Project ID (optional)'
+        required: false
+        type: string
+      environment_id:
+        description: 'Override Railway Environment ID (optional)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  railway:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Resolve IDs
+        id: ids
+        run: |
+          echo "OP=${{ github.event.inputs.operation }}" >> $GITHUB_ENV
+          # prefer inputs, otherwise secrets
+          if [[ -n "${{ github.event.inputs.project_id }}" ]]; then
+            echo "PROJECT_ID=${{ github.event.inputs.project_id }}" >> $GITHUB_ENV
+          else
+            echo "PROJECT_ID=${{ secrets.RAILWAY_PROJECT_ID }}" >> $GITHUB_ENV
+          fi
+          if [[ -n "${{ github.event.inputs.environment_id }}" ]]; then
+            echo "ENV_ID=${{ github.event.inputs.environment_id }}" >> $GITHUB_ENV
+          else
+            echo "ENV_ID=${{ secrets.RAILWAY_ENV_ID }}" >> $GITHUB_ENV
+          fi
+
+      - name: List variables (keys only)
+        if: env.OP == 'list'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$RAILWAY_TOKEN" || { echo 'RAILWAY_TOKEN is required' >&2; exit 1; }
+          test -n "$PROJECT_ID" || { echo 'PROJECT_ID is required' >&2; exit 1; }
+          test -n "$ENV_ID" || { echo 'ENV_ID is required' >&2; exit 1; }
+          GQL='query($projectId: String!, $environmentId: String!) { variables(projectId: $projectId, environmentId: $environmentId) { edges { node { id name } } } }'
+          jq -n --arg q "$GQL" --arg pid "$PROJECT_ID" --arg eid "$ENV_ID" '{query:$q, variables:{projectId:$pid, environmentId:$eid}}' > body.json
+          curl -sSf -H "Authorization: Bearer $RAILWAY_TOKEN" -H 'Content-Type: application/json' \
+            --data @body.json https://backboard.railway.app/graphql/v2 > resp.json
+          echo '### Railway Variables (keys only)' >> $GITHUB_STEP_SUMMARY
+          jq -r '.data.variables.edges[].node.name' resp.json | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || {
+            echo 'Raw response:' >> $GITHUB_STEP_SUMMARY; cat resp.json >> $GITHUB_STEP_SUMMARY; exit 1; }
+
+      - name: Publish keys to branch (ci/railway-keys/latest)
+        if: env.OP == 'list'
+        run: |
+          set -euo pipefail
+          mkdir -p ops
+          KEYS_JSON=$(jq -r '.data.variables.edges[].node.name' resp.json | jq -R . | jq -s .)
+          jq -n \
+            --arg pid "$PROJECT_ID" \
+            --arg eid "$ENV_ID" \
+            --arg ts "$(date -u +%FT%TZ)" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --argjson keys "$KEYS_JSON" \
+            '{project_id:$pid, environment_id:$eid, keys:$keys, generated_at:$ts, run_url:$run_url}' > ops/railway_keys.json
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -B ci/railway-keys/latest
+          git add ops/railway_keys.json
+          git commit -m "chore(ci): update Railway variable keys [skip ci]" || echo "No changes to commit"
+          git push origin HEAD
+
+      - name: Upsert variables from repo secrets
+        if: env.OP == 'upsert'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          ENV_ID: ${{ env.ENV_ID }}
+          EBAY_ENVIRONMENT: ${{ secrets.EBAY_ENVIRONMENT }}
+          EBAY_PRODUCTION_CLIENT_ID: ${{ secrets.EBAY_PRODUCTION_CLIENT_ID }}
+          EBAY_PRODUCTION_DEV_ID: ${{ secrets.EBAY_PRODUCTION_DEV_ID }}
+          EBAY_PRODUCTION_CERT_ID: ${{ secrets.EBAY_PRODUCTION_CERT_ID }}
+          EBAY_PRODUCTION_RUNAME: ${{ secrets.EBAY_PRODUCTION_RUNAME }}
+          ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$RAILWAY_TOKEN" || { echo 'RAILWAY_TOKEN is required' >&2; exit 1; }
+          test -n "$PROJECT_ID" || { echo 'PROJECT_ID is required' >&2; exit 1; }
+          test -n "$ENV_ID" || { echo 'ENV_ID is required' >&2; exit 1; }
+          echo '[]' > report.json
+          upsert() {
+            local name="$1" val="$2"
+            if [[ -z "$val" ]]; then echo "skip $name (empty)"; return; fi
+            jq -n --arg pid "$PROJECT_ID" --arg eid "$ENV_ID" --arg n "$name" --arg v "$val" \
+              '{query:"mutation up($input: VariableUpsertInput!) { variableUpsert(input: $input) }",
+                variables:{ input:{ projectId:$pid, environmentId:$eid, name:$n, value:$v } }}' > body.json
+            curl -sS -H "Authorization: Bearer $RAILWAY_TOKEN" -H 'Content-Type: application/json' \
+              --data @body.json https://backboard.railway.app/graphql/v2 > resp.json
+            if jq -e '.errors' resp.json >/dev/null; then
+              echo "- $name: ERR" >> $GITHUB_STEP_SUMMARY
+              jq -c '.errors' resp.json >> $GITHUB_STEP_SUMMARY || true
+              jq --arg name "$name" --arg status "ERR" '. + [{name:$name,status:$status}]' report.json > report.tmp && mv report.tmp report.json
+            else
+              echo "- $name: OK" >> $GITHUB_STEP_SUMMARY
+              jq --arg name "$name" --arg status "OK" '. + [{name:$name,status:$status}]' report.json > report.tmp && mv report.tmp report.json
+            fi
+          }
+          echo '### Upsert to Railway' >> $GITHUB_STEP_SUMMARY
+          upsert EBAY_ENVIRONMENT "$EBAY_ENVIRONMENT"
+          upsert EBAY_PRODUCTION_CLIENT_ID "$EBAY_PRODUCTION_CLIENT_ID"
+          upsert EBAY_PRODUCTION_DEV_ID "$EBAY_PRODUCTION_DEV_ID"
+          upsert EBAY_PRODUCTION_CERT_ID "$EBAY_PRODUCTION_CERT_ID"
+          upsert EBAY_PRODUCTION_RUNAME "$EBAY_PRODUCTION_RUNAME"
+          upsert ALLOWED_ORIGINS "$ALLOWED_ORIGINS"
+          upsert FRONTEND_URL "$FRONTEND_URL"
+          upsert DATABASE_URL "$DATABASE_URL"
+
+      - name: Publish upsert report to branch (ci/railway-upsert-report/latest)
+        if: env.OP == 'upsert'
+        run: |
+          set -euo pipefail
+          mkdir -p ops
+          jq -n \
+            --arg pid "$PROJECT_ID" \
+            --arg eid "$ENV_ID" \
+            --arg ts "$(date -u +%FT%TZ)" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --slurpfile results report.json \
+            '{project_id:$pid, environment_id:$eid, generated_at:$ts, run_url:$run_url, results:$results[0]}' > ops/railway_upsert_report.json
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -B ci/railway-upsert-report/latest
+          git add ops/railway_upsert_report.json
+          git commit -m "chore(ci): update Railway upsert report [skip ci]" || echo "No changes to commit"
+          git push origin HEAD
