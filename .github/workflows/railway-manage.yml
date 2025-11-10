@@ -49,36 +49,45 @@ jobs:
         if: env.OP == 'list'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        continue-on-error: true
         run: |
-          set -euo pipefail
-          test -n "$RAILWAY_TOKEN" || { echo 'RAILWAY_TOKEN is required' >&2; exit 1; }
-          test -n "$PROJECT_ID" || { echo 'PROJECT_ID is required' >&2; exit 1; }
-          test -n "$ENV_ID" || { echo 'ENV_ID is required' >&2; exit 1; }
+          set -uo pipefail
+          if [ -z "$RAILWAY_TOKEN" ]; then echo 'RAILWAY_TOKEN is required' >&2; exit 1; fi
+          if [ -z "$PROJECT_ID" ]; then echo 'PROJECT_ID is required' >&2; exit 1; fi
+          if [ -z "$ENV_ID" ]; then echo 'ENV_ID is required' >&2; exit 1; fi
           GQL='query($projectId: String!, $environmentId: String!) { variables(projectId: $projectId, environmentId: $environmentId) { edges { node { id name } } } }'
           jq -n --arg q "$GQL" --arg pid "$PROJECT_ID" --arg eid "$ENV_ID" '{query:$q, variables:{projectId:$pid, environmentId:$eid}}' > body.json
-          curl -sSf -H "Authorization: Bearer $RAILWAY_TOKEN" -H 'Content-Type: application/json' \
-            --data @body.json https://backboard.railway.app/graphql/v2 > resp.json
+          HTTP=$(curl -sS -o resp.json -w '%{http_code}' -H "Authorization: Bearer $RAILWAY_TOKEN" -H 'Content-Type: application/json' \
+            --data @body.json https://backboard.railway.app/graphql/v2 || true)
+          echo "HTTP: ${HTTP}" >> $GITHUB_STEP_SUMMARY
           echo '### Railway Variables (keys only)' >> $GITHUB_STEP_SUMMARY
-          jq -r '.data.variables.edges[].node.name' resp.json | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || {
-            echo 'Raw response:' >> $GITHUB_STEP_SUMMARY; cat resp.json >> $GITHUB_STEP_SUMMARY; exit 1; }
+          jq -r '.data.variables.edges[].node.name' resp.json 2>/dev/null | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || true
+          if [ "${HTTP}" != "200" ]; then
+            echo '' >> $GITHUB_STEP_SUMMARY; echo 'Raw response:' >> $GITHUB_STEP_SUMMARY; cat resp.json >> $GITHUB_STEP_SUMMARY || true
+          fi
+          echo -n "${HTTP}" > http_status.txt
 
       - name: Publish keys to branch (ci/railway-keys/latest)
         if: env.OP == 'list'
         run: |
           set -euo pipefail
           mkdir -p ops
-          KEYS_JSON=$(jq -r '.data.variables.edges[].node.name' resp.json | jq -R . | jq -s .)
+          KEYS_JSON=$(jq -r '.data.variables.edges[].node.name' resp.json 2>/dev/null | jq -R . | jq -s .)
+          if [ -z "$KEYS_JSON" ] || [ "$KEYS_JSON" = "null" ]; then KEYS_JSON='[]'; fi
+          HTTP=""; if [ -f http_status.txt ]; then HTTP=$(cat http_status.txt || true); fi
           jq -n \
             --arg pid "$PROJECT_ID" \
             --arg eid "$ENV_ID" \
             --arg ts "$(date -u +%FT%TZ)" \
             --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg http "$HTTP" \
             --argjson keys "$KEYS_JSON" \
-            '{project_id:$pid, environment_id:$eid, keys:$keys, generated_at:$ts, run_url:$run_url}' > ops/railway_keys.json
+            '{project_id:$pid, environment_id:$eid, http_status:$http, keys:$keys, generated_at:$ts, run_url:$run_url}' > ops/railway_keys.json
+          cp resp.json ops/railway_keys.response.json || true
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git checkout -B ci/railway-keys/latest
-          git add ops/railway_keys.json
+          git add ops/railway_keys.json ops/railway_keys.response.json || git add ops/railway_keys.json
           git commit -m "chore(ci): update Railway variable keys [skip ci]" || echo "No changes to commit"
           git push origin HEAD
 
