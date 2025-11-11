@@ -54,12 +54,19 @@ async def refresh_expiring_tokens():
                 
                 new_token_data = await ebay_service.refresh_access_token(token.refresh_token)
                 
+                # Defensive log: type and public attributes only (no secrets)
+                try:
+                    attrs = [a for a in dir(new_token_data) if not a.startswith('_')]
+                    logger.info("Token refresh response: type=%s, attrs=%s, has_refresh=%s", type(new_token_data).__name__, attrs, bool(getattr(new_token_data, 'refresh_token', None)))
+                except Exception:
+                    logger.debug("Could not introspect token refresh response")
+                
                 ebay_account_service.save_tokens(
                     db,
                     account.id,
-                    new_token_data["access_token"],
-                    new_token_data.get("refresh_token", token.refresh_token),
-                    new_token_data["expires_in"]
+                    new_token_data.access_token,
+                    getattr(new_token_data, 'refresh_token', None) or token.refresh_token,
+                    new_token_data.expires_in
                 )
                 
                 refreshed_count += 1
