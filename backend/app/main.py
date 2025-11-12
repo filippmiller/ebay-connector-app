@@ -85,7 +85,7 @@ async def startup_event():
     
     if "postgresql" in database_url:
         import re
-        masked_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:****@', database_url)
+        masked_url = re.sub(r'://([^:]+):([^@]+)@', r'://\\1:****@', database_url)
         logger.info(f"📊 Database URL: {masked_url}")
     
     if "postgresql" in database_url:
@@ -143,23 +143,27 @@ async def startup_event():
             logger.warning("⚠️  Continuing startup despite migration errors - application may still work")
         
         logger.info("✅ PostgreSQL configured - attempting to connect...")
-        
+        start_workers = True
     else:
         logger.info("Using SQLite database - data persists between restarts")
+        # In SQLite dev mode, skip background workers that depend on SQLAlchemy tables
+        start_workers = False
+        logger.info("⏭️  Skipping background workers in SQLite dev mode")
     
-    logger.info("🔄 Starting background workers...")
-    try:
-        from app.workers import run_token_refresh_worker_loop, run_health_check_worker_loop
-        
-        asyncio.create_task(run_token_refresh_worker_loop())
-        logger.info("✅ Token refresh worker started (runs every 10 minutes)")
-        
-        asyncio.create_task(run_health_check_worker_loop())
-        logger.info("✅ Health check worker started (runs every 15 minutes)")
-        
-    except Exception as e:
-        logger.error(f"⚠️  Failed to start background workers: {e}")
-        logger.info("Workers can be run separately if needed")
+    if start_workers:
+        logger.info("🔄 Starting background workers...")
+        try:
+            from app.workers import run_token_refresh_worker_loop, run_health_check_worker_loop
+            
+            asyncio.create_task(run_token_refresh_worker_loop())
+            logger.info("✅ Token refresh worker started (runs every 10 minutes)")
+            
+            asyncio.create_task(run_health_check_worker_loop())
+            logger.info("✅ Health check worker started (runs every 15 minutes)")
+            
+        except Exception as e:
+            logger.error(f"⚠️  Failed to start background workers: {e}")
+            logger.info("Workers can be run separately if needed")
 
 @app.get("/healthz")
 async def healthz():

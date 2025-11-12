@@ -19,8 +19,10 @@ from app.models_sqlalchemy.models import (
 # access to the values within the .ini file in use.
 config = context.config
 
-from app.config import settings
-database_url = settings.DATABASE_URL
+# Read DATABASE_URL strictly from env and enforce Postgres
+database_url = os.getenv("DATABASE_URL")
+if not database_url or database_url.startswith("sqlite"):
+    raise RuntimeError("Alembic: DATABASE_URL must be Postgres")
 config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.

@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+import os
 
 
 class Settings(BaseSettings):
@@ -27,13 +28,15 @@ class Settings(BaseSettings):
     EBAY_PRODUCTION_REDIRECT_URI: Optional[str] = None
     EBAY_PRODUCTION_RUNAME: Optional[str] = None
     
-    DATABASE_URL: str = "sqlite:///./ebay_connector.db"
+    # DATABASE_URL must be provided via environment from Railway (Supabase/Postgres)
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     FRONTEND_URL: str = "http://localhost:5173"
     
     class Config:
-        env_file = ".env"
+        # Do not silently read .env in CI; Railway injects env
+        env_file = None
         env_file_encoding = "utf-8"
         extra = "ignore"
     
@@ -79,5 +82,12 @@ class Settings(BaseSettings):
             return self.EBAY_SANDBOX_RUNAME
         return self.EBAY_PRODUCTION_RUNAME
 
+
+# Enforce no-SQLite policy immediately on import
+_db_url = os.getenv("DATABASE_URL")
+if not _db_url:
+    raise RuntimeError("DATABASE_URL is required (Supabase/Postgres). No SQLite fallback.")
+if _db_url.startswith("sqlite"):
+    raise RuntimeError("SQLite is not allowed in this project.")
 
 settings = Settings()
