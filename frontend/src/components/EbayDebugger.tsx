@@ -437,13 +437,25 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
     } catch {}
 
     if (totalTestingMode) {
-      // Handle raw request
+      // Handle raw request via backend
       if (!rawRequest.trim()) {
         setError('Raw request is required');
         return;
       }
-      // TODO: Parse raw request and send
-      setRawError('Total Testing Mode - raw request parsing not yet implemented');
+      setLoading(true);
+      setError('');
+      setStdError('');
+      setRawError('');
+      setResponse(null);
+      try {
+        const res = await api.post(`/ebay/debug/raw?environment=${environment}`, { raw: rawRequest });
+        setResponse(res.data);
+      } catch (err:any) {
+        console.error('Raw debug request failed:', err);
+        setRawError(err?.response?.data?.detail || err?.message || 'Failed to make raw debug request');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -611,6 +623,9 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 rows={8}
                 className="font-mono text-sm"
               />
+              {rawError && (
+                <Alert variant="destructive"><AlertDescription>{rawError}</AlertDescription></Alert>
+              )}
               <p className="text-xs text-gray-500">
                 Paste full request here (method, URL, headers, body). One line per header.
               </p>

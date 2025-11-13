@@ -1050,6 +1050,63 @@ async def export_sync_logs(
     )
 
 
+@router.get("/debug/templates")
+async def get_debug_templates(current_user: User = Depends(get_current_active_user)):
+    """Return predefined templates for the debugger."""
+    templates = {
+        "identity": {
+            "name": "Identity API - Get User Info",
+            "description": "Get current user identity (username, user_id)",
+            "method": "GET",
+            "path": "/identity/v1/oauth2/userinfo",
+            "params": {},
+        },
+        "orders": {
+            "name": "Orders API - Get Orders",
+            "description": "Fetch recent orders",
+            "method": "GET",
+            "path": "/sell/fulfillment/v1/order",
+            "params": {"limit": "1", "filter": "orderStatus:COMPLETED"},
+        },
+        "transactions": {
+            "name": "Transactions API - Get Transactions",
+            "description": "Fetch recent transactions",
+            "method": "GET",
+            "path": "/sell/finances/v1/transaction",
+            "params": {"limit": "1"},
+        },
+        "inventory": {
+            "name": "Inventory API - Get Inventory Items",
+            "description": "Fetch inventory items",
+            "method": "GET",
+            "path": "/sell/inventory/v1/inventory_item",
+            "params": {"limit": "1"},
+        },
+        "offers": {
+            "name": "Offers API - Get Offers",
+            "description": "Fetch active offers",
+            "method": "GET",
+            "path": "/sell/inventory/v1/offer",
+            "params": {"limit": "1"},
+        },
+        "disputes": {
+            "name": "Disputes API - Get Payment Disputes",
+            "description": "Fetch payment disputes",
+            "method": "GET",
+            "path": "/sell/fulfillment/v1/payment_dispute",
+            "params": {"limit": "1"},
+        },
+        "messages": {
+            "name": "Messages API - Get Messages",
+            "description": "Fetch messages (trading)",
+            "method": "GET",
+            "path": "/post-order/v2/return/search",
+            "params": {"limit": "1"},
+        },
+    }
+    return {"templates": templates}
+
+
 @router.post("/debug")
 async def debug_ebay_api(
     method: str = Query("GET", description="HTTP method"),
@@ -1297,6 +1354,154 @@ async def debug_ebay_api(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error making request: {str(e)}"
         )
+
+
+@router.post("/debug/raw")
+async def debug_ebay_api_raw(
+    raw: dict,
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Accept a raw HTTP request (as pasted text) and execute it as-is.
+    The raw payload must be a JSON object: { "raw": "METHOD URL\nHeader: value\n\nbody" }
+    """
+    import re
+    import time
+    import json as pyjson
+    import httpx
+
+    env = environment or current_user.ebay_environment or "sandbox"
+
+    # Extract raw text
+    raw_text = raw.get("raw") if isinstance(raw, dict) else None
+    if not raw_text or not isinstance(raw_text, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="raw string is required")
+
+    # Parse request
+    lines = raw_text.splitlines()
+    if not lines:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty raw request")
+
+    # First line: METHOD URL
+    first = lines[0].strip()
+    m = re.match(r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(.+)$", first, re.IGNORECASE)
+    if not m:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="First line must be 'METHOD URL'")
+    method = m.group(1).upper()
+    url = m.group(2).strip()
+
+    # Headers until blank line
+    headers: dict[str, str] = {}
+    body_lines: list[str] = []
+    in_body = False
+    for line in lines[1:]:
+        if not in_body:
+            if line.strip() == "":
+                in_body = True
+                continue
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers[k.strip()] = v.strip()
+        else:
+            body_lines.append(line)
+
+    body_str = "\n".join(body_lines) if body_lines else None
+
+    # Log request (mask Authorization)
+    masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in headers.items()}
+    try:
+        ebay_connect_logger.log_event(
+            user_id=current_user.id,
+            environment=env,
+            action="debug_raw_request",
+            request={
+                "method": method,
+                "url": url,
+                "headers": masked_headers_for_log,
+                "body": body_str
+            }
+        )
+    except Exception:
+        pass
+
+    start_time = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            req_kwargs = {"headers": headers}
+            if method in ("POST", "PUT", "PATCH"):
+                req_kwargs["content"] = body_str or ""
+            if method == "GET":
+                resp = await client.get(url, **req_kwargs)
+            elif method == "POST":
+                resp = await client.post(url, **req_kwargs)
+            elif method == "PUT":
+                resp = await client.put(url, **req_kwargs)
+            elif method == "DELETE":
+                resp = await client.delete(url, **req_kwargs)
+            elif method == "PATCH":
+                resp = await client.patch(url, **req_kwargs)
+            elif method == "HEAD":
+                resp = await client.head(url, **req_kwargs)
+            elif method == "OPTIONS":
+                resp = await client.options(url, **req_kwargs)
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported method: {method}")
+
+        response_time_ms = (time.time() - start_time) * 1000
+        try:
+            resp_body = resp.json()
+        except Exception:
+            resp_body = resp.text
+
+        # Log response
+        try:
+            ebay_connect_logger.log_event(
+                user_id=current_user.id,
+                environment=env,
+                action="debug_raw_response",
+                request={"method": method, "url": url},
+                response={
+                    "status": resp.status_code,
+                    "headers": dict(resp.headers),
+                    "body": (resp_body if isinstance(resp_body, dict) else (resp_body[:5000] if isinstance(resp_body, str) else str(resp_body)))
+                }
+            )
+        except Exception:
+            pass
+
+        ebay_headers = {k: v for k, v in resp.headers.items() if k.lower().startswith("x-ebay")}
+
+        return {
+            "request_context": {
+                "user_email": current_user.email,
+                "user_id": current_user.id[:8] + "..." if len(current_user.id) > 8 else current_user.id,
+                "environment": env,
+            },
+            "request": {
+                "method": method,
+                "url": url,
+                "url_full": url,
+                "headers": masked_headers_for_log,
+                "headers_full": headers,
+                "params": {},
+                "body": body_str,
+                "curl_command": f"curl -X {method} '{url}' " + " ".join([f"-H '{k}: {v}'" for k,v in headers.items()]) + (f" -d '{body_str}'" if body_str else "")
+            },
+            "response": {
+                "status_code": resp.status_code,
+                "status_text": resp.reason_phrase,
+                "headers": dict(resp.headers),
+                "ebay_headers": ebay_headers,
+                "body": resp_body,
+                "response_time_ms": round(response_time_ms, 2)
+            },
+            "success": 200 <= resp.status_code < 300
+        }
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Upstream error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in raw debug endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error: {str(e)}")
 
 
 @router.get("/debug/templates")
