@@ -11,6 +11,7 @@ import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Switch } from './ui/switch';
 import api from '../lib/apiClient';
+const FEATURE_TOKEN_INFO = (import.meta.env.VITE_FEATURE_TOKEN_INFO === 'true');
 import { Loader2, Play, Copy, Check } from 'lucide-react';
 
 interface DebugTemplate {
@@ -95,6 +96,8 @@ export const EbayDebugger: React.FC = () => {
   
   // Token Info
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
+  const [adminTokenInfo, setAdminTokenInfo] = useState<any | null>(null);
+  const [refreshingAdmin, setRefreshingAdmin] = useState(false);
   const [tokenInfoLoading, setTokenInfoLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'debugger' | 'token-info'>('debugger');
   const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
@@ -102,7 +105,20 @@ export const EbayDebugger: React.FC = () => {
     return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
   });
   
-  // Token Info API Request/Response History
+  // Admin Token Terminal (persistent logs from backend)
+  type TokenLogEntry = {
+    id: string;
+    environment: string;
+    action: string;
+    request?: { method?: string; url?: string };
+    response?: { status?: number; body?: any };
+    error?: string;
+    created_at: string;
+  };
+  const [tokenLogs, setTokenLogs] = useState<TokenLogEntry[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  // Token Info API Request/Response History (local preview of identity calls)
   type TokenInfoHistoryEntry = {
     timestamp: string;
     environment: string;
@@ -125,6 +141,10 @@ export const EbayDebugger: React.FC = () => {
     loadTemplates();
     if (activeTab === 'token-info') {
       loadTokenInfo();
+      if (FEATURE_TOKEN_INFO && environment === 'production') {
+        void loadAdminTokenInfo();
+        void loadTokenLogs();
+      }
     }
   }, [activeTab, environment]);
 
@@ -146,6 +166,48 @@ export const EbayDebugger: React.FC = () => {
       }
     }
   }, [environment, totalTestingMode]);
+
+  const loadAdminTokenInfo = async () => {
+    if (!FEATURE_TOKEN_INFO || environment !== 'production') { setAdminTokenInfo(null); return; }
+    try {
+      const { data } = await api.get('/admin/ebay/tokens/info?env=production');
+      setAdminTokenInfo(data);
+    } catch (e:any) {
+      setAdminTokenInfo({ error: e?.response?.data?.detail || 'failed_to_load' });
+    }
+  };
+
+  const loadTokenLogs = async () => {
+    if (!FEATURE_TOKEN_INFO || environment !== 'production') { setTokenLogs([]); return; }
+    setLogsLoading(true);
+    try {
+      const { data } = await api.get('/admin/ebay/tokens/logs?env=production&limit=100');
+      setTokenLogs(data?.logs || []);
+    } catch (e) {
+      // ignore
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  // Auto-poll logs every 10s while on token-info tab in production
+  useEffect(() => {
+    if (!(FEATURE_TOKEN_INFO && environment === 'production' && activeTab === 'token-info')) return;
+    const id = setInterval(() => { void loadTokenLogs(); }, 10000);
+    return () => clearInterval(id);
+  }, [FEATURE_TOKEN_INFO, environment, activeTab]);
+
+  const refreshAdminToken = async () => {
+    if (!FEATURE_TOKEN_INFO || environment !== 'production') return;
+    setRefreshingAdmin(true);
+    try {
+      await api.post('/admin/ebay/tokens/refresh?env=production');
+      await loadAdminTokenInfo();
+      await loadTokenLogs();
+    } finally {
+      setRefreshingAdmin(false);
+    }
+  };
 
   const loadTokenInfo = async (env?: 'sandbox' | 'production') => {
     const targetEnv = env || environment;
@@ -277,6 +339,16 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
     }
   };
 
+  const REQUIRED_SCOPES_BY_TEMPLATE: Record<string, string[]> = {
+    identity: ['https://api.ebay.com/oauth/api_scope'],
+    orders: ['https://api.ebay.com/oauth/api_scope/sell.fulfillment'],
+    transactions: ['https://api.ebay.com/oauth/api_scope/sell.finances'],
+    inventory: ['https://api.ebay.com/oauth/api_scope/sell.inventory'],
+    offers: ['https://api.ebay.com/oauth/api_scope/sell.inventory'],
+    disputes: ['https://api.ebay.com/oauth/api_scope/sell.fulfillment'],
+    messages: ['https://api.ebay.com/oauth/api_scope/trading'],
+  };
+
   const handleTemplateSelect = (templateName: string) => {
     setSelectedTemplate(templateName);
     const template = templates[templateName];
@@ -306,6 +378,31 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
   };
 
   const handleDebug = async () => {
+    // Scope guard for Quick Templates (only when a non-custom template is selected)
+    try {
+      const tpl = selectedTemplate && selectedTemplate !== 'custom' ? selectedTemplate : null;
+      if (tpl) {
+        const required = REQUIRED_SCOPES_BY_TEMPLATE[tpl] || [];
+        const userScopes: string[] = (FEATURE_TOKEN_INFO && environment === 'production')
+          ? (adminTokenInfo?.scopes || [])
+          : (tokenInfo?.scopes || []);
+        const missing = required.filter(r => !(userScopes || []).includes(r));
+        if (missing.length > 0) {
+          setError(`Missing required scopes: ${missing.join(', ')}`);
+          // Log to token terminal (production only, behind flag)
+          if (FEATURE_TOKEN_INFO && environment === 'production') {
+            try { await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
+              template: tpl,
+              path,
+              required_scopes: required,
+              missing_scopes: missing,
+            }); } catch {}
+          }
+          return; // Block send
+        }
+      }
+    } catch {}
+
     if (totalTestingMode) {
       // Handle raw request
       if (!rawRequest.trim()) {
@@ -872,46 +969,72 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 </Alert>
               ) : tokenInfo ? (
                 <div className="space-y-4">
-                  {/* User Info */}
-                  <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                    <div>
-                      <Label className="text-xs text-gray-500">User Email</Label>
-                      <p className="font-semibold">{tokenInfo.user_email}</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-gray-500">User ID</Label>
-                      <p className="font-mono text-sm">{tokenInfo.user_id}</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-gray-500">eBay Environment</Label>
-                      <Badge variant={tokenInfo.ebay_environment === 'production' ? 'default' : 'secondary'}>
-                        {tokenInfo.ebay_environment}
-                      </Badge>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-gray-500">Connection Status</Label>
-                      <Badge variant={tokenInfo.ebay_connected ? 'default' : 'destructive'}>
-                        {tokenInfo.ebay_connected ? 'Connected' : 'Not Connected'}
-                      </Badge>
-                    </div>
-                    {tokenInfo.ebay_username && (
-                      <div>
-                        <Label className="text-xs text-gray-500">eBay Username</Label>
-                        <p className="font-semibold">{tokenInfo.ebay_username}</p>
+                  {FEATURE_TOKEN_INFO && environment === 'production' && (
+                    <div className="space-y-2 p-3 bg-amber-50 border border-amber-200 rounded">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-sm font-semibold">Token Info (Production)</Label>
+                          <p className="text-xs text-gray-600">User access token (~2h) is used for API calls. Refresh token (long-lived) is used only to obtain a new user access token.</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={loadAdminTokenInfo} disabled={refreshingAdmin}>Load</Button>
+                          <Button size="sm" onClick={refreshAdminToken} disabled={refreshingAdmin}>
+                            {refreshingAdmin ? <><Loader2 className="mr-1 h-3 w-3 animate-spin"/>Refreshing...</> : 'Manual User Token Refresh'}
+                          </Button>
+                        </div>
                       </div>
-                    )}
-                    {tokenInfo.ebay_user_id && (
-                      <div>
-                        <Label className="text-xs text-gray-500">eBay User ID</Label>
-                        <p className="font-mono text-sm">{tokenInfo.ebay_user_id}</p>
-                      </div>
-                    )}
+                      {adminTokenInfo && !adminTokenInfo.error && (
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <Label className="text-xs text-gray-500">User access token (~2h)</Label>
+                            <div className="font-mono text-xs p-2 bg-white border rounded">{adminTokenInfo.access_token_masked || '—'}</div>
+                            <div className="text-xs text-gray-600 mt-1">Expires at (UTC): {adminTokenInfo.access_expires_at || '—'} {adminTokenInfo.access_ttl_sec != null && `(ttl ${adminTokenInfo.access_ttl_sec}s)`}</div>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-gray-500">Refresh token (long-lived)</Label>
+                            <div className="font-mono text-xs p-2 bg-white border rounded">{adminTokenInfo.refresh_token_masked || '—'}</div>
+                            <div className="text-xs text-gray-600 mt-1">
+                              Refresh expires at (UTC): {adminTokenInfo.refresh_expires_at || '—'}
+                              {typeof adminTokenInfo.refresh_ttl_sec === 'number' && (
+                                <span> (ttl {adminTokenInfo.refresh_ttl_sec}s)</span>
+                              )}
+                              {!adminTokenInfo.refresh_expires_at && (
+                                <span className="ml-1 text-gray-500">Exact expiry not returned by eBay in this environment</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="col-span-2">
+                            <Label className="text-xs text-gray-500">Scopes (from authorization)</Label>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {(adminTokenInfo.scopes || []).map((s:string, i:number)=> (
+                                <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50">{s}</span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {adminTokenInfo && adminTokenInfo.error && (
+                        <Alert variant="destructive"><AlertDescription>{String(adminTokenInfo.error)}</AlertDescription></Alert>
+                      )}
+                    </div>
+                  )}
+                  {/* Condensed User Summary */}
+                  <div className="p-2 bg-blue-50 rounded-lg border border-blue-200 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold">User:</span> <span>{tokenInfo.user_email}</span>
+                      <span>•</span>
+                      <span className="font-semibold">eBay:</span> <span>{tokenInfo.ebay_username || '—'}{tokenInfo.ebay_user_id ? ` (${tokenInfo.ebay_user_id})` : ''}</span>
+                      <span>•</span>
+                      <span className="font-semibold">Env:</span> <span>{tokenInfo.ebay_environment}</span>
+                      <span>•</span>
+                      <span className="font-semibold">Status:</span> <span>{tokenInfo.ebay_connected ? 'Connected' : 'Not Connected'}</span>
+                    </div>
                   </div>
 
-                  {/* Full Token */}
+                  {/* Token cards (local view of access token) */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label className="text-sm font-semibold">Full Access Token (Unmasked)</Label>
+                      <Label className="text-sm font-semibold">User access token (~2h)</Label>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -977,133 +1100,47 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 </Alert>
               )}
 
-              {/* API Request/Response Terminal */}
-              <Card className="mt-4">
-                <CardHeader>
-                  <CardTitle>📡 eBay API Request/Response Terminal</CardTitle>
-                  <CardDescription>
-                    Live API calls and response history. Automatically tests Identity API when token is loaded.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {/* Preview of next request */}
-                  {tokenInfo && tokenInfo.token_full && (
-                    <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                      <div className="flex items-center justify-between mb-2">
-                        <Label className="text-sm font-semibold">Next Request (when environment changes or refresh):</Label>
-                        <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
-                          {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
-                        </Badge>
-                      </div>
-                      <div className="space-y-2 text-xs font-mono">
-                        <div>
-                          <span className="text-gray-600">Method:</span> <span className="font-bold text-green-700">GET</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600">URL:</span>{' '}
-                          <span className="text-blue-700">
-                            {environment === 'sandbox' 
-                              ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/userinfo'
-                              : 'https://api.ebay.com/identity/v1/oauth2/userinfo'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600">Headers:</span>
-                          <pre className="mt-1 p-2 bg-white rounded border text-xs overflow-auto">
-{`Authorization: Bearer ${tokenInfo.token_full.substring(0, 30)}...${tokenInfo.token_full.substring(tokenInfo.token_full.length - 30)}
-Accept: application/json
-X-EBAY-C-MARKETPLACE-ID: EBAY_US`}
-                          </pre>
-                        </div>
-                      </div>
+              {/* Token Terminal Log (persistent, last 100) */}
+              {FEATURE_TOKEN_INFO && environment === 'production' && (
+                <Card className="mt-4">
+                  <CardHeader>
+                    <CardTitle>🖥️ Token Terminal Log</CardTitle>
+                    <CardDescription>Last 100 token actions (manual refresh, info views). No secrets are stored or shown.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm text-gray-600">Environment: Production</div>
+                      <Button size="sm" variant="outline" onClick={loadTokenLogs} disabled={logsLoading}>
+                        {logsLoading ? <><Loader2 className="mr-1 h-3 w-3 animate-spin"/>Reloading...</> : 'Reload'}
+                      </Button>
                     </div>
-                  )}
-
-                  {/* Request/Response History Terminal */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-sm font-semibold">Request/Response History ({tokenInfoHistory.length})</Label>
-                      {tokenInfoHistory.length > 0 && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setTokenInfoHistory([]);
-                            localStorage.removeItem('token_info_history');
-                          }}
-                        >
-                          Clear History
-                        </Button>
-                      )}
-                    </div>
-                    <ScrollArea className="h-[400px] w-full rounded-md border bg-gray-900 p-4 font-mono text-xs">
-                      {tokenInfoRequestLoading && (
-                        <div className="text-yellow-400 mb-2">
-                          ⏳ Testing Identity API...
-                        </div>
-                      )}
-                      {tokenInfoHistory.length === 0 ? (
-                        <div className="text-gray-400">
-                          No API calls yet. Token info will automatically test Identity API when loaded.
-                        </div>
+                    <ScrollArea className="h-[320px] w-full rounded-md border bg-gray-900 p-4 font-mono text-xs">
+                      {tokenLogs.length === 0 ? (
+                        <div className="text-gray-400">No token actions yet.</div>
                       ) : (
-                        <div className="space-y-4">
-                          {tokenInfoHistory.map((entry, idx) => (
-                            <div key={idx} className="border-b border-gray-700 pb-4 last:border-0">
-                              <div className="text-gray-400 mb-2">
-                                [{new Date(entry.timestamp).toLocaleString()}] {entry.environment === 'sandbox' ? '🧪' : '🚀'} {entry.environment.toUpperCase()}
-                              </div>
-                              
-                              {/* Request */}
-                              <div className="mb-3">
-                                <div className="text-green-400 font-bold mb-1">→ REQUEST:</div>
-                                <div className="text-green-300 ml-2">
-                                  <div>{entry.request.method} {entry.request.url}</div>
-                                  <div className="mt-1 text-gray-300">
-                                    {Object.entries(entry.request.headers).map(([key, value]) => (
-                                      <div key={key}>
-                                        {key}: {key === 'Authorization' && value.startsWith('Bearer ') 
-                                          ? `Bearer ${value.substring(7, 37)}...${value.substring(value.length - 30)}`
-                                          : value}
-                                      </div>
-                                    ))}
-                                  </div>
+                        <div className="space-y-3">
+                          {tokenLogs.map((log) => (
+                            <div key={log.id} className="border-b border-gray-700 pb-3 last:border-0">
+                              <div className="text-gray-400 mb-1">[{new Date(log.created_at).toLocaleString()}] {log.action}</div>
+                              {log.request?.method && log.request?.url && (
+                                <div className="text-green-300">→ {log.request.method} {log.request.url}</div>
+                              )}
+                              {typeof log.response?.status !== 'undefined' && (
+                                <div className={log.response.status && log.response.status >= 400 ? 'text-red-300' : 'text-blue-300'}>
+                                  ← status: {log.response.status}
                                 </div>
-                              </div>
-
-                              {/* Response */}
-                              <div>
-                                <div className={`font-bold mb-1 ${
-                                  entry.response.status >= 200 && entry.response.status < 300 ? 'text-green-400' :
-                                  entry.response.status >= 400 ? 'text-red-400' : 'text-yellow-400'
-                                }`}>
-                                  ← RESPONSE: {entry.response.status} {entry.response.status >= 200 && entry.response.status < 300 ? '✅' : '❌'}
-                                </div>
-                                <div className="text-gray-300 ml-2">
-                                  <div className="mb-1">
-                                    <span className="text-gray-400">Headers:</span>
-                                    <pre className="mt-1 p-2 bg-gray-800 rounded text-xs overflow-auto max-h-32">
-                                      {JSON.stringify(entry.response.headers, null, 2)}
-                                    </pre>
-                                  </div>
-                                  <div>
-                                    <span className="text-gray-400">Body:</span>
-                                    <pre className="mt-1 p-2 bg-gray-800 rounded text-xs overflow-auto max-h-48">
-                                      {typeof entry.response.body === 'object' 
-                                        ? JSON.stringify(entry.response.body, null, 2)
-                                        : String(entry.response.body)}
-                                    </pre>
-                                  </div>
-                                </div>
-                              </div>
+                              )}
+                              {log.error && (
+                                <div className="text-red-400">error: {log.error}</div>
+                              )}
                             </div>
                           ))}
                         </div>
                       )}
                     </ScrollArea>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
