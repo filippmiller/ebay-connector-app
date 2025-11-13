@@ -382,6 +382,53 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
     }
   };
 
+  // Export helpers for debugger terminal
+  const exportDebuggerLogs = (format: 'json' | 'ndjson' | 'txt') => {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filenameBase = `debugger_logs_${environment}_${ts}`;
+    let blob: Blob;
+    if (format === 'json') {
+      blob = new Blob([JSON.stringify({ logs: debugLogs }, null, 2)], { type: 'application/json' });
+      triggerDownload(`${filenameBase}.json`, blob);
+      return;
+    }
+    if (format === 'ndjson') {
+      const nd = debugLogs.map((l:any) => JSON.stringify(l)).join('\n');
+      blob = new Blob([nd], { type: 'application/x-ndjson' });
+      triggerDownload(`${filenameBase}.ndjson`, blob);
+      return;
+    }
+    const txt = debugLogs.map((l:any) => {
+      const seg: string[] = [];
+      seg.push(`[${new Date(l.created_at).toISOString()}] ${l.action}`);
+      if (l.request) {
+        seg.push(`→ ${l.request.method || ''} ${l.request.url || ''}`);
+        if (l.request.headers) seg.push(`headers: ${JSON.stringify(l.request.headers)}`);
+        if (l.request.body) seg.push(`body: ${typeof l.request.body === 'string' ? l.request.body : JSON.stringify(l.request.body)}`);
+      }
+      if (l.response) {
+        seg.push(`← status: ${l.response.status ?? ''}`);
+        if (l.response.headers) seg.push(`resp-headers: ${JSON.stringify(l.response.headers)}`);
+        if (typeof l.response.body !== 'undefined') seg.push(`resp-body: ${typeof l.response.body === 'string' ? l.response.body : JSON.stringify(l.response.body)}`);
+      }
+      if (l.error) seg.push(`error: ${l.error}`);
+      return seg.join('\n');
+    }).join('\n\n');
+    blob = new Blob([txt], { type: 'text/plain' });
+    triggerDownload(`${filenameBase}.txt`, blob);
+  };
+
+  const triggerDownload = (filename: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const handleTemplateSelect = (templateName: string) => {
     setSelectedTemplate(templateName);
     const template = templates[templateName];
@@ -422,7 +469,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
           : (tokenInfo?.scopes || []);
         const missing = required.filter(r => !(userScopes || []).includes(r));
         if (missing.length > 0) {
-          setError(`Missing required scopes: ${missing.join(', ')}`);
+          setStdError(`Missing required scopes: ${missing.join(', ')}`);
           // Log to token terminal (production only, behind flag)
           if (FEATURE_TOKEN_INFO && environment === 'production') {
             try { await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
@@ -502,9 +549,12 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
 
       const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
       setResponse(res.data);
+      // refresh terminal logs shortly after send
+      try { setTimeout(() => { void loadDebuggerLogs(); }, 200); } catch {}
     } catch (err: any) {
       console.error('Debug request failed:', err);
       setStdError(err.response?.data?.detail || 'Failed to make debug request');
+      try { setTimeout(() => { void loadDebuggerLogs(); }, 200); } catch {}
     } finally {
       setLoading(false);
     }
@@ -1001,8 +1051,17 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         {/* Debugger Terminal (last 100) */}
         <Card>
           <CardHeader>
-            <CardTitle>Debugger Terminal (last 100)</CardTitle>
-            <CardDescription>Live request/response events from the Debugger. No secrets are stored.</CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Debugger Terminal (last 100)</CardTitle>
+                <CardDescription>Live request/response events from the Debugger. No secrets are stored.</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => exportDebuggerLogs('json')}>Save JSON</Button>
+                <Button size="sm" variant="outline" onClick={() => exportDebuggerLogs('ndjson')}>Save NDJSON</Button>
+                <Button size="sm" variant="outline" onClick={() => exportDebuggerLogs('txt')}>Save TXT</Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {debugLogsLoading && <div className="text-sm text-gray-600">Loading...</div>}
@@ -1021,10 +1080,10 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                         <div className="mt-1 text-green-300">
                           → {log.request.method} {log.request.url}
                           {log.request.headers && (
-                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-24">{JSON.stringify(log.request.headers, null, 2)}</pre>
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-24 whitespace-pre-wrap break-words">{JSON.stringify(log.request.headers, null, 2)}</pre>
                           )}
                           {log.request.body && (
-                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-24">{typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}</pre>
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-24 whitespace-pre-wrap break-words">{typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}</pre>
                           )}
                         </div>
                       )}
@@ -1032,10 +1091,10 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                         <div className="mt-1 text-blue-300">
                           ← status: {log.response.status}
                           {log.response.headers && (
-                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-24">{JSON.stringify(log.response.headers, null, 2)}</pre>
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-24 whitespace-pre-wrap break-words">{JSON.stringify(log.response.headers, null, 2)}</pre>
                           )}
                           {typeof log.response.body !== 'undefined' && (
-                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32">{typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}</pre>
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 whitespace-pre-wrap break-words">{typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}</pre>
                           )}
                         </div>
                       )}
