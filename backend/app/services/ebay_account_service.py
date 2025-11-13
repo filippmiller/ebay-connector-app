@@ -78,6 +78,8 @@ class EbayAccountService:
         query = db.query(EbayAccount).filter(EbayAccount.org_id == org_id)
         if active_only:
             query = query.filter(EbayAccount.is_active == True)
+        # Prefer most recently connected accounts first
+        query = query.order_by(EbayAccount.connected_at.desc(), EbayAccount.updated_at.desc())
         return query.all()
     
     def update_account(

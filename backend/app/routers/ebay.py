@@ -276,24 +276,31 @@ async def get_token_info(
             detail=f"User is not connected to eBay ({env})"
         )
     
-    access_token = get_user_ebay_token(current_user, env)
-    token_expires_at = get_user_ebay_token_expires_at(current_user, env)
-    
-    # Get scopes and account info from database
+    # Select active account (most recently connected) and its latest token
+    from app.services.ebay_account_service import ebay_account_service
+    from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayToken, EbayAuthorization
+    db_session = next(get_db())
+    access_token = None
+    token_expires_at = None
     user_scopes = []
     ebay_user_id = None
     ebay_username = None
-    from app.services.ebay_account_service import ebay_account_service
-    from app.models_sqlalchemy import get_db
-    db_session = next(get_db())
     try:
         accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
         if accounts:
             account = accounts[0]
             ebay_user_id = account.ebay_user_id
             ebay_username = account.username
-            
-            from app.models_sqlalchemy.models import EbayAuthorization
+            token_row = (
+                db_session.query(EbayToken)
+                .filter(EbayToken.ebay_account_id == account.id)
+                .order_by(EbayToken.updated_at.desc())
+                .first()
+            )
+            if token_row:
+                access_token = token_row.access_token
+                token_expires_at = token_row.expires_at
             auths = db_session.query(EbayAuthorization).filter(
                 EbayAuthorization.ebay_account_id == account.id
             ).all()
@@ -302,7 +309,7 @@ async def get_token_info(
         logger.error(f"Error getting account info: {e}")
     finally:
         db_session.close()
-    
+
     # Get token info
     from app.utils.token_utils import extract_token_info, format_scopes_for_display
     token_info = extract_token_info(access_token) if access_token else {}
@@ -311,14 +318,14 @@ async def get_token_info(
         "user_email": current_user.email,
         "user_id": current_user.id,
         "ebay_environment": env,
-        "token_full": access_token,  # UNMASKED TOKEN
+        "token_full": access_token,  # UNMASKED TOKEN (dev/debug); production UI uses admin endpoints
         "token_length": len(access_token) if access_token else 0,
         "token_version": token_info.get("version"),
         "token_expires_at": token_expires_at.isoformat() if token_expires_at else None,
         "scopes": user_scopes,
         "scopes_display": format_scopes_for_display(user_scopes),
         "scopes_count": len(user_scopes),
-        "ebay_connected": is_user_ebay_connected(current_user, env),
+        "ebay_connected": bool(access_token),
         "ebay_user_id": ebay_user_id,
         "ebay_username": ebay_username
     }
@@ -1069,29 +1076,40 @@ async def debug_ebay_api(
         )
     
     debugger = EbayAPIDebugger(current_user.id, raw_mode=False, save_history=False)
-    
-    # Load user token (override environment explicitly)
-    if not debugger.load_user_token(env_override=env):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to load user token"
-        )
-    
-    # Get user scopes from account
+
+    # Load account-level token for active account (no legacy user fields)
     user_scopes = []
     from app.services.ebay_account_service import ebay_account_service
     from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayToken, EbayAuthorization
     db_session = next(get_db())
     try:
         accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
-        if accounts:
-            from app.models_sqlalchemy.models import EbayAuthorization
-            auths = db_session.query(EbayAuthorization).filter(
-                EbayAuthorization.ebay_account_id == accounts[0].id
-            ).all()
-            user_scopes = [auth.scope for auth in auths] if auths else []
-    except:
-        pass
+        if not accounts:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active eBay account")
+        active_account = accounts[0]
+        token_row = (
+            db_session.query(EbayToken)
+            .filter(EbayToken.ebay_account_id == active_account.id)
+            .order_by(EbayToken.updated_at.desc())
+            .first()
+        )
+        if not token_row or not token_row.access_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to load user token")
+        # Set debugger context
+        debugger.access_token = token_row.access_token
+        debugger.user = type("U", (), {"email": current_user.email, "id": current_user.id, "ebay_environment": env})
+        debugger.base_url = "https://api.sandbox.ebay.com" if env == "sandbox" else "https://api.ebay.com"
+        # Scopes from authorizations
+        auths = db_session.query(EbayAuthorization).filter(
+            EbayAuthorization.ebay_account_id == active_account.id
+        ).all()
+        user_scopes = [auth.scope for auth in auths] if auths else []
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading account token: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to load user token")
     finally:
         db_session.close()
     

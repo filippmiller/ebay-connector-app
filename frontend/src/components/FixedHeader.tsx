@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BUILD_NUMBER, BUILD_TIMESTAMP } from '@/config/build';
+import { BUILD_NUMBER, BUILD_TIMESTAMP, BUILD_BRANCH, BUILD_COMMIT } from '@/config/build';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderTab {
@@ -71,7 +71,7 @@ export default function FixedHeader() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-xs font-mono text-gray-500">Build #{BUILD_NUMBER} - {formatBuildTime(BUILD_TIMESTAMP)}</span>
+          <span className="text-xs font-mono text-gray-500">Build #{BUILD_NUMBER} • {BUILD_BRANCH}@{BUILD_COMMIT} • {formatBuildTime(BUILD_TIMESTAMP)}</span>
           <span className="text-xs text-gray-600">{user?.email}</span>
           <Button
             onClick={handleLogout}

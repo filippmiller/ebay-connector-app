@@ -125,7 +125,7 @@ async def get_ebay_tokens_info(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no_account")
 
-    token: Optional[EbayToken] = db.query(EbayToken).filter(EbayToken.ebay_account_id == account.id).first()
+    token: Optional[EbayToken] = db.query(EbayToken).filter(EbayToken.ebay_account_id == account.id).order_by(EbayToken.updated_at.desc()).first()
     auth: Optional[EbayAuthorization] = db.query(EbayAuthorization).filter(EbayAuthorization.ebay_account_id == account.id).first()
 
     now = datetime.now(timezone.utc)
@@ -148,14 +148,25 @@ async def get_ebay_tokens_info(
             user_id=current_user.id,
             environment=env,
             action="token_info_viewed",
-            request={"method": "GET", "url": f"/api/admin/ebay/tokens/info?env={env}"}
+            request={"method": "GET", "url": f"/api/admin/ebay/tokens/info?env={env}"},
+            response={
+                "status": 200,
+                "body": {
+                    "meta": {
+                        "ebay_account_id": str(account.id),
+                        "ebay_username": account.username,
+                        "access_len": (len(token.access_token) if token and token.access_token else 0),
+                        "refresh_len": (len(token.refresh_token) if token and token.refresh_token else 0)
+                    }
+                }
+            }
         )
     except Exception:
         pass
 
     return {
         "now_utc": now.isoformat(),
-        "source": "user",
+        "source": "account_level",
         "ebay_account": {
             "id": account.id,
             "username": account.username,
@@ -201,6 +212,11 @@ async def refresh_ebay_access_token(
         token.access_token = new_resp.access_token
         token.expires_at = datetime.now(timezone.utc) + (timedelta(seconds=new_resp.expires_in) if getattr(new_resp, 'expires_in', None) else timedelta(seconds=0))
         token.last_refreshed_at = datetime.now(timezone.utc)
+        # If eBay rotated refresh token or returned its TTL, persist it
+        if getattr(new_resp, 'refresh_token', None):
+            token.refresh_token = new_resp.refresh_token
+        if getattr(new_resp, 'refresh_token_expires_in', None):
+            token.refresh_expires_at = datetime.now(timezone.utc) + timedelta(seconds=getattr(new_resp, 'refresh_token_expires_in'))
         db.commit()
         db.refresh(token)
         # Log success (no secrets)
@@ -210,7 +226,19 @@ async def refresh_ebay_access_token(
                 environment=env,
                 action="token_refreshed",
                 request={"method": "POST", "url": f"/api/admin/ebay/tokens/refresh?env={env}"},
-                response={"status": 200, "body": {"access_expires_at": token.expires_at.isoformat() if token.expires_at else None}}
+                response={
+                    "status": 200,
+                    "body": {
+                        "meta": {
+                            "ebay_account_id": str(account.id),
+                            "ebay_username": account.username,
+                            "access_len": (len(token.access_token) if token and token.access_token else 0),
+                            "refresh_len": (len(token.refresh_token) if token and token.refresh_token else 0),
+                            "access_expires_at": token.expires_at.isoformat() if token.expires_at else None,
+                            "refresh_expires_at": token.refresh_expires_at.isoformat() if token.refresh_expires_at else None
+                        }
+                    }
+                }
             )
         except Exception:
             pass
