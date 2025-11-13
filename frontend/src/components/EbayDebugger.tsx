@@ -10,6 +10,7 @@ import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Switch } from './ui/switch';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import api from '../lib/apiClient';
 // Feature flag with safe fallbacks: env var, localStorage, or ?tokeninfo=1
 const FEATURE_TOKEN_INFO = (
@@ -102,6 +103,11 @@ export const EbayDebugger: React.FC = () => {
   const [rawRequest, setRawRequest] = useState<string>('');
   const [copied, setCopied] = useState<string>('');
   const [lineWrap, setLineWrap] = useState<boolean>(false);
+
+  // Reconnect modal state
+  const [showReconnect, setShowReconnect] = useState(false);
+  const [reconnectUrl, setReconnectUrl] = useState('');
+  const [reconnectScopes, setReconnectScopes] = useState<string[]>([]);
   
   // Token Info
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
@@ -470,6 +476,8 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         const missing = required.filter(r => !(userScopes || []).includes(r));
         if (missing.length > 0) {
           setStdError(`Missing required scopes: ${missing.join(', ')}`);
+          setReconnectScopes(missing);
+          setShowReconnect(true);
           // Log to token terminal (production only, behind flag)
           if (FEATURE_TOKEN_INFO && environment === 'production') {
             try { await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
@@ -483,6 +491,15 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         }
       }
     } catch {}
+
+    // If we have missing scopes, pre-generate reconnect URL for the modal
+    if (showReconnect && reconnectScopes.length > 0) {
+      try {
+        const redirectUri = `${window.location.origin}/ebay/callback`;
+        const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: reconnectScopes });
+        setReconnectUrl(data.authorization_url);
+      } catch {}
+    }
 
     if (totalTestingMode) {
       // Handle raw request via backend
@@ -1108,6 +1125,32 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
             </ScrollArea>
           </CardContent>
         </Card>
+
+        {/* Reconnect with required scopes (pre-flight) */}
+        <Dialog open={showReconnect} onOpenChange={(o)=> setShowReconnect(o)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Reconnect with required scopes</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="text-gray-700">Scopes we are about to request:</div>
+              <div className="flex flex-wrap gap-1">
+                {reconnectScopes.map((s,i)=> (
+                  <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50">{s}</span>
+                ))}
+              </div>
+              {reconnectUrl && (
+                <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto">
+                  GET {reconnectUrl}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={()=> setShowReconnect(false)}>Cancel</Button>
+              <Button onClick={()=> { if (reconnectUrl) { localStorage.setItem('ebay_oauth_environment', environment); window.location.href = reconnectUrl; } }}>Proceed to eBay</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         </TabsContent>
 
         <TabsContent value="token-info" className="space-y-4">

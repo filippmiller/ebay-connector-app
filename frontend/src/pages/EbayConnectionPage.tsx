@@ -5,6 +5,7 @@ import { ebayApi } from '../api/ebay';
 import api from '../lib/apiClient';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -55,6 +56,11 @@ export const EbayConnectionPage: React.FC = () => {
   const [connectLogs, setConnectLogs] = useState<EbayConnectLog[]>([]);
   const [connectLogLoading, setConnectLogLoading] = useState(false);
   const [connectLogError, setConnectLogError] = useState('');
+
+  // Pre-flight modal state
+  const [preflightOpen, setPreflightOpen] = useState(false);
+  const [preflightUrl, setPreflightUrl] = useState<string>('');
+  const [preflightScopes, setPreflightScopes] = useState<string[]>([]);
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -165,7 +171,14 @@ export const EbayConnectionPage: React.FC = () => {
       const redirectUri = `${window.location.origin}/ebay/callback`;
       localStorage.setItem('ebay_oauth_environment', environment);
       const response = await ebayApi.startAuth(redirectUri, environment);
-      window.location.href = response.authorization_url;
+      setPreflightUrl(response.authorization_url);
+      // Parse scopes from URL for display
+      try {
+        const u = new URL(response.authorization_url);
+        const scopeStr = (u.searchParams.get('scope') || '').trim();
+        setPreflightScopes(scopeStr ? scopeStr.split(' ') : []);
+      } catch {}
+      setPreflightOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start eBay authorization');
       setLoading(false);
@@ -569,6 +582,36 @@ export const EbayConnectionPage: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Pre-flight Authorization Modal */}
+              <Dialog open={preflightOpen} onOpenChange={(o)=> setPreflightOpen(o)}>
+                <DialogContent className="max-w-3xl">
+                  <DialogHeader>
+                    <DialogTitle>Review eBay Authorization Request</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3 text-sm">
+                    <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto">
+                      GET {preflightUrl}
+                    </div>
+                    <div>
+                      <div className="font-semibold mb-1">Scopes</div>
+                      {preflightScopes.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {preflightScopes.map((s,i)=> (
+                            <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50">{s}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-gray-600">(none parsed)</div>
+                      )}
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={()=> { setPreflightOpen(false); setLoading(false); }}>Cancel</Button>
+                    <Button onClick={()=> { window.location.href = preflightUrl; }}>Proceed to eBay</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <Card>
                   <CardHeader>
