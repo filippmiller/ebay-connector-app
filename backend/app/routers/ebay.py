@@ -197,7 +197,8 @@ async def ebay_auth_callback(
                 account.id,
                 token_response.access_token,
                 token_response.refresh_token,
-                token_response.expires_in
+                token_response.expires_in,
+                refresh_token_expires_in=getattr(token_response, 'refresh_token_expires_in', None)
             )
             
             scopes = token_response.scope.split() if hasattr(token_response, 'scope') and token_response.scope else []
