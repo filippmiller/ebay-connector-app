@@ -1169,12 +1169,29 @@ async def debug_ebay_api(
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
+    # Mask token for logs
+    masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in request_headers.items()}
     if headers_dict:
         request_headers.update(headers_dict)
     
     # Make request
     start_time = time.time()
     try:
+        # Log request to terminal (no secrets)
+        try:
+            ebay_connect_logger.log_event(
+                user_id=current_user.id,
+                environment=env,
+                action="debug_request",
+                request={
+                    "method": method,
+                    "url": url,
+                    "headers": masked_headers_for_log,
+                    "body": body_str
+                }
+            )
+        except Exception:
+            pass
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
             if method.upper() == "GET":
@@ -1200,6 +1217,25 @@ async def debug_ebay_api(
                 response_body = response.json()
             except:
                 response_body = response.text
+            
+            # Log response to terminal (no secrets)
+            try:
+                ebay_connect_logger.log_event(
+                    user_id=current_user.id,
+                    environment=env,
+                    action="debug_response",
+                    request={
+                        "method": method,
+                        "url": url
+                    },
+                    response={
+                        "status": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": (response_body if isinstance(response_body, dict) else (response_body[:5000] if isinstance(response_body, str) else str(response_body)))
+                    }
+                )
+            except Exception:
+                pass
             
             # Get eBay headers
             ebay_headers = {k: v for k, v in response.headers.items() 
