@@ -11,7 +11,11 @@ import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Switch } from './ui/switch';
 import api from '../lib/apiClient';
-const FEATURE_TOKEN_INFO = (import.meta.env.VITE_FEATURE_TOKEN_INFO === 'true');
+// Feature flag with safe fallbacks: env var, localStorage, or ?tokeninfo=1
+const FEATURE_TOKEN_INFO = (
+  (import.meta.env.VITE_FEATURE_TOKEN_INFO === 'true') ||
+  (typeof window !== 'undefined' && (localStorage.getItem('enable_token_info') === '1' || new URLSearchParams(window.location.search).get('tokeninfo') === '1'))
+);
 import { Loader2, Play, Copy, Check } from 'lucide-react';
 
 interface DebugTemplate {
@@ -168,7 +172,7 @@ export const EbayDebugger: React.FC = () => {
   }, [environment, totalTestingMode]);
 
   const loadAdminTokenInfo = async () => {
-    if (!FEATURE_TOKEN_INFO || environment !== 'production') { setAdminTokenInfo(null); return; }
+    if (environment !== 'production') { setAdminTokenInfo(null); return; }
     try {
       const { data } = await api.get('/admin/ebay/tokens/info?env=production');
       setAdminTokenInfo(data);
@@ -192,13 +196,13 @@ export const EbayDebugger: React.FC = () => {
 
   // Auto-poll logs every 10s while on token-info tab in production
   useEffect(() => {
-    if (!(FEATURE_TOKEN_INFO && environment === 'production' && activeTab === 'token-info')) return;
+    if (!(environment === 'production' && activeTab === 'token-info')) return;
     const id = setInterval(() => { void loadTokenLogs(); }, 10000);
     return () => clearInterval(id);
   }, [FEATURE_TOKEN_INFO, environment, activeTab]);
 
   const refreshAdminToken = async () => {
-    if (!FEATURE_TOKEN_INFO || environment !== 'production') return;
+    if (environment !== 'production') return;
     setRefreshingAdmin(true);
     try {
       await api.post('/admin/ebay/tokens/refresh?env=production');
@@ -383,7 +387,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
       const tpl = selectedTemplate && selectedTemplate !== 'custom' ? selectedTemplate : null;
       if (tpl) {
         const required = REQUIRED_SCOPES_BY_TEMPLATE[tpl] || [];
-        const userScopes: string[] = (FEATURE_TOKEN_INFO && environment === 'production')
+        const userScopes: string[] = (environment === 'production')
           ? (adminTokenInfo?.scopes || [])
           : (tokenInfo?.scopes || []);
         const missing = required.filter(r => !(userScopes || []).includes(r));
@@ -969,7 +973,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 </Alert>
               ) : tokenInfo ? (
                 <div className="space-y-4">
-                  {FEATURE_TOKEN_INFO && environment === 'production' && (
+          {environment === 'production' && (
                     <div className="space-y-2 p-3 bg-amber-50 border border-amber-200 rounded">
                       <div className="flex items-center justify-between">
                         <div>
@@ -1101,7 +1105,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
               )}
 
               {/* Token Terminal Log (persistent, last 100) */}
-              {FEATURE_TOKEN_INFO && environment === 'production' && (
+              {environment === 'production' && (
                 <Card className="mt-4">
                   <CardHeader>
                     <CardTitle>🖥️ Token Terminal Log</CardTitle>
