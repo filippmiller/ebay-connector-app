@@ -18,6 +18,35 @@ import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
 import { Link as LinkIcon, Unlink, Loader2 } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
 
+// Full set of whitelisted scopes provided by admin (base first)
+const MY_SCOPES: string[] = [
+  'https://api.ebay.com/oauth/api_scope',
+  'https://api.ebay.com/oauth/api_scope/sell.marketing.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.marketing',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory',
+  'https://api.ebay.com/oauth/api_scope/sell.account.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.account',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+  'https://api.ebay.com/oauth/api_scope/sell.analytics.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.finances',
+  'https://api.ebay.com/oauth/api_scope/sell.payment.dispute',
+  'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.reputation',
+  'https://api.ebay.com/oauth/api_scope/sell.reputation.readonly',
+  'https://api.ebay.com/oauth/api_scope/commerce.notification.subscription',
+  'https://api.ebay.com/oauth/api_scope/commerce.notification.subscription.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.stores',
+  'https://api.ebay.com/oauth/api_scope/sell.stores.readonly',
+  'https://api.ebay.com/oauth/scope/sell.edelivery',
+  'https://api.ebay.com/oauth/api_scope/commerce.vero',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory.mapping',
+  'https://api.ebay.com/oauth/api_scope/commerce.message',
+  'https://api.ebay.com/oauth/api_scope/commerce.feedback',
+  'https://api.ebay.com/oauth/api_scope/commerce.shipping',
+];
+
 const DEFAULT_SCOPES = [
   'https://api.ebay.com/oauth/api_scope',
   'https://api.ebay.com/oauth/api_scope/sell.account',
@@ -597,7 +626,7 @@ export const EbayConnectionPage: React.FC = () => {
                     <div>
                       <div className="font-semibold mb-1">Scopes from URL</div>
                       {preflightScopes.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
                           {preflightScopes.map((s,i)=> (
                             <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50">{s}</span>
                           ))}
@@ -620,6 +649,14 @@ export const EbayConnectionPage: React.FC = () => {
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={()=> { setPreflightOpen(false); setLoading(false); }}>Cancel</Button>
+                    <Button variant="outline" onClick={async ()=> {
+                      try {
+                        const redirectUri = `${window.location.origin}/ebay/callback`;
+                        const union = Array.from(new Set([...(preflightScopes||[]), ...MY_SCOPES]));
+                        const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
+                        window.location.href = data.authorization_url;
+                      } catch (e) { setLoading(false); }
+                    }}>Request all my scopes</Button>
                     <Button onClick={async ()=> {
                       try {
                         const added = (extraScopesInput||'').trim().split(/\s+/).filter(Boolean);

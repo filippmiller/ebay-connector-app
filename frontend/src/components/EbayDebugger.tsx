@@ -17,6 +17,35 @@ const FEATURE_TOKEN_INFO = (
   (import.meta.env.VITE_FEATURE_TOKEN_INFO === 'true') ||
   (typeof window !== 'undefined' && (localStorage.getItem('enable_token_info') === '1' || new URLSearchParams(window.location.search).get('tokeninfo') === '1'))
 );
+
+// Full set of whitelisted scopes provided by admin (base first)
+const MY_SCOPES: string[] = [
+  'https://api.ebay.com/oauth/api_scope',
+  'https://api.ebay.com/oauth/api_scope/sell.marketing.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.marketing',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory',
+  'https://api.ebay.com/oauth/api_scope/sell.account.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.account',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+  'https://api.ebay.com/oauth/api_scope/sell.analytics.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.finances',
+  'https://api.ebay.com/oauth/api_scope/sell.payment.dispute',
+  'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.reputation',
+  'https://api.ebay.com/oauth/api_scope/sell.reputation.readonly',
+  'https://api.ebay.com/oauth/api_scope/commerce.notification.subscription',
+  'https://api.ebay.com/oauth/api_scope/commerce.notification.subscription.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.stores',
+  'https://api.ebay.com/oauth/api_scope/sell.stores.readonly',
+  'https://api.ebay.com/oauth/scope/sell.edelivery',
+  'https://api.ebay.com/oauth/api_scope/commerce.vero',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory.mapping',
+  'https://api.ebay.com/oauth/api_scope/commerce.message',
+  'https://api.ebay.com/oauth/api_scope/commerce.feedback',
+  'https://api.ebay.com/oauth/api_scope/commerce.shipping',
+];
 import { Loader2, Play, Copy, Check } from 'lucide-react';
 
 interface DebugTemplate {
@@ -192,6 +221,21 @@ export const EbayDebugger: React.FC = () => {
       }
     }
   }, [environment, totalTestingMode]);
+
+  // When reconnect modal opens or scopes change, pre-generate the authorization URL
+  useEffect(() => {
+    const gen = async () => {
+      if (!showReconnect || reconnectScopes.length === 0) return;
+      try {
+        const redirectUri = `${window.location.origin}/ebay/callback`;
+        const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: reconnectScopes });
+        setReconnectUrl(data.authorization_url);
+      } catch {
+        // ignore
+      }
+    };
+    void gen();
+  }, [showReconnect, reconnectScopes, environment]);
 
   const loadAdminTokenInfo = async () => {
     if (environment !== 'production') { setAdminTokenInfo(null); return; }
@@ -1134,7 +1178,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
             </DialogHeader>
             <div className="space-y-3 text-sm">
               <div className="text-gray-700">Scopes we are about to request:</div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
                 {reconnectScopes.map((s,i)=> (
                   <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50">{s}</span>
                 ))}
@@ -1147,6 +1191,15 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={()=> setShowReconnect(false)}>Cancel</Button>
+              <Button variant="outline" onClick={async ()=> {
+                try {
+                  const redirectUri = `${window.location.origin}/ebay/callback`;
+                  const union = Array.from(new Set([...(reconnectScopes||[]), ...MY_SCOPES]));
+                  const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
+                  localStorage.setItem('ebay_oauth_environment', environment);
+                  window.location.href = data.authorization_url;
+                } catch {}
+              }}>Request all my scopes</Button>
               <Button onClick={()=> { if (reconnectUrl) { localStorage.setItem('ebay_oauth_environment', environment); window.location.href = reconnectUrl; } }}>Proceed to eBay</Button>
             </DialogFooter>
           </DialogContent>
