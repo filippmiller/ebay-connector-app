@@ -108,6 +108,55 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  // Export helpers for Connection Terminal
+  const exportConnectLogs = (format: 'json' | 'ndjson' | 'txt') => {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filenameBase = `connect_logs_${environment}_${ts}`;
+
+    let blob: Blob;
+    if (format === 'json') {
+      blob = new Blob([JSON.stringify({ logs: connectLogs }, null, 2)], { type: 'application/json' });
+      triggerDownload(`${filenameBase}.json`, blob);
+      return;
+    }
+    if (format === 'ndjson') {
+      const nd = connectLogs.map(l => JSON.stringify(l)).join('\n');
+      blob = new Blob([nd], { type: 'application/x-ndjson' });
+      triggerDownload(`${filenameBase}.ndjson`, blob);
+      return;
+    }
+    // txt (pretty)
+    const txt = connectLogs.map(l => {
+      const lines: string[] = [];
+      lines.push(`[${new Date(l.created_at).toISOString()}] ${l.environment} • ${l.action}`);
+      if (l.request) {
+        lines.push(`→ ${l.request.method || ''} ${l.request.url || ''}`);
+        if (l.request.headers) lines.push(`headers: ${JSON.stringify(l.request.headers)}`);
+        if (l.request.body) lines.push(`body: ${typeof l.request.body === 'string' ? l.request.body : JSON.stringify(l.request.body)}`);
+      }
+      if (l.response) {
+        lines.push(`← status: ${l.response.status ?? ''}`);
+        if (l.response.headers) lines.push(`resp-headers: ${JSON.stringify(l.response.headers)}`);
+        if (typeof l.response.body !== 'undefined') lines.push(`resp-body: ${typeof l.response.body === 'string' ? l.response.body : JSON.stringify(l.response.body)}`);
+      }
+      if (l.error) lines.push(`error: ${l.error}`);
+      return lines.join('\n');
+    }).join('\n\n');
+    blob = new Blob([txt], { type: 'text/plain' });
+    triggerDownload(`${filenameBase}.txt`, blob);
+  };
+
+  const triggerDownload = (filename: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const handleConnectEbay = async () => {
     setError('');
     setLoading(true);
@@ -522,18 +571,27 @@ export const EbayConnectionPage: React.FC = () => {
               </Card>
 
               <Card>
-                <CardHeader>
+                  <CardHeader>
                   <CardTitle>Connection Terminal</CardTitle>
                   <CardDescription>
                     Real-time history of connect requests and responses. Data is stored in the database for diagnostics.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {connectLogError && (
-                    <Alert variant="destructive" className="mb-3">
-                      <AlertDescription>{connectLogError}</AlertDescription>
-                    </Alert>
-                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    {connectLogError ? (
+                      <Alert variant="destructive" className="mr-3">
+                        <AlertDescription>{connectLogError}</AlertDescription>
+                      </Alert>
+                    ) : (
+                      <div className="text-sm text-gray-600" />
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={() => exportConnectLogs('json')}>Save JSON</Button>
+                      <Button size="sm" variant="outline" onClick={() => exportConnectLogs('ndjson')}>Save NDJSON</Button>
+                      <Button size="sm" variant="outline" onClick={() => exportConnectLogs('txt')}>Save TXT</Button>
+                    </div>
+                  </div>
                   {connectLogLoading && (
                     <div className="flex items-center text-sm text-gray-600 mb-2">
                       <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading connection logs...
@@ -554,17 +612,17 @@ export const EbayConnectionPage: React.FC = () => {
                           {log.request && (
                             <div className="mt-2">
                               <div className="text-green-400 font-semibold">→ REQUEST</div>
-                              <div className="text-green-200 mt-1">
+                              <div className="text-green-200 mt-1 overflow-x-auto">
                                 {log.request.method} {log.request.url}
                               </div>
                               {log.request.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100">
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-green-100 whitespace-pre-wrap break-words">
                                   {JSON.stringify(log.request.headers, null, 2)}
                                 </pre>
                               )}
                               {log.request.body && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100">
-                                  {JSON.stringify(log.request.body, null, 2)}
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-green-100 whitespace-pre-wrap break-words">
+                                  {typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}
                                 </pre>
                               )}
                             </div>
@@ -575,13 +633,13 @@ export const EbayConnectionPage: React.FC = () => {
                                 ← RESPONSE {log.response.status ?? ''}
                               </div>
                               {log.response.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-blue-100">
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-blue-100 whitespace-pre-wrap break-words">
                                   {JSON.stringify(log.response.headers, null, 2)}
                                 </pre>
                               )}
                               {typeof log.response.body !== 'undefined' && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-48 text-blue-100">
-                                  {JSON.stringify(log.response.body, null, 2)}
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-48 text-blue-100 whitespace-pre-wrap break-words">
+                                  {typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}
                                 </pre>
                               )}
                             </div>

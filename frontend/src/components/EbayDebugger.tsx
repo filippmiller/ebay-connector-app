@@ -101,6 +101,7 @@ export const EbayDebugger: React.FC = () => {
   const [debugLogsLoading, setDebugLogsLoading] = useState(false);
   const [rawRequest, setRawRequest] = useState<string>('');
   const [copied, setCopied] = useState<string>('');
+  const [lineWrap, setLineWrap] = useState<boolean>(false);
   
   // Token Info
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
@@ -859,18 +860,22 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
             {/* Full URL in one line */}
             <div className="mb-4 p-3 bg-gray-50 rounded border">
               <div className="flex items-center justify-between">
-                <div className="flex-1">
+                <div className="flex-1 overflow-x-auto">
                   <Label className="text-xs text-gray-500 mb-1 block">Full Request URL (one line)</Label>
                   <p className="font-mono text-sm break-all">{response.request.url_full || response.request.url}</p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => copyToClipboard(response.request.url_full || response.request.url, 'url')}
-                  className="ml-2"
-                >
-                  {copied === 'url' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
+                <div className="flex items-center gap-2 ml-2">
+                  <Button variant="outline" size="sm" onClick={() => setLineWrap(prev => !prev)}>
+                    {lineWrap ? 'Disable wrap' : 'Wrap lines'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(response.request.url_full || response.request.url, 'url')}
+                  >
+                    {copied === 'url' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -887,26 +892,26 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     </div>
                     <div>
                       <Label className="text-xs text-gray-500">URL</Label>
-                      <p className="font-mono text-xs break-all">{response.request.url}</p>
+                      <p className="font-mono text-xs break-all overflow-x-auto">{response.request.url}</p>
                     </div>
                     {Object.keys(response.request.params).length > 0 && (
                       <div>
                         <Label className="text-xs text-gray-500">Query Parameters</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {JSON.stringify(response.request.params, null, 2)}
                         </pre>
                       </div>
                     )}
                     <div>
                       <Label className="text-xs text-gray-500">Headers</Label>
-                      <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                      <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                         {JSON.stringify(response.request.headers, null, 2)}
                       </pre>
                     </div>
                     {response.request.body && (
                       <div>
                         <Label className="text-xs text-gray-500">Body</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {typeof response.request.body === 'string' 
                             ? response.request.body 
                             : JSON.stringify(response.request.body, null, 2)}
@@ -916,7 +921,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     {response.request.curl_command && (
                       <div>
                         <Label className="text-xs text-gray-500">cURL Command</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {response.request.curl_command}
                         </pre>
                       </div>
@@ -938,7 +943,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     </div>
                     <div>
                       <Label className="text-xs text-gray-500">Response Body</Label>
-                      <pre className="text-xs bg-white p-2 rounded overflow-auto border max-h-[500px]">
+                      <pre className={`text-xs bg-white p-2 rounded overflow-auto border max-h-[500px] ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                         {typeof response.response.body === 'string'
                           ? response.response.body
                           : JSON.stringify(response.response.body, null, 2)}
@@ -966,13 +971,13 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                       <>
                         <div>
                           <Label className="text-xs text-gray-500">eBay-Specific Headers</Label>
-                          <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                          <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                             {JSON.stringify(response.response.ebay_headers, null, 2)}
                           </pre>
                         </div>
                         <div>
                           <Label className="text-xs text-gray-500">All Response Headers</Label>
-                          <pre className="text-xs bg-white p-2 rounded overflow-auto border max-h-[400px]">
+                          <pre className={`text-xs bg-white p-2 rounded overflow-auto border max-h-[400px] ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                             {JSON.stringify(response.response.headers, null, 2)}
                           </pre>
                         </div>
@@ -980,7 +985,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     ) : (
                       <div>
                         <Label className="text-xs text-gray-500">All Response Headers</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {JSON.stringify(response.response.headers, null, 2)}
                         </pre>
                       </div>

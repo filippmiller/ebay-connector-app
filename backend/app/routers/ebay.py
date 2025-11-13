@@ -1367,7 +1367,6 @@ async def debug_ebay_api_raw(
     """
     import re
     import time
-    import json as pyjson
     import httpx
 
     env = environment or current_user.ebay_environment or "sandbox"
@@ -1406,6 +1405,29 @@ async def debug_ebay_api_raw(
             body_lines.append(line)
 
     body_str = "\n".join(body_lines) if body_lines else None
+
+    # Derive token and scopes (for context only)
+    auth_header = next((v for k, v in headers.items() if k.lower() == "authorization"), None)
+    token_in_header = None
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token_in_header = auth_header[len("Bearer "):] if auth_header.startswith("Bearer ") else auth_header[len("bearer "):]
+
+    # Load account-level scopes for visibility
+    user_scopes = []
+    try:
+        from app.services.ebay_account_service import ebay_account_service
+        from app.models_sqlalchemy import get_db
+        from app.models_sqlalchemy.models import EbayAuthorization, EbayAccount
+        db_session = next(get_db())
+        accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
+        if accounts:
+            active_account = accounts[0]
+            auths = db_session.query(EbayAuthorization).filter(
+                EbayAuthorization.ebay_account_id == active_account.id
+            ).all()
+            user_scopes = [a.scope for a in auths] if auths else []
+    except Exception:
+        pass
 
     # Log request (mask Authorization)
     masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in headers.items()}
@@ -1471,11 +1493,27 @@ async def debug_ebay_api_raw(
 
         ebay_headers = {k: v for k, v in resp.headers.items() if k.lower().startswith("x-ebay")}
 
+        # Build request_context enriched for Raw Mode
+        from app.utils.token_utils import mask_token, format_scopes_for_display, extract_token_info
+        token_masked = mask_token(token_in_header) if token_in_header else None
+        token_version = None
+        try:
+            if token_in_header:
+                token_version = extract_token_info(token_in_header).get("version")
+        except Exception:
+            pass
+
         return {
             "request_context": {
                 "user_email": current_user.email,
                 "user_id": current_user.id[:8] + "..." if len(current_user.id) > 8 else current_user.id,
                 "environment": env,
+                "token": (token_masked or ""),
+                "token_full": token_in_header,
+                "token_version": token_version,
+                "scopes": user_scopes,
+                "scopes_display": format_scopes_for_display(user_scopes),
+                "scopes_full": user_scopes,
             },
             "request": {
                 "method": method,
