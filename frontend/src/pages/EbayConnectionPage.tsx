@@ -726,7 +726,7 @@ export const EbayConnectionPage: React.FC = () => {
                                 {log.request.method} {log.request.url}
                               </div>
                               {log.request.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-green-100 whitespace-pre-wrap break-words">
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-green-100 whitespace-pre">
                                   {JSON.stringify(log.request.headers, null, 2)}
                                 </pre>
                               )}
@@ -743,12 +743,12 @@ export const EbayConnectionPage: React.FC = () => {
                                 ← RESPONSE {log.response.status ?? ''}
                               </div>
                               {log.response.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-blue-100 whitespace-pre-wrap break-words">
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-blue-100 whitespace-pre">
                                   {JSON.stringify(log.response.headers, null, 2)}
                                 </pre>
                               )}
                               {typeof log.response.body !== 'undefined' && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-48 text-blue-100 whitespace-pre-wrap break-words">
+                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-48 text-blue-100 whitespace-pre">
                                   {typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}
                                 </pre>
                               )}
@@ -969,7 +969,7 @@ export const EbayConnectionPage: React.FC = () => {
                   </Button>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="h-96 w-full rounded-md border bg-black text-white p-4 font-mono text-sm">
+                  <ScrollArea className="h-96 w-full rounded-md border bg-black text-white p-4 font-mono text-sm overflow-x-auto">
                     {logs.length === 0 ? (
                       <div className="text-gray-400">No logs yet. Connect to eBay to see credential exchanges.</div>
                     ) : (
