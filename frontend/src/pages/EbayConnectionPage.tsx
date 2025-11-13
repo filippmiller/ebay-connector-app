@@ -85,6 +85,8 @@ export const EbayConnectionPage: React.FC = () => {
   const [connectLogs, setConnectLogs] = useState<EbayConnectLog[]>([]);
   const [connectLogLoading, setConnectLogLoading] = useState(false);
   const [connectLogError, setConnectLogError] = useState('');
+  // Connection Terminal UX
+  const [connWrap, setConnWrap] = useState<boolean>(false);
 
   // Pre-flight modal state
   const [preflightOpen, setPreflightOpen] = useState(false);
@@ -700,6 +702,7 @@ export const EbayConnectionPage: React.FC = () => {
                       <Button size="sm" variant="outline" onClick={() => exportConnectLogs('json')}>Save JSON</Button>
                       <Button size="sm" variant="outline" onClick={() => exportConnectLogs('ndjson')}>Save NDJSON</Button>
                       <Button size="sm" variant="outline" onClick={() => exportConnectLogs('txt')}>Save TXT</Button>
+                      <Button size="sm" variant="outline" onClick={() => setConnWrap(w => !w)}>{connWrap ? 'Disable wrap' : 'Wrap lines'}</Button>
                     </div>
                   </div>
                   {connectLogLoading && (
@@ -707,14 +710,14 @@ export const EbayConnectionPage: React.FC = () => {
                       <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading connection logs...
                     </div>
                   )}
-                  <ScrollArea className="h-80 rounded border bg-gray-900 p-4 text-xs font-mono">
+                  <div className="h-80 rounded border bg-gray-900 p-4 text-xs font-mono overflow-auto">
                     {connectLogs.length === 0 ? (
                       <div className="text-gray-400">
                         No connection events yet. Click "Connect to eBay" to generate logs.
                       </div>
                     ) : (
                       connectLogs.map((log) => (
-                        <div key={log.id} className="border-b border-gray-800 pb-4 mb-4 last:border-0 last:pb-0 last:mb-0">
+                        <div key={log.id} className="border-b border-gray-800 pb-4 mb-4 last:border-0 last:pb-0 last:mb-0 text-white">
                           <div className="flex flex-wrap items-center justify-between text-gray-400">
                             <span>[{new Date(log.created_at).toLocaleString()}]</span>
                             <span>{log.environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'} • {log.action}</span>
@@ -722,18 +725,14 @@ export const EbayConnectionPage: React.FC = () => {
                           {log.request && (
                             <div className="mt-2">
                               <div className="text-green-400 font-semibold">→ REQUEST</div>
-                              <div className="text-green-200 mt-1 overflow-x-auto">
-                                {log.request.method} {log.request.url}
-                              </div>
+                              <pre className={`mt-1 text-green-200 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
+                                {`${log.request.method || ''} ${log.request.url || ''}`}
+                              </pre>
                               {log.request.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-green-100 whitespace-pre">
-                                  {JSON.stringify(log.request.headers, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{JSON.stringify(log.request.headers, null, 2)}</pre>
                               )}
                               {log.request.body && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-green-100 whitespace-pre-wrap break-words">
-                                  {typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}</pre>
                               )}
                             </div>
                           )}
@@ -743,14 +742,10 @@ export const EbayConnectionPage: React.FC = () => {
                                 ← RESPONSE {log.response.status ?? ''}
                               </div>
                               {log.response.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 text-blue-100 whitespace-pre">
-                                  {JSON.stringify(log.response.headers, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-blue-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{JSON.stringify(log.response.headers, null, 2)}</pre>
                               )}
                               {typeof log.response.body !== 'undefined' && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-48 text-blue-100 whitespace-pre">
-                                  {typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-48 text-blue-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}</pre>
                               )}
                             </div>
                           )}
@@ -760,7 +755,7 @@ export const EbayConnectionPage: React.FC = () => {
                         </div>
                       ))
                     )}
-                  </ScrollArea>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
