@@ -91,6 +91,7 @@ export const EbayConnectionPage: React.FC = () => {
   const [preflightUrl, setPreflightUrl] = useState<string>('');
   const [preflightScopes, setPreflightScopes] = useState<string[]>([]);
   const [extraScopesInput, setExtraScopesInput] = useState<string>('');
+  const [preflightSubmitting, setPreflightSubmitting] = useState(false);
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -594,7 +595,7 @@ export const EbayConnectionPage: React.FC = () => {
                     </ScrollArea>
                     <div className="mt-3">
                       <h4 className="text-sm font-semibold mb-2">Raw Authorization URL</h4>
-                      <div className="p-2 bg-gray-50 border rounded font-mono text-xs break-all">
+                      <div className="p-2 bg-gray-50 border rounded font-mono text-xs whitespace-pre-wrap break-words">
                         {(() => {
                           const base = environment === 'production' ? 'https://auth.ebay.com/oauth2/authorize' : 'https://auth.sandbox.ebay.com/oauth2/authorize';
                           const qs = new URLSearchParams({
@@ -614,13 +615,13 @@ export const EbayConnectionPage: React.FC = () => {
               </Card>
 
               {/* Pre-flight Authorization Modal */}
-              <Dialog open={preflightOpen} onOpenChange={(o)=> { setPreflightOpen(o); if (!o) setLoading(false); }}>
-                <DialogContent className="max-w-3xl">
+              <Dialog open={preflightOpen} onOpenChange={(o)=> { setPreflightOpen(o); if (!o) { setLoading(false); setPreflightSubmitting(false); } }}>
+                <DialogContent className="max-w-3xl max-h-[70vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>Review eBay Authorization Request</DialogTitle>
                   </DialogHeader>
                   <div className="space-y-4 text-sm">
-                    <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto whitespace-pre break-all">
+                    <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto whitespace-pre-wrap break-words">
                       GET {preflightUrl}
                     </div>
                     <div>
@@ -628,7 +629,7 @@ export const EbayConnectionPage: React.FC = () => {
                       {preflightScopes.length > 0 ? (
                         <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
                           {preflightScopes.map((s,i)=> (
-                            <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50">{s}</span>
+                            <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50 break-all">{s}</span>
                           ))}
                         </div>
                       ) : (
@@ -648,28 +649,33 @@ export const EbayConnectionPage: React.FC = () => {
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button variant="outline" onClick={()=> { setPreflightOpen(false); setLoading(false); }}>Cancel</Button>
-                    <Button variant="outline" onClick={async ()=> {
+                    <Button variant="outline" onClick={()=> { setPreflightOpen(false); setLoading(false); setPreflightSubmitting(false); }}>Cancel</Button>
+                    <Button variant="outline" disabled={preflightSubmitting} onClick={async ()=> {
                       try {
+                        setPreflightSubmitting(true);
                         const redirectUri = `${window.location.origin}/ebay/callback`;
                         const union = Array.from(new Set([...(preflightScopes||[]), ...MY_SCOPES]));
                         const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
-                        window.location.href = data.authorization_url;
-                      } catch (e) { setLoading(false); }
+                        setPreflightOpen(false);
+                        window.location.assign(data.authorization_url);
+                      } catch (e) { setLoading(false); setPreflightSubmitting(false); }
                     }}>Request all my scopes</Button>
-                    <Button onClick={async ()=> {
+                    <Button disabled={preflightSubmitting} onClick={async ()=> {
                       try {
+                        setPreflightSubmitting(true);
                         const added = (extraScopesInput||'').trim().split(/\s+/).filter(Boolean);
                         if (added.length > 0) {
                           const redirectUri = `${window.location.origin}/ebay/callback`;
                           const union = Array.from(new Set([...(preflightScopes||[]), ...added]));
                           const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
-                          window.location.href = data.authorization_url;
+                          setPreflightOpen(false);
+                          window.location.assign(data.authorization_url);
                           return;
                         }
-                        window.location.href = preflightUrl;
-                      } catch (e) { setLoading(false); }
-                    }}>Proceed to eBay</Button>
+                        setPreflightOpen(false);
+                        window.location.assign(preflightUrl);
+                      } catch (e) { setLoading(false); setPreflightSubmitting(false); }
+                    }}>{preflightSubmitting ? 'Redirecting…' : 'Proceed to eBay'}</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
