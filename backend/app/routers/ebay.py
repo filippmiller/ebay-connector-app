@@ -1283,7 +1283,9 @@ async def debug_ebay_api(
                     action="debug_response",
                     request={
                         "method": method,
-                        "url": url
+                        "url": url,
+                        "headers": masked_headers_for_log,
+                        "body": body_str
                     },
                     response={
                         "status": response.status_code,
@@ -1481,7 +1483,12 @@ async def debug_ebay_api_raw(
                 user_id=current_user.id,
                 environment=env,
                 action="debug_raw_response",
-                request={"method": method, "url": url},
+                request={
+                    "method": method,
+                    "url": url,
+                    "headers": masked_headers_for_log,
+                    "body": body_str
+                },
                 response={
                     "status": resp.status_code,
                     "headers": dict(resp.headers),
