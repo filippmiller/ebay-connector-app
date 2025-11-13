@@ -92,9 +92,13 @@ export const EbayDebugger: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<DebugResponse | null>(null);
   const [error, setError] = useState<string>('');
+  const [stdError, setStdError] = useState<string>('');
+  const [rawError, setRawError] = useState<string>('');
   
   // Total Testing Mode
   const [totalTestingMode, setTotalTestingMode] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<any[]>([]);
+  const [debugLogsLoading, setDebugLogsLoading] = useState(false);
   const [rawRequest, setRawRequest] = useState<string>('');
   const [copied, setCopied] = useState<string>('');
   
@@ -143,6 +147,11 @@ export const EbayDebugger: React.FC = () => {
 
   useEffect(() => {
     loadTemplates();
+    if (activeTab === 'debugger') {
+      void loadDebuggerLogs();
+      const id = setInterval(() => { if (!totalTestingMode) void loadDebuggerLogs(); }, 10000);
+      return () => clearInterval(id);
+    }
     if (activeTab === 'token-info') {
       loadTokenInfo();
       if (FEATURE_TOKEN_INFO && environment === 'production') {
@@ -150,7 +159,13 @@ export const EbayDebugger: React.FC = () => {
         void loadTokenLogs();
       }
     }
-  }, [activeTab, environment]);
+  }, [activeTab, environment, totalTestingMode]);
+
+  // Reset errors when switching mode
+  useEffect(() => {
+    setStdError('');
+    setRawError('');
+  }, [totalTestingMode]);
 
   // Update rawRequest URL when environment changes
   useEffect(() => {
@@ -353,6 +368,19 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
     messages: ['https://api.ebay.com/oauth/api_scope/trading'],
   };
 
+  const loadDebuggerLogs = async () => {
+    try {
+      setDebugLogsLoading(true);
+      const { data } = await api.get(`/ebay/connect/logs?environment=${environment}&limit=100`);
+      const onlyDebug = (data.logs || []).filter((l:any)=> String(l.action||'').startsWith('debug_'));
+      setDebugLogs(onlyDebug);
+    } catch {
+      // ignore
+    } finally {
+      setDebugLogsLoading(false);
+    }
+  };
+
   const handleTemplateSelect = (templateName: string) => {
     setSelectedTemplate(templateName);
     const template = templates[templateName];
@@ -382,6 +410,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
   };
 
   const handleDebug = async () => {
+    setStdError('');
     // Scope guard for Quick Templates (only when a non-custom template is selected)
     try {
       const tpl = selectedTemplate && selectedTemplate !== 'custom' ? selectedTemplate : null;
@@ -414,12 +443,12 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         return;
       }
       // TODO: Parse raw request and send
-      setError('Total Testing Mode - raw request parsing not yet implemented');
+      setRawError('Total Testing Mode - raw request parsing not yet implemented');
       return;
     }
 
     if (!path) {
-      setError('Path is required');
+      setStdError('Path is required');
       return;
     }
 
@@ -462,7 +491,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
       setResponse(res.data);
     } catch (err: any) {
       console.error('Debug request failed:', err);
-      setError(err.response?.data?.detail || 'Failed to make debug request');
+      setStdError(err.response?.data?.detail || 'Failed to make debug request');
     } finally {
       setLoading(false);
     }
@@ -673,14 +702,39 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
           )}
 
           {/* Error */}
-          {error && (
+          {stdError && (
             <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>{stdError}</AlertDescription>
             </Alert>
           )}
 
-          {/* Submit Button */}
-          <Button onClick={handleDebug} disabled={loading || (!totalTestingMode && !path) || (totalTestingMode && !rawRequest.trim())}>
+            {/* Raw Request Preview (one line + headers) */}
+            {!totalTestingMode && (
+              <div className="mb-3 p-3 bg-gray-50 rounded border">
+                <Label className="text-xs text-gray-500 mb-1 block">Raw Request Preview</Label>
+                <pre className="text-xs font-mono whitespace-pre-wrap break-all">{`${method} ${(() => {
+                  const base = environment === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+                  const p = path.startsWith('http') ? path : (path.startsWith('/') ? `${base}${path}` : `${base}/${path}`);
+                  const paramsObj: Record<string,string> = {};
+                  (params||'').split('&').forEach((pair)=>{ const [k,v] = pair.split('='); if(k&&v) paramsObj[k.trim()] = v.trim(); });
+                  const qs = new URLSearchParams(paramsObj).toString();
+                  return qs ? `${p}?${qs}` : p;
+                })()}`}
+{Object.entries((() => {
+  const hdrs: Record<string,string> = {};
+  (headers||'').split(',').forEach((pair)=>{ const [k,v] = pair.split(':'); if(k&&v) hdrs[k.trim()] = v.trim(); });
+  // We always add Authorization/Accept/Content-Type
+  hdrs['Authorization'] = 'Bearer ***';
+  hdrs['Accept'] = 'application/json';
+  if(['POST','PUT','PATCH'].includes(method.toUpperCase())) hdrs['Content-Type']='application/json';
+  return hdrs;
+})()).map(([k,v])=>`\n${k}: ${v}`).join('')}
+{['POST','PUT','PATCH'].includes(method.toUpperCase()) && body ? `\n\n${body}` : ''}
+</pre>
+              </div>
+            )}
+            {/* Submit Button */}
+            <Button onClick={handleDebug} disabled={loading || (!totalTestingMode && !path) || (totalTestingMode && !rawRequest.trim())}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -923,6 +977,58 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
           </CardContent>
         </Card>
         )}
+
+        {/* Debugger Terminal (last 100) */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Debugger Terminal (last 100)</CardTitle>
+            <CardDescription>Live request/response events from the Debugger. No secrets are stored.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {debugLogsLoading && <div className="text-sm text-gray-600">Loading...</div>}
+            <ScrollArea className="h-80 rounded border bg-gray-900 p-4 font-mono text-xs">
+              {debugLogs.length === 0 ? (
+                <div className="text-gray-400">No debugger events yet.</div>
+              ) : (
+                <div className="space-y-3">
+                  {debugLogs.map((log:any)=> (
+                    <div key={log.id} className="border-b border-gray-800 pb-3">
+                      <div className="flex items-center justify-between text-gray-400">
+                        <span>[{new Date(log.created_at).toLocaleString()}]</span>
+                        <span>{log.action}</span>
+                      </div>
+                      {log.request && (
+                        <div className="mt-1 text-green-300">
+                          → {log.request.method} {log.request.url}
+                          {log.request.headers && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-24">{JSON.stringify(log.request.headers, null, 2)}</pre>
+                          )}
+                          {log.request.body && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-24">{typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}</pre>
+                          )}
+                        </div>
+                      )}
+                      {log.response && (
+                        <div className="mt-1 text-blue-300">
+                          ← status: {log.response.status}
+                          {log.response.headers && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-24">{JSON.stringify(log.response.headers, null, 2)}</pre>
+                          )}
+                          {typeof log.response.body !== 'undefined' && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32">{typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}</pre>
+                          )}
+                        </div>
+                      )}
+                      {log.error && (
+                        <div className="mt-1 text-red-300">error: {log.error}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </CardContent>
+        </Card>
         </TabsContent>
 
         <TabsContent value="token-info" className="space-y-4">
@@ -962,7 +1068,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 </div>
               </div>
 
-              {tokenInfoLoading ? (
+          {tokenInfoLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin mr-2" />
                   Loading token information...

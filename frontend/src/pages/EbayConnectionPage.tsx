@@ -500,9 +500,23 @@ export const EbayConnectionPage: React.FC = () => {
                         </div>
                       ))}
                     </ScrollArea>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Actual state and scope values are generated on the server and recorded in the terminal below.
-                    </p>
+                    <div className="mt-3">
+                      <h4 className="text-sm font-semibold mb-2">Raw Authorization URL</h4>
+                      <div className="p-2 bg-gray-50 border rounded font-mono text-xs break-all">
+                        {(() => {
+                          const base = environment === 'production' ? 'https://auth.ebay.com/oauth2/authorize' : 'https://auth.sandbox.ebay.com/oauth2/authorize';
+                          const qs = new URLSearchParams({
+                            response_type: 'code',
+                            redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
+                            scope: DEFAULT_SCOPES.join(' '),
+                            state: 'generated server-side',
+                            client_id: 'configured server-side'
+                          }).toString();
+                          return `GET ${base}?${qs}`;
+                        })()}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2">Actual values (client_id/state) задаются сервером и логируются в “Connection Terminal”.</p>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
