@@ -113,10 +113,14 @@ class EbayAccountService:
         access_token: str,
         refresh_token: Optional[str],
         expires_in: int,
+        *,
+        refresh_token_expires_in: Optional[int] = None,
         token_type: str = "Bearer"
     ) -> EbayToken:
-        """Save or update tokens for an account"""
-        expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        """Save or update tokens for an account, including optional refresh token expiry."""
+        now = datetime.utcnow()
+        expires_at = now + timedelta(seconds=expires_in)
+        refresh_expires_at = (now + timedelta(seconds=refresh_token_expires_in)) if refresh_token_expires_in else None
         
         existing_token = db.query(EbayToken).filter(
             EbayToken.ebay_account_id == account_id
@@ -128,24 +132,34 @@ class EbayAccountService:
                 existing_token.refresh_token = refresh_token
             existing_token.token_type = token_type
             existing_token.expires_at = expires_at
-            existing_token.last_refreshed_at = datetime.utcnow()
+            existing_token.last_refreshed_at = now
+            if refresh_expires_at:
+                # Only set if provided by eBay
+                if hasattr(existing_token, 'refresh_expires_at'):
+                    existing_token.refresh_expires_at = refresh_expires_at
             existing_token.refresh_error = None
-            existing_token.updated_at = datetime.utcnow()
+            existing_token.updated_at = now
             db.commit()
             db.refresh(existing_token)
             logger.info(f"Updated tokens for account: {account_id}")
             return existing_token
         
-        token_id = str(uuid.uuid4())
-        token = EbayToken(
-            id=token_id,
+        token_kwargs = dict(
+            id=str(uuid.uuid4()),
             ebay_account_id=account_id,
             access_token=access_token,
             refresh_token=refresh_token,
             token_type=token_type,
             expires_at=expires_at,
-            last_refreshed_at=datetime.utcnow()
+            last_refreshed_at=now,
         )
+        if refresh_expires_at is not None:
+            # Only set if ORM model has the column
+            try:
+                token_kwargs['refresh_expires_at'] = refresh_expires_at
+            except Exception:
+                pass
+        token = EbayToken(**token_kwargs)
         db.add(token)
         db.commit()
         db.refresh(token)

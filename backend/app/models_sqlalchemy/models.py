@@ -769,6 +769,7 @@ class EbayToken(Base):
     refresh_token = Column(Text, nullable=True)
     token_type = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
+    refresh_expires_at = Column(DateTime(timezone=True), nullable=True)
     last_refreshed_at = Column(DateTime(timezone=True), nullable=True)
     refresh_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
