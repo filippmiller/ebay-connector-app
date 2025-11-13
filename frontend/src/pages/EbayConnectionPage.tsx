@@ -61,6 +61,7 @@ export const EbayConnectionPage: React.FC = () => {
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightUrl, setPreflightUrl] = useState<string>('');
   const [preflightScopes, setPreflightScopes] = useState<string[]>([]);
+  const [extraScopesInput, setExtraScopesInput] = useState<string>('');
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -584,17 +585,17 @@ export const EbayConnectionPage: React.FC = () => {
               </Card>
 
               {/* Pre-flight Authorization Modal */}
-              <Dialog open={preflightOpen} onOpenChange={(o)=> setPreflightOpen(o)}>
+              <Dialog open={preflightOpen} onOpenChange={(o)=> { setPreflightOpen(o); if (!o) setLoading(false); }}>
                 <DialogContent className="max-w-3xl">
                   <DialogHeader>
                     <DialogTitle>Review eBay Authorization Request</DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-3 text-sm">
-                    <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto">
+                  <div className="space-y-4 text-sm">
+                    <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto whitespace-pre break-all">
                       GET {preflightUrl}
                     </div>
                     <div>
-                      <div className="font-semibold mb-1">Scopes</div>
+                      <div className="font-semibold mb-1">Scopes from URL</div>
                       {preflightScopes.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {preflightScopes.map((s,i)=> (
@@ -605,10 +606,33 @@ export const EbayConnectionPage: React.FC = () => {
                         <div className="text-gray-600">(none parsed)</div>
                       )}
                     </div>
+                    <div>
+                      <div className="font-semibold mb-1">Additional scopes (space-separated)</div>
+                      <textarea
+                        className="w-full border rounded p-2 font-mono text-xs"
+                        rows={3}
+                        placeholder="Paste extra scopes here to request all whitelisted ones"
+                        value={extraScopesInput}
+                        onChange={(e)=> setExtraScopesInput(e.target.value)}
+                      />
+                      <div className="text-xs text-gray-500 mt-1">We’ll merge these with the current list and request them in one authorization.</div>
+                    </div>
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={()=> { setPreflightOpen(false); setLoading(false); }}>Cancel</Button>
-                    <Button onClick={()=> { window.location.href = preflightUrl; }}>Proceed to eBay</Button>
+                    <Button onClick={async ()=> {
+                      try {
+                        const added = (extraScopesInput||'').trim().split(/\s+/).filter(Boolean);
+                        if (added.length > 0) {
+                          const redirectUri = `${window.location.origin}/ebay/callback`;
+                          const union = Array.from(new Set([...(preflightScopes||[]), ...added]));
+                          const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
+                          window.location.href = data.authorization_url;
+                          return;
+                        }
+                        window.location.href = preflightUrl;
+                      } catch (e) { setLoading(false); }
+                    }}>Proceed to eBay</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
