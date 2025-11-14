@@ -2,11 +2,19 @@ import { apiClient } from './client';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
 
 export const ebayApi = {
-  async startAuth(redirectUri: string, environment: 'sandbox' | 'production' = 'sandbox', scopes?: string[]): Promise<{ authorization_url: string; state: string }> {
+  async startAuth(
+    redirectUri: string,
+    environment: 'sandbox' | 'production' = 'sandbox',
+    scopes?: string[],
+    houseName?: string,
+  ): Promise<{ authorization_url: string; state: string }> {
     const params = new URLSearchParams({ 
       redirect_uri: redirectUri,
-      environment: environment
+      environment: environment,
     });
+    if (houseName) {
+      params.set('house_name', houseName);
+    }
     const body = scopes ? { scopes } : {};
     const response = await apiClient.post(`/ebay/auth/start?${params}`, body);
     return response.data;

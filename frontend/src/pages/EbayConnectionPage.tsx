@@ -10,13 +10,13 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 import { Input } from '../components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SyncTerminal } from '../components/SyncTerminal';
 import { EbayDebugger } from '../components/EbayDebugger';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
-import { Link as LinkIcon, Unlink, Loader2 } from 'lucide-react';
+import { Link as LinkIcon, Loader2 } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
 
 const DEFAULT_SCOPES = [
@@ -34,10 +34,8 @@ export const EbayConnectionPage: React.FC = () => {
   const [logs, setLogs] = useState<EbayLog[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
-    const saved = localStorage.getItem('ebay_environment');
-    return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
-  });
+  // For now operate only against production environment on this page
+  const [environment] = useState<'sandbox' | 'production'>('production');
   
   const [syncing, setSyncing] = useState(false);
   const [syncingTransactions, setSyncingTransactions] = useState(false);
@@ -94,6 +92,7 @@ export const EbayConnectionPage: React.FC = () => {
   const [accounts, setAccounts] = useState<EbayAccountWithToken[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [accountsError, setAccountsError] = useState('');
+  const [selectedConnectAccountId, setSelectedConnectAccountId] = useState<string | null>(null);
 
   // Account detail modal state (token + scopes)
   const [accountDetailOpen, setAccountDetailOpen] = useState(false);
@@ -169,6 +168,9 @@ export const EbayConnectionPage: React.FC = () => {
       setAccountsError('');
       const data = await ebayApi.getAccounts(true);
       setAccounts(data || []);
+      if (!selectedConnectAccountId && data && data.length > 0) {
+        setSelectedConnectAccountId(data[0].id);
+      }
     } catch (err) {
       console.error('Failed to load eBay accounts:', err);
       setAccountsError('Failed to load eBay accounts');
@@ -246,8 +248,14 @@ export const EbayConnectionPage: React.FC = () => {
 
     try {
       const redirectUri = `${window.location.origin}/ebay/callback`;
-      localStorage.setItem('ebay_oauth_environment', environment);
-      const response = await ebayApi.startAuth(redirectUri, environment);
+      // For now always initiate auth in production
+      const env: 'sandbox' | 'production' = 'production';
+      localStorage.setItem('ebay_oauth_environment', env);
+
+      const selectedAcc = accounts.find((a) => a.id === selectedConnectAccountId) || null;
+      const houseName = selectedAcc?.house_name || selectedAcc?.username || undefined;
+
+      const response = await ebayApi.startAuth(redirectUri, env, undefined, houseName);
       setPreflightUrl(response.authorization_url);
       // Parse scopes from URL for display
       try {
@@ -542,106 +550,82 @@ export const EbayConnectionPage: React.FC = () => {
               )}
 
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-xl">eBay Connection Status</CardTitle>
-                  <CardDescription className="text-sm text-gray-600">
-                    Manage your eBay API connection
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
-                    <div className="flex items-center gap-3">
-                      <Label htmlFor="env-switch" className="font-medium">
-                        Environment:
-                      </Label>
-                      <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
-                        {environment === 'sandbox' ? 'Sandbox (Testing)' : 'Production (Live)'}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Label htmlFor="env-switch" className="text-sm text-gray-600">
-                        Sandbox
-                      </Label>
-                      <Switch
-                        id="env-switch"
-                        checked={environment === 'production'}
-                        onCheckedChange={(checked) => {
-                          const newEnv = checked ? 'production' : 'sandbox';
-                          setEnvironment(newEnv);
-                          localStorage.setItem('ebay_environment', newEnv);
-                        }}
-                        disabled={connectionStatus?.connected}
-                      />
-                      <Label htmlFor="env-switch" className="text-sm text-gray-600">
-                        Production
-                      </Label>
-                    </div>
+                <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <CardTitle className="text-xl">eBay Connection</CardTitle>
+                    <CardDescription className="text-sm text-gray-600">
+                      Select an eBay account and start a new OAuth connect flow.
+                    </CardDescription>
                   </div>
-
-                  {connectionStatus?.connected && (
-                    <p className="text-xs text-gray-500 flex items-center gap-1">
-                      Disconnect to change environment. Currently using:
-                      <strong>{environment}</strong>
-                    </p>
-                  )}
-
-                  <div className="flex items-center gap-4">
-                    <div>
-                      <span className="text-sm text-gray-600">Status: </span>
-                      {connectionStatus?.connected ? (
-                        <Badge className="bg-green-100 text-green-800">
-                          <LinkIcon className="w-3 h-3 mr-1" />
+                  <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+                    <Badge variant="destructive">Production (Live)</Badge>
+                    {connectionStatus?.connected && (
+                      <>
+                        <Badge className="bg-green-100 text-green-800 flex items-center gap-1">
+                          <LinkIcon className="w-3 h-3" />
                           Connected
                         </Badge>
-                      ) : (
-                        <Badge variant="secondary">
-                          <Unlink className="w-3 h-3 mr-1" />
-                          Not Connected
-                        </Badge>
-                      )}
-                    </div>
-                    {connectionStatus?.connected && connectionStatus?.expires_at && (
-                      <div className="text-sm text-gray-600">
-                        Expires: {new Date(connectionStatus.expires_at).toLocaleString()}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-4 flex gap-3">
-                    {connectionStatus?.connected ? (
-                      <>
+                        {connectionStatus.expires_at && (
+                          <span className="text-gray-600">
+                            Expires: {new Date(connectionStatus.expires_at).toLocaleString()}
+                          </span>
+                        )}
                         <Button 
                           onClick={() => navigate('/ebay/test')}
                           disabled={loading}
+                          size="sm"
                         >
-                          Test eBay API
+                          Test API
                         </Button>
                         <Button 
                           variant="destructive" 
                           onClick={handleDisconnect}
                           disabled={loading}
+                          size="sm"
                         >
-                          {loading ? 'Disconnecting...' : 'Disconnect from eBay'}
+                          {loading ? 'Disconnecting…' : 'Disconnect'}
                         </Button>
                       </>
-                    ) : (
-                      <Button 
-                        onClick={handleConnectEbay}
-                        disabled={loading}
-                      >
-                        {loading ? 'Connecting...' : 'Connect to eBay'}
-                      </Button>
                     )}
                   </div>
-
-                  <div className="pt-4 border-t">
-                    <h3 className="text-base font-semibold mb-2">About eBay OAuth</h3>
-                    <p className="text-sm text-gray-700 leading-relaxed max-w-3xl">
-                      To connect to eBay, you need to provide your eBay API credentials 
-                      (Client ID, Client Secret, and Redirect URI) in the backend configuration.
-                      Once configured, clicking "Connect to eBay" will redirect you to eBay's 
-                      authorization page where you can grant access to your eBay account.
-                    </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex-1">
+                      <Label className="text-xs font-medium text-gray-700">eBay account to (re)connect</Label>
+                      {accountsLoading ? (
+                        <div className="text-xs text-gray-500 mt-1">Loading accounts…</div>
+                      ) : accounts.length > 0 ? (
+                        <Select
+                          value={selectedConnectAccountId || accounts[0]?.id}
+                          onValueChange={(val) => setSelectedConnectAccountId(val)}
+                        >
+                          <SelectTrigger className="mt-1 h-8 text-xs w-full sm:w-72">
+                            <SelectValue placeholder="Select eBay account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {accounts.map((acc) => (
+                              <SelectItem key={acc.id} value={acc.id}>
+                                {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <p className="text-xs text-gray-500 mt-1">
+                          No eBay accounts yet. Connecting will create a new account from the eBay user you log in with.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-end sm:items-center gap-2">
+                      <Button 
+                        onClick={handleConnectEbay}
+                        disabled={loading || (accounts.length > 0 && !selectedConnectAccountId)}
+                        size="sm"
+                      >
+                        {loading ? 'Connecting…' : 'Connect to eBay'}
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
