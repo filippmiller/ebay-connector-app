@@ -270,13 +270,19 @@ export const EbayDebugger: React.FC = () => {
     }
   }, [environment, totalTestingMode]);
 
-  // When reconnect modal opens or scopes change, pre-generate the authorization URL
+  // When reconnect modal opens or scopes change, pre-generate the authorization URL.
+  // IMPORTANT: always request the full whitelisted scope set, not just the minimal missing scopes,
+  // so that reconnect from the Debugger never "shrinks" the token to a narrower scope set.
   useEffect(() => {
     const gen = async () => {
       if (!showReconnect || reconnectScopes.length === 0) return;
       try {
         const redirectUri = `${window.location.origin}/ebay/callback`;
-        const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: reconnectScopes });
+        const union = Array.from(new Set([...(reconnectScopes || []), ...MY_SCOPES]));
+        const { data } = await api.post(
+          `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+          { scopes: union },
+        );
         setReconnectUrl(data.authorization_url);
       } catch {
         // ignore

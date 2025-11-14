@@ -748,32 +748,54 @@ export const EbayConnectionPage: React.FC = () => {
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={()=> { setPreflightOpen(false); setLoading(false); setPreflightSubmitting(false); }}>Cancel</Button>
-                    <Button variant="outline" disabled={preflightSubmitting} onClick={async ()=> {
-                      try {
-                        setPreflightSubmitting(true);
-                        const redirectUri = `${window.location.origin}/ebay/callback`;
-                        const union = Array.from(new Set([...(preflightScopes||[]), ...(availableScopes || [])]));
-                        const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
-                        setPreflightOpen(false);
-                        window.location.assign(data.authorization_url);
-                      } catch (e) { setLoading(false); setPreflightSubmitting(false); }
-                    }}>Request all my scopes</Button>
-                    <Button disabled={preflightSubmitting} onClick={async ()=> {
-                      try {
-                        setPreflightSubmitting(true);
-                        const added = (extraScopesInput||'').trim().split(/\s+/).filter(Boolean);
-                        if (added.length > 0) {
+                    <Button
+                      variant="outline"
+                      disabled={preflightSubmitting}
+                      onClick={async ()=> {
+                        try {
+                          setPreflightSubmitting(true);
                           const redirectUri = `${window.location.origin}/ebay/callback`;
-                          const union = Array.from(new Set([...(preflightScopes||[]), ...added]));
-                          const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
+                          const baseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
+                          const union = Array.from(new Set(baseScopes));
+                          const { data } = await api.post(
+                            `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+                            { scopes: union },
+                          );
                           setPreflightOpen(false);
                           window.location.assign(data.authorization_url);
-                          return;
+                        } catch (e) {
+                          setLoading(false);
+                          setPreflightSubmitting(false);
                         }
-                        setPreflightOpen(false);
-                        window.location.assign(preflightUrl);
-                      } catch (e) { setLoading(false); setPreflightSubmitting(false); }
-                    }}>{preflightSubmitting ? 'Redirecting…' : 'Proceed to eBay'}</Button>
+                      }}
+                    >
+                      Request all my scopes
+                    </Button>
+                    <Button
+                      disabled={preflightSubmitting}
+                      onClick={async ()=> {
+                        try {
+                          setPreflightSubmitting(true);
+                          const redirectUri = `${window.location.origin}/ebay/callback`;
+                          const baseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
+                          const added = (extraScopesInput||'').trim().split(/\s+/).filter(Boolean);
+                          const union = added.length > 0
+                            ? Array.from(new Set([...baseScopes, ...added]))
+                            : Array.from(new Set(baseScopes));
+                          const { data } = await api.post(
+                            `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+                            { scopes: union },
+                          );
+                          setPreflightOpen(false);
+                          window.location.assign(data.authorization_url);
+                        } catch (e) {
+                          setLoading(false);
+                          setPreflightSubmitting(false);
+                        }
+                      }}
+                    >
+                      {preflightSubmitting ? 'Redirecting…' : 'Proceed to eBay'}
+                    </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
