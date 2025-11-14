@@ -913,14 +913,14 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # Use orderfulfillmentstatus filter instead of date filter (lastModifiedDate and createdDate are not supported)
-                # For date filtering, we'll fetch all orders and filter client-side if needed
+                # For now we do not send any explicit status/date filter and instead
+                # rely on eBay's default time window. Once the exact filter
+                # semantics are finalized, we can re-introduce a canonical
+                # filter here (e.g. creationdate or lastmodifieddate ranges).
                 filter_params = {
-                    # Fetch orders whose fulfillment is completed
-                    "filter": "orderfulfillmentstatus:FULFILLED",
                     "limit": limit,
                     "offset": offset,
-                    "fieldGroups": "TAX_BREAKDOWN"
+                    "fieldGroups": "TAX_BREAKDOWN",
                 }
                 
                 # Check for cancellation BEFORE making the API request

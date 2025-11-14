@@ -1274,13 +1274,13 @@ async def get_debug_templates(current_user: User = Depends(get_current_active_us
         },
         "orders": {
             "name": "Orders API - Get Orders",
-            "description": "Fetch recent orders (fulfilled)",
+            "description": "Fetch recent orders",
             "method": "GET",
             "path": "/sell/fulfillment/v1/order",
-            # eBay Fulfillment API filter for orders whose fulfillment is completed.
-            # Using value without braces to satisfy current API validation.
-            # Example final query: filter=orderfulfillmentstatus:FULFILLED
-            "params": {"limit": "1", "filter": "orderfulfillmentstatus:FULFILLED"},
+            # For now we rely on eBay's default time window and only control pagination
+            # via limit. Filtering by date/status can be added once the API behavior
+            # is fully confirmed in production.
+            "params": {"limit": "1"},
         },
         "transactions": {
             "name": "Transactions API - Get Transactions",

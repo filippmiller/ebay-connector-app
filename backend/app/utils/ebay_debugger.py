@@ -193,15 +193,15 @@ class EbayAPIDebugger:
                 "method": "GET",
                 "path": "/sell/fulfillment/v1/order",
                 "params": {
-                    # Query orders where fulfillment has been completed
+                    # Minimal request: rely on eBay's default time window and
+                    # just page via limit. Additional filters can be added via
+                    # the interactive prompts.
                     "limit": "1",
-                    "filter": "orderfulfillmentstatus:FULFILLED"
                 },
                 "headers": {},
                 "body": None,
-                "description": "Fetch recent orders (fulfilled)"
-            },
-            "transactions": {
+                "description": "Fetch recent orders"
+             },
                 "name": "Transactions API - Get Transactions",
                 "method": "GET",
                 "path": "/sell/finances/v1/transaction",
