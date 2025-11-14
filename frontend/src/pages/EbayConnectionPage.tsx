@@ -95,6 +95,14 @@ export const EbayConnectionPage: React.FC = () => {
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [accountsError, setAccountsError] = useState('');
 
+  // Account detail modal state (token + scopes)
+  const [accountDetailOpen, setAccountDetailOpen] = useState(false);
+  const [accountDetailLoading, setAccountDetailLoading] = useState(false);
+  const [accountDetailError, setAccountDetailError] = useState('');
+  const [selectedAccount, setSelectedAccount] = useState<EbayAccountWithToken | null>(null);
+  const [accountScopes, setAccountScopes] = useState<string[]>([]);
+  const [accountTokenInfo, setAccountTokenInfo] = useState<any | null>(null);
+
   // Pre-flight modal state
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightUrl, setPreflightUrl] = useState<string>('');
@@ -443,6 +451,26 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  const getAccountStatusDot = (status: string) => {
+    switch (status) {
+      case 'healthy':
+        return 'bg-green-500';
+      case 'expiring_soon':
+        return 'bg-yellow-400';
+      case 'expired':
+      case 'error':
+        return 'bg-red-500';
+      default:
+        return 'bg-gray-400';
+    }
+  };
+
+  const maskToken = (token: string | undefined | null) => {
+    if (!token) return '';
+    if (token.length <= 12) return token;
+    return `${token.slice(0, 6)}…${token.slice(-4)}`;
+  };
+
   const formatTimestamp = (timestamp: string) => {
     try {
       return new Date(timestamp).toLocaleString(undefined, { hour12: false });
@@ -451,20 +479,56 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  const openAccountDetail = async (acc: EbayAccountWithToken) => {
+    setSelectedAccount(acc);
+    setAccountDetailOpen(true);
+    setAccountDetailLoading(true);
+    setAccountDetailError('');
+    setAccountScopes([]);
+    setAccountTokenInfo(null);
+    try {
+      // Load scopes for this account
+      const authRes = await api.get(`/ebay-accounts/${acc.id}/authorizations`);
+      const scopes: string[] = Array.from(
+        new Set(
+          (authRes.data || []).flatMap((a: any) => Array.isArray(a.scopes) ? a.scopes : []),
+        ),
+      );
+      setAccountScopes(scopes);
+    } catch (e: any) {
+      setAccountDetailError(e?.response?.data?.detail || 'Failed to load account scopes');
+    }
+
+    try {
+      // Load token info (masked token, expiry, etc.)
+      const params = new URLSearchParams({ environment });
+      params.set('account_id', acc.id);
+      const tokenRes = await api.get(`/ebay/token-info?${params.toString()}`);
+      setAccountTokenInfo(tokenRes.data);
+    } catch (e: any) {
+      // Do not block modal if token-info fails; surface message if nothing else loaded
+      if (!accountDetailError) {
+        setAccountDetailError(e?.response?.data?.detail || 'Failed to load token info');
+      }
+    } finally {
+      setAccountDetailLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
       <main className="w-full pt-16 px-4 sm:px-6 lg:px-10 py-8">
         <div className="w-full mx-auto">
-          <h1 className="text-3xl font-bold mb-6">eBay Connection Management</h1>
+          <h1 className="text-4xl font-bold mb-8 tracking-tight">eBay Connection Management</h1>
 
           <Tabs defaultValue="connection" className="space-y-4">
-              <TabsList>
-              <TabsTrigger value="connection">eBay Connection</TabsTrigger>
-              <TabsTrigger value="accounts">eBay Accounts</TabsTrigger>
-              <TabsTrigger value="sync">Sync Data</TabsTrigger>
-              <TabsTrigger value="debugger">🔧 API Debugger</TabsTrigger>
-              <TabsTrigger value="terminal">Connection Terminal</TabsTrigger>
+              <TabsList className="flex flex-wrap gap-2 bg-white rounded-lg shadow-sm px-2 py-1">
+              <TabsTrigger value="connection" className="text-sm px-3 py-1">eBay Connection</TabsTrigger>
+              <TabsTrigger value="accounts" className="text-sm px-3 py-1">eBay Accounts</TabsTrigger>
+              <TabsTrigger value="sync" className="text-sm px-3 py-1">Sync Data</TabsTrigger>
+              <TabsTrigger value="debugger" className="text-sm px-3 py-1">🔧 API Debugger</TabsTrigger>
+              <TabsTrigger value="terminal" className="text-sm px-3 py-1">Connection Terminal</TabsTrigger>
             </TabsList>
 
             <TabsContent value="connection" className="space-y-4">
@@ -476,8 +540,8 @@ export const EbayConnectionPage: React.FC = () => {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>eBay Connection Status</CardTitle>
-                  <CardDescription>
+                  <CardTitle className="text-xl">eBay Connection Status</CardTitle>
+                  <CardDescription className="text-sm text-gray-600">
                     Manage your eBay API connection
                   </CardDescription>
                 </CardHeader>
@@ -569,8 +633,8 @@ export const EbayConnectionPage: React.FC = () => {
                   </div>
 
                   <div className="pt-4 border-t">
-                    <h3 className="text-sm font-medium mb-2">About eBay OAuth</h3>
-                    <p className="text-sm text-gray-600">
+                    <h3 className="text-base font-semibold mb-2">About eBay OAuth</h3>
+                    <p className="text-sm text-gray-700 leading-relaxed max-w-3xl">
                       To connect to eBay, you need to provide your eBay API credentials 
                       (Client ID, Client Secret, and Redirect URI) in the backend configuration.
                       Once configured, clicking "Connect to eBay" will redirect you to eBay's 
@@ -582,8 +646,8 @@ export const EbayConnectionPage: React.FC = () => {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Connection Request Preview</CardTitle>
-                  <CardDescription>
+                  <CardTitle className="text-xl">Connection Request Preview</CardTitle>
+                  <CardDescription className="text-sm text-gray-600">
                     Preview of the authorization request that will be sent to eBay for the selected environment.
                   </CardDescription>
                 </CardHeader>
@@ -813,8 +877,8 @@ export const EbayConnectionPage: React.FC = () => {
             <TabsContent value="accounts" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>eBay Accounts</CardTitle>
-                  <CardDescription>
+                  <CardTitle className="text-xl">eBay Accounts</CardTitle>
+                  <CardDescription className="text-sm text-gray-600">
                     All eBay accounts for this organization, with token status and health.
                   </CardDescription>
                 </CardHeader>
@@ -833,10 +897,23 @@ export const EbayConnectionPage: React.FC = () => {
                   {accounts.length > 0 && (
                     <div className="space-y-3">
                       {accounts.map((acc) => (
-                        <div key={acc.id} className="border rounded p-3 bg-gray-50 flex flex-col gap-1 text-sm">
+                        <button
+                          key={acc.id}
+                          type="button"
+                          onClick={() => openAccountDetail(acc)}
+                          className="w-full text-left border rounded p-3 bg-gray-50 flex flex-col gap-2 text-sm hover:bg-white hover:border-blue-300 transition cursor-pointer"
+                        >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
-                              <div className="font-semibold">{acc.house_name || acc.username || acc.id}</div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-gray-900">
+                                  {acc.house_name || acc.username || acc.id}
+                                </span>
+                                <span className={`inline-flex h-2 w-2 rounded-full ${getAccountStatusDot(acc.status)}`} />
+                                <span className="text-xs uppercase tracking-wide text-gray-500">
+                                  {acc.status}
+                                </span>
+                              </div>
                               <div className="text-xs text-gray-600">
                                 eBay: {acc.username || '—'} ({acc.ebay_user_id})
                               </div>
@@ -844,25 +921,121 @@ export const EbayConnectionPage: React.FC = () => {
                                 Connected at: {new Date(acc.connected_at).toLocaleString()}
                               </div>
                             </div>
-                            <div className="text-right text-xs">
-                              <div>Status: {acc.status}</div>
+                            <div className="flex flex-col items-end gap-1 text-xs text-gray-600">
                               {typeof acc.expires_in_seconds === 'number' && (
                                 <div>TTL: {acc.expires_in_seconds}s</div>
                               )}
                               {acc.token?.expires_at && (
                                 <div>Expires: {new Date(acc.token.expires_at).toLocaleString()}</div>
                               )}
+                              {acc.last_health_check && (
+                                <div>Last health: {new Date(acc.last_health_check).toLocaleString()}</div>
+                              )}
                               {acc.token?.refresh_error && (
-                                <div className="text-red-500 mt-1">Last error: {acc.token.refresh_error}</div>
+                                <div className="text-red-500">Last error: {acc.token.refresh_error}</div>
                               )}
                             </div>
                           </div>
-                        </div>
+                          <div className="mt-1 text-xs text-blue-600 flex items-center gap-1">
+                            <span>View token details &amp; scopes</span>
+                          </div>
+                        </button>
                       ))}
                     </div>
                   )}
                 </CardContent>
               </Card>
+
+              {/* Account detail modal */}
+              <Dialog open={accountDetailOpen} onOpenChange={(open) => {
+                setAccountDetailOpen(open);
+                if (!open) {
+                  setSelectedAccount(null);
+                  setAccountScopes([]);
+                  setAccountTokenInfo(null);
+                  setAccountDetailError('');
+                }
+              }}>
+                <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {selectedAccount ? (selectedAccount.house_name || selectedAccount.username || selectedAccount.id) : 'eBay Account'}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 text-sm">
+                    {selectedAccount && (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex h-2 w-2 rounded-full ${getAccountStatusDot(selectedAccount.status)}`} />
+                            <span className="text-xs uppercase tracking-wide text-gray-600">{selectedAccount.status}</span>
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            eBay: {selectedAccount.username || '—'} ({selectedAccount.ebay_user_id})
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Connected at: {new Date(selectedAccount.connected_at).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-600 space-y-1 text-right">
+                          {selectedAccount.token?.expires_at && (
+                            <div>Access expires: {new Date(selectedAccount.token.expires_at).toLocaleString()}</div>
+                          )}
+                          {selectedAccount.token?.last_refreshed_at && (
+                            <div>Last refresh: {new Date(selectedAccount.token.last_refreshed_at).toLocaleString()}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {accountDetailLoading && (
+                      <div className="flex items-center gap-2 text-xs text-gray-600">
+                        <Loader2 className="h-4 w-4 animate-spin" /> Loading token details...
+                      </div>
+                    )}
+
+                    {accountDetailError && (
+                      <Alert variant="destructive">
+                        <AlertDescription className="text-xs">{accountDetailError}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {accountTokenInfo && (
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Token</h3>
+                        <div className="bg-gray-50 border rounded p-2 text-xs font-mono space-y-1">
+                          <div>Access token: {maskToken(accountTokenInfo.token_full)}</div>
+                          <div>Expires at: {accountTokenInfo.token_expires_at || 'unknown'}</div>
+                          <div>Scopes count: {accountTokenInfo.scopes_count}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {accountScopes.length > 0 && (
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Scopes</h3>
+                        <div className="flex flex-wrap gap-1 max-h-48 overflow-y-auto">
+                          {accountScopes.map((s) => (
+                            <span key={s} className="text-[11px] px-2 py-0.5 border rounded bg-gray-50 break-all">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {accountScopes.length === 0 && !accountDetailLoading && !accountDetailError && (
+                      <div className="text-xs text-gray-500">No scopes recorded yet for this account.</div>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" size="sm" onClick={() => setAccountDetailOpen(false)}>
+                      Close
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
             </TabsContent>
 
             <TabsContent value="sync" className="space-y-4">
