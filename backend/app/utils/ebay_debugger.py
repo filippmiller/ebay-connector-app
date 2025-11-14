@@ -201,7 +201,8 @@ class EbayAPIDebugger:
                 "headers": {},
                 "body": None,
                 "description": "Fetch recent orders"
-             },
+            },
+            "transactions": {
                 "name": "Transactions API - Get Transactions",
                 "method": "GET",
                 "path": "/sell/finances/v1/transaction",
