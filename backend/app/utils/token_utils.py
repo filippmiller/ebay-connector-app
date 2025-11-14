@@ -50,6 +50,7 @@ REQUIRED_SCOPES = {
     "offers": ["https://api.ebay.com/oauth/api_scope/sell.inventory"],
     "disputes": ["https://api.ebay.com/oauth/api_scope/sell.fulfillment"],
     "messages": ["https://api.ebay.com/oauth/api_scope/trading"],
+    "seller_transactions": ["https://api.ebay.com/oauth/api_scope/trading"],
 }
 
 # All available scopes (from Dev Portal)

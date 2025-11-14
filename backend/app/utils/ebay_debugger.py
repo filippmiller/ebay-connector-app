@@ -259,8 +259,23 @@ class EbayAPIDebugger:
                     "X-EBAY-API-COMPATIBILITY-LEVEL": "967"
                     # X-EBAY-API-IAF-TOKEN will be injected from access token
                 },
-                "body": """<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<GetMyMessagesRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">\n  <DetailLevel>ReturnMessages</DetailLevel>\n  <ErrorLanguage>en_US</ErrorLanguage>\n  <Version>967</Version>\n  <WarningLevel>High</WarningLevel>\n  <Pagination>\n    <EntriesPerPage>5</EntriesPerPage>\n    <PageNumber>1</PageNumber>\n  </Pagination>\n</GetMyMessagesRequest>""",
+                "body": """<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<GetMyMessagesRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">\n  <DetailLevel>ReturnHeaders</DetailLevel>\n  <Pagination>\n    <EntriesPerPage>5</EntriesPerPage>\n    <PageNumber>1</PageNumber>\n  </Pagination>\n</GetMyMessagesRequest>""",
                 "description": "Get My Messages via Trading GetMyMessages"
+            },
+            "seller_transactions": {
+                "name": "Trading  GetSellerTransactions",
+                "method": "POST",
+                "path": "/ws/api.dll",
+                "params": {},
+                "headers": {
+                    "Content-Type": "text/xml",
+                    "X-EBAY-API-CALL-NAME": "GetSellerTransactions",
+                    "X-EBAY-API-SITEID": "0",
+                    "X-EBAY-API-COMPATIBILITY-LEVEL": "967"
+                    # X-EBAY-API-IAF-TOKEN will be injected from access token
+                },
+                "body": """<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<GetSellerTransactionsRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">\n  <NumberOfDays>7</NumberOfDays>\n  <Pagination>\n    <EntriesPerPage>50</EntriesPerPage>\n    <PageNumber>1</PageNumber>\n  </Pagination>\n</GetSellerTransactionsRequest>""",
+                "description": "Get seller transactions (order line items) via Trading GetSellerTransactions"
             }
         }
         

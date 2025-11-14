@@ -134,6 +134,11 @@ export const EbayDebugger: React.FC = () => {
   const [copied, setCopied] = useState<string>('');
   const [lineWrap, setLineWrap] = useState<boolean>(false);
 
+  // Trading GetSellerTransactions parameters
+  const [sellerTxNumberOfDays, setSellerTxNumberOfDays] = useState<number>(7);
+  const [sellerTxEntriesPerPage, setSellerTxEntriesPerPage] = useState<number>(50);
+  const [sellerTxPageNumber, setSellerTxPageNumber] = useState<number>(1);
+
   // Reconnect modal state
   const [showReconnect, setShowReconnect] = useState(false);
   const [reconnectUrl, setReconnectUrl] = useState('');
@@ -517,6 +522,7 @@ export const EbayDebugger: React.FC = () => {
     offers: ['https://api.ebay.com/oauth/api_scope/sell.inventory'],
     disputes: ['https://api.ebay.com/oauth/api_scope/sell.fulfillment'],
     messages: ['https://api.ebay.com/oauth/api_scope/trading'],
+    seller_transactions: ['https://api.ebay.com/oauth/api_scope/trading'],
   };
 
   const loadDebuggerLogs = async () => {
@@ -696,13 +702,29 @@ export const EbayDebugger: React.FC = () => {
         });
       }
 
+      // Build body: for Trading GetSellerTransactions we construct XML from dedicated fields
+      let effectiveBody = body;
+      if (selectedTemplate === 'seller_transactions') {
+        const nd = Math.min(30, Math.max(1, Number.isFinite(sellerTxNumberOfDays) ? sellerTxNumberOfDays : 7));
+        const epp = Math.min(200, Math.max(1, Number.isFinite(sellerTxEntriesPerPage) ? sellerTxEntriesPerPage : 50));
+        const pn = Math.max(1, Number.isFinite(sellerTxPageNumber) ? sellerTxPageNumber : 1);
+        effectiveBody = `<?xml version="1.0" encoding="utf-8"?>\n` +
+          `<GetSellerTransactionsRequest xmlns="urn:ebay:apis:eBLBaseComponents">\n` +
+          `  <NumberOfDays>${nd}</NumberOfDays>\n` +
+          `  <Pagination>\n` +
+          `    <EntriesPerPage>${epp}</EntriesPerPage>\n` +
+          `    <PageNumber>${pn}</PageNumber>\n` +
+          `  </Pagination>\n` +
+          `</GetSellerTransactionsRequest>`;
+      }
+
       const queryParams = new URLSearchParams({
         method,
         path,
         environment: environment,
         ...(params ? { params: Object.entries(paramsObj).map(([k, v]) => `${k}=${v}`).join('&') } : {}),
         ...(headers ? { headers: Object.entries(headersObj).map(([k, v]) => `${k}: ${v}`).join(', ') } : {}),
-        ...(body ? { body } : {}),
+        ...(effectiveBody ? { body: effectiveBody } : {}),
         ...(selectedTemplate && selectedTemplate !== "custom" ? { template: selectedTemplate } : {})
       });
 
@@ -990,7 +1012,7 @@ export const EbayDebugger: React.FC = () => {
               </div>
 
               {/* Body */}
-              {(method === 'POST' || method === 'PUT' || method === 'PATCH') && (
+              {(method === 'POST' || method === 'PUT' || method === 'PATCH') && selectedTemplate !== 'seller_transactions' && (
                 <div className="space-y-2">
                   <Label>Request Body (JSON)</Label>
                   <Textarea
@@ -1000,6 +1022,47 @@ export const EbayDebugger: React.FC = () => {
                     rows={4}
                     className="font-mono text-sm"
                   />
+                </div>
+              )}
+
+              {/* Trading GetSellerTransactions parameters */}
+              {selectedTemplate === 'seller_transactions' && (
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <Label className="text-xs font-medium">NumberOfDays</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={30}
+                      className="mt-1 h-8 text-xs"
+                      value={sellerTxNumberOfDays}
+                      onChange={(e) => setSellerTxNumberOfDays(Number(e.target.value) || 0)}
+                    />
+                    <p className="text-[11px] text-gray-500">Days back to retrieve transactions (130, default 7).</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">EntriesPerPage</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={200}
+                      className="mt-1 h-8 text-xs"
+                      value={sellerTxEntriesPerPage}
+                      onChange={(e) => setSellerTxEntriesPerPage(Number(e.target.value) || 0)}
+                    />
+                    <p className="text-[11px] text-gray-500">Number of transactions per page (100, default 50).</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">PageNumber</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      className="mt-1 h-8 text-xs"
+                      value={sellerTxPageNumber}
+                      onChange={(e) => setSellerTxPageNumber(Number(e.target.value) || 0)}
+                    />
+                    <p className="text-[11px] text-gray-500">Page number to retrieve (>= 1).</p>
+                  </div>
                 </div>
               )}
             </>

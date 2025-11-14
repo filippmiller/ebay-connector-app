@@ -1458,9 +1458,13 @@ async def debug_ebay_api(
         request_headers.update(headers_dict)
 
     # Trading API - GetMyMessages uses XML + X-EBAY-API-IAF-TOKEN instead of JSON Bearer
-    if template == "messages":
+    if template in ("messages", "seller_transactions"):
+        request_headers.pop("Authorization", None)
         request_headers["Content-Type"] = "text/xml"
-        request_headers["X-EBAY-API-CALL-NAME"] = "GetMyMessages"
+        if template == "messages":
+            request_headers["X-EBAY-API-CALL-NAME"] = "GetMyMessages"
+        else:
+            request_headers["X-EBAY-API-CALL-NAME"] = "GetSellerTransactions"
         request_headers["X-EBAY-API-SITEID"] = "0"
         request_headers["X-EBAY-API-COMPATIBILITY-LEVEL"] = "967"
         # Use the same OAuth user token as IAF token for Trading
@@ -1794,7 +1798,7 @@ async def get_debug_templates(
     debugger = EbayAPIDebugger(current_user.id)
     templates = {}
     
-    for template_name in ["identity", "orders", "transactions", "inventory", "offers", "disputes", "messages"]:
+    for template_name in ["identity", "orders", "transactions", "inventory", "offers", "disputes", "messages", "seller_transactions"]:
         template = debugger.get_template(template_name)
         if template:
             templates[template_name] = {
