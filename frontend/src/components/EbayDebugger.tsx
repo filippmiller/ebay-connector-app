@@ -228,7 +228,10 @@ export const EbayDebugger: React.FC = () => {
     loadTemplates();
     void loadAccounts();
     if (activeTab === 'debugger') {
+      // Keep debugger terminal fresh, but keep controls compact
       void loadDebuggerLogs();
+      // Also load lightweight token info for the selected account (no Identity call)
+      void loadTokenInfo(environment, { skipIdentityTest: true });
       const id = setInterval(() => { if (!totalTestingMode) void loadDebuggerLogs(); }, 10000);
       return () => clearInterval(id);
     }
@@ -360,7 +363,10 @@ export const EbayDebugger: React.FC = () => {
     }
   };
 
-  const loadTokenInfo = async (env?: 'sandbox' | 'production') => {
+  const loadTokenInfo = async (
+    env?: 'sandbox' | 'production',
+    options?: { skipIdentityTest?: boolean },
+  ) => {
     const targetEnv = env || environment;
     setTokenInfoLoading(true);
     setError('');
@@ -370,8 +376,8 @@ export const EbayDebugger: React.FC = () => {
       const res = await api.get(`/ebay/token-info?${params.toString()}`);
       setTokenInfo(res.data);
       
-      // Automatically test Identity API call if token is available
-      if (res.data.token_full && res.data.ebay_connected) {
+      // Automatically test Identity API call if token is available (unless explicitly skipped)
+      if (res.data.token_full && res.data.ebay_connected && !options?.skipIdentityTest) {
         await testIdentityAPI(targetEnv, res.data.token_full);
       }
     } catch (err: any) {
@@ -389,6 +395,9 @@ export const EbayDebugger: React.FC = () => {
     setError('');
     if (activeTab === 'token-info') {
       void loadTokenInfo(newEnv);
+    } else if (activeTab === 'debugger') {
+      // Keep small token badge in sync without spamming Identity API
+      void loadTokenInfo(newEnv, { skipIdentityTest: true });
     }
   };
 
@@ -594,7 +603,8 @@ export const EbayDebugger: React.FC = () => {
 
   const handleDebug = async () => {
     setStdError('');
-    // Scope guard for Quick Templates (only when a non-custom template is selected)
+    // Scope guard for Quick Templates (only when a non-custom template is selected).
+    // We no longer block the request; we only show a warning + optional reconnect modal.
     try {
       const tpl = selectedTemplate && selectedTemplate !== 'custom' ? selectedTemplate : null;
       if (tpl) {
@@ -609,26 +619,19 @@ export const EbayDebugger: React.FC = () => {
           setShowReconnect(true);
           // Log to token terminal (production only, behind flag)
           if (FEATURE_TOKEN_INFO && environment === 'production') {
-            try { await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
-              template: tpl,
-              path,
-              required_scopes: required,
-              missing_scopes: missing,
-            }); } catch {}
+            try {
+              await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
+                template: tpl,
+                path,
+                required_scopes: required,
+                missing_scopes: missing,
+              });
+            } catch {}
           }
-          return; // Block send
+          // Do NOT return here – still send the request to eBay so the debugger remains usable.
         }
       }
     } catch {}
-
-    // If we have missing scopes, pre-generate reconnect URL for the modal
-    if (showReconnect && reconnectScopes.length > 0) {
-      try {
-        const redirectUri = `${window.location.origin}/ebay/callback`;
-        const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: reconnectScopes });
-        setReconnectUrl(data.authorization_url);
-      } catch {}
-    }
 
     if (totalTestingMode) {
       // Handle raw request via backend
@@ -739,7 +742,9 @@ export const EbayDebugger: React.FC = () => {
                   loadTokenInfo();
                 }
               }}
-              variant="default"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              variant="outline"
             >
               View Token Info
             </Button>
@@ -749,9 +754,9 @@ export const EbayDebugger: React.FC = () => {
 
       {/* Tabs for Debugger and Token Info */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'debugger' | 'token-info')}>
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="debugger">🔧 API Debugger</TabsTrigger>
-          <TabsTrigger value="token-info">🔑 Token Info</TabsTrigger>
+        <TabsList className="grid w-full max-w-xs grid-cols-2 text-xs mb-2">
+          <TabsTrigger value="debugger" className="h-8 py-1 text-xs">🔧 API Debugger</TabsTrigger>
+          <TabsTrigger value="token-info" className="h-8 py-1 text-xs">🔑 Token Info</TabsTrigger>
         </TabsList>
 
         <TabsContent value="debugger" className="space-y-4">
@@ -764,7 +769,7 @@ export const EbayDebugger: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Environment + Account Selector */}
+          {/* Environment + Account Selector + Token badge */}
           <div className="flex flex-col gap-3 p-3 bg-gray-50 rounded-lg border">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -793,7 +798,7 @@ export const EbayDebugger: React.FC = () => {
             </div>
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div className="text-sm font-medium">eBay account:</div>
+              <div className="text-xs font-medium text-gray-700">eBay account:</div>
               <div className="flex items-center gap-2 flex-1">
                 {accountsLoading ? (
                   <div className="text-xs text-gray-500">Loading accounts...</div>
@@ -804,9 +809,13 @@ export const EbayDebugger: React.FC = () => {
                 ) : (
                   <Select
                     value={selectedAccountId || accounts[0]?.id}
-                    onValueChange={(val) => setSelectedAccountId(val)}
+                    onValueChange={(val) => {
+                      setSelectedAccountId(val);
+                      // Refresh lightweight token info when switching accounts
+                      void loadTokenInfo(environment, { skipIdentityTest: true });
+                    }}
                   >
-                    <SelectTrigger className="w-full sm:w-72">
+                    <SelectTrigger className="w-full sm:w-64 h-8 text-xs">
                       <SelectValue placeholder="Select eBay account" />
                     </SelectTrigger>
                     <SelectContent>
@@ -820,14 +829,47 @@ export const EbayDebugger: React.FC = () => {
                 )}
               </div>
             </div>
+
+            {/* Compact token status for selected account */}
+            <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px] text-gray-600">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">Token:</span>
+                {tokenInfoLoading ? (
+                  <span>Loading…</span>
+                ) : tokenInfo && tokenInfo.token_full ? (
+                  <span className="font-mono break-all">
+                    {tokenInfo.token_full.slice(0, 16)}…
+                  </span>
+                ) : (
+                  <span className="text-gray-400">Not loaded</span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span>
+                  Status:
+                  {' '}
+                  {tokenInfo && tokenInfo.ebay_connected ? (
+                    <span className="text-green-600 font-medium">live</span>
+                  ) : (
+                    <span className="text-red-600 font-medium">not connected</span>
+                  )}
+                </span>
+                {tokenInfo?.token_expires_at && (
+                  <span className="text-gray-500">
+                    expires at {tokenInfo.token_expires_at}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Mode Toggle */}
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center gap-2 text-xs">
             <Button
               variant={!totalTestingMode ? "default" : "outline"}
               onClick={() => setTotalTestingMode(false)}
               size="sm"
+              className="h-8 px-3 text-xs"
             >
               Standard Mode
             </Button>
@@ -835,6 +877,7 @@ export const EbayDebugger: React.FC = () => {
               variant={totalTestingMode ? "default" : "outline"}
               onClick={() => setTotalTestingMode(true)}
               size="sm"
+              className="h-8 px-3 text-xs"
             >
               Total Testing Mode
             </Button>
@@ -842,8 +885,8 @@ export const EbayDebugger: React.FC = () => {
 
           {totalTestingMode ? (
             /* Total Testing Mode */
-            <div className="space-y-2">
-              <Label>Raw Request (Full URL + Headers + Body)</Label>
+              <div className="space-y-1">
+                <Label className="text-xs font-medium">Raw Request (Full URL + Headers + Body)</Label>
               <Textarea
                 placeholder={environment === 'sandbox' 
                   ? "GET https://api.sandbox.ebay.com/identity/v1/oauth2/userinfo\nAuthorization: Bearer v^1.1#...\nX-EBAY-C-MARKETPLACE-ID: EBAY_US"
@@ -863,30 +906,31 @@ export const EbayDebugger: React.FC = () => {
           ) : (
             /* Standard Mode */
             <>
-              {/* Template Selection */}
-              <div className="space-y-2">
-                <Label>Quick Templates</Label>
-                <Select value={selectedTemplate || "custom"} onValueChange={handleTemplateSelect}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a template or use custom" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="custom">Custom Request</SelectItem>
-                    {Object.entries(templates).map(([key, template]) => (
-                      <SelectItem key={key} value={key}>
-                        {template.name} - {template.description}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Compact parameter row: Templates + Method + Path + Query + Headers */}
+              <div className="flex flex-wrap items-end gap-3 text-xs">
+                {/* Quick Templates */}
+                <div className="flex-1 min-w-[220px]">
+                  <Label className="text-xs font-medium">Quick Templates</Label>
+                  <Select value={selectedTemplate || "custom"} onValueChange={handleTemplateSelect}>
+                    <SelectTrigger className="mt-1 h-8 text-xs">
+                      <SelectValue placeholder="Select a template or use custom" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="custom">Custom Request</SelectItem>
+                      {Object.entries(templates).map(([key, template]) => (
+                        <SelectItem key={key} value={key}>
+                          {template.name} - {template.description}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {/* Method and Path */}
-              <div className="grid grid-cols-4 gap-4">
-                <div className="space-y-2">
-                  <Label>Method</Label>
+                {/* Method */}
+                <div className="w-24">
+                  <Label className="text-xs font-medium">Method</Label>
                   <Select value={method} onValueChange={setMethod}>
-                    <SelectTrigger>
+                    <SelectTrigger className="mt-1 h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -898,36 +942,41 @@ export const EbayDebugger: React.FC = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="col-span-3 space-y-2">
-                  <Label>API Path *</Label>
+
+                {/* API Path */}
+                <div className="flex-[2] min-w-[260px]">
+                  <Label className="text-xs font-medium">API Path *</Label>
                   <Input
+                    className="mt-1 h-8 text-xs"
                     placeholder="/sell/fulfillment/v1/order"
                     value={path}
                     onChange={(e) => setPath(e.target.value)}
                   />
                 </div>
-              </div>
 
-              {/* Query Parameters */}
-              <div className="space-y-2">
-                <Label>Query Parameters</Label>
-                <Input
-                  placeholder="limit=1&filter=orderStatus:COMPLETED"
-                  value={params}
-                  onChange={(e) => setParams(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">Format: key1=value1&key2=value2</p>
-              </div>
+                {/* Query Parameters */}
+                <div className="flex-1 min-w-[220px]">
+                  <Label className="text-xs font-medium">Query Parameters</Label>
+                  <Input
+                    className="mt-1 h-8 text-xs"
+                    placeholder="limit=1&filter=orderStatus:COMPLETED"
+                    value={params}
+                    onChange={(e) => setParams(e.target.value)}
+                  />
+                  <p className="text-[11px] text-gray-500">Format: key1=value1&key2=value2</p>
+                </div>
 
-              {/* Headers */}
-              <div className="space-y-2">
-                <Label>Additional Headers (optional)</Label>
-                <Input
-                  placeholder="X-EBAY-C-MARKETPLACE-ID: EBAY_US"
-                  value={headers}
-                  onChange={(e) => setHeaders(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">Format: Header1: Value1, Header2: Value2</p>
+                {/* Headers */}
+                <div className="flex-1 min-w-[240px]">
+                  <Label className="text-xs font-medium">Additional Headers (optional)</Label>
+                  <Input
+                    className="mt-1 h-8 text-xs"
+                    placeholder="X-EBAY-C-MARKETPLACE-ID: EBAY_US"
+                    value={headers}
+                    onChange={(e) => setHeaders(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500">Format: Header1: Value1, Header2: Value2</p>
+                </div>
               </div>
 
               {/* Body */}
