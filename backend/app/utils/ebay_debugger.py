@@ -193,12 +193,13 @@ class EbayAPIDebugger:
                 "method": "GET",
                 "path": "/sell/fulfillment/v1/order",
                 "params": {
+                    # Query orders where fulfillment has been completed
                     "limit": "1",
-                    "filter": "orderStatus:COMPLETED"
+                    "filter": "orderfulfillmentstatus:FULFILLED"
                 },
                 "headers": {},
                 "body": None,
-                "description": "Get seller orders (Fulfillment API)"
+                "description": "Fetch recent orders (fulfilled)"
             },
             "transactions": {
                 "name": "Transactions API - Get Transactions",
