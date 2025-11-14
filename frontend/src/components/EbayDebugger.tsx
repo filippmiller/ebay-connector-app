@@ -623,21 +623,22 @@ export const EbayDebugger: React.FC = () => {
           const userScopes: string[] = tokenInfo.scopes || [];
           const missing = required.filter(r => !(userScopes || []).includes(r));
           if (missing.length > 0) {
-          setStdError(`Missing required scopes: ${missing.join(', ')}`);
-          setReconnectScopes(missing);
-          setShowReconnect(true);
-          // Log to token terminal (production only, behind flag)
-          if (FEATURE_TOKEN_INFO && environment === 'production') {
-            try {
-              await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
-                template: tpl,
-                path,
-                required_scopes: required,
-                missing_scopes: missing,
-              });
-            } catch {}
+            setStdError(`Missing required scopes: ${missing.join(', ')}`);
+            setReconnectScopes(missing);
+            setShowReconnect(true);
+            // Log to token terminal (production only, behind flag)
+            if (FEATURE_TOKEN_INFO && environment === 'production') {
+              try {
+                await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
+                  template: tpl,
+                  path,
+                  required_scopes: required,
+                  missing_scopes: missing,
+                });
+              } catch {}
+            }
+            // Do NOT return here – still send the request to eBay so the debugger remains usable.
           }
-          // Do NOT return here – still send the request to eBay so the debugger remains usable.
         }
       }
     } catch {}
