@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.services.auth import get_current_user
@@ -58,7 +58,10 @@ async def get_account(
         expires_in_seconds = None
         
         if token and token.expires_at:
-            expires_in_seconds = int((token.expires_at - datetime.utcnow()).total_seconds())
+            from app.services.ebay_account_service import ebay_account_service as svc
+            expires_at_utc = svc._to_utc(token.expires_at)
+            now_utc = datetime.now(timezone.utc)
+            expires_in_seconds = int((expires_at_utc - now_utc).total_seconds())
         
         from app.models_sqlalchemy.models import EbayHealthEvent
         last_health = db.query(EbayHealthEvent).filter(

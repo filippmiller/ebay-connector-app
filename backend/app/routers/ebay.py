@@ -500,11 +500,14 @@ async def get_token_info(
         token_expires_at = token_row.expires_at
 
         # Basic check: consider token inactive if expires_at in past
-        if token_expires_at and token_expires_at < datetime.now(timezone.utc):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Token for selected eBay account has expired",
-            )
+        if token_expires_at:
+            from app.services.ebay_account_service import ebay_account_service as svc
+            token_expires_at_utc = svc._to_utc(token_expires_at)
+            if token_expires_at_utc < datetime.now(timezone.utc):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Token for selected eBay account has expired",
+                )
 
         auths = db_session.query(EbayAuthorization).filter(
             EbayAuthorization.ebay_account_id == selected_account.id
