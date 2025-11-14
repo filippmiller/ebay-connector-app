@@ -110,6 +110,9 @@ export const EbayConnectionPage: React.FC = () => {
   const [extraScopesInput, setExtraScopesInput] = useState<string>('');
   const [preflightSubmitting, setPreflightSubmitting] = useState(false);
 
+  // Compact: collapse Connection Request Preview details by default
+  const [showRequestPreview, setShowRequestPreview] = useState(false);
+
   useEffect(() => {
     if (user?.role !== 'admin') {
       navigate('/dashboard');
@@ -546,7 +549,7 @@ export const EbayConnectionPage: React.FC = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border">
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
                     <div className="flex items-center gap-3">
                       <Label htmlFor="env-switch" className="font-medium">
                         Environment:
@@ -576,11 +579,10 @@ export const EbayConnectionPage: React.FC = () => {
                   </div>
 
                   {connectionStatus?.connected && (
-                    <Alert>
-                      <AlertDescription>
-                        Disconnect to change environment. Currently using: <strong>{environment}</strong>
-                      </AlertDescription>
-                    </Alert>
+                    <p className="text-xs text-gray-500 flex items-center gap-1">
+                      Disconnect to change environment. Currently using:
+                      <strong>{environment}</strong>
+                    </p>
                   )}
 
                   <div className="flex items-center gap-4">
@@ -645,13 +647,24 @@ export const EbayConnectionPage: React.FC = () => {
               </Card>
 
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-xl">Connection Request Preview</CardTitle>
-                  <CardDescription className="text-sm text-gray-600">
-                    Preview of the authorization request that will be sent to eBay for the selected environment.
-                  </CardDescription>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl">Connection Request Preview</CardTitle>
+                    <CardDescription className="text-sm text-gray-600">
+                      Preview of the authorization request that will be sent to eBay for the selected environment.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setShowRequestPreview((v) => !v)}
+                  >
+                    {showRequestPreview ? 'Hide details' : 'Show details'}
+                  </Button>
                 </CardHeader>
-                <CardContent>
+                {showRequestPreview && (
+                <CardContent className="pt-2">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <h4 className="text-sm font-semibold">Environment</h4>
@@ -677,9 +690,9 @@ export const EbayConnectionPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-4">
-                    <h4 className="text-sm font-semibold mb-2">Query Parameters</h4>
-                    <ScrollArea className="h-32 rounded border bg-gray-50 p-3 text-xs font-mono">
+                    <div className="mt-3">
+                      <h4 className="text-sm font-semibold mb-2">Query Parameters</h4>
+                      <ScrollArea className="h-24 rounded border bg-gray-50 p-3 text-xs font-mono">
                       {Array.from(
                         new URLSearchParams({
                           response_type: 'code',
@@ -695,7 +708,7 @@ export const EbayConnectionPage: React.FC = () => {
                     </ScrollArea>
                     <div className="mt-3">
                       <h4 className="text-sm font-semibold mb-2">Raw Authorization URL</h4>
-                      <div className="p-2 bg-gray-50 border rounded font-mono text-xs whitespace-pre-wrap break-words">
+                      <div className="p-2 bg-gray-50 border rounded font-mono text-xs whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
                         {(() => {
                           const base = environment === 'production' ? 'https://auth.ebay.com/oauth2/authorize' : 'https://auth.sandbox.ebay.com/oauth2/authorize';
                           const qs = new URLSearchParams({
@@ -712,6 +725,7 @@ export const EbayConnectionPage: React.FC = () => {
                     </div>
                   </div>
                 </CardContent>
+                )}
               </Card>
 
               {/* Pre-flight Authorization Modal */}
