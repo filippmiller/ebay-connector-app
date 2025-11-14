@@ -1311,11 +1311,11 @@ async def get_debug_templates(current_user: User = Depends(get_current_active_us
             "params": {"limit": "1"},
         },
         "messages": {
-            "name": "Messages API - Get Messages",
-            "description": "Fetch messages (trading)",
-            "method": "GET",
-            "path": "/post-order/v2/return/search",
-            "params": {"limit": "1"},
+            "name": "Messages API - Get My Messages (Trading)",
+            "description": "Fetch messages via Trading GetMyMessages",
+            "method": "POST",
+            "path": "/ws/api.dll",
+            "params": {},
         },
     }
     return {"templates": templates}
@@ -1428,6 +1428,12 @@ async def debug_ebay_api(
     
     # Build URL
     base_url = debugger.base_url
+    # Finances API (transactions) lives on apiz.ebay.com / apiz.sandbox.ebay.com
+    if api_name == "transactions":
+        if env == "sandbox":
+            base_url = "https://apiz.sandbox.ebay.com"
+        else:
+            base_url = "https://apiz.ebay.com"
     if path.startswith('/'):
         url = f"{base_url}{path}"
     elif path.startswith('http'):
@@ -1450,6 +1456,15 @@ async def debug_ebay_api(
     masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in request_headers.items()}
     if headers_dict:
         request_headers.update(headers_dict)
+
+    # Trading API - GetMyMessages uses XML + X-EBAY-API-IAF-TOKEN instead of JSON Bearer
+    if template == "messages":
+        request_headers["Content-Type"] = "text/xml"
+        request_headers["X-EBAY-API-CALL-NAME"] = "GetMyMessages"
+        request_headers["X-EBAY-API-SITEID"] = "0"
+        request_headers["X-EBAY-API-COMPATIBILITY-LEVEL"] = "967"
+        # Use the same OAuth user token as IAF token for Trading
+        request_headers["X-EBAY-API-IAF-TOKEN"] = debugger.access_token
     
     # Make request
     start_time = time.time()

@@ -693,7 +693,8 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        api_url = f"{settings.ebay_api_base_url}/sell/finances/v1/transaction"
+        # Finances API lives on apiz.ebay.com / apiz.sandbox.ebay.com, not api.ebay.com
+        api_url = f"{settings.ebay_finances_base_url}/sell/finances/v1/transaction"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
