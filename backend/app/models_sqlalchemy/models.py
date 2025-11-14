@@ -873,3 +873,21 @@ class Message(Base):
         Index('idx_ebay_messages_is_read', 'is_read'),
         Index('idx_ebay_messages_message_date', 'message_date'),
     )
+
+
+class EbayScopeDefinition(Base):
+    __tablename__ = "ebay_scope_definitions"
+
+    id = Column(String(36), primary_key=True)
+    scope = Column(Text, nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    grant_type = Column(String(20), nullable=False, default="user")  # 'user', 'client', or 'both'
+    is_active = Column(Boolean, nullable=False, default=True)
+    meta = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_ebay_scope_definitions_scope', 'scope', unique=True),
+        Index('idx_ebay_scope_definitions_grant_type', 'grant_type'),
+    )

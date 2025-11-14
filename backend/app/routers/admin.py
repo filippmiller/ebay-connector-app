@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone
 
 from ..models_sqlalchemy import get_db
-from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization
+from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition
 from ..services.auth import admin_required
 from ..models.user import User
 from ..utils.logger import logger
@@ -104,6 +104,142 @@ async def log_blocked_scope(
     except Exception as e:
         logger.error(f"Failed to log blocked scope: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="log_failed")
+
+
+@router.get("/ebay/connect/last")
+async def get_last_connect_cycle(
+    env: str = Query(..., description="sandbox or production"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db)
+):
+    """Return the most recent connect cycle summary: start_auth, callback, exchange, connect_success, plus current tokens/authorizations."""
+    # Logs
+    from ..services.database import db as db_svc
+    logs = db_svc.get_connect_logs(current_user.id, env, limit)
+    summary = {}
+    for entry in logs:
+        act = entry.get('action')
+        if act and act not in summary:
+            if act in ("start_auth", "callback_received", "exchange_code_for_token", "connect_success", "token_exchange_request", "token_exchange_response"):
+                summary[act] = entry
+        if len(summary) >= 4:
+            # we captured key stages
+            pass
+    # Account snapshot
+    account: Optional[EbayAccount] = db.query(EbayAccount).filter(
+        EbayAccount.org_id == current_user.id,
+        EbayAccount.is_active == True
+    ).order_by(desc(EbayAccount.connected_at)).first()
+    token = None
+    auth = None
+    if account:
+        token = db.query(EbayToken).filter(EbayToken.ebay_account_id == account.id).order_by(desc(EbayToken.updated_at)).first()
+        auth = db.query(EbayAuthorization).filter(EbayAuthorization.ebay_account_id == account.id).first()
+    return {
+        "logs": summary,
+        "account": {
+            "id": (account.id if account else None),
+            "username": (account.username if account else None),
+            "ebay_user_id": (account.ebay_user_id if account else None),
+        },
+        "token": {
+            "access_len": (len(token.access_token) if token and token.access_token else 0),
+            "access_expires_at": (token.expires_at.isoformat() if token and token.expires_at else None),
+            "refresh_len": (len(token.refresh_token) if token and token.refresh_token else 0),
+            "refresh_expires_at": (token.refresh_expires_at.isoformat() if token and token.refresh_expires_at else None),
+        } if token else None,
+        "authorizations": {
+            "scopes": (auth.scopes if auth and auth.scopes else []),
+            "count": (len(auth.scopes) if auth and auth.scopes else 0),
+        }
+    }
+
+@router.get("/ebay/accounts/scopes")
+async def get_ebay_accounts_scopes(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db)
+):
+    """Return eBay accounts for this org with their stored scopes vs scope catalog.
+
+    This is an admin-only view that shows:
+    - scope_catalog: all active user/both scopes from ebay_scope_definitions
+    - accounts: each EbayAccount + its authorizations.scopes and whether it has full catalog
+    """
+    # Load catalog of available scopes (user-consent and both)
+    catalog_rows = (
+        db.query(EbayScopeDefinition)
+        .filter(
+            EbayScopeDefinition.is_active == True,  # noqa: E712
+            EbayScopeDefinition.grant_type.in_(['user', 'both']),
+        )
+        .order_by(EbayScopeDefinition.scope)
+        .all()
+    )
+    catalog_scopes = [r.scope for r in catalog_rows]
+
+    # All accounts for current org (including inactive, so admin sees history)
+    accounts = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.org_id == current_user.id)
+        .order_by(desc(EbayAccount.connected_at))
+        .all()
+    )
+
+    result_accounts = []
+    for account in accounts:
+        # All authorizations for this account
+        auth_rows = (
+            db.query(EbayAuthorization)
+            .filter(EbayAuthorization.ebay_account_id == account.id)
+            .order_by(EbayAuthorization.created_at.desc())
+            .all()
+        )
+        scopes: list[str] = []
+        for auth in auth_rows:
+            if auth.scopes:
+                scopes.extend(auth.scopes)
+        # Unique + sorted scopes
+        unique_scopes = sorted(set(scopes))
+        missing_catalog_scopes = [s for s in catalog_scopes if s not in unique_scopes]
+        has_all_catalog_scopes = bool(catalog_scopes) and not missing_catalog_scopes
+
+        # Latest token snapshot (if exists) – minimal info only
+        token = (
+            db.query(EbayToken)
+            .filter(EbayToken.ebay_account_id == account.id)
+            .order_by(desc(EbayToken.updated_at))
+            .first()
+        )
+
+        result_accounts.append({
+            "id": account.id,
+            "username": account.username,
+            "ebay_user_id": account.ebay_user_id,
+            "house_name": account.house_name,
+            "is_active": account.is_active,
+            "connected_at": account.connected_at.isoformat() if account.connected_at else None,
+            "scopes": unique_scopes,
+            "scopes_count": len(unique_scopes),
+            "has_all_catalog_scopes": has_all_catalog_scopes,
+            "missing_catalog_scopes": missing_catalog_scopes,
+            "token": {
+                "access_expires_at": token.expires_at.isoformat() if token and token.expires_at else None,
+                "has_refresh_token": bool(token and token.refresh_token),
+            } if token else None,
+        })
+
+    return {
+        "scope_catalog": [
+            {
+                "scope": r.scope,
+                "grant_type": r.grant_type,
+                "description": r.description,
+            }
+            for r in catalog_rows
+        ],
+        "accounts": result_accounts,
+    }
 
 
 @router.get("/ebay/tokens/info")

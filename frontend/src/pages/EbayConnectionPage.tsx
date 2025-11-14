@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { ScrollArea } from '../components/ui/scroll-area';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
+import { Input } from '../components/ui/input';
 import { SyncTerminal } from '../components/SyncTerminal';
 import { EbayDebugger } from '../components/EbayDebugger';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
@@ -87,6 +88,11 @@ export const EbayConnectionPage: React.FC = () => {
   const [connectLogError, setConnectLogError] = useState('');
   // Connection Terminal UX
   const [connWrap, setConnWrap] = useState<boolean>(false);
+  const [connectSearch, setConnectSearch] = useState<string>('');
+  const [terminalSearch, setTerminalSearch] = useState<string>('');
+
+  // Available scopes loaded from backend catalog
+  const [availableScopes, setAvailableScopes] = useState<string[]>([]);
 
   // Pre-flight modal state
   const [preflightOpen, setPreflightOpen] = useState(false);
@@ -102,6 +108,7 @@ export const EbayConnectionPage: React.FC = () => {
     }
     loadConnectionStatus();
     loadLogs();
+    loadAvailableScopes();
     const interval = setInterval(loadLogs, 3000);
     return () => {
       clearInterval(interval);
@@ -130,6 +137,16 @@ export const EbayConnectionPage: React.FC = () => {
       setLogs(response.logs);
     } catch (err) {
       console.error('Failed to load logs:', err);
+    }
+  };
+
+  const loadAvailableScopes = async () => {
+    try {
+      const res = await ebayApi.getAvailableScopes();
+      const scopes = (res.scopes || []).map((s) => s.scope);
+      setAvailableScopes(scopes);
+    } catch (err) {
+      console.error('Failed to load available eBay scopes:', err);
     }
   };
 
@@ -421,8 +438,8 @@ export const EbayConnectionPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
-      <main className="w-full pt-16 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto">
+      <main className="w-full pt-16 px-4 sm:px-6 lg:px-10 py-8">
+        <div className="w-full mx-auto">
           <h1 className="text-3xl font-bold mb-6">eBay Connection Management</h1>
 
           <Tabs defaultValue="connection" className="space-y-4">
@@ -586,7 +603,7 @@ export const EbayConnectionPage: React.FC = () => {
                         new URLSearchParams({
                           response_type: 'code',
                           redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
-                          scope: DEFAULT_SCOPES.join(' '),
+                          scope: (availableScopes.length ? availableScopes : DEFAULT_SCOPES).join(' '),
                           state: 'generated server-side',
                         }).entries()
                       ).map(([key, value]) => (
@@ -603,7 +620,7 @@ export const EbayConnectionPage: React.FC = () => {
                           const qs = new URLSearchParams({
                             response_type: 'code',
                             redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
-                            scope: DEFAULT_SCOPES.join(' '),
+                            scope: (availableScopes.length ? availableScopes : DEFAULT_SCOPES).join(' '),
                             state: 'generated server-side',
                             client_id: 'configured server-side'
                           }).toString();
@@ -656,7 +673,7 @@ export const EbayConnectionPage: React.FC = () => {
                       try {
                         setPreflightSubmitting(true);
                         const redirectUri = `${window.location.origin}/ebay/callback`;
-                        const union = Array.from(new Set([...(preflightScopes||[]), ...MY_SCOPES]));
+                        const union = Array.from(new Set([...(preflightScopes||[]), ...(availableScopes || [])]));
                         const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
                         setPreflightOpen(false);
                         window.location.assign(data.authorization_url);
@@ -699,7 +716,13 @@ export const EbayConnectionPage: React.FC = () => {
                       <div className="text-sm text-gray-600" />
                     )}
                     <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => exportConnectLogs('json')}>Save JSON</Button>
+                        <Input
+                          placeholder="Search logs"
+                          value={connectSearch}
+                          onChange={(e) => setConnectSearch(e.target.value)}
+                          className="h-8 w-40 text-xs bg-gray-800 text-gray-100 border-gray-700 mr-2"
+                        />
+                        <Button size="sm" variant="outline" onClick={() => exportConnectLogs('json')}>Save JSON</Button>
                       <Button size="sm" variant="outline" onClick={() => exportConnectLogs('ndjson')}>Save NDJSON</Button>
                       <Button size="sm" variant="outline" onClick={() => exportConnectLogs('txt')}>Save TXT</Button>
                       <Button size="sm" variant="outline" onClick={() => setConnWrap(w => !w)}>{connWrap ? 'Disable wrap' : 'Wrap lines'}</Button>
@@ -710,13 +733,23 @@ export const EbayConnectionPage: React.FC = () => {
                       <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading connection logs...
                     </div>
                   )}
-                  <div className="h-80 rounded border bg-gray-900 p-4 text-xs font-mono overflow-auto">
+                  <div className="min-h-[60vh] max-h-[80vh] rounded border bg-gray-950 p-4 text-sm font-mono overflow-auto">
                     {connectLogs.length === 0 ? (
                       <div className="text-gray-400">
                         No connection events yet. Click "Connect to eBay" to generate logs.
                       </div>
                     ) : (
-                      connectLogs.map((log) => (
+                      connectLogs
+                        .filter((log) => {
+                          if (!connectSearch.trim()) return true;
+                          const q = connectSearch.toLowerCase();
+                          try {
+                            return JSON.stringify(log).toLowerCase().includes(q);
+                          } catch {
+                            return false;
+                          }
+                        })
+                        .map((log) => (
                         <div key={log.id} className="border-b border-gray-800 pb-4 mb-4 last:border-0 last:pb-0 last:mb-0 text-white">
                           <div className="flex flex-wrap items-center justify-between text-gray-400">
                             <span>[{new Date(log.created_at).toLocaleString()}]</span>
@@ -959,17 +992,35 @@ export const EbayConnectionPage: React.FC = () => {
                       Real-time log of all eBay API credential exchanges and requests
                     </CardDescription>
                   </div>
-                  <Button variant="outline" size="sm" onClick={handleClearLogs}>
-                    Clear Logs
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder="Search logs"
+                      value={terminalSearch}
+                      onChange={(e) => setTerminalSearch(e.target.value)}
+                      className="h-8 w-40 text-xs bg-gray-800 text-gray-100 border-gray-700"
+                    />
+                    <Button variant="outline" size="sm" onClick={handleClearLogs}>
+                      Clear Logs
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="h-96 w-full rounded-md border bg-black text-white p-4 font-mono text-sm overflow-x-auto">
+                  <ScrollArea className="min-h-[60vh] max-h-[80vh] w-full rounded-md border bg-black text-white p-4 font-mono text-sm overflow-x-auto">
                     {logs.length === 0 ? (
                       <div className="text-gray-400">No logs yet. Connect to eBay to see credential exchanges.</div>
                     ) : (
                       <div className="space-y-2">
-                        {logs.map((log, index) => (
+                        {logs
+                          .filter((log) => {
+                            if (!terminalSearch.trim()) return true;
+                            const q = terminalSearch.toLowerCase();
+                            try {
+                              return JSON.stringify(log).toLowerCase().includes(q);
+                            } catch {
+                              return false;
+                            }
+                          })
+                          .map((log, index) => (
                           <div key={index} className="pb-2 border-b border-gray-800">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="text-gray-500">

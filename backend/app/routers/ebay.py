@@ -20,11 +20,18 @@ async def start_ebay_auth(
     purpose: str = Query('BOTH', description="Account purpose: BUYER, SELLER, or BOTH"),
     current_user: User = Depends(get_current_active_user)
 ):
+    """Start eBay OAuth flow.
+
+    If client does not explicitly pass scopes, we default to **all active user-consent scopes**
+    from ebay_scope_definitions (grant_type in ['user', 'both']).
+    """
     logger.info(f"Starting eBay OAuth for user: {current_user.email} in {environment} mode, house_name: {house_name}")
     
     from app.config import settings
     import json
     import uuid
+    from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayScopeDefinition
     
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = environment
@@ -41,11 +48,33 @@ async def start_ebay_auth(
             "environment": environment
         }
         state = json.dumps(state_data)
+
+        # Determine effective scopes: prefer client-provided, otherwise all active user scopes from catalog
+        effective_scopes = auth_request.scopes or []
+        if not effective_scopes:
+            db_session = next(get_db())
+            try:
+                rows = (
+                    db_session.query(EbayScopeDefinition)
+                    .filter(
+                        EbayScopeDefinition.is_active == True,  # noqa: E712
+                        EbayScopeDefinition.grant_type.in_(["user", "both"]),
+                    )
+                    .order_by(EbayScopeDefinition.scope)
+                    .all()
+                )
+                effective_scopes = [r.scope for r in rows] if rows else []
+            except Exception as e:
+                logger.error(f"Failed to load ebay_scope_definitions: {e}")
+                # fall back to whatever client sent (empty → EbayService will apply its own defaults)
+                effective_scopes = auth_request.scopes or []
+            finally:
+                db_session.close()
         
         auth_url = ebay_service.get_authorization_url(
             redirect_uri=redirect_uri,
             state=state,
-            scopes=auth_request.scopes,
+            scopes=effective_scopes,
             environment=environment
         )
 
@@ -200,11 +229,51 @@ async def ebay_auth_callback(
                 token_response.expires_in,
                 refresh_token_expires_in=getattr(token_response, 'refresh_token_expires_in', None)
             )
-            
-            scopes = token_response.scope.split() if hasattr(token_response, 'scope') and token_response.scope else []
+
+            # Determine final scopes: prefer token_response.scope; fallback to last start_auth if missing
+            scopes: List[str] = []
+
+            # 1) Preferred: scopes returned directly from eBay token endpoint
+            if getattr(token_response, "scope", None):
+                scopes = [s for s in token_response.scope.split() if s]
+
+            # 2) Fallback: recover scopes from the most recent start_auth connect log
+            if not scopes:
+                try:
+                    recent_logs = ebay_connect_logger.get_logs(current_user.id, environment, limit=50)
+                    for log in recent_logs:
+                        if log.get("action") != "start_auth":
+                            continue
+
+                        req = log.get("request") or {}
+                        headers = req.get("headers") or {}
+                        scope_str: str = ""
+
+                        # Prefer explicit scope header we stored
+                        if isinstance(headers, dict):
+                            scope_str = headers.get("scope") or ""
+
+                        # Fallback: parse scope from the logged URL
+                        if not scope_str:
+                            from urllib.parse import urlparse, parse_qs
+                            url = req.get("url") or ""
+                            try:
+                                parsed = urlparse(url)
+                                q = parse_qs(parsed.query)
+                                scope_str = q.get("scope", [""])[0]
+                            except Exception:
+                                scope_str = ""
+
+                        scopes = [s for s in (scope_str or "").split(" ") if s]
+                        if scopes:
+                            break
+                except Exception:
+                    logger.error("Failed to reconstruct scopes from connect logs", exc_info=True)
+
+            # 3) Persist scopes for this eBay account if we managed to derive them
             if scopes:
                 ebay_account_service.save_authorizations(db, account.id, scopes)
-            
+
             ebay_service.save_user_tokens(current_user.id, token_response, environment=environment)
             
             logger.info(f"Successfully connected eBay account: {account.id} ({house_name})")
@@ -219,7 +288,9 @@ async def ebay_auth_callback(
                         "house_name": house_name,
                         "ebay_user_id": ebay_user_id,
                         "username": username,
-                        "expires_in": token_response.expires_in
+                        "expires_in": token_response.expires_in,
+                        "final_scopes": scopes,
+                        "final_scope_count": len(scopes),
                     }
                 }
             )
@@ -246,6 +317,87 @@ async def ebay_auth_callback(
         raise
     finally:
         settings.EBAY_ENVIRONMENT = original_env
+
+
+@router.get("/scopes")
+async def get_ebay_scopes(current_user: User = Depends(get_current_active_user)):
+    """Return all active eBay scopes available for user-consent flows.
+
+    We expose only scopes with grant_type in ['user', 'both'] and is_active = true.
+    Description is returned but is for internal/admin use; UI may ignore it.
+    """
+    from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayScopeDefinition
+
+    db_session = next(get_db())
+    try:
+        rows = (
+            db_session.query(EbayScopeDefinition)
+            .filter(
+                EbayScopeDefinition.is_active == True,  # noqa: E712
+                EbayScopeDefinition.grant_type.in_(["user", "both"]),
+            )
+            .order_by(EbayScopeDefinition.scope)
+            .all()
+        )
+        scopes = [
+            {
+                "scope": r.scope,
+                "grant_type": r.grant_type,
+                "description": r.description,
+            }
+            for r in rows
+        ]
+        return {"scopes": scopes}
+    finally:
+        db_session.close()
+
+
+@router.get("/scopes/health")
+async def get_ebay_scopes_health(current_user: User = Depends(get_current_active_user)):
+    """Simple healthcheck for ebay_scope_definitions.
+
+    Returns count of active user-consent scopes and a sample subset so we can
+    verify that the catalog table exists and is populated.
+    """
+    from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayScopeDefinition
+
+    db_session = next(get_db())
+    try:
+        total = (
+            db_session.query(EbayScopeDefinition)
+            .filter(
+                EbayScopeDefinition.is_active == True,  # noqa: E712
+                EbayScopeDefinition.grant_type.in_(["user", "both"]),
+            )
+            .count()
+        )
+        sample_rows = (
+            db_session.query(EbayScopeDefinition)
+            .filter(
+                EbayScopeDefinition.is_active == True,  # noqa: E712
+                EbayScopeDefinition.grant_type.in_(["user", "both"]),
+            )
+            .order_by(EbayScopeDefinition.scope)
+            .limit(5)
+            .all()
+        )
+        sample = [
+            {
+                "scope": r.scope,
+                "grant_type": r.grant_type,
+                "description": r.description,
+            }
+            for r in sample_rows
+        ]
+        return {
+            "ok": True,
+            "total_active_user_scopes": total,
+            "sample": sample,
+        }
+    finally:
+        db_session.close()
 
 
 @router.get("/status", response_model=EbayConnectionStatus)
@@ -304,7 +456,8 @@ async def get_token_info(
             auths = db_session.query(EbayAuthorization).filter(
                 EbayAuthorization.ebay_account_id == account.id
             ).all()
-            user_scopes = [auth.scope for auth in auths] if auths else []
+            # Flatten JSONB array of scopes from all authorizations
+            user_scopes = [s for auth in auths for s in (auth.scopes or [])] if auths else []
     except Exception as e:
         logger.error(f"Error getting account info: {e}")
     finally:
@@ -1157,11 +1310,11 @@ async def debug_ebay_api(
         debugger.access_token = token_row.access_token
         debugger.user = type("U", (), {"email": current_user.email, "id": current_user.id, "ebay_environment": env})
         debugger.base_url = "https://api.sandbox.ebay.com" if env == "sandbox" else "https://api.ebay.com"
-        # Scopes from authorizations
+        # Scopes from authorizations (flatten JSONB array)
         auths = db_session.query(EbayAuthorization).filter(
             EbayAuthorization.ebay_account_id == active_account.id
         ).all()
-        user_scopes = [auth.scope for auth in auths] if auths else []
+        user_scopes = [s for auth in auths for s in (auth.scopes or [])] if auths else []
     except HTTPException:
         raise
     except Exception as e:

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
+import { Input } from './ui/input';
 import { Download, Pause, Play, Trash2, Square } from 'lucide-react';
 import api from '../lib/apiClient';
 
@@ -37,6 +38,7 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
   const [isCancelled, setIsCancelled] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const [search, setSearch] = useState('');
 
   // Load historical events on mount
   useEffect(() => {
@@ -344,7 +346,13 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
               </span>
             )}
           </CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <Input
+              placeholder="Search events"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 w-44 text-xs bg-gray-900 text-gray-100 border-gray-700"
+            />
             {(!isComplete || isConnected) && !isCancelled && (
               <Button
                 variant="ghost"
@@ -387,19 +395,33 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
         </div>
       </CardHeader>
       <CardContent>
-        <ScrollArea className="h-[600px] w-full rounded-md border bg-gray-950 p-4 font-mono text-sm" ref={scrollRef}>
+        <ScrollArea className="min-h-[60vh] max-h-[80vh] w-full rounded-md border bg-gray-950 p-4 font-mono text-sm" ref={scrollRef}>
           {events.length === 0 ? (
             <div className="text-gray-500">Waiting for sync to start...</div>
           ) : (
             <div className="space-y-1">
-              {events.map((event, index) => (
-                <div 
-                  key={index} 
-                  className={`${getEventColor(event)} ${event.level === 'debug' && event.message.includes('\n') ? 'whitespace-pre' : ''}`}
-                >
-                  {formatEvent(event)}
-                </div>
-              ))}
+              {events
+                .filter((event) => {
+                  if (!search.trim()) return true;
+                  const q = search.toLowerCase();
+                  try {
+                    return (
+                      (event.message || '').toLowerCase().includes(q) ||
+                      (event.http_url || '').toLowerCase().includes(q) ||
+                      (event.event_type || '').toLowerCase().includes(q)
+                    );
+                  } catch {
+                    return false;
+                  }
+                })
+                .map((event, index) => (
+                  <div 
+                    key={index} 
+                    className={`${getEventColor(event)} ${event.level === 'debug' && event.message.includes('\n') ? 'whitespace-pre' : ''}`}
+                  >
+                    {formatEvent(event)}
+                  </div>
+                ))}
             </div>
           )}
         </ScrollArea>

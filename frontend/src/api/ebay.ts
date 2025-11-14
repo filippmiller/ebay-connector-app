@@ -49,6 +49,13 @@ export const ebayApi = {
     return response.data;
   },
 
+  async getAvailableScopes(): Promise<{ scopes: { scope: string; grant_type: string; description?: string }[] }> {
+    const response = await apiClient.get<{ scopes: { scope: string; grant_type: string; description?: string }[] }>(
+      '/ebay/scopes',
+    );
+    return response.data;
+  },
+
   async testFetchOrders(limit: number = 10): Promise<any> {
     const response = await apiClient.get(`/ebay/test/orders?limit=${limit}`);
     return response.data;

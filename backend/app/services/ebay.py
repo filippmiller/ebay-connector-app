@@ -299,7 +299,19 @@ class EbayService:
         finally:
             settings.EBAY_ENVIRONMENT = original_env
     
-    async def refresh_access_token(self, refresh_token: str) -> EbayTokenResponse:
+    async def refresh_access_token(
+        self,
+        refresh_token: str,
+        *,
+        user_id: Optional[str] = None,
+        environment: Optional[str] = None,
+    ) -> EbayTokenResponse:
+        """Refresh an access token using a long-lived refresh token.
+
+        When user_id/environment are provided, this will also write a detailed
+        entry to ebay_connect_logs with the HTTP request/response used for
+        the refresh (credentials are masked in the request payload).
+        """
         if not settings.ebay_client_id or not settings.ebay_cert_id:
             ebay_logger.log_ebay_event(
                 "token_refresh_error",
@@ -311,80 +323,150 @@ class EbayService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="eBay credentials not configured"
             )
-        
+
+        target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
+
         credentials = f"{settings.ebay_client_id}:{settings.ebay_cert_id}"
         encoded_credentials = base64.b64encode(credentials.encode()).decode()
-        
+
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {encoded_credentials}"
         }
-        
+
         data = {
             "grant_type": "refresh_token",
-            "refresh_token": refresh_token
+            "refresh_token": refresh_token,
         }
-        
+
+        # Request payload for connect logs – mask secrets but keep full structure
+        masked_headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": "Basic **** (masked)",
+        }
+        masked_body = {
+            "grant_type": "refresh_token",
+            # Only partially show the refresh token for safety
+            "refresh_token": refresh_token if len(refresh_token) <= 12 else f"{refresh_token[:6]}...{refresh_token[-4:]}",
+        }
+        request_payload = {
+            "method": "POST",
+            "url": self.token_url,
+            "headers": masked_headers,
+            "body": masked_body,
+        }
+
         ebay_logger.log_ebay_event(
             "token_refresh_request",
             "Refreshing eBay access token",
             request_data={
                 "grant_type": "refresh_token",
-                "refresh_token": refresh_token
-            }
+                "refresh_token": "<hidden>",
+                "environment": target_env,
+            },
         )
-        
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     self.token_url,
                     headers=headers,
                     data=data,
-                    timeout=30.0
+                    timeout=30.0,
                 )
-                
+
+                # Try to capture a structured body for logging
+                try:
+                    response_body: Any = response.json()
+                except ValueError:
+                    response_body = response.text
+
                 if response.status_code != 200:
-                    error_detail = response.text
+                    error_detail = response_body if isinstance(response_body, str) else response.text
+
                     ebay_logger.log_ebay_event(
                         "token_refresh_failed",
                         f"Token refresh failed with status {response.status_code}",
                         response_data={"error": error_detail},
                         status="error",
-                        error=error_detail
+                        error=error_detail,
                     )
+
+                    # Optional connect log entry – only if we have user context
+                    if user_id is not None:
+                        ebay_connect_logger.log_event(
+                            user_id=user_id,
+                            environment=target_env,
+                            action="token_refresh_failed",
+                            request=request_payload,
+                            response={
+                                "status": response.status_code,
+                                "headers": dict(response.headers),
+                                "body": response_body if isinstance(response_body, (dict, list)) else str(response_body)[:5000],
+                            },
+                            error=str(error_detail)[:2000],
+                        )
+
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Failed to refresh token: {error_detail}"
+                        detail=f"Failed to refresh token: {error_detail}",
                     )
-                
-                token_data = response.json()
-                
+
+                token_data = response_body if isinstance(response_body, dict) else response.json()
+
                 ebay_logger.log_ebay_event(
                     "token_refresh_success",
                     "Successfully refreshed eBay access token",
                     response_data={
                         "access_token": token_data.get("access_token"),
-                        "expires_in": token_data.get("expires_in")
+                        "expires_in": token_data.get("expires_in"),
                     },
-                    status="success"
+                    status="success",
                 )
-                
+
+                # Optional connect log entry for successful refresh
+                if user_id is not None:
+                    ebay_connect_logger.log_event(
+                        user_id=user_id,
+                        environment=target_env,
+                        action="token_refreshed",
+                        request=request_payload,
+                        response={
+                            "status": response.status_code,
+                            "headers": dict(response.headers),
+                            # Store full parsed JSON body; may include tokens
+                            "body": token_data,
+                        },
+                    )
+
                 logger.info("Successfully refreshed eBay access token")
-                
+
                 return EbayTokenResponse(**token_data)
-                
+
         except httpx.RequestError as e:
             error_msg = f"HTTP request failed: {str(e)}"
             ebay_logger.log_ebay_event(
                 "token_refresh_error",
                 "HTTP request error during token refresh",
                 status="error",
-                error=error_msg
+                error=error_msg,
             )
+
+            # Optional connect log entry for network-level errors
+            if user_id is not None:
+                ebay_connect_logger.log_event(
+                    user_id=user_id,
+                    environment=target_env,
+                    action="token_refresh_error",
+                    request=request_payload,
+                    response=None,
+                    error=error_msg,
+                )
+
             logger.error(error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg
+                detail=error_msg,
             )
     
     def save_user_tokens(self, user_id: str, token_response: EbayTokenResponse, environment: Optional[str] = None):
@@ -756,12 +838,12 @@ class EbayService:
                 try:
                     accounts = ebay_account_service.get_accounts_by_org(db_session, user_id)
                     if accounts:
-                        # Get scopes from first account's authorizations
+                        # Get scopes from first account's authorizations (flatten JSONB array)
                         from app.models_sqlalchemy.models import EbayAuthorization
                         auths = db_session.query(EbayAuthorization).filter(
                             EbayAuthorization.ebay_account_id == accounts[0].id
                         ).all()
-                        user_scopes = [auth.scope for auth in auths] if auths else []
+                        user_scopes = [s for auth in auths for s in (auth.scopes or [])] if auths else []
                 except Exception as e:
                     logger.warning(f"Could not retrieve scopes from account: {e}")
                 finally:

@@ -144,6 +144,27 @@ export const EbayDebugger: React.FC = () => {
   const [refreshingAdmin, setRefreshingAdmin] = useState(false);
   const [tokenInfoLoading, setTokenInfoLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'debugger' | 'token-info'>('debugger');
+
+  // Admin view: accounts + scopes vs catalog
+  type AdminAccountsScopes = {
+    scope_catalog: { scope: string; grant_type: string; description?: string }[];
+    accounts: {
+      id: string;
+      username: string | null;
+      ebay_user_id: string;
+      house_name: string;
+      is_active: boolean;
+      connected_at?: string | null;
+      scopes: string[];
+      scopes_count: number;
+      has_all_catalog_scopes: boolean;
+      missing_catalog_scopes: string[];
+      token?: { access_expires_at?: string | null; has_refresh_token?: boolean } | null;
+    }[];
+  } | null;
+  const [accountsScopes, setAccountsScopes] = useState<AdminAccountsScopes>(null);
+  const [accountsScopesLoading, setAccountsScopesLoading] = useState(false);
+  const [accountsScopesError, setAccountsScopesError] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
     const saved = localStorage.getItem('ebay_environment');
     return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
@@ -193,6 +214,7 @@ export const EbayDebugger: React.FC = () => {
       if (FEATURE_TOKEN_INFO && environment === 'production') {
         void loadAdminTokenInfo();
         void loadTokenLogs();
+        void loadAdminAccountsScopes();
       }
     }
   }, [activeTab, environment, totalTestingMode]);
@@ -274,8 +296,27 @@ export const EbayDebugger: React.FC = () => {
       await api.post('/admin/ebay/tokens/refresh?env=production');
       await loadAdminTokenInfo();
       await loadTokenLogs();
+      await loadAdminAccountsScopes();
     } finally {
       setRefreshingAdmin(false);
+    }
+  };
+
+  const loadAdminAccountsScopes = async () => {
+    if (!FEATURE_TOKEN_INFO || environment !== 'production') {
+      setAccountsScopes(null);
+      setAccountsScopesError(null);
+      return;
+    }
+    setAccountsScopesLoading(true);
+    setAccountsScopesError(null);
+    try {
+      const { data } = await api.get('/admin/ebay/accounts/scopes');
+      setAccountsScopes(data);
+    } catch (e: any) {
+      setAccountsScopesError(e?.response?.data?.detail || 'Failed to load accounts/scopes');
+    } finally {
+      setAccountsScopesLoading(false);
     }
   };
 
@@ -1376,6 +1417,107 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     <Loader2 className={`h-4 w-4 mr-2 ${(tokenInfoLoading || tokenInfoRequestLoading) ? 'animate-spin' : ''}`} />
                     {tokenInfoRequestLoading ? 'Testing API...' : 'Refresh Token Info & Test API'}
                   </Button>
+
+                  {/* Admin: Accounts + Scopes vs Catalog (production only) */}
+                  {FEATURE_TOKEN_INFO && environment === 'production' && (
+                    <Card className="mt-4">
+                      <CardHeader>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <CardTitle>Accounts &amp; Scopes (Admin)</CardTitle>
+                            <CardDescription>
+                              For this org: all eBay accounts, stored scopes, and comparison with scope catalog.
+                            </CardDescription>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={loadAdminAccountsScopes} disabled={accountsScopesLoading}>
+                            {accountsScopesLoading ? <><Loader2 className="mr-1 h-3 w-3 animate-spin"/>Reloading...</> : 'Reload'}
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-4 text-sm">
+                        {accountsScopesError && (
+                          <Alert variant="destructive"><AlertDescription>{accountsScopesError}</AlertDescription></Alert>
+                        )}
+                        {accountsScopes && (
+                          <>
+                            <div className="text-xs text-gray-600 mb-1">
+                              Scope catalog: {accountsScopes.scope_catalog.length} scopes
+                            </div>
+                            <details className="mb-3">
+                              <summary className="cursor-pointer text-blue-600 hover:text-blue-800 text-xs">Show scope catalog</summary>
+                              <ul className="mt-2 space-y-1 list-disc list-inside">
+                                {accountsScopes.scope_catalog.map((s) => (
+                                  <li key={s.scope} className="font-mono text-xs text-gray-700">
+                                    {s.scope}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                            {accountsScopes.accounts.length === 0 ? (
+                              <div className="text-gray-600 text-sm">No eBay accounts found for this org.</div>
+                            ) : (
+                              <div className="space-y-3">
+                                {accountsScopes.accounts.map((acc) => (
+                                  <div key={acc.id} className="p-3 border rounded bg-gray-50">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div>
+                                        <div className="font-semibold">{acc.house_name || acc.username || acc.id}</div>
+                                        <div className="text-xs text-gray-600">eBay: {acc.username || '—'} ({acc.ebay_user_id})</div>
+                                        {acc.connected_at && (
+                                          <div className="text-xs text-gray-500">Connected at: {new Date(acc.connected_at).toLocaleString()}</div>
+                                        )}
+                                      </div>
+                                      <div className="text-right text-xs">
+                                        <div>Scopes: {acc.scopes_count} / {accountsScopes.scope_catalog.length}</div>
+                                        <div>
+                                          {acc.has_all_catalog_scopes ? (
+                                            <span className="text-green-600 font-semibold">Full catalog granted</span>
+                                          ) : (
+                                            <span className="text-amber-600 font-semibold">Missing {acc.missing_catalog_scopes.length} scopes</span>
+                                          )}
+                                        </div>
+                                        {acc.token && (
+                                          <div className="mt-1 text-xs text-gray-500">
+                                            Access expires: {acc.token.access_expires_at || '—'}
+                                            {acc.token.has_refresh_token ? ' • has refresh token' : ''}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <details className="mt-2">
+                                      <summary className="cursor-pointer text-blue-600 hover:text-blue-800 text-xs">Show account scopes</summary>
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {acc.scopes.length === 0 ? (
+                                          <span className="text-xs text-red-600">No scopes stored</span>
+                                        ) : (
+                                          acc.scopes.map((s) => (
+                                            <span key={s} className="text-xs px-2 py-0.5 border rounded bg-white font-mono">{s}</span>
+                                          ))
+                                        )}
+                                      </div>
+                                    </details>
+                                    {!acc.has_all_catalog_scopes && acc.missing_catalog_scopes.length > 0 && (
+                                      <details className="mt-2">
+                                        <summary className="cursor-pointer text-amber-700 hover:text-amber-900 text-xs">Show missing catalog scopes</summary>
+                                        <ul className="mt-1 list-disc list-inside">
+                                          {acc.missing_catalog_scopes.map((s) => (
+                                            <li key={s} className="text-xs font-mono text-amber-800">{s}</li>
+                                          ))}
+                                        </ul>
+                                      </details>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {!accountsScopes && !accountsScopesLoading && !accountsScopesError && (
+                          <div className="text-xs text-gray-500">Click "Reload" to load accounts/scopes from admin API.</div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
               ) : (
                 <Alert>

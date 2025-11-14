@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.services.ebay_account_service import ebay_account_service
 from app.services.ebay import ebay_service
@@ -40,38 +41,51 @@ async def refresh_expiring_tokens():
         for account in accounts:
             try:
                 token = ebay_account_service.get_token(db, account.id)
-                
+
                 if not token or not token.refresh_token:
                     logger.warning(f"Account {account.id} ({account.house_name}) has no refresh token")
                     errors.append({
                         "account_id": account.id,
                         "house_name": account.house_name,
-                        "error": "No refresh token available"
+                        "error": "No refresh token available",
                     })
                     continue
-                
+
                 logger.info(f"Refreshing token for account {account.id} ({account.house_name})")
-                
-                new_token_data = await ebay_service.refresh_access_token(token.refresh_token)
-                
+
+                # Use org_id as the logical user_id for connect logs
+                org_id = getattr(account, "org_id", None)
+                env = settings.EBAY_ENVIRONMENT or "sandbox"
+
+                new_token_data = await ebay_service.refresh_access_token(
+                    token.refresh_token,
+                    user_id=org_id,
+                    environment=env,
+                )
+
                 # Defensive log: type and public attributes only (no secrets)
                 try:
-                    attrs = [a for a in dir(new_token_data) if not a.startswith('_')]
-                    logger.info("Token refresh response: type=%s, attrs=%s, has_refresh=%s", type(new_token_data).__name__, attrs, bool(getattr(new_token_data, 'refresh_token', None)))
+                    attrs = [a for a in dir(new_token_data) if not a.startswith("_")]
+                    logger.info(
+                        "Token refresh response: type=%s, attrs=%s, has_refresh=%s",
+                        type(new_token_data).__name__,
+                        attrs,
+                        bool(getattr(new_token_data, "refresh_token", None)),
+                    )
                 except Exception:
                     logger.debug("Could not introspect token refresh response")
-                
+
                 ebay_account_service.save_tokens(
                     db,
                     account.id,
                     new_token_data.access_token,
-                    getattr(new_token_data, 'refresh_token', None) or token.refresh_token,
-                    new_token_data.expires_in
+                    getattr(new_token_data, "refresh_token", None) or token.refresh_token,
+                    new_token_data.expires_in,
                 )
-                
+
                 refreshed_count += 1
                 logger.info(f"Successfully refreshed token for account {account.id} ({account.house_name})")
-                
+
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"Failed to refresh token for account {account.id} ({account.house_name}): {error_msg}")
