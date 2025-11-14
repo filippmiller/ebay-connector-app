@@ -65,6 +65,36 @@ export const EbayConnectionPage: React.FC = () => {
   // Available scopes loaded from backend catalog
   const [availableScopes, setAvailableScopes] = useState<string[]>([]);
 
+  // eBay accounts overview
+  type EbayAccountWithToken = {
+    id: string;
+    org_id: string;
+    ebay_user_id: string;
+    username: string | null;
+    house_name: string;
+    purpose: string;
+    marketplace_id?: string | null;
+    site_id?: number | null;
+    connected_at: string;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+    token?: {
+      id: string;
+      ebay_account_id: string;
+      expires_at?: string | null;
+      last_refreshed_at?: string | null;
+      refresh_error?: string | null;
+    } | null;
+    status: string;
+    expires_in_seconds?: number | null;
+    last_health_check?: string | null;
+    health_status?: string | null;
+  };
+  const [accounts, setAccounts] = useState<EbayAccountWithToken[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState('');
+
   // Pre-flight modal state
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightUrl, setPreflightUrl] = useState<string>('');
@@ -80,6 +110,7 @@ export const EbayConnectionPage: React.FC = () => {
     loadConnectionStatus();
     loadLogs();
     loadAvailableScopes();
+    loadAccounts();
     const interval = setInterval(loadLogs, 3000);
     return () => {
       clearInterval(interval);
@@ -118,6 +149,20 @@ export const EbayConnectionPage: React.FC = () => {
       setAvailableScopes(scopes);
     } catch (err) {
       console.error('Failed to load available eBay scopes:', err);
+    }
+  };
+
+  const loadAccounts = async () => {
+    try {
+      setAccountsLoading(true);
+      setAccountsError('');
+      const data = await ebayApi.getAccounts(true);
+      setAccounts(data || []);
+    } catch (err) {
+      console.error('Failed to load eBay accounts:', err);
+      setAccountsError('Failed to load eBay accounts');
+    } finally {
+      setAccountsLoading(false);
     }
   };
 
@@ -414,8 +459,9 @@ export const EbayConnectionPage: React.FC = () => {
           <h1 className="text-3xl font-bold mb-6">eBay Connection Management</h1>
 
           <Tabs defaultValue="connection" className="space-y-4">
-            <TabsList>
+              <TabsList>
               <TabsTrigger value="connection">eBay Connection</TabsTrigger>
+              <TabsTrigger value="accounts">eBay Accounts</TabsTrigger>
               <TabsTrigger value="sync">Sync Data</TabsTrigger>
               <TabsTrigger value="debugger">🔧 API Debugger</TabsTrigger>
               <TabsTrigger value="terminal">Connection Terminal</TabsTrigger>
@@ -760,6 +806,61 @@ export const EbayConnectionPage: React.FC = () => {
                       ))
                     )}
                   </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="accounts" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>eBay Accounts</CardTitle>
+                  <CardDescription>
+                    All eBay accounts for this organization, with token status and health.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {accountsLoading && (
+                    <div className="text-sm text-gray-600">Loading accounts...</div>
+                  )}
+                  {accountsError && (
+                    <Alert variant="destructive" className="mb-2">
+                      <AlertDescription>{accountsError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {!accountsLoading && !accountsError && accounts.length === 0 && (
+                    <div className="text-sm text-gray-600">No eBay accounts found. Connect to eBay to create an account.</div>
+                  )}
+                  {accounts.length > 0 && (
+                    <div className="space-y-3">
+                      {accounts.map((acc) => (
+                        <div key={acc.id} className="border rounded p-3 bg-gray-50 flex flex-col gap-1 text-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="font-semibold">{acc.house_name || acc.username || acc.id}</div>
+                              <div className="text-xs text-gray-600">
+                                eBay: {acc.username || '—'} ({acc.ebay_user_id})
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                Connected at: {new Date(acc.connected_at).toLocaleString()}
+                              </div>
+                            </div>
+                            <div className="text-right text-xs">
+                              <div>Status: {acc.status}</div>
+                              {typeof acc.expires_in_seconds === 'number' && (
+                                <div>TTL: {acc.expires_in_seconds}s</div>
+                              )}
+                              {acc.token?.expires_at && (
+                                <div>Expires: {new Date(acc.token.expires_at).toLocaleString()}</div>
+                              )}
+                              {acc.token?.refresh_error && (
+                                <div className="text-red-500 mt-1">Last error: {acc.token.refresh_error}</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

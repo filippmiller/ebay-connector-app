@@ -105,4 +105,12 @@ export const ebayApi = {
     const response = await apiClient.get(`/ebay/orders?limit=${limit}&offset=${offset}`);
     return response.data;
   },
+
+  // eBay multi-account support
+  async getAccounts(activeOnly: boolean = true): Promise<any[]> {
+    const params = new URLSearchParams();
+    params.set('active_only', activeOnly ? 'true' : 'false');
+    const response = await apiClient.get(`/ebay-accounts?${params.toString()}`);
+    return response.data;
+  },
 };

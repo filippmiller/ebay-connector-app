@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Switch } from './ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import api from '../lib/apiClient';
+import { ebayApi } from '../api/ebay';
 // Feature flag with safe fallbacks: env var, localStorage, or ?tokeninfo=1
 const FEATURE_TOKEN_INFO = (
   (import.meta.env.VITE_FEATURE_TOKEN_INFO === 'true') ||
@@ -145,6 +146,27 @@ export const EbayDebugger: React.FC = () => {
   const [tokenInfoLoading, setTokenInfoLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'debugger' | 'token-info'>('debugger');
 
+  // eBay accounts for account selection (multi-account)
+  type EbayAccountWithToken = {
+    id: string;
+    org_id: string;
+    ebay_user_id: string;
+    username: string | null;
+    house_name: string;
+    status: string;
+    token?: {
+      id: string;
+      ebay_account_id: string;
+      expires_at?: string | null;
+      last_refreshed_at?: string | null;
+      refresh_error?: string | null;
+    } | null;
+  };
+  const [accounts, setAccounts] = useState<EbayAccountWithToken[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+
   // Admin view: accounts + scopes vs catalog
   type AdminAccountsScopes = {
     scope_catalog: { scope: string; grant_type: string; description?: string }[];
@@ -204,6 +226,7 @@ export const EbayDebugger: React.FC = () => {
 
   useEffect(() => {
     loadTemplates();
+    void loadAccounts();
     if (activeTab === 'debugger') {
       void loadDebuggerLogs();
       const id = setInterval(() => { if (!totalTestingMode) void loadDebuggerLogs(); }, 10000);
@@ -258,6 +281,23 @@ export const EbayDebugger: React.FC = () => {
     };
     void gen();
   }, [showReconnect, reconnectScopes, environment]);
+
+  const loadAccounts = async () => {
+    try {
+      setAccountsLoading(true);
+      setAccountsError(null);
+      const data = await ebayApi.getAccounts(true);
+      setAccounts(data || []);
+      if (!selectedAccountId && data && data.length > 0) {
+        setSelectedAccountId(data[0].id);
+      }
+    } catch (e: any) {
+      console.error('Failed to load eBay accounts:', e);
+      setAccountsError(e?.response?.data?.detail || 'Failed to load eBay accounts');
+    } finally {
+      setAccountsLoading(false);
+    }
+  };
 
   const loadAdminTokenInfo = async () => {
     if (environment !== 'production') { setAdminTokenInfo(null); return; }
@@ -325,7 +365,9 @@ export const EbayDebugger: React.FC = () => {
     setTokenInfoLoading(true);
     setError('');
     try {
-      const res = await api.get(`/ebay/token-info?environment=${targetEnv}`);
+      const params = new URLSearchParams({ environment: targetEnv });
+      if (selectedAccountId) params.set('account_id', selectedAccountId);
+      const res = await api.get(`/ebay/token-info?${params.toString()}`);
       setTokenInfo(res.data);
       
       // Automatically test Identity API call if token is available
@@ -340,15 +382,15 @@ export const EbayDebugger: React.FC = () => {
     }
   };
 
-const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
-  if (environment === newEnv) return;
-  setEnvironment(newEnv);
-  localStorage.setItem('ebay_environment', newEnv);
-  setError('');
-  if (activeTab === 'token-info') {
-    void loadTokenInfo(newEnv);
-  }
-};
+  const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
+    if (environment === newEnv) return;
+    setEnvironment(newEnv);
+    localStorage.setItem('ebay_environment', newEnv);
+    setError('');
+    if (activeTab === 'token-info') {
+      void loadTokenInfo(newEnv);
+    }
+  };
 
   const testIdentityAPI = async (env: 'sandbox' | 'production', token: string) => {
     setTokenInfoRequestLoading(true);
@@ -375,7 +417,9 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         path: '/identity/v1/oauth2/userinfo',
         environment: env
       });
-      
+      if (selectedAccountId) {
+        queryParams.set('account_id', selectedAccountId);
+      }
       const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
       
       const historyEntry: TokenInfoHistoryEntry = {
@@ -649,6 +693,9 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         ...(selectedTemplate && selectedTemplate !== "custom" ? { template: selectedTemplate } : {})
       });
 
+      if (selectedAccountId) {
+        queryParams.set('account_id', selectedAccountId);
+      }
       const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
       setResponse(res.data);
       // refresh terminal logs shortly after send
@@ -717,17 +764,18 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Environment Selector */}
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
-            <div className="flex items-center gap-3">
-              <Label htmlFor="debugger-env" className="font-medium">
-                Environment:
-              </Label>
-              <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
-                {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
-              </Badge>
-            </div>
-            <div className="flex items-center gap-3">
+          {/* Environment + Account Selector */}
+          <div className="flex flex-col gap-3 p-3 bg-gray-50 rounded-lg border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Label htmlFor="debugger-env" className="font-medium">
+                  Environment:
+                </Label>
+                <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                  {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-3">
               <Label htmlFor="debugger-env" className="text-sm text-gray-600">
                 Sandbox
               </Label>
@@ -742,6 +790,35 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
               <Label htmlFor="debugger-env" className="text-sm text-gray-600">
                 Production
               </Label>
+            </div>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="text-sm font-medium">eBay account:</div>
+              <div className="flex items-center gap-2 flex-1">
+                {accountsLoading ? (
+                  <div className="text-xs text-gray-500">Loading accounts...</div>
+                ) : accountsError ? (
+                  <div className="text-xs text-red-500">{accountsError}</div>
+                ) : accounts.length === 0 ? (
+                  <div className="text-xs text-gray-500">No eBay accounts. Connect to eBay first.</div>
+                ) : (
+                  <Select
+                    value={selectedAccountId || accounts[0]?.id}
+                    onValueChange={(val) => setSelectedAccountId(val)}
+                  >
+                    <SelectTrigger className="w-full sm:w-72">
+                      <SelectValue placeholder="Select eBay account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {accounts.map((acc) => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1345,7 +1422,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     </div>
                   )}
                   {/* Condensed User Summary */}
-                  <div className="p-2 bg-blue-50 rounded-lg border border-blue-200 text-sm">
+              <div className="p-2 bg-blue-50 rounded-lg border border-blue-200 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold">User:</span> <span>{tokenInfo.user_email}</span>
                       <span>•</span>

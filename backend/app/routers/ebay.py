@@ -402,64 +402,119 @@ async def get_ebay_scopes_health(current_user: User = Depends(get_current_active
 
 @router.get("/status", response_model=EbayConnectionStatus)
 async def get_ebay_status(current_user: User = Depends(get_current_active_user)):
-    return EbayConnectionStatus(
-        connected=current_user.ebay_connected,
-        user_id=current_user.id if current_user.ebay_connected else None,
-        expires_at=current_user.ebay_token_expires_at
-    )
+    """Connection status based on eBay accounts + account-level tokens.
+
+    A user is considered connected if any active eBay account has a non-expired
+    access token in ebay_tokens. This ignores legacy user.ebay_connected flags.
+    """
+    from app.models_sqlalchemy import get_db
+    from app.services.ebay_account_service import ebay_account_service
+
+    db_session = next(get_db())
+    try:
+        accounts_with_status = ebay_account_service.get_accounts_with_status(db_session, current_user.id)
+        # Treat statuses 'healthy' and 'expiring_soon' as connected
+        connected_accounts = [a for a in accounts_with_status if a.status in ("healthy", "expiring_soon")]
+        if not connected_accounts:
+            return EbayConnectionStatus(connected=False, user_id=current_user.id, expires_at=None, scopes=[])
+
+        # Compute the latest token expiry among connected accounts
+        from datetime import datetime
+        expires_at_values = [
+            a.token.expires_at for a in connected_accounts
+            if a.token and a.token.expires_at is not None
+        ]
+        latest_expiry = max(expires_at_values) if expires_at_values else None
+
+        return EbayConnectionStatus(
+            connected=True,
+            user_id=current_user.id,
+            expires_at=latest_expiry,
+            scopes=None,
+        )
+    finally:
+        db_session.close()
 
 
 @router.get("/token-info")
 async def get_token_info(
     environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
+    account_id: Optional[str] = Query(None, description="Specific eBay account ID to inspect (optional)"),
     current_user: User = Depends(get_current_active_user)
 ):
+    """Get full token information for current user (for debugging).
+
+    Uses eBay account-level tokens rather than legacy user fields. If account_id
+    is not provided, the most recently connected active account is used.
     """
-    Get full token information for current user (for debugging).
-    Returns unmasked token and all related data.
-    """
-    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected, get_user_ebay_token_expires_at
-    
-    env = environment or current_user.ebay_environment or "sandbox"
-    
-    if not is_user_ebay_connected(current_user, env):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"User is not connected to eBay ({env})"
-        )
-    
-    # Select active account (most recently connected) and its latest token
+    from datetime import datetime, timezone
     from app.services.ebay_account_service import ebay_account_service
     from app.models_sqlalchemy import get_db
     from app.models_sqlalchemy.models import EbayToken, EbayAuthorization
+
+    env = environment or current_user.ebay_environment or "sandbox"
+
     db_session = next(get_db())
     access_token = None
     token_expires_at = None
-    user_scopes = []
+    user_scopes: list[str] = []
     ebay_user_id = None
     ebay_username = None
     try:
         accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
-        if accounts:
-            account = accounts[0]
-            ebay_user_id = account.ebay_user_id
-            ebay_username = account.username
-            token_row = (
-                db_session.query(EbayToken)
-                .filter(EbayToken.ebay_account_id == account.id)
-                .order_by(EbayToken.updated_at.desc())
-                .first()
+        if not accounts:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User has no eBay accounts ({env})",
             )
-            if token_row:
-                access_token = token_row.access_token
-                token_expires_at = token_row.expires_at
-            auths = db_session.query(EbayAuthorization).filter(
-                EbayAuthorization.ebay_account_id == account.id
-            ).all()
-            # Flatten JSONB array of scopes from all authorizations
-            user_scopes = [s for auth in auths for s in (auth.scopes or [])] if auths else []
+
+        # Pick account: specific ID if provided, otherwise most recently connected
+        selected_account = None
+        if account_id:
+            for acc in accounts:
+                if acc.id == account_id:
+                    selected_account = acc
+                    break
+            if not selected_account:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found for user")
+        else:
+            selected_account = accounts[0]
+
+        ebay_user_id = selected_account.ebay_user_id
+        ebay_username = selected_account.username
+
+        # Latest token for this account
+        token_row = (
+            db_session.query(EbayToken)
+            .filter(EbayToken.ebay_account_id == selected_account.id)
+            .order_by(EbayToken.updated_at.desc())
+            .first()
+        )
+        if not token_row or not token_row.access_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active token for selected eBay account",
+            )
+
+        access_token = token_row.access_token
+        token_expires_at = token_row.expires_at
+
+        # Basic check: consider token inactive if expires_at in past
+        if token_expires_at and token_expires_at < datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Token for selected eBay account has expired",
+            )
+
+        auths = db_session.query(EbayAuthorization).filter(
+            EbayAuthorization.ebay_account_id == selected_account.id
+        ).all()
+        user_scopes = [s for auth in auths for s in (auth.scopes or [])] if auths else []
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting account info: {e}")
+        logger.error(f"Error getting account token info: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to load token info")
     finally:
         db_session.close()
 
@@ -1269,6 +1324,7 @@ async def debug_ebay_api(
     body: Optional[str] = Query(None, description="Request body (JSON string)"),
     template: Optional[str] = Query(None, description="Use predefined template (identity, orders, transactions, etc.)"),
     environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
+    account_id: Optional[str] = Query(None, description="Specific eBay account ID to use for the call (optional)"),
     current_user: User = Depends(get_current_active_user)
 ):
     """Debug eBay API requests - make a test request and return full response."""
@@ -1279,16 +1335,10 @@ async def debug_ebay_api(
     
     env = environment or current_user.ebay_environment or "sandbox"
     
-    if not is_user_ebay_connected(current_user, env):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"User is not connected to eBay ({env})"
-        )
-    
     debugger = EbayAPIDebugger(current_user.id, raw_mode=False, save_history=False)
 
-    # Load account-level token for active account (no legacy user fields)
-    user_scopes = []
+    # Load account-level token for selected account (no legacy user fields)
+    user_scopes: list[str] = []
     from app.services.ebay_account_service import ebay_account_service
     from app.models_sqlalchemy import get_db
     from app.models_sqlalchemy.models import EbayToken, EbayAuthorization
@@ -1297,7 +1347,18 @@ async def debug_ebay_api(
         accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
         if not accounts:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active eBay account")
-        active_account = accounts[0]
+
+        # Pick specific account if provided, otherwise first
+        if account_id:
+            active_account = None
+            for acc in accounts:
+                if acc.id == account_id:
+                    active_account = acc
+                    break
+            if not active_account:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found for user")
+        else:
+            active_account = accounts[0]
         token_row = (
             db_session.query(EbayToken)
             .filter(EbayToken.ebay_account_id == active_account.id)
