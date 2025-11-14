@@ -615,11 +615,14 @@ export const EbayDebugger: React.FC = () => {
       const tpl = selectedTemplate && selectedTemplate !== 'custom' ? selectedTemplate : null;
       if (tpl) {
         const required = REQUIRED_SCOPES_BY_TEMPLATE[tpl] || [];
-        const userScopes: string[] = (environment === 'production')
-          ? (adminTokenInfo?.scopes || [])
-          : (tokenInfo?.scopes || []);
-        const missing = required.filter(r => !(userScopes || []).includes(r));
-        if (missing.length > 0) {
+        // Always use the scopes from the currently selected account/tokenInfo.
+        // Admin-level scopes may differ or be stale and would give false negatives.
+        if (!tokenInfo || !Array.isArray(tokenInfo.scopes)) {
+          // Token info not loaded yet – skip scope warning to avoid false negatives.
+        } else {
+          const userScopes: string[] = tokenInfo.scopes || [];
+          const missing = required.filter(r => !(userScopes || []).includes(r));
+          if (missing.length > 0) {
           setStdError(`Missing required scopes: ${missing.join(', ')}`);
           setReconnectScopes(missing);
           setShowReconnect(true);

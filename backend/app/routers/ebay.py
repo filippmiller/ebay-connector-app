@@ -1274,10 +1274,13 @@ async def get_debug_templates(current_user: User = Depends(get_current_active_us
         },
         "orders": {
             "name": "Orders API - Get Orders",
-            "description": "Fetch recent orders",
+            "description": "Fetch recent orders (completed, fulfilled)",
             "method": "GET",
             "path": "/sell/fulfillment/v1/order",
-            "params": {"limit": "1", "filter": "orderStatus:COMPLETED"},
+            # eBay Fulfillment API expects lowercase filter names, e.g.:
+            #   filter=orderfulfillmentstatus:{FULFILLED}
+            # We use FULFILLED to get shipped/finished orders.
+            "params": {"limit": "1", "filter": "orderfulfillmentstatus:{FULFILLED}"},
         },
         "transactions": {
             "name": "Transactions API - Get Transactions",
