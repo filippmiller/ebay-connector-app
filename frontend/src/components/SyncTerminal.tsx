@@ -36,6 +36,7 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
   const [isPaused, setIsPaused] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [isCancelled, setIsCancelled] = useState(false);
+  const [visibleLimit, setVisibleLimit] = useState<number>(500);
   const scrollRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const [search, setSearch] = useState('');
@@ -323,6 +324,22 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
     return `[${time}] ${message}`;
   };
 
+  // Apply search & limit
+  const filteredEvents = events.filter((event) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    try {
+      return (
+        (event.message || '').toLowerCase().includes(q) ||
+        (event.http_url || '').toLowerCase().includes(q) ||
+        (event.event_type || '').toLowerCase().includes(q)
+      );
+    } catch {
+      return false;
+    }
+  });
+  const limitedEvents = filteredEvents.slice(Math.max(filteredEvents.length - visibleLimit, 0));
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -347,6 +364,20 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
             )}
           </CardTitle>
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span>Show</span>
+              <select
+                value={visibleLimit}
+                onChange={(e) => setVisibleLimit(Number(e.target.value) || 500)}
+                className="h-8 rounded border border-gray-700 bg-gray-900 text-gray-100 text-xs px-2"
+              >
+                <option value={200}>200</option>
+                <option value={500}>500</option>
+                <option value={2000}>2000</option>
+                <option value={5000}>5000</option>
+              </select>
+              <span>events</span>
+            </div>
             <Input
               placeholder="Search events"
               value={search}
@@ -395,33 +426,19 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
         </div>
       </CardHeader>
       <CardContent>
-        <ScrollArea className="min-h-[60vh] max-h-[80vh] w-full rounded-md border bg-gray-950 p-4 font-mono text-sm" ref={scrollRef}>
-          {events.length === 0 ? (
+        <ScrollArea className="min-h-[50vh] max-h-[70vh] w-full rounded-md border bg-gray-950 p-4 font-mono text-sm overflow-auto" ref={scrollRef}>
+          {limitedEvents.length === 0 ? (
             <div className="text-gray-500">Waiting for sync to start...</div>
           ) : (
             <div className="space-y-1">
-              {events
-                .filter((event) => {
-                  if (!search.trim()) return true;
-                  const q = search.toLowerCase();
-                  try {
-                    return (
-                      (event.message || '').toLowerCase().includes(q) ||
-                      (event.http_url || '').toLowerCase().includes(q) ||
-                      (event.event_type || '').toLowerCase().includes(q)
-                    );
-                  } catch {
-                    return false;
-                  }
-                })
-                .map((event, index) => (
-                  <div 
-                    key={index} 
-                    className={`${getEventColor(event)} ${event.level === 'debug' && event.message.includes('\n') ? 'whitespace-pre' : ''}`}
-                  >
-                    {formatEvent(event)}
-                  </div>
-                ))}
+              {limitedEvents.map((event, index) => (
+                <div 
+                  key={index} 
+                  className={`${getEventColor(event)} ${event.level === 'debug' && event.message.includes('\n') ? 'whitespace-pre' : ''}`}
+                >
+                  {formatEvent(event)}
+                </div>
+              ))}
             </div>
           )}
         </ScrollArea>

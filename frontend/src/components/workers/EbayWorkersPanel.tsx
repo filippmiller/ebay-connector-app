@@ -28,9 +28,11 @@ interface WorkerConfigResponse {
 
 interface EbayWorkersPanelProps {
   accountId: string;
+  accountLabel: string;
+  ebayUserId?: string;
 }
 
-export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId }) => {
+export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, accountLabel, ebayUserId }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<WorkerConfigResponse | null>(null);
@@ -195,8 +197,11 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId })
             <div>
               <div className="font-semibold text-lg">Workers command control</div>
               <div className="text-sm text-gray-600">
-                Account: {config.account.username || config.account.house_name || config.account.id}
+                Account: {accountLabel || config.account.username || config.account.house_name || config.account.id}
               </div>
+              {ebayUserId && (
+                <div className="text-xs text-gray-500">eBay user id: {ebayUserId}</div>
+              )}
             </div>
             <button
               onClick={toggleGlobal}
@@ -221,7 +226,25 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId })
             <tbody>
               {config.workers.map((w) => (
                 <tr key={w.api_family} className="border-t">
-                  <td className="px-3 py-2 font-medium">{w.api_family}</td>
+                  <td className="px-3 py-2 font-medium align-top">
+                    <div className="font-medium capitalize">{w.api_family}</div>
+                    {w.api_family === 'orders' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Orders – Fulfillment API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GET /sell/fulfillment/v1/order</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_orders</span>
+                          <span className="text-gray-500"> (+ </span>
+                          <span className="font-mono">ebay_order_line_items</span>
+                          <span className="text-gray-500">)</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Key columns: order_id, user_id, creation_date, last_modified_date, order_payment_status,
+                          order_fulfillment_status, buyer_username, total_amount, total_currency, ship_to_*, line_items_count.
+                        </div>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2">
                     <span
                       className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${

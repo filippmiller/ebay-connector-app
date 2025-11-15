@@ -1284,7 +1284,15 @@ export const EbayConnectionPage: React.FC = () => {
                       </div>
 
                       {selectedConnectAccountId && (
-                        <EbayWorkersPanel accountId={selectedConnectAccountId} />
+                        <EbayWorkersPanel
+                          accountId={selectedConnectAccountId}
+                          accountLabel={
+                            (accounts.find(a => a.id === selectedConnectAccountId)?.house_name) ||
+                            (accounts.find(a => a.id === selectedConnectAccountId)?.username) ||
+                            selectedConnectAccountId
+                          }
+                          ebayUserId={accounts.find(a => a.id === selectedConnectAccountId)?.ebay_user_id}
+                        />
                       )}
                     </>
                   )}
