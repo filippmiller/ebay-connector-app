@@ -725,7 +725,8 @@ class PostgresEbayDatabase:
                  order_id, transaction_date, 
                  transaction_type, transaction_status, amount, currency,
                  transaction_data, created_at, updated_at)
-                VALUES (:transaction_id, :user_id, :order_id, :transaction_date,
+                VALUES (:transaction_id, :user_id, :ebay_account_id, :ebay_user_id,
+                        :order_id, :transaction_date,
                         :transaction_type, :transaction_status, :amount, :currency,
                         :transaction_data, :created_at, :updated_at)
                 ON CONFLICT (transaction_id, user_id) 
