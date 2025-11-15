@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RefreshCw, CheckCircle2, XCircle, Clock, Download } from 'lucide-react';
@@ -9,22 +8,6 @@ import { useToast } from '@/hooks/use-toast';
 import FixedHeader from '@/components/FixedHeader';
 import api from '@/lib/apiClient';
 import { DataGridPage } from '@/components/DataGridPage';
-
-interface Offer {
-  offer_id: string;
-  direction: string;
-  state: string;
-  item_id: string;
-  sku?: string;
-  buyer_username?: string;
-  quantity: number;
-  price_value: number;
-  price_currency: string;
-  original_price_value?: number;
-  created_at?: string;
-  expires_at?: string;
-  message?: string;
-}
 
 export default function OffersPageV2() {
   const [syncing, setSyncing] = useState(false);
@@ -118,23 +101,6 @@ export default function OffersPageV2() {
     }
   };
 
-  const getStateBadge = (state: string) => {
-    const colors: Record<string, string> = {
-      PENDING: 'bg-yellow-100 text-yellow-800',
-      ACCEPTED: 'bg-green-100 text-green-800',
-      DECLINED: 'bg-red-100 text-red-800',
-      EXPIRED: 'bg-gray-100 text-gray-800',
-      COUNTERED: 'bg-blue-100 text-blue-800'
-    };
-    return <Badge className={colors[state] || 'bg-gray-100'}>{state}</Badge>;
-  };
-
-  const getDirectionBadge = (direction: string) => {
-    return direction === 'INBOUND' ? 
-      <Badge className="bg-purple-100 text-purple-800">Inbound</Badge> :
-      <Badge className="bg-orange-100 text-orange-800">Outbound</Badge>;
-  };
-
   const getSyncIcon = () => {
     if (syncStatus === 'success') return <CheckCircle2 className="h-4 w-4 text-green-600" />;
     if (syncStatus === 'error') return <XCircle className="h-4 w-4 text-red-600" />;
@@ -196,34 +162,28 @@ export default function OffersPageV2() {
           <Input
             placeholder="Buyer username"
             value={filters.buyer}
-            onChange={(e) => setFilters({...filters, buyer: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, buyer: e.target.value })}
           />
 
           <Input
             placeholder="Item ID"
             value={filters.item_id}
-            onChange={(e) => setFilters({...filters, item_id: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, item_id: e.target.value })}
           />
 
           <Input
             placeholder="SKU"
             value={filters.sku}
-            onChange={(e) => setFilters({...filters, sku: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, sku: e.target.value })}
           />
         </div>
       </Card>
 
-      {loading ? (
-        <div className="flex justify-center p-12">
-          <Loader2 className="h-8 w-8 animate-spin" />
+      <Card className="mt-4">
+        <div className="h-[60vh] p-4">
+          <DataGridPage gridKey="offers" title="Offers" extraParams={gridParams} />
         </div>
-      ) : (
-        <Card className="mt-4">
-          <div className="h-[60vh] p-4">
-            <DataGridPage gridKey="offers" title="Offers" extraParams={gridParams} />
-          </div>
-        </Card>
-      )}
+      </Card>
       </div>
     </div>
   );

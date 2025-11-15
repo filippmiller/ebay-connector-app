@@ -1,17 +1,7 @@
-import { useState, useEffect } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 
 export default function TransactionsPage() {
-  const [, setTransactions] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-
-  useEffect(() => {
-    // legacy, no-op; DataGridPage handles data fetching
-    setLoading(false);
-  }, []);
-
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />

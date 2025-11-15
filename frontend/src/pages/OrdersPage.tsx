@@ -1,18 +1,10 @@
 import { useState, useEffect } from 'react';
 import { getOrderStats } from '../api/orders';
 import { DataGridPage } from '@/components/DataGridPage';
-import { Package, Search, Download } from 'lucide-react';
+import { Search, Download } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../components/ui/table';
 
 interface OrderLineItem {
   id: string;
@@ -45,21 +37,13 @@ interface OrderStats {
 }
 
 export const OrdersPage = () => {
-  const [orders, setOrders] = useState<Order[]>([]); // legacy, can be removed later
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadStats();
-  }, [selectedStatus]);
-
-  const loadOrders = async () => {
-    // Legacy table disabled; grid below handles data fetching
-    setLoading(false);
-  };
+  }, []);
 
   const loadStats = async () => {
     try {
@@ -90,14 +74,6 @@ export const OrdersPage = () => {
       style: 'currency',
       currency: 'USD',
     }).format(amount);
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
   };
 
   return (
@@ -136,7 +112,6 @@ export const OrdersPage = () => {
               className="pl-10"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && loadOrders()}
             />
           </div>
 
@@ -161,67 +136,6 @@ export const OrdersPage = () => {
 
       <div className="flex-1 overflow-auto p-6">
         <DataGridPage gridKey="orders" title="Orders" />
-
-        {selectedOrder && (
-          <div className="mt-6 border rounded-lg p-6 bg-gray-50">
-            <h3 className="text-lg font-semibold mb-4">Order Details: {selectedOrder.order_id}</h3>
-
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div>
-                <div className="text-sm text-gray-600">Buyer Information</div>
-                <div className="mt-2">
-                  <div className="font-medium">{selectedOrder.buyer_username}</div>
-                  <div className="text-sm text-gray-600">{selectedOrder.buyer_email}</div>
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600">Order Summary</div>
-                <div className="mt-2 space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span>Subtotal:</span>
-                    <span>{formatCurrency(selectedOrder.total_amount - (selectedOrder.shipping_cost || 0) - (selectedOrder.tax_amount || 0))}</span>
-                  </div>
-                  {selectedOrder.shipping_cost && (
-                    <div className="flex justify-between">
-                      <span>Shipping:</span>
-                      <span>{formatCurrency(selectedOrder.shipping_cost)}</span>
-                    </div>
-                  )}
-                  {selectedOrder.tax_amount && (
-                    <div className="flex justify-between">
-                      <span>Tax:</span>
-                      <span>{formatCurrency(selectedOrder.tax_amount)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between font-bold border-t pt-1">
-                    <span>Total:</span>
-                    <span>{formatCurrency(selectedOrder.total_amount)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-gray-600 mb-2">Line Items</div>
-              <div className="space-y-2">
-                {(selectedOrder.line_items || []).map((item) => (
-                  <div key={item.id} className="flex items-center gap-4 bg-white p-3 rounded">
-                    {item.image_url && (
-                      <img src={item.image_url} alt={item.title} className="w-16 h-16 object-cover rounded" />
-                    )}
-                    <div className="flex-1">
-                      <div className="font-medium">{item.title || 'Unknown item'}</div>
-                      <div className="text-sm text-gray-600">
-                        Quantity: {item.quantity || 1} × {formatCurrency(item.unit_price || 0)}
-                      </div>
-                    </div>
-                    <div className="font-medium">{formatCurrency(item.total_price || 0)}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
