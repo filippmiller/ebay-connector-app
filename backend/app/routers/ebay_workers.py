@@ -80,9 +80,9 @@ async def get_worker_config(
 
     states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
 
-    # Ensure we have at least Orders and Transactions workers configured so they
-    # always appear in the Workers command control UI for this account.
-    ensured_families = ["orders", "transactions"]
+    # Ensure we have at least Orders / Transactions / Offers / Messages workers
+    # configured so they always appear in the Workers control UI for this account.
+    ensured_families = ["orders", "transactions", "offers", "messages"]
     ebay_user_id = account.ebay_user_id or "unknown"
     for api_family in ensured_families:
         if api_family not in states_by_api:

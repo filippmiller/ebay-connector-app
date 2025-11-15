@@ -54,68 +54,69 @@ export const OrdersPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="h-screen flex flex-col bg-white">
       <FixedHeader />
-      <div className="w-full pt-16 px-4 py-6">
-        <div className="max-w-7xl mx-auto">
+      <div className="pt-16 flex-1 px-4 py-6 overflow-hidden">
+        <div className="max-w-7xl mx-auto h-full flex flex-col">
           <h1 className="text-2xl font-bold mb-4">Orders</h1>
 
-        {stats && (
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600">Total Orders</div>
-              <div className="text-2xl font-bold">{stats.total_orders || 0}</div>
-            </div>
-            <div className="bg-green-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600">Total Revenue</div>
-              <div className="text-2xl font-bold">{formatCurrency(stats.total_revenue || 0)}</div>
-            </div>
-            <div className="bg-purple-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600">Status Breakdown</div>
-              <div className="flex gap-2 mt-2 flex-wrap">
-                {stats.status_breakdown && Object.entries(stats.status_breakdown).map(([status, count]) => (
-                  <Badge key={status} className={getStatusColor(status)}>
-                    {status}: {count}
-                  </Badge>
-                ))}
+          {stats && (
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Total Orders</div>
+                <div className="text-2xl font-bold">{stats.total_orders || 0}</div>
+              </div>
+              <div className="bg-green-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Total Revenue</div>
+                <div className="text-2xl font-bold">{formatCurrency(stats.total_revenue || 0)}</div>
+              </div>
+              <div className="bg-purple-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Status Breakdown</div>
+                <div className="flex gap-2 mt-2 flex-wrap">
+                  {stats.status_breakdown &&
+                    Object.entries(stats.status_breakdown).map(([status, count]) => (
+                      <Badge key={status} className={getStatusColor(status)}>
+                        {status}: {count}
+                      </Badge>
+                    ))}
+                </div>
               </div>
             </div>
+          )}
+
+          <div className="flex gap-4 mt-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                placeholder="Search by order ID, buyer name, or email..."
+                className="pl-10"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            <select
+              className="px-4 py-2 border rounded-md"
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+            >
+              <option value="">All Statuses</option>
+              <option value="PAID">Paid</option>
+              <option value="SHIPPED">Shipped</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+
+            <Button variant="outline">
+              <Download className="h-4 w-4 mr-2" />
+              Export
+            </Button>
           </div>
-        )}
 
-        <div className="flex gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search by order ID, buyer name, or email..."
-              className="pl-10"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+          <div className="mt-6 flex-1">
+            <DataGridPage gridKey="orders" title="Orders" />
           </div>
-
-          <select
-            className="px-4 py-2 border rounded-md"
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-          >
-            <option value="">All Statuses</option>
-            <option value="PAID">Paid</option>
-            <option value="SHIPPED">Shipped</option>
-            <option value="COMPLETED">Completed</option>
-            <option value="CANCELLED">Cancelled</option>
-          </select>
-
-          <Button variant="outline">
-            <Download className="h-4 w-4 mr-2" />
-            Export
-          </Button>
         </div>
-
-        <div className="mt-6">
-          <DataGridPage gridKey="orders" title="Orders" />
-        </div>
-      </div>
       </div>
     </div>
   );
