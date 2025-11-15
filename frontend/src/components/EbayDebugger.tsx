@@ -592,7 +592,13 @@ export const EbayDebugger: React.FC = () => {
       setMethod(template.method);
       setPath(template.path);
       setParams(Object.entries(template.params).map(([k, v]) => `${k}=${v}`).join('&'));
-      setHeaders('');
+      // Default headers per template
+      if (templateName === 'transactions') {
+        // Finances API requires marketplace header
+        setHeaders('X-EBAY-C-MARKETPLACE-ID: EBAY_US');
+      } else {
+        setHeaders('');
+      }
       setBody('');
     } else if (templateName === "custom") {
       setMethod('GET');
@@ -1080,7 +1086,18 @@ export const EbayDebugger: React.FC = () => {
               <div className="mb-3 p-3 bg-gray-50 rounded border">
                 <Label className="text-xs text-gray-500 mb-1 block">Raw Request Preview</Label>
                 <pre className="text-xs font-mono whitespace-pre-wrap break-all">{`${method} ${(() => {
-                  const base = environment === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+                  // Choose base host depending on API family
+                  let base: string;
+                  const isFinances = selectedTemplate === 'transactions' || path.includes('/sell/finances/');
+                  if (isFinances) {
+                    base = environment === 'sandbox'
+                      ? 'https://apiz.sandbox.ebay.com'
+                      : 'https://apiz.ebay.com';
+                  } else {
+                    base = environment === 'sandbox'
+                      ? 'https://api.sandbox.ebay.com'
+                      : 'https://api.ebay.com';
+                  }
                   const p = path.startsWith('http') ? path : (path.startsWith('/') ? `${base}${path}` : `${base}/${path}`);
                   const paramsObj: Record<string,string> = {};
                   (params||'').split('&').forEach((pair)=>{ const [k,v] = pair.split('='); if(k&&v) paramsObj[k.trim()] = v.trim(); });
