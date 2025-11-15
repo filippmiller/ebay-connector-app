@@ -124,6 +124,8 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
                 run_id=sync_run_id,
                 ebay_account_id=ebay_account_id,
                 ebay_user_id=ebay_user_id,
+                window_from=from_iso,
+                window_to=to_iso,
             )
 
             total_fetched = int(result.get("total_fetched", 0))
@@ -155,7 +157,7 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
                 duration_ms=duration_ms,
             )
 
-            # Advance cursor to window_to (safe; underlying sync uses its own 90-day range)
+            # Advance cursor to window_to (underlying sync now respects this time window)
             mark_sync_run_result(db, state, cursor_value=to_iso, error=None)
 
             complete_run(

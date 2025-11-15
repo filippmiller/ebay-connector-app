@@ -1470,67 +1470,117 @@ class EbayService:
         run_id: Optional[str] = None,
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Synchronize all transactions from eBay to database with pagination (limit=200)
-        
+        Synchronize transactions from eBay to database with pagination (limit=200).
+
+        If `window_from`/`window_to` are provided, restricts the sync to that
+        transactionDate window. Otherwise, defaults to a 90-day backfill window
+        ending at "now" (UTC).
+
         Args:
             user_id: User ID
             access_token: eBay OAuth access token
             run_id: Optional run_id for sync event logging
+            ebay_account_id: Optional internal eBay account id for tagging
+            ebay_user_id: Optional eBay user id for tagging
+            window_from: Optional ISO8601 datetime (UTC) for the start of the window
+            window_to: Optional ISO8601 datetime (UTC) for the end of the window
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
-        
+
         # Use provided run_id if available, otherwise create new one
         event_logger = SyncEventLogger(user_id, 'transactions', run_id=run_id)
         job_id = ebay_db.create_sync_job(user_id, 'transactions')
         start_time = time.time()
-        
+
         try:
             total_fetched = 0
             total_stored = 0
-            
-            from datetime import datetime, timedelta
-            end_date = datetime.utcnow()
-            start_date = end_date - timedelta(days=90)
-            
+
+            from datetime import datetime, timedelta, timezone
+
+            # Determine effective date range
+            now_utc = datetime.now(timezone.utc)
+
+            def _parse_iso(dt_str: str) -> Optional[datetime]:
+                try:
+                    # Support both "...Z" and "+00:00" style
+                    if dt_str.endswith('Z'):
+                        dt_str = dt_str.replace('Z', '+00:00')
+                    return datetime.fromisoformat(dt_str)
+                except Exception:
+                    return None
+
+            end_date: datetime
+            if window_to:
+                parsed_to = _parse_iso(window_to)
+                end_date = parsed_to or now_utc
+            else:
+                end_date = now_utc
+
+            if window_from:
+                parsed_from = _parse_iso(window_from)
+                if parsed_from:
+                    start_date = parsed_from
+                else:
+                    start_date = end_date - timedelta(days=90)
+            else:
+                start_date = end_date - timedelta(days=90)
+
             limit = TRANSACTIONS_PAGE_LIMIT
             offset = 0
             has_more = True
             current_page = 0
             max_pages = 200  # Safety limit to prevent infinite loops
-            
+
             # Get user identity for logging "who we are"
             identity = await self.get_user_identity(access_token)
             username = identity.get("username", "unknown")
             identity_ebay_user_id = identity.get("userId", "unknown")
 
             effective_ebay_user_id = ebay_user_id or identity_ebay_user_id
-            
+
             # Log Identity API errors if any
             if identity.get("error"):
                 event_logger.log_error(f"Identity API error: {identity.get('error')}")
                 event_logger.log_warning("⚠️ Token may be invalid or missing required scopes. Please reconnect to eBay.")
-            
-            event_logger.log_start(f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
+
+            days_span = (end_date - start_date).days
+            event_logger.log_start(
+                f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}"
+            )
             event_logger.log_info(f"=== WHO WE ARE ===")
             event_logger.log_info(f"Connected as: {username} (eBay UserID: {effective_ebay_user_id})")
             event_logger.log_info(f"Environment: {settings.EBAY_ENVIRONMENT}")
             event_logger.log_info(f"API Configuration: Finances API v1, max batch size: {limit} transactions per request")
-            event_logger.log_info(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} (90 days)")
-            event_logger.log_info(f"Window: {start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}")
+            event_logger.log_info(
+                f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} (~{days_span} days)"
+            )
+            event_logger.log_info(
+                f"Window: {start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
+            )
             event_logger.log_info(f"Safety limit: max {max_pages} pages")
-            logger.info(f"Starting transaction sync for user {user_id} ({username}) with limit={limit}")
-            
+            logger.info(
+                f"Starting transaction sync for user {user_id} ({username}) with limit={limit}, "
+                f"window={start_date.isoformat()}..{end_date.isoformat()}"
+            )
+
             await asyncio.sleep(0.5)
-            
+
             while has_more:
                 # Safety check: max pages limit
                 if current_page >= max_pages:
-                    event_logger.log_warning(f"Reached safety limit of {max_pages} pages. Stopping to prevent infinite loop.")
-                    logger.warning(f"Transactions sync reached max_pages limit ({max_pages}) for run_id {event_logger.run_id}")
+                    event_logger.log_warning(
+                        f"Reached safety limit of {max_pages} pages. Stopping to prevent infinite loop."
+                    )
+                    logger.warning(
+                        f"Transactions sync reached max_pages limit ({max_pages}) for run_id {event_logger.run_id}"
+                    )
                     break
                 # Check for cancellation
                 from app.services.sync_event_logger import is_cancelled
@@ -1549,21 +1599,26 @@ class EbayService:
                         "total_fetched": total_fetched,
                         "total_stored": total_stored,
                         "job_id": job_id,
-                        "run_id": event_logger.run_id
+                        "run_id": event_logger.run_id,
                     }
-                
+
                 current_page += 1
-                # FIXED: Use RSQL filter format: filter=transactionDate:[...]
+                # Use RSQL filter format: restrict transactionDate to our effective window
                 filter_params = {
-                    'filter': f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]",
+                    'filter': (
+                        f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}.."
+                        f"{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
+                    ),
                     'limit': limit,
-                    'offset': offset
+                    'offset': offset,
                 }
-                
+
                 # Check for cancellation BEFORE making the API request
                 from app.services.sync_event_logger import is_cancelled
                 if is_cancelled(event_logger.run_id):
-                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (before API request)")
+                    logger.info(
+                        f"Transactions sync cancelled for run_id {event_logger.run_id} (before API request)"
+                    )
                     event_logger.log_warning("Sync operation cancelled by user")
                     event_logger.log_done(
                         f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
@@ -1577,18 +1632,22 @@ class EbayService:
                         "total_fetched": total_fetched,
                         "total_stored": total_stored,
                         "job_id": job_id,
-                        "run_id": event_logger.run_id
+                        "run_id": event_logger.run_id,
                     }
-                
-                event_logger.log_info(f"→ Requesting page {current_page}: GET /sell/finances/v1/transaction?limit={limit}&offset={offset}")
-                
+
+                event_logger.log_info(
+                    f"→ Requesting page {current_page}: GET /sell/finances/v1/transaction?limit={limit}&offset={offset}"
+                )
+
                 request_start = time.time()
                 try:
                     transactions_response = await self.fetch_transactions(access_token, filter_params)
                 except Exception as e:
                     # Check for cancellation after error
                     if is_cancelled(event_logger.run_id):
-                        logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (after API error)")
+                        logger.info(
+                            f"Transactions sync cancelled for run_id {event_logger.run_id} (after API error)"
+                        )
                         event_logger.log_warning("Sync operation cancelled by user")
                         event_logger.log_done(
                             f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
@@ -1602,14 +1661,16 @@ class EbayService:
                             "total_fetched": total_fetched,
                             "total_stored": total_stored,
                             "job_id": job_id,
-                            "run_id": event_logger.run_id
+                            "run_id": event_logger.run_id,
                         }
                     raise
                 request_duration = int((time.time() - request_start) * 1000)
-                
+
                 # Check for cancellation AFTER the API request
                 if is_cancelled(event_logger.run_id):
-                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (after API request)")
+                    logger.info(
+                        f"Transactions sync cancelled for run_id {event_logger.run_id} (after API request)"
+                    )
                     event_logger.log_warning("Sync operation cancelled by user")
                     event_logger.log_done(
                         f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
@@ -1623,36 +1684,40 @@ class EbayService:
                         "total_fetched": total_fetched,
                         "total_stored": total_stored,
                         "job_id": job_id,
-                        "run_id": event_logger.run_id
+                        "run_id": event_logger.run_id,
                     }
-                
+
                 transactions = transactions_response.get('transactions', [])
                 total = transactions_response.get('total', 0) or 0  # Ensure total is always a number
                 total_pages = (total + limit - 1) // limit if total > 0 else 1
-                
+
                 event_logger.log_http_request(
                     'GET',
                     f'/sell/finances/v1/transaction?limit={limit}&offset={offset}',
                     200,
                     request_duration,
-                    len(transactions)
+                    len(transactions),
                 )
-                
-                event_logger.log_info(f"← Response: 200 OK ({request_duration}ms) - Received {len(transactions)} transactions (Total available: {total})")
-                
+
+                event_logger.log_info(
+                    f"← Response: 200 OK ({request_duration}ms) - Received {len(transactions)} transactions (Total available: {total})"
+                )
+
                 # Early exit if total == 0 (no transactions in window)
                 if total == 0 and current_page == 1:
-                    event_logger.log_info(f"✓ No transactions found in date window. Total available: 0")
+                    event_logger.log_info("✓ No transactions found in date window. Total available: 0")
                     event_logger.log_warning("No transactions in window - check date range, account, or environment")
                     break
-                
+
                 total_fetched += len(transactions)
-                
+
                 await asyncio.sleep(0.3)
-                
+
                 # Check for cancellation before storing
                 if is_cancelled(event_logger.run_id):
-                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (before storing)")
+                    logger.info(
+                        f"Transactions sync cancelled for run_id {event_logger.run_id} (before storing)"
+                    )
                     event_logger.log_warning("Sync operation cancelled by user")
                     event_logger.log_done(
                         f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
@@ -1666,9 +1731,9 @@ class EbayService:
                         "total_fetched": total_fetched,
                         "total_stored": total_stored,
                         "job_id": job_id,
-                        "run_id": event_logger.run_id
+                        "run_id": event_logger.run_id,
                     }
-                
+
                 event_logger.log_info(f"→ Storing {len(transactions)} transactions in database...")
                 store_start = time.time()
                 batch_stored = 0
@@ -1682,22 +1747,29 @@ class EbayService:
                         batch_stored += 1
                 total_stored += batch_stored
                 store_duration = int((time.time() - store_start) * 1000)
-                
-                event_logger.log_info(f"← Database: Stored {batch_stored} transactions ({store_duration}ms)")
-                
+
+                event_logger.log_info(
+                    f"← Database: Stored {batch_stored} transactions ({store_duration}ms)"
+                )
+
                 event_logger.log_progress(
-                    f"Page {current_page}/{total_pages} complete: {len(transactions)} fetched, {batch_stored} stored | Running total: {total_fetched}/{total} fetched, {total_stored} stored",
+                    f"Page {current_page}/{total_pages} complete: {len(transactions)} fetched, {batch_stored} stored | "
+                    f"Running total: {total_fetched}/{total} fetched, {total_stored} stored",
                     current_page,
                     total_pages,
                     total_fetched,
-                    total_stored
+                    total_stored,
                 )
-                
-                logger.info(f"Synced batch: {len(transactions)} transactions (total: {total_fetched}/{total}, stored: {total_stored})")
-                
+
+                logger.info(
+                    f"Synced batch: {len(transactions)} transactions (total: {total_fetched}/{total}, stored: {total_stored})"
+                )
+
                 # Check for cancellation before continuing to next page
                 if is_cancelled(event_logger.run_id):
-                    logger.info(f"Transactions sync cancelled for run_id {event_logger.run_id} (before next page)")
+                    logger.info(
+                        f"Transactions sync cancelled for run_id {event_logger.run_id} (before next page)"
+                    )
                     event_logger.log_warning("Sync operation cancelled by user")
                     event_logger.log_done(
                         f"Transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
@@ -1711,38 +1783,45 @@ class EbayService:
                         "total_fetched": total_fetched,
                         "total_stored": total_stored,
                         "job_id": job_id,
-                        "run_id": event_logger.run_id
+                        "run_id": event_logger.run_id,
                     }
-                
+
                 # Update has_more BEFORE incrementing offset to prevent infinite loops
                 # Stop if: no more transactions, or we've fetched all available, or offset would exceed total
-                has_more = len(transactions) > 0 and len(transactions) == limit and (offset + limit) < total
-                
+                has_more = (
+                    len(transactions) > 0
+                    and len(transactions) == limit
+                    and (offset + limit) < total
+                )
+
                 offset += limit
-                
+
                 if has_more:
                     await asyncio.sleep(0.8)
-            
+
             duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, 'completed', total_fetched, total_stored)
-            
+
             event_logger.log_done(
                 f"Transactions sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
                 total_fetched,
                 total_stored,
-                duration_ms
+                duration_ms,
             )
-            
-            logger.info(f"Transaction sync completed: fetched={total_fetched}, stored={total_stored}")
-            
+
+            logger.info(
+                f"Transaction sync completed: fetched={total_fetched}, stored={total_stored}, "
+                f"window={start_date.isoformat()}..{end_date.isoformat()}"
+            )
+
             return {
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
                 "job_id": job_id,
-                "run_id": event_logger.run_id
+                "run_id": event_logger.run_id,
             }
-            
+
         except Exception as e:
             error_msg = str(e)
             event_logger.log_error(f"Transactions sync failed: {error_msg}", e)
