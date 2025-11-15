@@ -72,6 +72,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
 
   useEffect(() => {
     fetchConfig();
+    fetchRecentRuns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
 
@@ -86,12 +87,24 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       );
       const runs = resp.data.runs || [];
       setRecentRuns(runs);
-      // Auto-select the most recent run for the terminal if nothing selected.
+      // Auto-select and attach to the most recent run for the terminal if we
+      // don't already have an active sync run.
       if (runs.length > 0 && (!selectedRunId || selectedRunId === "latest")) {
         const latest = runs[0];
         setSelectedRunId(latest.id);
-        // We will resolve sync_run_id lazily when user explicitly chooses the
-        // run or when a new run is started.
+        if (!activeSyncRunId) {
+          try {
+            const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
+            const summary = logsResp.data?.run?.summary as any;
+            const syncRunId = summary?.sync_run_id || summary?.run_id || null;
+            if (syncRunId) {
+              setActiveSyncRunId(syncRunId);
+              setActiveApiFamily(latest.api_family);
+            }
+          } catch (err) {
+            console.error("Failed to auto-attach workers terminal to latest run", err);
+          }
+        }
       }
     } catch (e) {
       // Swallow errors here; the main error surface is the config fetch.
@@ -369,8 +382,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       )}
 
       {/* Workers sync terminal occupying lower half of the tab */}
-      {activeSyncRunId && (
-        <div className="mt-6">
+      <div className="mt-6">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm text-gray-700">
               eBay workers terminal for this account – showing {activeApiFamily || "latest"} run
@@ -425,11 +437,18 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
               </select>
             </div>
           </div>
-          <SyncTerminal
-            runId={activeSyncRunId}
-            onComplete={() => {}}
-            onStop={() => {}}
-          />
+          {activeSyncRunId ? (
+            <SyncTerminal
+              runId={activeSyncRunId}
+              onComplete={() => {}}
+              onStop={() => {}}
+            />
+          ) : (
+            <div className="text-xs text-gray-500 border rounded p-2 bg-gray-50">
+              No worker run selected yet. Trigger a worker (e.g. "Run now" on Orders or Transactions)
+              or choose a run from the dropdown above to see detailed logs.
+            </div>
+          )}
         </div>
       )}
 
