@@ -20,6 +20,7 @@ from app.services.ebay_workers.state import (
     get_or_create_sync_state,
 )
 from app.services.ebay_workers.orders_worker import run_orders_worker_for_account
+from app.services.ebay_workers.transactions_worker import run_transactions_worker_for_account
 from app.services.ebay_workers.runs import get_active_run
 
 
@@ -177,34 +178,44 @@ async def toggle_global_workers(
 @router.post("/run")
 async def run_worker_once(
     account_id: str = Query(..., description="eBay account id"),
-    api: str = Query("orders", description="API family to run (currently only 'orders')"),
+    api: str = Query("orders", description="API family to run (e.g. 'orders', 'transactions')"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Manually trigger a single worker run for an account.
 
-    For now, only the Orders worker is wired.
+    Currently supports:
+    - orders
+    - transactions
     """
 
     if not are_workers_globally_enabled(db):
         return {"status": "skipped", "reason": "workers_disabled"}
 
-    if api != "orders":
+    if api not in {"orders", "transactions"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
 
     account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
     if not account or account.org_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
-    # Fire-and-forget async worker
-    run_id = await run_orders_worker_for_account(account_id)
+    # Dispatch by API family
+    if api == "orders":
+        run_id = await run_orders_worker_for_account(account_id)
+        api_family = "orders"
+    elif api == "transactions":
+        run_id = await run_transactions_worker_for_account(account_id)
+        api_family = "transactions"
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
+
     if not run_id:
-        active = get_active_run(db, ebay_account_id=account_id, api_family="orders")
+        active = get_active_run(db, ebay_account_id=account_id, api_family=api_family)
         if active:
             return {"status": "skipped", "reason": "already_running", "run_id": active.id}
         return {"status": "skipped", "reason": "not_started"}
 
-    return {"status": "started", "run_id": run_id}
+    return {"status": "started", "run_id": run_id, "api_family": api_family}
 
 
 @router.get("/runs")

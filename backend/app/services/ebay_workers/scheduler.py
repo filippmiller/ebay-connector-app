@@ -12,9 +12,13 @@ from app.utils.logger import logger
 
 from .state import are_workers_globally_enabled, get_or_create_sync_state
 from .orders_worker import run_orders_worker_for_account
+from .transactions_worker import run_transactions_worker_for_account
 
 
-API_FAMILIES = ["orders"]  # later: "finances", "messages", "seller_transactions", ...
+API_FAMILIES = [
+    "orders",
+    "transactions",
+]  # later: "disputes", "offers", "messages", ...
 
 
 def _get_db() -> Session:
@@ -51,7 +55,7 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
             )
 
         # Orders worker
-        state: EbaySyncState | None = (
+        state_orders: EbaySyncState | None = (
             db.query(EbaySyncState)
             .filter(
                 EbaySyncState.ebay_account_id == ebay_account_id,
@@ -59,8 +63,20 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
             )
             .first()
         )
-        if state and state.enabled:
+        if state_orders and state_orders.enabled:
             await run_orders_worker_for_account(ebay_account_id)
+
+        # Transactions worker
+        state_tx: EbaySyncState | None = (
+            db.query(EbaySyncState)
+            .filter(
+                EbaySyncState.ebay_account_id == ebay_account_id,
+                EbaySyncState.api_family == "transactions",
+            )
+            .first()
+        )
+        if state_tx and state_tx.enabled:
+            await run_transactions_worker_for_account(ebay_account_id)
 
     finally:
         db.close()

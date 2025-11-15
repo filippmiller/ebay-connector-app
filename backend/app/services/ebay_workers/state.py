@@ -14,9 +14,10 @@ from app.models_sqlalchemy.ebay_workers import (
 
 API_FAMILIES = [
     "orders",
-    "finances",
+    "transactions",
+    "disputes",
+    "offers",
     "messages",
-    "seller_transactions",
 ]
 
 
