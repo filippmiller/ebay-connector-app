@@ -798,7 +798,14 @@ class EbayService:
             )
 
 
-    async def sync_all_orders(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
+    async def sync_all_orders(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Synchronize all orders from eBay to database with pagination (limit=200)
         
@@ -854,7 +861,11 @@ class EbayService:
             identity = await self.get_user_identity(access_token, user_scopes=user_scopes, 
                                                    user_email=user_email, user_id=user_id)
             username = identity.get("username", "unknown")
-            ebay_user_id = identity.get("userId", "unknown")
+            identity_ebay_user_id = identity.get("userId", "unknown")
+
+            # Prefer explicitly provided ebay_user_id (e.g. from worker/account),
+            # but fall back to Identity API userId when not provided.
+            effective_ebay_user_id = ebay_user_id or identity_ebay_user_id
             
             # Log Identity API errors if any
             if identity.get("error"):
@@ -867,6 +878,9 @@ class EbayService:
             if scope_validation["missing_scopes"]:
                 missing_display = format_scopes_for_display(scope_validation["missing_scopes"])
                 event_logger.log_warning(f"⚠️ Missing required scopes for Orders API: {missing_display}")
+
+            # Persist context so PostgresEbayDatabase can tag rows
+            from app.services.ebay_database import ebay_db
             
             # Date window with 5-10 minute cushion
             from datetime import datetime, timedelta
@@ -877,7 +891,7 @@ class EbayService:
             
             event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
             event_logger.log_info(f"=== WHO WE ARE ===")
-            event_logger.log_info(f"Connected as: {username} (eBay UserID: {ebay_user_id})")
+            event_logger.log_info(f"Connected as: {username} (eBay UserID: {effective_ebay_user_id})")
             event_logger.log_info(f"Environment: {settings.EBAY_ENVIRONMENT}")
             event_logger.log_info(f"API Configuration: Fulfillment API v1, max batch size: {limit} orders per request")
             event_logger.log_info(f"Date window: {since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}")
@@ -1050,7 +1064,24 @@ class EbayService:
                 
                 event_logger.log_info(f"→ Storing {len(orders)} orders in database...")
                 store_start = time.time()
-                batch_stored = ebay_db.batch_upsert_orders(user_id, orders)
+                # When using PostgresEbayDatabase, this will tag each row with
+                # ebay_account_id (if provided) and effective_ebay_user_id.
+                try:
+                    batch_stored = ebay_db.batch_upsert_orders(  # type: ignore[arg-type]
+                        user_id,
+                        orders,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=effective_ebay_user_id,
+                    )
+                except TypeError:
+                    # SQLite legacy path without batch_upsert_orders
+                    from app.services.ebay_database import EbayDatabase as _SQLiteDB
+                    if isinstance(ebay_db, _SQLiteDB):  # type: ignore[misc]
+                        batch_stored = 0
+                        from app.utils.logger import logger as _logger
+                        _logger.warning("batch_upsert_orders not supported on SQLite ebay_db; skipping tagging")
+                    else:
+                        raise
                 store_duration = int((time.time() - store_start) * 1000)
                 total_stored += batch_stored
                 
@@ -1432,7 +1463,14 @@ class EbayService:
             )
 
 
-    async def sync_all_transactions(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
+    async def sync_all_transactions(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Synchronize all transactions from eBay to database with pagination (limit=200)
         
@@ -1467,7 +1505,9 @@ class EbayService:
             # Get user identity for logging "who we are"
             identity = await self.get_user_identity(access_token)
             username = identity.get("username", "unknown")
-            ebay_user_id = identity.get("userId", "unknown")
+            identity_ebay_user_id = identity.get("userId", "unknown")
+
+            effective_ebay_user_id = ebay_user_id or identity_ebay_user_id
             
             # Log Identity API errors if any
             if identity.get("error"):
@@ -1476,7 +1516,7 @@ class EbayService:
             
             event_logger.log_start(f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
             event_logger.log_info(f"=== WHO WE ARE ===")
-            event_logger.log_info(f"Connected as: {username} (eBay UserID: {ebay_user_id})")
+            event_logger.log_info(f"Connected as: {username} (eBay UserID: {effective_ebay_user_id})")
             event_logger.log_info(f"Environment: {settings.EBAY_ENVIRONMENT}")
             event_logger.log_info(f"API Configuration: Finances API v1, max batch size: {limit} transactions per request")
             event_logger.log_info(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} (90 days)")
@@ -1633,7 +1673,12 @@ class EbayService:
                 store_start = time.time()
                 batch_stored = 0
                 for transaction in transactions:
-                    if ebay_db.upsert_transaction(user_id, transaction):
+                    if ebay_db.upsert_transaction(  # type: ignore[arg-type]
+                        user_id,
+                        transaction,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=effective_ebay_user_id,
+                    ):
                         batch_stored += 1
                 total_stored += batch_stored
                 store_duration = int((time.time() - store_start) * 1000)

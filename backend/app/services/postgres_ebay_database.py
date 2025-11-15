@@ -243,8 +243,18 @@ class PostgresEbayDatabase:
         finally:
             session.close()
     
-    def batch_upsert_orders(self, user_id: str, orders: List[Dict[str, Any]]) -> int:
-        """Batch insert or update multiple orders with normalization"""
+    def batch_upsert_orders(
+        self,
+        user_id: str,
+        orders: List[Dict[str, Any]],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> int:
+        """Batch insert or update multiple orders with normalization.
+
+        ebay_account_id / ebay_user_id identify which eBay account (and seller
+        user id such as "mil_243") these rows belong to.
+        """
         if not orders:
             return 0
         
@@ -267,11 +277,18 @@ class PostgresEbayDatabase:
                     
                     try:
                         normalized_order, line_items = self.normalize_order(order_data)
-                        all_line_items.extend(line_items)
-                        
+                        # Attach eBay context to both order and its line items
                         normalized_order['user_id'] = user_id
+                        normalized_order['ebay_account_id'] = ebay_account_id
+                        normalized_order['ebay_user_id'] = ebay_user_id
                         normalized_order['created_at'] = now
                         normalized_order['updated_at'] = now
+
+                        for li in line_items:
+                            li['ebay_account_id'] = ebay_account_id
+                            li['ebay_user_id'] = ebay_user_id
+
+                        all_line_items.extend(line_items)
                         
                         values_list.append(normalized_order)
                     except Exception as e:
@@ -286,13 +303,34 @@ class PostgresEbayDatabase:
                 
                 for idx, values in enumerate(values_list):
                     placeholders = []
-                    for key in ['order_id', 'user_id', 'creation_date', 'last_modified',
-                               'payment_status', 'fulfillment_status', 'buyer_username', 'buyer_email',
-                               'buyer_registered', 'total_amount', 'total_currency',
-                               'order_total_value', 'order_total_currency', 'line_items_count',
-                               'tracking_number', 'ship_to_name', 'ship_to_city', 'ship_to_state',
-                               'ship_to_postal_code', 'ship_to_country_code',
-                               'order_data', 'raw_payload', 'created_at', 'updated_at']:
+                    for key in [
+                        'order_id',
+                        'user_id',
+                        'ebay_account_id',
+                        'ebay_user_id',
+                        'creation_date',
+                        'last_modified',
+                        'payment_status',
+                        'fulfillment_status',
+                        'buyer_username',
+                        'buyer_email',
+                        'buyer_registered',
+                        'total_amount',
+                        'total_currency',
+                        'order_total_value',
+                        'order_total_currency',
+                        'line_items_count',
+                        'tracking_number',
+                        'ship_to_name',
+                        'ship_to_city',
+                        'ship_to_state',
+                        'ship_to_postal_code',
+                        'ship_to_country_code',
+                        'order_data',
+                        'raw_payload',
+                        'created_at',
+                        'updated_at',
+                    ]:
                         param_name = f"{key}_{idx}"
                         params[param_name] = values.get(key)
                         placeholders.append(f":{param_name}")
@@ -300,7 +338,8 @@ class PostgresEbayDatabase:
                 
                 query = text(f"""
                     INSERT INTO ebay_orders 
-                    (order_id, user_id, creation_date, last_modified_date, 
+                    (order_id, user_id, ebay_account_id, ebay_user_id,
+                     creation_date, last_modified_date, 
                      order_payment_status, order_fulfillment_status, 
                      buyer_username, buyer_email, buyer_registered,
                      total_amount, total_currency,
@@ -370,8 +409,18 @@ class PostgresEbayDatabase:
                         continue
                     
                     placeholders = []
-                    for key in ['order_id', 'line_item_id', 'sku', 'title', 'quantity', 
-                               'total_value', 'currency', 'raw_payload']:
+                    for key in [
+                        'order_id',
+                        'line_item_id',
+                        'sku',
+                        'title',
+                        'quantity',
+                        'total_value',
+                        'currency',
+                        'raw_payload',
+                        'ebay_account_id',
+                        'ebay_user_id',
+                    ]:
                         param_name = f"{key}_{idx}"
                         params[param_name] = item.get(key)
                         placeholders.append(f":{param_name}")
@@ -382,7 +431,8 @@ class PostgresEbayDatabase:
                 
                 query = text(f"""
                     INSERT INTO order_line_items 
-                    (order_id, line_item_id, sku, title, quantity, total_value, currency, raw_payload)
+                    (order_id, line_item_id, sku, title, quantity, total_value, currency, raw_payload,
+                     ebay_account_id, ebay_user_id)
                     VALUES {','.join(value_placeholders)}
                     ON CONFLICT (order_id, line_item_id) 
                     DO UPDATE SET
@@ -391,7 +441,9 @@ class PostgresEbayDatabase:
                         quantity = EXCLUDED.quantity,
                         total_value = EXCLUDED.total_value,
                         currency = EXCLUDED.currency,
-                        raw_payload = EXCLUDED.raw_payload
+                        raw_payload = EXCLUDED.raw_payload,
+                        ebay_account_id = EXCLUDED.ebay_account_id,
+                        ebay_user_id = EXCLUDED.ebay_user_id
                 """)
                 
                 session.execute(query, params)
@@ -491,8 +543,14 @@ class PostgresEbayDatabase:
         finally:
             session.close()
     
-    def upsert_dispute(self, user_id: str, dispute_data: Dict[str, Any]) -> bool:
-        """Insert or update a dispute"""
+    def upsert_dispute(
+        self,
+        user_id: str,
+        dispute_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a dispute with eBay account context."""
         session = self._get_session()
         
         try:
@@ -511,7 +569,8 @@ class PostgresEbayDatabase:
             
             query = text("""
                 INSERT INTO ebay_disputes 
-                (dispute_id, user_id, order_id, dispute_reason, 
+                (dispute_id, user_id, ebay_account_id, ebay_user_id,
+                 order_id, dispute_reason, 
                  dispute_status, open_date, respond_by_date, dispute_data, 
                  created_at, updated_at)
                 VALUES (:dispute_id, :user_id, :order_id, :dispute_reason,
@@ -531,6 +590,8 @@ class PostgresEbayDatabase:
             session.execute(query, {
                 'dispute_id': dispute_id,
                 'user_id': user_id,
+                'ebay_account_id': ebay_account_id,
+                'ebay_user_id': ebay_user_id,
                 'order_id': order_id,
                 'dispute_reason': dispute_reason,
                 'dispute_status': dispute_status,
@@ -551,8 +612,14 @@ class PostgresEbayDatabase:
         finally:
             session.close()
     
-    def upsert_offer(self, user_id: str, offer_data: Dict[str, Any]) -> bool:
-        """Insert or update an offer"""
+    def upsert_offer(
+        self,
+        user_id: str,
+        offer_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update an offer with eBay account context."""
         session = self._get_session()
         
         try:
@@ -576,7 +643,8 @@ class PostgresEbayDatabase:
             
             query = text("""
                 INSERT INTO ebay_offers 
-                (offer_id, user_id, listing_id, buyer_username, 
+                (offer_id, user_id, ebay_account_id, ebay_user_id,
+                 listing_id, buyer_username, 
                  offer_amount, offer_currency, offer_status, 
                  offer_date, expiration_date, offer_data, 
                  created_at, updated_at)
@@ -600,6 +668,8 @@ class PostgresEbayDatabase:
             session.execute(query, {
                 'offer_id': offer_id,
                 'user_id': user_id,
+                'ebay_account_id': ebay_account_id,
+                'ebay_user_id': ebay_user_id,
                 'listing_id': listing_id,
                 'buyer_username': buyer_username,
                 'offer_amount': offer_amount,
@@ -622,8 +692,14 @@ class PostgresEbayDatabase:
         finally:
             session.close()
     
-    def upsert_transaction(self, user_id: str, transaction_data: Dict[str, Any]) -> bool:
-        """Insert or update a transaction"""
+    def upsert_transaction(
+        self,
+        user_id: str,
+        transaction_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a transaction with eBay account context."""
         session = self._get_session()
         
         try:
@@ -645,7 +721,8 @@ class PostgresEbayDatabase:
             
             query = text("""
                 INSERT INTO ebay_transactions 
-                (transaction_id, user_id, order_id, transaction_date, 
+                (transaction_id, user_id, ebay_account_id, ebay_user_id,
+                 order_id, transaction_date, 
                  transaction_type, transaction_status, amount, currency,
                  transaction_data, created_at, updated_at)
                 VALUES (:transaction_id, :user_id, :order_id, :transaction_date,
@@ -666,6 +743,8 @@ class PostgresEbayDatabase:
             session.execute(query, {
                 'transaction_id': transaction_id,
                 'user_id': user_id,
+                'ebay_account_id': ebay_account_id,
+                'ebay_user_id': ebay_user_id,
                 'order_id': order_id,
                 'transaction_date': transaction_date,
                 'transaction_type': transaction_type,
@@ -785,7 +864,13 @@ class PostgresEbayDatabase:
         finally:
             session.close()
     
-    def upsert_inventory_item(self, user_id: str, inventory_item_data: Dict[str, Any]) -> bool:
+    def upsert_inventory_item(
+        self,
+        user_id: str,
+        inventory_item_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
         """
         Insert or update an inventory item from eBay API into the inventory table.
         
@@ -913,15 +998,16 @@ class PostgresEbayDatabase:
                     ebay_status = 'ENDED'
             
             # Upsert using sku_code as unique key
-            # Note: Currently inventory table doesn't have user_id - may need schema update for multi-user
             query = text("""
                 INSERT INTO inventory 
                 (sku_code, title, condition, part_number, model, category,
                  price_value, price_currency, quantity, ebay_listing_id, ebay_status,
-                 photo_count, raw_payload, rec_created, rec_updated)
+                 photo_count, raw_payload, rec_created, rec_updated,
+                 user_id, ebay_account_id, ebay_user_id)
                 VALUES (:sku_code, :title, :condition, :part_number, :model, :category,
                         :price_value, :price_currency, :quantity, :ebay_listing_id, :ebay_status,
-                        :photo_count, :raw_payload, :rec_created, :rec_updated)
+                        :photo_count, :raw_payload, :rec_created, :rec_updated,
+                        :user_id, :ebay_account_id, :ebay_user_id)
                 ON CONFLICT (sku_code) 
                 DO UPDATE SET
                     title = EXCLUDED.title,
@@ -936,7 +1022,10 @@ class PostgresEbayDatabase:
                     ebay_status = EXCLUDED.ebay_status,
                     photo_count = EXCLUDED.photo_count,
                     raw_payload = EXCLUDED.raw_payload,
-                    rec_updated = EXCLUDED.rec_updated
+                    rec_updated = EXCLUDED.rec_updated,
+                    user_id = EXCLUDED.user_id,
+                    ebay_account_id = EXCLUDED.ebay_account_id,
+                    ebay_user_id = EXCLUDED.ebay_user_id
             """)
             
             session.execute(query, {
@@ -954,7 +1043,10 @@ class PostgresEbayDatabase:
                 'photo_count': photo_count,
                 'raw_payload': json.dumps(inventory_item_data),
                 'rec_created': now,
-                'rec_updated': now
+                'rec_updated': now,
+                'user_id': user_id,
+                'ebay_account_id': ebay_account_id,
+                'ebay_user_id': ebay_user_id,
             })
             
             session.commit()

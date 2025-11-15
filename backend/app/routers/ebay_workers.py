@@ -69,22 +69,31 @@ async def get_worker_config(
 
     workers_enabled = are_workers_globally_enabled(db)
 
-    # Load sync state rows for this account
-    states: List[EbaySyncState] = (
+    # Load existing sync state rows for this account and index by api_family
+    existing_states: List[EbaySyncState] = (
         db.query(EbaySyncState)
         .filter(EbaySyncState.ebay_account_id == account_id)
         .all()
     )
 
-    # If no state rows yet, create a default Orders state lazily
-    if not states:
-        state = get_or_create_sync_state(
-            db,
-            ebay_account_id=account_id,
-            ebay_user_id=account.ebay_user_id,
-            api_family="orders",
-        )
-        states = [state]
+    states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
+
+    # Ensure we have at least Orders and Transactions workers configured so they
+    # always appear in the Workers command control UI for this account.
+    ensured_families = ["orders", "transactions"]
+    ebay_user_id = account.ebay_user_id or "unknown"
+    for api_family in ensured_families:
+        if api_family not in states_by_api:
+            states_by_api[api_family] = get_or_create_sync_state(
+                db,
+                ebay_account_id=account_id,
+                ebay_user_id=ebay_user_id,
+                api_family=api_family,
+            )
+
+    # Use a stable ordering for display purposes
+    ordered_api_families = sorted(states_by_api.keys())
+    states: List[EbaySyncState] = [states_by_api[api] for api in ordered_api_families]
 
     items: List[WorkerConfigItem] = []
     for state in states:
