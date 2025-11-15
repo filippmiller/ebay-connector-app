@@ -76,6 +76,8 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
             return None
 
         run_id = run.id
+        # Use a deterministic sync_event run_id so we can attach the terminal UI
+        sync_run_id = f"worker_orders_{run_id}"
 
         # Determine window using cursor + overlap
         overlap_minutes = OVERLAP_MINUTES_DEFAULT
@@ -120,14 +122,22 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
         # progress. The worker log records a high-level summary.
         start_time = time.time()
         try:
-            # sync_all_orders expects the org/user id and uses EbayAccountService
-            # internally to resolve account + token. Here we simply reuse that
-            # behavior by passing account.org_id as user_id.
+            # sync_all_orders expects the org/user id and an access token.
+            # We reuse the account.org_id as the logical user_id and pass
+            # the account token so the sync reuses the same HTTP + DB logic
+            # as the manual "Sync Data" operations.
             user_id = account.org_id
-            result = await ebay_service.sync_all_orders(user_id=user_id)
+            result = await ebay_service.sync_all_orders(
+                user_id=user_id,
+                access_token=token.access_token,
+                run_id=sync_run_id,
+            )
 
             total_fetched = int(result.get("total_fetched", 0))
             total_stored = int(result.get("total_stored", 0))
+            # Prefer the run_id returned by sync_all_orders, but fall back to
+            # our deterministic value in case of older implementations.
+            sync_run_id = str(result.get("run_id")) if result.get("run_id") else sync_run_id
 
             # For the worker-level log we treat the entire call as a single page
             log_page(
@@ -168,6 +178,7 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
                     "duration_ms": duration_ms,
                     "window_from": from_iso,
                     "window_to": to_iso,
+                    "sync_run_id": sync_run_id,
                 },
             )
 
@@ -194,6 +205,7 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
                     "total_fetched": total_fetched,
                     "total_stored": total_stored,
                     "duration_ms": duration_ms,
+                    "sync_run_id": sync_run_id,
                 },
             )
             logger.error(f"Orders worker for account={ebay_account_id} failed: {msg}")
