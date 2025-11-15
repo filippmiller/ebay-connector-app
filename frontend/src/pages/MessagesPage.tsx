@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { getMessages, updateMessage, getMessageStats } from '../api/messages';
 import { Mail, MailOpen, Star, Archive, Search, Inbox, Send, Flag } from 'lucide-react';
@@ -7,6 +7,7 @@ import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
 import FixedHeader from '@/components/FixedHeader';
+import { DataGridPage } from '@/components/DataGridPage';
 
 interface Message {
   id: string;
@@ -39,10 +40,12 @@ export const MessagesPage = () => {
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [gridRefresh, setGridRefresh] = useState(0);
 
   useEffect(() => {
     loadMessages();
     loadStats();
+    setGridRefresh((v) => v + 1);
   }, [selectedFolder]);
 
   const loadMessages = async () => {
@@ -51,6 +54,7 @@ export const MessagesPage = () => {
       const data = await getMessages(selectedFolder, false, searchQuery);
       console.log('Messages data:', data);
       setMessages(Array.isArray(data) ? data : []);
+      setGridRefresh((v) => v + 1);
     } catch (error) {
       console.error('Failed to load messages:', error);
       setMessages([]);
@@ -107,13 +111,28 @@ export const MessagesPage = () => {
 
   const getMessageTypeColor = (type: string | null) => {
     switch (type) {
-      case 'SHIPPING': return 'bg-blue-100 text-blue-800';
-      case 'ISSUE': return 'bg-red-100 text-red-800';
-      case 'FEEDBACK': return 'bg-green-100 text-green-800';
-      case 'QUESTION': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'SHIPPING':
+        return 'bg-blue-100 text-blue-800';
+      case 'ISSUE':
+        return 'bg-red-100 text-red-800';
+      case 'FEEDBACK':
+        return 'bg-green-100 text-green-800';
+      case 'QUESTION':
+        return 'bg-yellow-100 text-yellow-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   };
+
+  const gridParams = useMemo(() => {
+    const params: Record<string, string | number | boolean> = {
+      folder: selectedFolder,
+      search: searchQuery,
+      unread_only: false,
+      _refresh: gridRefresh,
+    };
+    return params;
+  }, [selectedFolder, searchQuery, gridRefresh]);
 
   return (
     <div className="h-screen flex flex-col bg-white">
@@ -327,6 +346,12 @@ export const MessagesPage = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Grid view (beta) */}
+      <div className="border-t h-[45vh] bg-gray-50 p-4">
+        <h2 className="text-lg font-semibold mb-2">Messages grid (beta)</h2>
+        <DataGridPage gridKey="messages" title="Messages" extraParams={gridParams} />
       </div>
     </div>
   );

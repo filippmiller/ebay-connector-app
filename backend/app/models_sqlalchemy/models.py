@@ -638,6 +638,28 @@ class Payout(Base):
     raw_payload = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UserGridLayout(Base):
+    __tablename__ = "user_grid_layouts"
+    
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    grid_key = Column(String(100), nullable=False)
+    
+    # Ordered list of visible column names
+    visible_columns = Column(JSONB, nullable=True)
+    # Mapping column_name -> width in pixels
+    column_widths = Column(JSONB, nullable=True)
+    # Optional sort config: { "column": str, "direction": "asc"|"desc" }
+    sort = Column(JSONB, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_user_grid_layouts_user_grid', 'user_id', 'grid_key', unique=True),
+    )
     
     payout_items = relationship("PayoutItem", back_populates="payout", cascade="all, delete-orphan")
     

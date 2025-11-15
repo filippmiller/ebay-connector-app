@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getOrders, getOrderStats } from '../api/orders';
+import { getOrderStats } from '../api/orders';
+import { DataGridPage } from '@/components/DataGridPage';
 import { Package, Search, Download } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -44,7 +45,7 @@ interface OrderStats {
 }
 
 export const OrdersPage = () => {
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]); // legacy, can be removed later
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,20 +53,12 @@ export const OrdersPage = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadOrders();
     loadStats();
   }, [selectedStatus]);
 
   const loadOrders = async () => {
-    try {
-      setLoading(true);
-      const data = await getOrders(selectedStatus, searchQuery);
-      setOrders(data);
-    } catch (error) {
-      console.error('Failed to load orders:', error);
-    } finally {
-      setLoading(false);
-    }
+    // Legacy table disabled; grid below handles data fetching
+    setLoading(false);
   };
 
   const loadStats = async () => {
@@ -167,60 +160,7 @@ export const OrdersPage = () => {
       </div>
 
       <div className="flex-1 overflow-auto p-6">
-        {loading ? (
-          <div className="text-center py-8 text-gray-500">Loading...</div>
-        ) : orders.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <Package className="h-16 w-16 mx-auto mb-4 opacity-20" />
-            <p>No orders found</p>
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Order ID</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Buyer</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Items</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead>Tracking</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orders.map((order) => (
-                <TableRow
-                  key={order.id}
-                  className="cursor-pointer hover:bg-gray-50"
-                  onClick={() => setSelectedOrder(selectedOrder?.id === order.id ? null : order)}
-                >
-                  <TableCell className="font-medium">{order.order_id}</TableCell>
-                  <TableCell>{order.order_date ? formatDate(order.order_date) : 'N/A'}</TableCell>
-                  <TableCell>
-                    <div className="text-sm">
-                      <div className="font-medium">{order.buyer_username || 'N/A'}</div>
-                      <div className="text-gray-500 text-xs">{order.buyer_email || ''}</div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge className={getStatusColor(order.order_status)}>
-                      {order.order_status || 'UNKNOWN'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{order.line_items?.length || 0} item(s)</TableCell>
-                  <TableCell className="text-right font-medium">
-                    {formatCurrency(order.total_amount || 0)}
-                  </TableCell>
-                  <TableCell>
-                    {order.tracking_number && (
-                      <span className="text-xs text-blue-600">{order.tracking_number}</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <DataGridPage gridKey="orders" title="Orders" />
 
         {selectedOrder && (
           <div className="mt-6 border rounded-lg p-6 bg-gray-50">

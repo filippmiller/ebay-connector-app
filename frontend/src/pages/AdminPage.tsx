@@ -31,6 +31,11 @@ export default function AdminPage() {
             <h2 className="text-lg font-semibold">eBay Connection</h2>
             <p className="text-sm text-gray-600 mt-1">Manage eBay API connections</p>
           </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/db-explorer')}>
+            <h2 className="text-lg font-semibold">DB Explorer</h2>
+            <p className="text-sm text-gray-600 mt-1">Browse Supabase tables and recent rows (read-only)</p>
+          </Card>
           
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/migration')}>
             <h2 className="text-lg font-semibold">Data Migration</h2>

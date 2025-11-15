@@ -19,6 +19,7 @@ import TransactionsPage from './pages/TransactionsPage';
 import FinancialsPage from './pages/FinancialsPage';
 import AdminJobsPage from './pages/AdminJobsPage';
 import OffersPageV2 from './pages/OffersPageV2';
+import AdminDbExplorerPage from './pages/AdminDbExplorerPage';
 import SKUPage from './pages/SKUPage';
 import ListingPage from './pages/ListingPage';
 import ShippingPage from './pages/ShippingPage';
@@ -113,6 +114,7 @@ function App() {
           <Route path="/offers" element={<ProtectedRoute><OffersPageV2 /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
           <Route path="/admin/ebay-connection" element={<ProtectedRoute><EbayConnectionPage /></ProtectedRoute>} />
+          <Route path="/admin/db-explorer" element={<ProtectedRoute><AdminDbExplorerPage /></ProtectedRoute>} />
           <Route
             path="/orders"
             element={

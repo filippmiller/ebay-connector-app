@@ -2024,9 +2024,24 @@ class EbayService:
         finally:
             event_logger.close()
 
-    async def sync_all_offers(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
+    async def sync_all_offers(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
-        Synchronize all offers from eBay to database.
+        Synchronize offers from eBay to database.
+
+        Inventory/Offers APIs do not expose a direct date filter, so `window_from`
+        and `window_to` are used primarily for logging and for filtering which
+        offers we store based on their `creationDate`. Older offers outside the
+        window are skipped at write-time, and upserts keep the operation
+        idempotent.
         
         According to eBay API documentation:
         - getOffers endpoint requires 'sku' parameter (Required)
@@ -2817,13 +2832,26 @@ class EbayService:
             logger.error(f"Failed to get message folders: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to get message folders: {str(e)}")
     
-    async def get_message_headers(self, access_token: str, folder_id: str, page_number: int = 1, entries_per_page: int = 200) -> Dict[str, Any]:
-        """Get message headers (IDs only) using GetMyMessages with ReturnHeaders"""
+    async def get_message_headers(
+        self,
+        access_token: str,
+        folder_id: str,
+        page_number: int = 1,
+        entries_per_page: int = 200,
+        start_time_from: Optional[str] = None,
+        start_time_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get message headers (IDs only) using GetMyMessages with ReturnHeaders.
+
+        Optional start_time_from/start_time_to allow worker-driven time windows.
+        """
         import xml.etree.ElementTree as ET
         
         api_url = "https://api.ebay.com/ws/api.dll"
         
         now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        start_from_iso = start_time_from or "2015-01-01T00:00:00.000Z"
+        start_to_iso = start_time_to or now_iso
         
         xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
 <GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
@@ -2833,8 +2861,8 @@ class EbayService:
   <DetailLevel>ReturnHeaders</DetailLevel>
   <FolderID>{folder_id}</FolderID>
   <WarningLevel>High</WarningLevel>
-  <StartTimeFrom>2015-01-01T00:00:00.000Z</StartTimeFrom>
-  <StartTimeTo>{now_iso}</StartTimeTo>
+  <StartTimeFrom>{start_from_iso}</StartTimeFrom>
+  <StartTimeTo>{start_to_iso}</StartTimeTo>
   <Pagination>
     <EntriesPerPage>{entries_per_page}</EntriesPerPage>
     <PageNumber>{page_number}</PageNumber>

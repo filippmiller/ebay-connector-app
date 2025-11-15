@@ -648,7 +648,8 @@ class PostgresEbayDatabase:
                  offer_amount, offer_currency, offer_status, 
                  offer_date, expiration_date, offer_data, 
                  created_at, updated_at)
-                VALUES (:offer_id, :user_id, :listing_id, :buyer_username,
+                VALUES (:offer_id, :user_id, :ebay_account_id, :ebay_user_id,
+                        :listing_id, :buyer_username,
                         :offer_amount, :offer_currency, :offer_status,
                         :offer_date, :expiration_date, :offer_data,
                         :created_at, :updated_at)
