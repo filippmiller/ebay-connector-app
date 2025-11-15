@@ -42,6 +42,9 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   // Sync terminal for underlying sync_event logs (full HTTP detail)
   const [activeSyncRunId, setActiveSyncRunId] = useState<string | null>(null);
   const [activeApiFamily, setActiveApiFamily] = useState<string | null>(null);
+  const [runningApiFamily, setRunningApiFamily] = useState<string | null>(null);
+  const [recentRuns, setRecentRuns] = useState<any[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | "latest" | null>("latest");
 
   const fetchConfig = async () => {
     if (!accountId) return;
@@ -56,14 +59,9 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       );
       const data = resp.data;
       setConfig(data);
-      // If we have a recent run with a sync_run_id in its summary, pre-select
-      // it for the terminal so the bottom half shows something useful.
-      const firstWorker = data.workers[0];
-      const summary = firstWorker?.last_run_summary as any;
-      if (summary && (summary.sync_run_id || summary.run_id)) {
-        setActiveSyncRunId(summary.sync_run_id || summary.run_id);
-        setActiveApiFamily(firstWorker.api_family);
-      }
+      // Also refresh recent worker runs so the terminal can attach to the
+      // latest activity across all APIs.
+      fetchRecentRuns();
     } catch (e: any) {
       console.error("Failed to load worker config", e);
       setError(e?.response?.data?.detail || e.message || "Failed to load workers");
@@ -76,6 +74,30 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     fetchConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
+
+  const fetchRecentRuns = async () => {
+    if (!accountId) return;
+    try {
+      const resp = await api.get<{ runs: any[] }>(
+        `/ebay/workers/runs`,
+        {
+          params: { account_id: accountId, limit: 20 },
+        }
+      );
+      const runs = resp.data.runs || [];
+      setRecentRuns(runs);
+      // Auto-select the most recent run for the terminal if nothing selected.
+      if (runs.length > 0 && (!selectedRunId || selectedRunId === "latest")) {
+        const latest = runs[0];
+        setSelectedRunId(latest.id);
+        // We will resolve sync_run_id lazily when user explicitly chooses the
+        // run or when a new run is started.
+      }
+    } catch (e) {
+      // Swallow errors here; the main error surface is the config fetch.
+      console.error("Failed to load recent worker runs", e);
+    }
+  };
 
   const toggleGlobal = async () => {
     if (!config) return;
@@ -120,6 +142,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
 
   const triggerRun = async (apiFamily: string) => {
     try {
+      setRunningApiFamily(apiFamily);
       const resp = await api.post(
         `/ebay/workers/run`,
         null,
@@ -127,17 +150,48 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
           params: { account_id: accountId, api: apiFamily },
         }
       );
-      // When a worker run is started, clear any previous sync terminal so the
-      // user knows we are waiting for fresh logs.
-      if (resp.data?.status === "started") {
-        setActiveSyncRunId(null);
+      if (resp.data?.status === "started" && resp.data?.run_id) {
+        const runId = resp.data.run_id as string;
         setActiveApiFamily(apiFamily);
+        setSelectedRunId(runId);
+        // Immediately fetch logs for this run to resolve the underlying
+        // sync_run_id for the terminal.
+        try {
+          const logsResp = await api.get(`/ebay/workers/logs/${runId}`);
+          const summary = logsResp.data?.run?.summary as any;
+          const syncRunId = summary?.sync_run_id || summary?.run_id || null;
+          if (syncRunId) {
+            setActiveSyncRunId(syncRunId);
+          } else {
+            setActiveSyncRunId(null);
+          }
+        } catch (err) {
+          console.error("Failed to load logs for new worker run", err);
+        }
+      } else if (resp.data?.status === "skipped" && resp.data?.run_id) {
+        // Already running; attach terminal to the active run.
+        const runId = resp.data.run_id as string;
+        setActiveApiFamily(apiFamily);
+        setSelectedRunId(runId);
+        try {
+          const logsResp = await api.get(`/ebay/workers/logs/${runId}`);
+          const summary = logsResp.data?.run?.summary as any;
+          const syncRunId = summary?.sync_run_id || summary?.run_id || null;
+          if (syncRunId) {
+            setActiveSyncRunId(syncRunId);
+          }
+        } catch (err) {
+          console.error("Failed to load logs for existing worker run", err);
+        }
       }
-      // Refresh config to pick up latest run info (including summary with sync_run_id once available)
+      // Refresh config + recent runs to pick up the latest state.
       fetchConfig();
+      fetchRecentRuns();
     } catch (e: any) {
       console.error("Failed to trigger run", e);
       setError(e?.response?.data?.detail || e.message || "Failed to trigger run");
+    } finally {
+      setRunningApiFamily(null);
     }
   };
 
@@ -244,6 +298,20 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                         </div>
                       </div>
                     )}
+                    {w.api_family === 'transactions' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Transactions – Finances API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GET /sell/finances/v1/transaction</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_transactions</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Key columns: transaction_id, user_id, order_id, transaction_date, transaction_type,
+                          transaction_status, amount, currency. All rows are tagged with ebay_account_id and ebay_user_id
+                          (e.g. mil_243) for precise account-level tracking.
+                        </div>
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <span
@@ -279,9 +347,12 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     </button>
                     <button
                       onClick={() => triggerRun(w.api_family)}
-                      className="px-2 py-1 border rounded text-xs bg-blue-600 text-white"
+                      className={`px-2 py-1 border rounded text-xs text-white ${
+                        runningApiFamily === w.api_family ? "bg-blue-400" : "bg-blue-600"
+                      }`}
+                      disabled={runningApiFamily === w.api_family}
                     >
-                      Run now
+                      {runningApiFamily === w.api_family ? "Starting..." : "Run now"}
                     </button>
                     <button
                       onClick={() => openDetails(w.api_family)}
@@ -302,7 +373,56 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
         <div className="mt-6">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm text-gray-700">
-              Terminal for {activeApiFamily || "orders"} worker (run_id: {activeSyncRunId})
+              eBay workers terminal for this account – showing {activeApiFamily || "latest"} run
+            </div>
+            <div className="flex items-center space-x-2 text-xs text-gray-600">
+              <span>Select worker run:</span>
+              <select
+                className="border rounded px-1 py-0.5 text-xs"
+                value={selectedRunId || "latest"}
+                onChange={async (e) => {
+                  const val = e.target.value;
+                  if (val === "latest") {
+                    setSelectedRunId("latest");
+                    // Re-resolve latest run from recentRuns
+                    if (recentRuns.length > 0) {
+                      const latest = recentRuns[0];
+                      try {
+                        const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
+                        const summary = logsResp.data?.run?.summary as any;
+                        const syncRunId = summary?.sync_run_id || summary?.run_id || null;
+                        if (syncRunId) {
+                          setActiveSyncRunId(syncRunId);
+                          setActiveApiFamily(latest.api_family);
+                          setSelectedRunId(latest.id);
+                        }
+                      } catch (err) {
+                        console.error("Failed to load logs for latest worker run", err);
+                      }
+                    }
+                  } else {
+                    setSelectedRunId(val);
+                    try {
+                      const logsResp = await api.get(`/ebay/workers/logs/${val}`);
+                      const summary = logsResp.data?.run?.summary as any;
+                      const syncRunId = summary?.sync_run_id || summary?.run_id || null;
+                      if (syncRunId) {
+                        setActiveSyncRunId(syncRunId);
+                        setActiveApiFamily(logsResp.data?.run?.api_family || null);
+                      }
+                    } catch (err) {
+                      console.error("Failed to load logs for selected worker run", err);
+                    }
+                  }
+                }}
+              >
+                <option value="latest">Latest run (all APIs)</option>
+                {recentRuns.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {run.api_family} – {run.started_at || "unknown"} – {run.status}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <SyncTerminal
