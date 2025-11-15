@@ -6,30 +6,6 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 
-interface OrderLineItem {
-  id: string;
-  title: string;
-  quantity: number;
-  unit_price: number;
-  total_price: number;
-  image_url: string | null;
-}
-
-interface Order {
-  id: string;
-  order_id: string;
-  order_status: string;
-  order_date: string;
-  buyer_username: string | null;
-  buyer_email: string | null;
-  total_amount: number;
-  shipping_cost: number | null;
-  tax_amount: number | null;
-  tracking_number: string | null;
-  shipped_date: string | null;
-  line_items: OrderLineItem[];
-}
-
 interface OrderStats {
   total_orders: number;
   total_revenue: number;
