@@ -638,6 +638,14 @@ class Payout(Base):
     raw_payload = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationship to payout items
+    payout_items = relationship("PayoutItem", back_populates="payout", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_payout_date', 'payout_date'),
+        Index('idx_payout_user_id', 'user_id'),
+    )
 
 
 class UserGridLayout(Base):
@@ -659,13 +667,6 @@ class UserGridLayout(Base):
     
     __table_args__ = (
         Index('idx_user_grid_layouts_user_grid', 'user_id', 'grid_key', unique=True),
-    )
-    
-    payout_items = relationship("PayoutItem", back_populates="payout", cascade="all, delete-orphan")
-    
-    __table_args__ = (
-        Index('idx_payout_date', 'payout_date'),
-        Index('idx_payout_user_id', 'user_id'),
     )
 
 
