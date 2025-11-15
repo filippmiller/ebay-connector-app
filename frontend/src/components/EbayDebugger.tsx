@@ -1061,7 +1061,7 @@ export const EbayDebugger: React.FC = () => {
                       value={sellerTxPageNumber}
                       onChange={(e) => setSellerTxPageNumber(Number(e.target.value) || 0)}
                     />
-                    <p className="text-[11px] text-gray-500">Page number to retrieve (>= 1).</p>
+                    <p className="text-[11px] text-gray-500">Page number to retrieve (&gt;= 1).</p>
                   </div>
                 </div>
               )}
