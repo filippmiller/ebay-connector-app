@@ -5,7 +5,7 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts
+from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers
 from app.utils.logger import logger
 import os
 import asyncio
@@ -64,6 +64,7 @@ async def request_logger(request: Request, call_next):
 app.include_router(auth.router)
 app.include_router(ebay.router)
 app.include_router(ebay_accounts.router)
+app.include_router(ebay_workers.router)
 app.include_router(orders.router)
 app.include_router(messages.router)
 app.include_router(offers.router)

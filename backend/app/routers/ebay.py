@@ -1452,13 +1452,13 @@ async def debug_ebay_api(
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
-    # Mask token for logs
-    masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in request_headers.items()}
+    # Merge any extra headers from the UI/template (e.g. X-EBAY-C-MARKETPLACE-ID)
     if headers_dict:
         request_headers.update(headers_dict)
 
-    # Trading API - GetMyMessages uses XML + X-EBAY-API-IAF-TOKEN instead of JSON Bearer
+    # Trading API XML calls use X-EBAY-API-IAF-TOKEN instead of JSON Bearer
     if template in ("messages", "seller_transactions"):
+        # Do not send Authorization: Bearer for Trading
         request_headers.pop("Authorization", None)
         request_headers["Content-Type"] = "text/xml"
         if template == "messages":
@@ -1469,6 +1469,9 @@ async def debug_ebay_api(
         request_headers["X-EBAY-API-COMPATIBILITY-LEVEL"] = "967"
         # Use the same OAuth user token as IAF token for Trading
         request_headers["X-EBAY-API-IAF-TOKEN"] = debugger.access_token
+
+    # Mask token for logs AFTER all header mutations so logs show the full set
+    masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in request_headers.items()}
     
     # Make request
     start_time = time.time()
