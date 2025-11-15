@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getOrderStats } from '../api/orders';
 import { DataGridPage } from '@/components/DataGridPage';
+import FixedHeader from '@/components/FixedHeader';
 import { Search, Download } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -53,9 +54,11 @@ export const OrdersPage = () => {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-white">
-      <div className="border-b px-6 py-4">
-        <h1 className="text-2xl font-bold mb-4">Orders</h1>
+    <div className="min-h-screen bg-white">
+      <FixedHeader />
+      <div className="w-full pt-16 px-4 py-6">
+        <div className="max-w-7xl mx-auto">
+          <h1 className="text-2xl font-bold mb-4">Orders</h1>
 
         {stats && (
           <div className="grid grid-cols-3 gap-4 mb-4">
@@ -108,10 +111,10 @@ export const OrdersPage = () => {
             Export
           </Button>
         </div>
-      </div>
 
-      <div className="flex-1 overflow-auto p-6">
-        <DataGridPage gridKey="orders" title="Orders" />
+        <div className="mt-6">
+          <DataGridPage gridKey="orders" title="Orders" />
+        </div>
       </div>
     </div>
   );
