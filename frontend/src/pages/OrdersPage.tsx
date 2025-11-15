@@ -116,6 +116,7 @@ export const OrdersPage = () => {
           <DataGridPage gridKey="orders" title="Orders" />
         </div>
       </div>
+      </div>
     </div>
   );
 };
