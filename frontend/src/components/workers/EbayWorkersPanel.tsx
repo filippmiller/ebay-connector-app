@@ -163,6 +163,10 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
           params: { account_id: accountId, api: apiFamily },
         }
       );
+      if (resp.data?.status === "error") {
+        setError(resp.data?.error_message || `Worker ${apiFamily} failed to start`);
+        return;
+      }
       if (resp.data?.status === "started" && resp.data?.run_id) {
         const runId = resp.data.run_id as string;
         setActiveApiFamily(apiFamily);
@@ -429,11 +433,27 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                 }}
               >
                 <option value="latest">Latest run (all APIs)</option>
-                {recentRuns.map((run) => (
-                  <option key={run.id} value={run.id}>
-                    {run.api_family} – {run.started_at || "unknown"} – {run.status}
-                  </option>
-                ))}
+                {recentRuns.map((run) => {
+                  let label = `${run.api_family}`;
+                  if (run.started_at) {
+                    try {
+                      const d = new Date(run.started_at);
+                      const datePart = d.toISOString().slice(0, 10); // YYYY-MM-DD
+                      const timePart = d.toTimeString().slice(0, 8); // HH:MM:SS
+                      label += ` – ${datePart} ${timePart}`;
+                    } catch {
+                      label += ` – ${run.started_at}`;
+                    }
+                  }
+                  if (run.status) {
+                    label += ` – ${run.status}`;
+                  }
+                  return (
+                    <option key={run.id} value={run.id}>
+                      {label}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>

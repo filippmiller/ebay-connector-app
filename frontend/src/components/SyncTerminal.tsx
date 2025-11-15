@@ -244,7 +244,8 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
 
   useEffect(() => {
     if (scrollRef.current && !isPaused) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      // Newest events are rendered at the top, so keep the scroll near the top
+      scrollRef.current.scrollTop = 0;
     }
   }, [events, isPaused]);
 
@@ -338,7 +339,9 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
       return false;
     }
   });
-  const limitedEvents = filteredEvents.slice(Math.max(filteredEvents.length - visibleLimit, 0));
+  const limitedEvents = filteredEvents
+    .slice(Math.max(filteredEvents.length - visibleLimit, 0))
+    .reverse(); // Show newest events first at the top
 
   return (
     <Card className="w-full">

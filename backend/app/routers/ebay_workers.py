@@ -208,15 +208,28 @@ async def run_worker_once(
     if not account or account.org_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
-    # Dispatch by API family
-    if api == "orders":
-        run_id = await run_orders_worker_for_account(account_id)
-        api_family = "orders"
-    elif api == "transactions":
-        run_id = await run_transactions_worker_for_account(account_id)
-        api_family = "transactions"
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
+    # Dispatch by API family with robust error handling so the client always
+    # gets a structured response instead of a generic 5xx/502.
+    try:
+        if api == "orders":
+            run_id = await run_orders_worker_for_account(account_id)
+            api_family = "orders"
+        elif api == "transactions":
+            run_id = await run_transactions_worker_for_account(account_id)
+            api_family = "transactions"
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
+    except HTTPException:
+        # Preserve explicit HTTP errors (e.g. bad api_family).
+        raise
+    except Exception as exc:
+        # Log and surface a clear error message instead of propagating a 500.
+        logger.error(f"Failed to start worker run account={account_id} api={api}: {exc}", exc_info=True)
+        return {
+            "status": "error",
+            "api_family": api,
+            "error_message": str(exc),
+        }
 
     if not run_id:
         active = get_active_run(db, ebay_account_id=account_id, api_family=api_family)
