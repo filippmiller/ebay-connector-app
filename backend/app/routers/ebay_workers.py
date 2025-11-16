@@ -23,6 +23,7 @@ from app.services.ebay_workers.orders_worker import run_orders_worker_for_accoun
 from app.services.ebay_workers.transactions_worker import run_transactions_worker_for_account
 from app.services.ebay_workers.offers_worker import run_offers_worker_for_account
 from app.services.ebay_workers.messages_worker import run_messages_worker_for_account
+from app.services.ebay_workers.active_inventory_worker import run_active_inventory_worker_for_account
 from app.services.ebay_workers.runs import get_active_run
 
 
@@ -80,9 +81,16 @@ async def get_worker_config(
 
     states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
 
-    # Ensure we have at least Orders / Transactions / Offers / Messages workers
-    # configured so they always appear in the Workers control UI for this account.
-    ensured_families = ["orders", "transactions", "offers", "messages"]
+    # Ensure we have at least Orders / Transactions / Offers / Messages /
+    # Active Inventory workers configured so they always appear in the Workers
+    # control UI for this account.
+    ensured_families = [
+        "orders",
+        "transactions",
+        "offers",
+        "messages",
+        "active_inventory",
+    ]
     ebay_user_id = account.ebay_user_id or "unknown"
     for api_family in ensured_families:
         if api_family not in states_by_api:
@@ -193,19 +201,11 @@ async def run_worker_once(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Manually trigger a single worker run for an account.
-
-    Currently supports:
-    - orders
-    - transactions
-    - offers
-    - messages
-    """
 
     if not are_workers_globally_enabled(db):
         return {"status": "skipped", "reason": "workers_disabled"}
 
-    if api not in {"orders", "transactions", "offers", "messages"}:
+    if api not in {"orders", "transactions", "offers", "messages", "active_inventory"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
 
     account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
@@ -227,6 +227,9 @@ async def run_worker_once(
         elif api == "messages":
             run_id = await run_messages_worker_for_account(account_id)
             api_family = "messages"
+        elif api == "active_inventory":
+            run_id = await run_active_inventory_worker_for_account(account_id)
+            api_family = "active_inventory"
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
     except HTTPException:
