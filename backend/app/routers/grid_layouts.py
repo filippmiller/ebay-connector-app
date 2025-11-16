@@ -97,6 +97,20 @@ ACTIVE_INVENTORY_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
 ]
 
+CASES_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="open_date", label="Opened at", type="datetime", width_default=180),
+  ColumnMeta(name="external_id", label="Case/Dispute ID", type="string", width_default=220),
+  ColumnMeta(name="kind", label="Kind", type="string", width_default=120),
+  ColumnMeta(name="issue_type", label="Issue type", type="string", width_default=140),
+  ColumnMeta(name="status", label="Status", type="string", width_default=140),
+  ColumnMeta(name="buyer_username", label="Buyer", type="string", width_default=200),
+  ColumnMeta(name="order_id", label="Order ID", type="string", width_default=200),
+  ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="respond_by_date", label="Respond by", type="datetime", width_default=180),
+  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+]
+
 
 GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "orders": {
@@ -167,6 +181,22 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "last_seen_at", "direction": "desc"},
     },
+    "cases": {
+        "visible_columns": [
+            "open_date",
+            "external_id",
+            "kind",
+            "issue_type",
+            "status",
+            "buyer_username",
+            "order_id",
+            "amount",
+            "currency",
+            "respond_by_date",
+            "ebay_account_id",
+        ],
+        "sort": {"column": "open_date", "direction": "desc"},
+    },
 }
 
 
@@ -181,6 +211,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return OFFERS_COLUMNS_META
     if grid_key == "active_inventory":
         return ACTIVE_INVENTORY_COLUMNS_META
+    if grid_key == "cases":
+        return CASES_COLUMNS_META
     return []
 
 def _allowed_columns_for_grid(grid_key: str) -> List[str]:

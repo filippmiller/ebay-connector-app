@@ -126,6 +126,20 @@ async def get_grid_data(
             )
         finally:
             db_sqla.close()
+    elif grid_key == "cases":
+        return _get_cases_data(
+            db,
+            current_user,
+            requested_cols,
+            limit,
+            offset,
+            sort_column,
+            sort_dir,
+            state=state,
+            buyer=buyer,
+            from_date=from_date,
+            to_date=to_date,
+        )
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Grid not implemented yet")
 
@@ -424,6 +438,200 @@ def _get_offers_data(
 
     return {
         "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+
+
+def _get_cases_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    state: Optional[str],
+    buyer: Optional[str],
+    from_date: Optional[str],
+    to_date: Optional[str],
+) -> Dict[str, Any]:
+    """Unified INR/SNAD Cases & Disputes grid backed by ebay_disputes + ebay_cases.
+
+    We materialize rows for the current user and filter to INR/SNAD-like items
+    in application code – expected volume is low so this stays cheap and avoids
+    schema coupling.
+    """
+    import json
+    from datetime import datetime as dt_type
+    from sqlalchemy import text as sa_text
+
+    union_sql = sa_text(
+        """
+        SELECT
+            'payment_dispute' AS kind,
+            d.dispute_id      AS external_id,
+            d.order_id        AS order_id,
+            d.dispute_reason  AS reason,
+            d.dispute_status  AS status,
+            d.open_date       AS open_date,
+            d.respond_by_date AS respond_by_date,
+            d.dispute_data    AS raw_payload,
+            d.ebay_account_id AS ebay_account_id,
+            d.ebay_user_id    AS ebay_user_id
+        FROM ebay_disputes d
+        WHERE d.user_id = :user_id
+        UNION ALL
+        SELECT
+            'postorder_case'  AS kind,
+            c.case_id         AS external_id,
+            c.order_id        AS order_id,
+            c.case_type       AS reason,
+            c.case_status     AS status,
+            c.open_date       AS open_date,
+            c.close_date      AS respond_by_date,
+            c.case_data       AS raw_payload,
+            c.ebay_account_id AS ebay_account_id,
+            c.ebay_user_id    AS ebay_user_id
+        FROM ebay_cases c
+        WHERE c.user_id = :user_id
+        """
+    )
+
+    result = db.execute(union_sql, {"user_id": current_user.id})
+
+    def _issue_type(reason: Optional[str]) -> Optional[str]:
+        if not reason:
+            return None
+        r = reason.upper()
+        if "NOT_RECEIVED" in r:
+            return "INR"
+        if "NOT_AS_DESCRIBED" in r or "SNAD" in r:
+            return "SNAD"
+        return None
+
+    rows_all: List[Dict[str, Any]] = []
+    for row in result:
+        issue = _issue_type(row.reason)
+        if not issue:
+            continue
+
+        raw_payload = row.raw_payload
+        try:
+            payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload or {}
+        except Exception:
+            payload = {}
+
+        buyer_username = (
+            payload.get("buyerUsername")
+            or (payload.get("buyer") or {}).get("username")
+            or (payload.get("buyer") or {}).get("userId")
+        )
+
+        amount = None
+        currency = None
+        try:
+            mt_list = payload.get("monetaryTransactions") or []
+            if mt_list:
+                total_price = (mt_list[0] or {}).get("totalPrice") or {}
+                amount = total_price.get("value")
+                currency = total_price.get("currency")
+        except Exception:
+            pass
+
+        if amount is None:
+            claim = payload.get("claimAmount") or payload.get("disputeAmount") or {}
+            amount = claim.get("value")
+            currency = currency or claim.get("currency")
+
+        def _normalize_dt(value: Any) -> Optional[str]:
+            if not value:
+                return None
+            if isinstance(value, dt_type):
+                return value.isoformat()
+            if isinstance(value, str):
+                try:
+                    v = value.replace("Z", "+00:00") if "Z" in value else value
+                    dt = dt_type.fromisoformat(v)
+                    return dt.isoformat()
+                except Exception:
+                    return value
+            return str(value)
+
+        open_date = _normalize_dt(row.open_date)
+        respond_by_date = _normalize_dt(row.respond_by_date)
+
+        rows_all.append(
+            {
+                "kind": row.kind,
+                "external_id": row.external_id,
+                "order_id": row.order_id,
+                "status": row.status,
+                "issue_type": issue,
+                "buyer_username": buyer_username,
+                "amount": amount,
+                "currency": currency,
+                "open_date": open_date,
+                "respond_by_date": respond_by_date,
+                "ebay_account_id": row.ebay_account_id,
+                "ebay_user_id": row.ebay_user_id,
+            }
+        )
+
+    # Simple filters
+    if state:
+        rows_all = [r for r in rows_all if (r.get("status") or "").lower() == state.lower()]
+    if buyer:
+        rows_all = [r for r in rows_all if buyer.lower() in (r.get("buyer_username") or "").lower()]
+
+    if from_date or to_date:
+        def _within_window(r: Dict[str, Any]) -> bool:
+            od = r.get("open_date")
+            if not isinstance(od, str):
+                return True
+            try:
+                v = od.replace("Z", "+00:00") if "Z" in od else od
+                dt = dt_type.fromisoformat(v)
+            except Exception:
+                return True
+            if from_date:
+                try:
+                    f = dt_type.fromisoformat(from_date.replace("Z", "+00:00"))
+                    if dt < f:
+                        return False
+                except Exception:
+                    pass
+            if to_date:
+                try:
+                    t = dt_type.fromisoformat(to_date.replace("Z", "+00:00"))
+                    if dt > t:
+                        return False
+                except Exception:
+                    pass
+            return True
+
+        rows_all = [r for r in rows_all if _within_window(r)]
+
+    # Sort
+    if sort_column and sort_column in {"open_date", "status", "buyer_username", "amount", "respond_by_date"}:
+        reverse = sort_dir == "desc"
+        rows_all.sort(key=lambda r: r.get(sort_column) or "", reverse=reverse)
+    else:
+        rows_all.sort(key=lambda r: r.get("open_date") or "", reverse=True)
+
+    total = len(rows_all)
+    page_rows = rows_all[offset : offset + limit]
+
+    projected: List[Dict[str, Any]] = []
+    for r in page_rows:
+        projected.append({col: r.get(col) for col in selected_cols})
+
+    return {
+        "rows": projected,
         "limit": limit,
         "offset": offset,
         "total": total,

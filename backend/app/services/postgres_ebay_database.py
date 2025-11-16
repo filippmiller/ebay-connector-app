@@ -550,33 +550,35 @@ class PostgresEbayDatabase:
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
     ) -> bool:
-        """Insert or update a dispute with eBay account context."""
+        """Insert or update a payment dispute with eBay account context."""
         session = self._get_session()
-        
+
         try:
-            dispute_id = dispute_data.get('paymentDisputeId')
+            dispute_id = dispute_data.get("paymentDisputeId")
             if not dispute_id:
                 logger.error("Dispute data missing paymentDisputeId")
                 return False
-            
+
             now = datetime.utcnow()
-            
-            order_id = dispute_data.get('orderId')
-            dispute_reason = dispute_data.get('reason')
-            dispute_status = dispute_data.get('status')
-            open_date = dispute_data.get('openDate')
-            respond_by_date = dispute_data.get('respondByDate')
-            
-            query = text("""
-                INSERT INTO ebay_disputes 
+
+            order_id = dispute_data.get("orderId")
+            dispute_reason = dispute_data.get("reason")
+            dispute_status = dispute_data.get("status")
+            open_date = dispute_data.get("openDate")
+            respond_by_date = dispute_data.get("respondByDate")
+
+            query = text(
+                """
+                INSERT INTO ebay_disputes
                 (dispute_id, user_id, ebay_account_id, ebay_user_id,
-                 order_id, dispute_reason, 
-                 dispute_status, open_date, respond_by_date, dispute_data, 
+                 order_id, dispute_reason,
+                 dispute_status, open_date, respond_by_date, dispute_data,
                  created_at, updated_at)
-                VALUES (:dispute_id, :user_id, :order_id, :dispute_reason,
+                VALUES (:dispute_id, :user_id, :ebay_account_id, :ebay_user_id,
+                        :order_id, :dispute_reason,
                         :dispute_status, :open_date, :respond_by_date, :dispute_data,
                         :created_at, :updated_at)
-                ON CONFLICT (dispute_id, user_id) 
+                ON CONFLICT (dispute_id, user_id)
                 DO UPDATE SET
                     order_id = EXCLUDED.order_id,
                     dispute_reason = EXCLUDED.dispute_reason,
@@ -584,34 +586,117 @@ class PostgresEbayDatabase:
                     open_date = EXCLUDED.open_date,
                     respond_by_date = EXCLUDED.respond_by_date,
                     dispute_data = EXCLUDED.dispute_data,
+                    ebay_account_id = EXCLUDED.ebay_account_id,
+                    ebay_user_id = EXCLUDED.ebay_user_id,
                     updated_at = EXCLUDED.updated_at
-            """)
-            
-            session.execute(query, {
-                'dispute_id': dispute_id,
-                'user_id': user_id,
-                'ebay_account_id': ebay_account_id,
-                'ebay_user_id': ebay_user_id,
-                'order_id': order_id,
-                'dispute_reason': dispute_reason,
-                'dispute_status': dispute_status,
-                'open_date': open_date,
-                'respond_by_date': respond_by_date,
-                'dispute_data': json.dumps(dispute_data),
-                'created_at': now,
-                'updated_at': now
-            })
-            
+                """
+            )
+
+            session.execute(
+                query,
+                {
+                    "dispute_id": dispute_id,
+                    "user_id": user_id,
+                    "ebay_account_id": ebay_account_id,
+                    "ebay_user_id": ebay_user_id,
+                    "order_id": order_id,
+                    "dispute_reason": dispute_reason,
+                    "dispute_status": dispute_status,
+                    "open_date": open_date,
+                    "respond_by_date": respond_by_date,
+                    "dispute_data": json.dumps(dispute_data),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
             session.commit()
             return True
-            
+
         except Exception as e:
             logger.error(f"Error upserting dispute: {str(e)}")
             session.rollback()
             return False
         finally:
             session.close()
-    
+
+    def upsert_case(
+        self,
+        user_id: str,
+        case_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a Post-Order case in ebay_cases."""
+        session = self._get_session()
+
+        try:
+            case_id = case_data.get("caseId") or case_data.get("case_id")
+            if not case_id:
+                logger.error("Case data missing caseId")
+                return False
+
+            now = datetime.utcnow()
+
+            order_id = case_data.get("orderId") or case_data.get("order_id")
+            case_type = case_data.get("caseType") or case_data.get("case_type")
+            case_status = case_data.get("status") or case_data.get("caseStatus")
+            open_date = case_data.get("openDate") or case_data.get("open_date")
+            close_date = case_data.get("closeDate") or case_data.get("close_date")
+
+            query = text(
+                """
+                INSERT INTO ebay_cases
+                (case_id, user_id, ebay_account_id, ebay_user_id,
+                 order_id, case_type, case_status,
+                 open_date, close_date, case_data,
+                 created_at, updated_at)
+                VALUES (:case_id, :user_id, :ebay_account_id, :ebay_user_id,
+                        :order_id, :case_type, :case_status,
+                        :open_date, :close_date, :case_data,
+                        :created_at, :updated_at)
+                ON CONFLICT (case_id, user_id)
+                DO UPDATE SET
+                    order_id = EXCLUDED.order_id,
+                    case_type = EXCLUDED.case_type,
+                    case_status = EXCLUDED.case_status,
+                    open_date = EXCLUDED.open_date,
+                    close_date = EXCLUDED.close_date,
+                    case_data = EXCLUDED.case_data,
+                    ebay_account_id = EXCLUDED.ebay_account_id,
+                    ebay_user_id = EXCLUDED.ebay_user_id,
+                    updated_at = EXCLUDED.updated_at
+                """
+            )
+
+            session.execute(
+                query,
+                {
+                    "case_id": case_id,
+                    "user_id": user_id,
+                    "ebay_account_id": ebay_account_id,
+                    "ebay_user_id": ebay_user_id,
+                    "order_id": order_id,
+                    "case_type": case_type,
+                    "case_status": case_status,
+                    "open_date": open_date,
+                    "close_date": close_date,
+                    "case_data": json.dumps(case_data),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+            session.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error upserting case: {str(e)}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
     def upsert_offer(
         self,
         user_id: str,

@@ -1156,33 +1156,26 @@ class EbayService:
 
 
     async def fetch_payment_disputes(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Fetch payment disputes from eBay Fulfillment API using search endpoint
-        """
+        """Fetch payment disputes from eBay Fulfillment API using search endpoint."""
         if not access_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="eBay access token required"
+                detail="eBay access token required",
             )
-        
-        # FIXED: Payment Disputes API uses POST method with search criteria
-        # Endpoint: POST /sell/fulfillment/v1/payment_dispute_summary/search
-        # According to eBay API docs, disputes are fetched via search endpoint
+
+        # Payment Disputes API uses POST method with search criteria
         api_url = f"{settings.ebay_api_base_url}/sell/fulfillment/v1/payment_dispute_summary/search"
-        
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"  # Required for all eBay APIs
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",  # Required for all eBay APIs
         }
-        
+
         # Payment disputes search requires POST with search criteria in body
-        search_criteria = filter_params or {}
-        if not search_criteria:
-            # Default: search for all disputes
-            search_criteria = {}
-        
+        search_body = filter_params or {}
+
         ebay_logger.log_ebay_event(
             "fetch_disputes_request",
             f"Fetching payment disputes from eBay ({settings.EBAY_ENVIRONMENT})",
@@ -1190,73 +1183,156 @@ class EbayService:
                 "environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
                 "method": "POST",
-                "body": search_criteria
-            }
+                "body": search_body,
+            },
         )
-        
+
         try:
             async with httpx.AsyncClient() as client:
-                # Payment dispute search requires POST with body, not GET
-                search_body = {}
-                if filter_params:
-                    search_body.update(filter_params)
-                
                 response = await client.post(
                     api_url,
                     headers=headers,
                     json=search_body,
-                    timeout=30.0
+                    timeout=30.0,
                 )
-                
-                if response.status_code != 200:
-                    error_detail = response.text
-                    try:
-                        error_json = response.json()
-                        error_detail = str(error_json)
-                    except:
-                        pass
-                    
-                    ebay_logger.log_ebay_event(
-                        "fetch_disputes_failed",
-                        f"Failed to fetch disputes: {response.status_code}",
-                        response_data={"error": error_detail},
-                        status="error",
-                        error=error_detail
-                    )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Failed to fetch disputes: {error_detail}"
-                    )
-                
-                disputes_data = response.json()
-                
+
+            if response.status_code != 200:
+                error_detail: Any = response.text
+                try:
+                    error_json = response.json()
+                    error_detail = error_json
+                except Exception:
+                    pass
+
                 ebay_logger.log_ebay_event(
-                    "fetch_disputes_success",
-                    f"Successfully fetched disputes from eBay",
-                    response_data={
-                        "total_disputes": disputes_data.get('total', 0)
-                    },
-                    status="success"
+                    "fetch_disputes_failed",
+                    f"Failed to fetch disputes: {response.status_code}",
+                    response_data={"error": error_detail},
+                    status="error",
+                    error=str(error_detail),
                 )
-                
-                logger.info(f"Successfully fetched disputes from eBay")
-                
-                return disputes_data
-                
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to fetch disputes: {error_detail}",
+                )
+
+            disputes_data = response.json()
+
+            ebay_logger.log_ebay_event(
+                "fetch_disputes_success",
+                "Successfully fetched disputes from eBay",
+                response_data={
+                    "total_disputes": disputes_data.get("total", 0),
+                },
+                status="success",
+            )
+
+            logger.info("Successfully fetched disputes from eBay")
+            return disputes_data
+
         except httpx.RequestError as e:
             error_msg = f"HTTP request failed: {str(e)}"
             ebay_logger.log_ebay_event(
                 "fetch_disputes_error",
                 "HTTP request error during disputes fetch",
                 status="error",
-                error=error_msg
+                error=error_msg,
             )
             logger.error(error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg
+                detail=error_msg,
             )
-    
+
+    async def fetch_postorder_cases(
+        self,
+        access_token: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch cases from the Post-Order Case Management API (casemanagement)."""
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        api_url = f"{settings.ebay_api_base_url}/post-order/v2/casemanagement/search"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        search_body = filter_params or {}
+
+        ebay_logger.log_ebay_event(
+            "fetch_postorder_cases_request",
+            f"Fetching Post-Order cases from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "method": "POST",
+                "body": search_body,
+            },
+        )
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    api_url,
+                    headers=headers,
+                    json=search_body,
+                    timeout=30.0,
+                )
+
+            if response.status_code != 200:
+                error_detail: Any = response.text
+                try:
+                    error_json = response.json()
+                    error_detail = error_json
+                except Exception:
+                    pass
+
+                ebay_logger.log_ebay_event(
+                    "fetch_postorder_cases_failed",
+                    f"Failed to fetch Post-Order cases: {response.status_code}",
+                    response_data={"error": error_detail},
+                    status="error",
+                    error=str(error_detail),
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to fetch Post-Order cases: {error_detail}",
+                )
+
+            cases_data = response.json()
+
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_cases_success",
+                "Successfully fetched Post-Order cases",
+                response_data={
+                    "total_cases": cases_data.get("total", len(cases_data.get("cases", []))),
+                },
+                status="success",
+            )
+
+            logger.info("Successfully fetched Post-Order cases from eBay")
+            return cases_data
+
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed: {str(e)}"
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_cases_error",
+                "HTTP request error during Post-Order cases fetch",
+                status="error",
+                error=error_msg,
+            )
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg,
+            )
+
     async def fetch_inventory_items(self, access_token: str, limit: int = 200, offset: int = 0) -> Dict[str, Any]:
         """
         Fetch inventory items from eBay Inventory API
@@ -1831,15 +1907,15 @@ class EbayService:
         finally:
             event_logger.close()
 
-    async def sync_all_disputes(self, user_id: str, access_token: str, run_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Synchronize all payment disputes from eBay to database with comprehensive logging
-        
-        Args:
-            user_id: User ID
-            access_token: eBay OAuth access token
-            run_id: Optional run_id for sync event logging
-        """
+    async def sync_all_disputes(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronize all payment disputes from eBay to database with logging."""
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
@@ -1981,7 +2057,12 @@ class EbayService:
                         "run_id": event_logger.run_id
                     }
                 
-                if ebay_db.upsert_dispute(user_id, dispute):
+                if ebay_db.upsert_dispute(
+                    user_id,
+                    dispute,
+                    ebay_account_id=ebay_account_id,
+                    ebay_user_id=ebay_user_id,
+                ):
                     total_stored += 1
             store_duration = int((time.time() - store_start) * 1000)
             
@@ -2020,6 +2101,173 @@ class EbayService:
             event_logger.log_error(f"Disputes sync failed: {error_msg}", e)
             logger.error(f"Disputes sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
+            raise
+        finally:
+            event_logger.close()
+
+    async def sync_postorder_cases(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Sync INR/SNAD Post-Order cases into ebay_cases."""
+        from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
+
+        event_logger = SyncEventLogger(user_id, "cases", run_id=run_id)
+        job_id = ebay_db.create_sync_job(user_id, "cases")
+        start_time = time.time()
+
+        try:
+            total_fetched = 0
+            total_stored = 0
+
+            event_logger.log_start(
+                f"Starting Post-Order cases sync from eBay ({settings.EBAY_ENVIRONMENT})",
+            )
+            logger.info(f"Starting Post-Order cases sync for user {user_id}")
+
+            await asyncio.sleep(0.3)
+
+            from app.services.sync_event_logger import is_cancelled
+
+            if is_cancelled(event_logger.run_id):
+                logger.info(f"Cases sync cancelled for run_id {event_logger.run_id} (before API request)")
+                event_logger.log_warning("Sync operation cancelled by user")
+                duration_ms = int((time.time() - start_time) * 1000)
+                event_logger.log_done(
+                    "Cases sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    duration_ms,
+                )
+                ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id,
+                }
+
+            event_logger.log_info("→ Requesting: POST /post-order/v2/casemanagement/search")
+            request_start = time.time()
+            try:
+                cases_response = await self.fetch_postorder_cases(access_token)
+            except Exception as exc:
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        f"Cases sync cancelled for run_id {event_logger.run_id} (after API error)",
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        "Cases sync cancelled: 0 fetched, 0 stored",
+                        0,
+                        0,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": 0,
+                        "total_stored": 0,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+                raise
+
+            request_duration = int((time.time() - request_start) * 1000)
+
+            cases = cases_response.get("cases") or cases_response.get("members") or []
+            total_fetched = len(cases)
+
+            event_logger.log_http_request(
+                "POST",
+                "/post-order/v2/casemanagement/search",
+                200,
+                request_duration,
+                total_fetched,
+            )
+            event_logger.log_info(
+                f"← Response: 200 OK ({request_duration}ms) - Received {total_fetched} cases",
+            )
+
+            await asyncio.sleep(0.2)
+
+            def _issue_type(case: Dict[str, Any]) -> Optional[str]:
+                raw = (case.get("caseType") or case.get("case_type") or "").upper()
+                if "NOT_RECEIVED" in raw:
+                    return "INR"
+                if "NOT_AS_DESCRIBED" in raw or "SNAD" in raw:
+                    return "SNAD"
+                return None
+
+            stored = 0
+            for c in cases:
+                issue = _issue_type(c)
+                if not issue:
+                    # Skip non-INR/SNAD cases
+                    continue
+
+                if is_cancelled(event_logger.run_id):
+                    logger.info(f"Cases sync cancelled for run_id {event_logger.run_id} (during storage)")
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        f"Cases sync cancelled: {total_fetched} fetched, {stored} stored",
+                        total_fetched,
+                        stored,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", total_fetched, stored)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                if ebay_db.upsert_case(  # type: ignore[attr-defined]
+                    user_id,
+                    c,
+                    ebay_account_id=ebay_account_id,
+                    ebay_user_id=ebay_user_id,
+                ):
+                    stored += 1
+
+            total_stored = stored
+            duration_ms = int((time.time() - start_time) * 1000)
+            ebay_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
+
+            event_logger.log_done(
+                f"Cases sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms,
+            )
+            logger.info(
+                f"Cases sync completed: fetched={total_fetched}, stored={total_stored}",
+            )
+
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "job_id": job_id,
+                "run_id": event_logger.run_id,
+            }
+
+        except Exception as exc:
+            error_msg = str(exc)
+            event_logger.log_error(f"Cases sync failed: {error_msg}", exc)
+            logger.error(f"Cases sync failed: {error_msg}")
+            ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
             raise
         finally:
             event_logger.close()

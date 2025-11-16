@@ -24,6 +24,7 @@ from app.services.ebay_workers.transactions_worker import run_transactions_worke
 from app.services.ebay_workers.offers_worker import run_offers_worker_for_account
 from app.services.ebay_workers.messages_worker import run_messages_worker_for_account
 from app.services.ebay_workers.active_inventory_worker import run_active_inventory_worker_for_account
+from app.services.ebay_workers.cases_worker import run_cases_worker_for_account
 from app.services.ebay_workers.runs import get_active_run
 
 
@@ -82,14 +83,15 @@ async def get_worker_config(
     states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
 
     # Ensure we have at least Orders / Transactions / Offers / Messages /
-    # Active Inventory workers configured so they always appear in the Workers
-    # control UI for this account.
+    # Active Inventory / Cases workers configured so they always appear in the
+    # Workers control UI for this account.
     ensured_families = [
         "orders",
         "transactions",
         "offers",
         "messages",
         "active_inventory",
+        "cases",
     ]
     ebay_user_id = account.ebay_user_id or "unknown"
     for api_family in ensured_families:
@@ -205,7 +207,7 @@ async def run_worker_once(
     if not are_workers_globally_enabled(db):
         return {"status": "skipped", "reason": "workers_disabled"}
 
-    if api not in {"orders", "transactions", "offers", "messages", "active_inventory"}:
+    if api not in {"orders", "transactions", "offers", "messages", "active_inventory", "cases"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
 
     account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
@@ -230,6 +232,9 @@ async def run_worker_once(
         elif api == "active_inventory":
             run_id = await run_active_inventory_worker_for_account(account_id)
             api_family = "active_inventory"
+        elif api == "cases":
+            run_id = await run_cases_worker_for_account(account_id)
+            api_family = "cases"
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
     except HTTPException:
