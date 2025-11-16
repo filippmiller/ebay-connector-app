@@ -157,6 +157,66 @@ async def get_table_schema(
     }
 
 
+@router.get("/search")
+async def search_database(
+    q: str = Query(..., min_length=1, max_length=200, description="Search query (substring, case-insensitive)"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Naive global search across all text-ish columns in allowed schemas.
+
+    For each table in ALLOWED_SCHEMAS, we look up text-like columns and run a
+    case-insensitive LIKE search. Results are limited and grouped per table.
+    This is best-effort and not optimized for very large datasets, but useful
+    for ad-hoc debugging.
+    """
+
+    tables = _get_known_tables(db)
+    conn = engine.connect()
+    try:
+        results: Dict[str, Any] = {"query": q, "tables": []}
+        pattern = f"%{q}%"
+
+        for t in tables:
+            schema = t["schema"]
+            name = t["name"]
+
+            # Find text-like columns for this table
+            cols_sql = text(
+                """
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_schema = :schema
+                  AND table_name = :table
+                  AND data_type IN ('text','character varying','character','citext')
+                ORDER BY ordinal_position
+                """
+            )
+            text_cols = [row["column_name"] for row in conn.execute(cols_sql, {"schema": schema, "table": name}).mappings()]
+            if not text_cols:
+                continue
+
+            like_clauses = " OR ".join([f"CAST(\"{col}\" AS text) ILIKE :pattern" for col in text_cols])
+            search_sql = text(
+                f"SELECT * FROM {schema}.\"{name}\" WHERE {like_clauses} LIMIT :limit"
+            )
+            rows = conn.execute(search_sql, {"pattern": pattern, "limit": limit}).mappings().all()
+            if rows:
+                results["tables"].append(
+                    {
+                        "schema": schema,
+                        "name": name,
+                        "matched_columns": text_cols,
+                        "rows": [dict(r) for r in rows],
+                    }
+                )
+
+        return results
+    finally:
+        conn.close()
+
+
 @router.get("/tables/{table_name}/rows")
 async def get_table_rows(
     table_name: str,

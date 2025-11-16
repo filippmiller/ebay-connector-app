@@ -30,6 +30,18 @@ interface RowsResponse {
   total_estimate: number | null;
 }
 
+interface GlobalSearchResultTable {
+  schema: string;
+  name: string;
+  matched_columns: string[];
+  rows: Record<string, any>[];
+}
+
+interface GlobalSearchResponse {
+  query: string;
+  tables: GlobalSearchResultTable[];
+}
+
 const AdminDbExplorerPage: React.FC = () => {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [filteredTables, setFilteredTables] = useState<TableInfo[]>([]);
@@ -44,6 +56,9 @@ const AdminDbExplorerPage: React.FC = () => {
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [globalSearchResult, setGlobalSearchResult] = useState<GlobalSearchResponse | null>(null);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
 
   useEffect(() => {
     const fetchTables = async () => {
@@ -211,7 +226,7 @@ const AdminDbExplorerPage: React.FC = () => {
           </div>
         </div>
         <div className="overflow-auto border rounded max-h-[60vh]">
-          <table className="min-w-full text-xs">
+          <table className="min-w-full text-xs table-fixed">
             <thead className="bg-gray-100">
               <tr>
                 {columns.map((col) => (
@@ -225,12 +240,17 @@ const AdminDbExplorerPage: React.FC = () => {
               {rows.rows.map((row, idx) => (
                 <tr key={idx} className="border-t">
                   {columns.map((col) => (
-                    <td key={col} className="px-2 py-1 border whitespace-nowrap max-w-xs overflow-hidden text-ellipsis">
-                      {row[col] === null || row[col] === undefined
-                        ? ''
-                        : typeof row[col] === 'object'
-                        ? JSON.stringify(row[col])
-                        : String(row[col])}
+                    <td
+                      key={col}
+                      className="px-2 py-1 border whitespace-nowrap max-w-xs overflow-x-auto text-[11px] font-mono"
+                    >
+                      <div className="inline-block whitespace-pre select-text">
+                        {row[col] === null || row[col] === undefined
+                          ? ''
+                          : typeof row[col] === 'object'
+                          ? JSON.stringify(row[col], null, 2)
+                          : String(row[col])}
+                      </div>
                     </td>
                   ))}
                 </tr>
@@ -256,6 +276,107 @@ const AdminDbExplorerPage: React.FC = () => {
       <div className="pt-12 p-4">
         <h1 className="text-2xl font-bold mb-4">Admin &rarr; DB Explorer</h1>
         {error && <div className="mb-3 text-sm text-red-600">{error}</div>}
+        <div className="mb-3 flex items-center gap-2">
+          <input
+            type="text"
+            className="flex-1 border rounded px-2 py-1 text-sm"
+            placeholder="Global search (substring, case-insensitive) across text columns in public schema..."
+            value={globalSearchQuery}
+            onChange={(e) => setGlobalSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && globalSearchQuery.trim()) {
+                setGlobalSearchLoading(true);
+                setGlobalSearchResult(null);
+                api
+                  .get<GlobalSearchResponse>('/api/admin/db/search', {
+                    params: { q: globalSearchQuery.trim(), limit: 20 },
+                  })
+                  .then((resp) => {
+                    setGlobalSearchResult(resp.data);
+                  })
+                  .catch((err: any) => {
+                    console.error('Global search failed', err);
+                    setError(err?.response?.data?.detail || err.message || 'Global search failed');
+                  })
+                  .finally(() => setGlobalSearchLoading(false));
+              }
+            }}
+          />
+          <button
+            className="px-3 py-1 border rounded text-sm bg-white hover:bg-gray-50"
+            disabled={globalSearchLoading || !globalSearchQuery.trim()}
+            onClick={() => {
+              if (!globalSearchQuery.trim()) return;
+              setGlobalSearchLoading(true);
+              setGlobalSearchResult(null);
+              api
+                .get<GlobalSearchResponse>('/api/admin/db/search', {
+                  params: { q: globalSearchQuery.trim(), limit: 20 },
+                })
+                .then((resp) => {
+                  setGlobalSearchResult(resp.data);
+                })
+                .catch((err: any) => {
+                  console.error('Global search failed', err);
+                  setError(err?.response?.data?.detail || err.message || 'Global search failed');
+                })
+                .finally(() => setGlobalSearchLoading(false));
+            }}
+          >
+            {globalSearchLoading ? 'Searching...' : 'Search all tables'}
+          </button>
+        </div>
+        {globalSearchResult && (
+          <div className="mb-4 border rounded bg-white p-3 text-xs max-h-[40vh] overflow-auto">
+            <div className="mb-2 font-semibold">Global search results for "{globalSearchResult.query}"</div>
+            {globalSearchResult.tables.length === 0 ? (
+              <div className="text-gray-500">No matches found in text columns.</div>
+            ) : (
+              <div className="space-y-3">
+                {globalSearchResult.tables.map((t) => (
+                  <div key={`${t.schema}.${t.name}`}>
+                    <div className="font-mono text-[11px] mb-1">
+                      {t.schema}.{t.name} (columns: {t.matched_columns.join(', ')})
+                    </div>
+                    <div className="overflow-auto border rounded max-h-40">
+                      <table className="min-w-full text-[11px] table-fixed">
+                        <thead className="bg-gray-100">
+                          <tr>
+                            {Object.keys(t.rows[0] || {}).map((col) => (
+                              <th key={col} className="px-2 py-1 border font-mono text-[11px]">
+                                {col}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {t.rows.map((row, idx) => (
+                            <tr key={idx} className="border-t">
+                              {Object.keys(t.rows[0] || {}).map((col) => (
+                                <td
+                                  key={col}
+                                  className="px-2 py-1 border whitespace-nowrap max-w-xs overflow-x-auto text-[11px] font-mono"
+                                >
+                                  <div className="inline-block whitespace-pre select-text">
+                                    {row[col] === null || row[col] === undefined
+                                      ? ''
+                                      : typeof row[col] === 'object'
+                                      ? JSON.stringify(row[col], null, 2)
+                                      : String(row[col])}
+                                  </div>
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-12 gap-4">
           <div className="col-span-3 border rounded bg-white p-3 flex flex-col">
             <div className="mb-2">

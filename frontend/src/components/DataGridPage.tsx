@@ -111,6 +111,24 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     fetchLayout();
   }, [gridKey]);
 
+  // Recompute columns whenever visibleColumns or layout change
+  useEffect(() => {
+    if (!layout) return;
+    if (!visibleColumns.length) {
+      setColumns([]);
+      return;
+    }
+    const nextCols: ColumnState[] = visibleColumns
+      .map((name) => {
+        const meta = availableColumnsMap[name];
+        if (!meta) return null;
+        const width = layout.column_widths[name] || meta.width_default || 150;
+        return { name, label: meta.label || name, width };
+      })
+      .filter((c): c is ColumnState => c !== null);
+    setColumns(nextCols);
+  }, [layout, visibleColumns, layout?.column_widths, layout?.available_columns]);
+
   // Load data whenever layout/visibleColumns/sort/limit/offset change
   useEffect(() => {
     if (!layout) return;
@@ -288,7 +306,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
       {error && <div className="mb-2 text-xs text-red-600">{error}</div>}
 
-      <div className="flex-1 border rounded bg-white overflow-auto">
+      <div className="flex-1 min-h-0 border rounded bg-white overflow-auto">
         {loadingLayout ? (
           <div className="p-4 text-sm text-gray-500">Loading layout…</div>
         ) : !layout ? (
