@@ -1249,7 +1249,12 @@ class EbayService:
         access_token: str,
         filter_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Fetch cases from the Post-Order Case Management API (casemanagement)."""
+        """Fetch cases from the Post-Order Case Management API (casemanagement).
+
+        IMPORTANT: This helper must surface *detailed* eBay errors so that the
+        workers UI can show the real cause (status, body, correlation id)
+        instead of a generic "Failed to fetch Post-Order cases" message.
+        """
         if not access_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1257,6 +1262,8 @@ class EbayService:
             )
 
         api_url = f"{settings.ebay_api_base_url}/post-order/v2/casemanagement/search"
+        timeout_seconds = 30.0
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
@@ -1282,27 +1289,55 @@ class EbayService:
                     api_url,
                     headers=headers,
                     json=search_body,
-                    timeout=30.0,
+                    timeout=timeout_seconds,
                 )
 
             if response.status_code != 200:
-                error_detail: Any = response.text
+                # Extract as much context as possible from the failing response.
+                correlation_id = (
+                    response.headers.get("X-EBAY-CORRELATION-ID")
+                    or response.headers.get("x-ebay-correlation-id")
+                )
+
+                error_body: Any
                 try:
-                    error_json = response.json()
-                    error_detail = error_json
+                    error_body = response.json()
                 except Exception:
-                    pass
+                    error_body = response.text
+
+                # Truncate body to keep logs and last_error reasonably small.
+                body_snippet = (
+                    str(error_body)[:2000]
+                    if not isinstance(error_body, (dict, list))
+                    else error_body
+                )
+
+                message = (
+                    f"EBAY Post-Order error {response.status_code} on POST "
+                    f"/post-order/v2/casemanagement/search; "
+                    f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
+                )
 
                 ebay_logger.log_ebay_event(
                     "fetch_postorder_cases_failed",
-                    f"Failed to fetch Post-Order cases: {response.status_code}",
-                    response_data={"error": error_detail},
+                    "Failed to fetch Post-Order cases from eBay",
+                    response_data={
+                        "status_code": response.status_code,
+                        "correlation_id": correlation_id,
+                        "headers": dict(response.headers),
+                        "body": body_snippet,
+                    },
                     status="error",
-                    error=str(error_detail),
+                    error=message,
                 )
+
+                logger.error(message)
+
+                # Raise an HTTPException whose detail carries the full message so
+                # worker last_error and /ebay/workers/run can display it.
                 raise HTTPException(
                     status_code=response.status_code,
-                    detail=f"Failed to fetch Post-Order cases: {error_detail}",
+                    detail=message,
                 )
 
             cases_data = response.json()
@@ -1319,18 +1354,39 @@ class EbayService:
             logger.info("Successfully fetched Post-Order cases from eBay")
             return cases_data
 
+        except httpx.TimeoutException as e:
+            message = (
+                f"Timeout calling EBAY Post-Order /post-order/v2/casemanagement/search "
+                f"after {timeout_seconds}s: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_cases_timeout",
+                "Timeout during Post-Order cases fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=message,
+            )
         except httpx.RequestError as e:
-            error_msg = f"HTTP request failed: {str(e)}"
+            # Non-timeout network / connection error.
+            message = (
+                "Network error calling EBAY Post-Order "
+                "/post-order/v2/casemanagement/search: "
+                f"{str(e)}"
+            )
             ebay_logger.log_ebay_event(
                 "fetch_postorder_cases_error",
                 "HTTP request error during Post-Order cases fetch",
                 status="error",
-                error=error_msg,
+                error=message,
             )
-            logger.error(error_msg)
+            logger.error(message)
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg,
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
             )
 
     async def fetch_inventory_items(self, access_token: str, limit: int = 200, offset: int = 0) -> Dict[str, Any]:
@@ -2264,7 +2320,13 @@ class EbayService:
             }
 
         except Exception as exc:
-            error_msg = str(exc)
+            # Preserve detailed HTTPException messages (including eBay status,
+            # body, and correlation id) so they flow into worker last_error.
+            if isinstance(exc, HTTPException):
+                error_msg = f"{exc.status_code}: {exc.detail}"
+            else:
+                error_msg = str(exc)
+
             event_logger.log_error(f"Cases sync failed: {error_msg}", exc)
             logger.error(f"Cases sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
