@@ -45,7 +45,10 @@ class Order(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     synced_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    line_items = relationship("OrderLineItem", back_populates="order", cascade="all, delete-orphan")
+    # NOTE: Relationship to OrderLineItem is disabled in this minimal version to
+    # avoid mapper initialization issues on Supabase, since order_line_items
+    # currently references external order IDs rather than the internal UUID.
+    # line_items = relationship("OrderLineItem", back_populates="order", cascade="all, delete-orphan")
 
 class OrderLineItem(Base):
     """Line items for orders, mapped to public.order_line_items in Supabase.
@@ -72,6 +75,6 @@ class OrderLineItem(Base):
     ebay_account_id = Column(String(255), nullable=True, index=True)
     ebay_user_id = Column(String(255), nullable=True, index=True)
 
-    # No relationship to Order here in the minimal version; the grid only uses
-    # this table. We can reintroduce joins/enrichments once the basic grid is stable.
-    order = relationship("Order", back_populates="line_items", viewonly=True, primaryjoin="foreign(OrderLineItem.order_id) == Order.order_id")
+    # Relationship back to Order is disabled for now to avoid mapper
+    # auto-detection errors; the grid queries this table directly.
+    # order = relationship("Order", back_populates="line_items", viewonly=True, primaryjoin="foreign(OrderLineItem.order_id) == Order.order_id")
