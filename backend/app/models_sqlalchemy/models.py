@@ -898,6 +898,31 @@ class Message(Base):
     )
 
 
+class ActiveInventory(Base):
+    """Snapshot of active listings from Feed Active Inventory Report per account."""
+    __tablename__ = "ebay_active_inventory"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
+    ebay_user_id = Column(Text, nullable=True)
+    sku = Column(String(100), nullable=True, index=True)
+    item_id = Column(String(100), nullable=True, index=True)
+    title = Column(Text, nullable=True)
+    quantity_available = Column(Integer, nullable=True)
+    price = Column(Numeric(14, 2), nullable=True)
+    currency = Column(CHAR(3), nullable=True)
+    listing_status = Column(String(50), nullable=True, index=True)
+    condition_id = Column(String(50), nullable=True)
+    condition_text = Column(Text, nullable=True)
+    raw_payload = Column(JSONB, nullable=True)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index('idx_active_inv_account_sku_item', 'ebay_account_id', 'sku', 'item_id', unique=True),
+        Index('idx_active_inv_ebay_user_id', 'ebay_user_id'),
+    )
+
+
 class EbayScopeDefinition(Base):
     __tablename__ = "ebay_scope_definitions"
 

@@ -10,7 +10,7 @@ import enum
 from app.database import get_db
 from app.db_models import Order, OrderLineItem, Transaction as EbayLegacyTransaction
 from app.models_sqlalchemy import get_db as get_db_sqla
-from app.models_sqlalchemy.models import Message as EbayMessage, Offer as OfferModel, OfferState, OfferDirection
+from app.models_sqlalchemy.models import Message as EbayMessage, Offer as OfferModel, OfferState, OfferDirection, ActiveInventory
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
 from app.routers.grid_layouts import _allowed_columns_for_grid
@@ -109,6 +109,20 @@ async def get_grid_data(
                 sku=sku,
                 from_date=from_date,
                 to_date=to_date,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "active_inventory":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_active_inventory_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
             )
         finally:
             db_sqla.close()
@@ -407,6 +421,67 @@ def _get_offers_data(
         return row
 
     rows = [_serialize(o) for o in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_active_inventory_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+) -> Dict[str, Any]:
+    """Active Inventory grid backed by ebay_active_inventory snapshot.
+
+    For now this is a simple per-org view: show rows for all accounts belonging
+    to the current user/org. We can refine account scoping later.
+    """
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    # Filter by org via join on ebay_accounts.org_id if needed; for MVP, we
+    # filter by accounts that belong to this user/org using a simple join.
+    from app.models_sqlalchemy.models import EbayAccount
+
+    query = (
+        db.query(ActiveInventory)
+        .join(EbayAccount, ActiveInventory.ebay_account_id == EbayAccount.id)
+        .filter(EbayAccount.org_id == current_user.id)
+    )
+
+    total = query.count()
+
+    if sort_column and hasattr(ActiveInventory, sort_column):
+        order_attr = getattr(ActiveInventory, sort_column)
+        if sort_dir == "desc":
+            query = query.order_by(desc(order_attr))
+        else:
+            query = query.order_by(asc(order_attr))
+
+    rows_db: List[ActiveInventory] = query.offset(offset).limit(limit).all()
+
+    def _serialize(ai: ActiveInventory) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            value = getattr(ai, col, None)
+            if isinstance(value, dt_type):
+                row[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                row[col] = float(value)
+            else:
+                row[col] = value
+        return row
+
+    rows = [_serialize(ai) for ai in rows_db]
 
     return {
         "rows": rows,

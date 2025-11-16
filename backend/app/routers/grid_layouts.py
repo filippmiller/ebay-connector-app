@@ -85,6 +85,18 @@ OFFERS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="expires_at", label="Expires at", type="datetime", width_default=180),
 ]
 
+ACTIVE_INVENTORY_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="last_seen_at", label="Last seen", type="datetime", width_default=180),
+  ColumnMeta(name="sku", label="SKU", type="string", width_default=160),
+  ColumnMeta(name="item_id", label="Item ID", type="string", width_default=180),
+  ColumnMeta(name="title", label="Title", type="string", width_default=260),
+  ColumnMeta(name="quantity_available", label="Qty", type="number", width_default=80),
+  ColumnMeta(name="price", label="Price", type="money", width_default=120),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="listing_status", label="Status", type="string", width_default=120),
+  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+]
+
 
 GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "orders": {
@@ -141,6 +153,20 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "created_at", "direction": "desc"},
     },
+    "active_inventory": {
+        "visible_columns": [
+            "last_seen_at",
+            "sku",
+            "item_id",
+            "title",
+            "quantity_available",
+            "price",
+            "currency",
+            "listing_status",
+            "ebay_account_id",
+        ],
+        "sort": {"column": "last_seen_at", "direction": "desc"},
+    },
 }
 
 
@@ -153,6 +179,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return MESSAGES_COLUMNS_META
     if grid_key == "offers":
         return OFFERS_COLUMNS_META
+    if grid_key == "active_inventory":
+        return ACTIVE_INVENTORY_COLUMNS_META
     return []
 
 def _allowed_columns_for_grid(grid_key: str) -> List[str]:

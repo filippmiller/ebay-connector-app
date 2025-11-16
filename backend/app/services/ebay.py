@@ -2784,7 +2784,11 @@ class EbayService:
             return None
     
     async def get_message_folders(self, access_token: str) -> Dict[str, Any]:
-        """Get message folders using GetMyMessages with ReturnSummary"""
+        """Get message folders using GetMyMessages with ReturnSummary.
+
+        Also logs the raw XML summary so we can distinguish between "0 folders in
+        XML" vs "parser failed to find FolderSummary".
+        """
         import xml.etree.ElementTree as ET
         
         api_url = "https://api.ebay.com/ws/api.dll"
@@ -2809,13 +2813,37 @@ class EbayService:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(api_url, content=xml_request, headers=headers)
             
-            root = ET.fromstring(response.text)
+            raw_xml = response.text or ""
+            # Log a truncated copy of the raw XML for diagnostics (no token in body)
+            logger.info(f"GetMyMessages ReturnSummary raw XML (first 2000 chars): {raw_xml[:2000]}")
+            
+            root = ET.fromstring(raw_xml)
             ns = {"ebay": "urn:ebay:apis:eBLBaseComponents"}
             
             folders = []
             summary_elem = root.find(".//ebay:Summary", ns)
+            total_message_count = None
+            new_message_count = None
             if summary_elem is not None:
-                for folder_elem in summary_elem.findall(".//ebay:FolderSummary", ns):
+                tmc_elem = summary_elem.find("ebay:TotalMessageCount", ns)
+                nmc_elem = summary_elem.find("ebay:NewMessageCount", ns)
+                if tmc_elem is not None and tmc_elem.text is not None:
+                    try:
+                        total_message_count = int(tmc_elem.text)
+                    except ValueError:
+                        total_message_count = None
+                if nmc_elem is not None and nmc_elem.text is not None:
+                    try:
+                        new_message_count = int(nmc_elem.text)
+                    except ValueError:
+                        new_message_count = None
+
+                folder_elems = summary_elem.findall("ebay:FolderSummary", ns)
+                if not folder_elems and (total_message_count or new_message_count):
+                    logger.warning(
+                        "GetMyMessages Summary has counts but no FolderSummary elements – parser may be misaligned with XML structure."
+                    )
+                for folder_elem in folder_elems:
                     folder_id_elem = folder_elem.find("ebay:FolderID", ns)
                     folder_name_elem = folder_elem.find("ebay:FolderName", ns)
                     total_elem = folder_elem.find("ebay:TotalMessageCount", ns)
@@ -2824,10 +2852,19 @@ class EbayService:
                         folders.append({
                             "folder_id": folder_id_elem.text,
                             "folder_name": folder_name_elem.text,
-                            "total_count": int(total_elem.text) if total_elem is not None else 0
+                            "total_count": int(total_elem.text) if total_elem is not None and total_elem.text is not None else 0,
                         })
+            else:
+                logger.warning("GetMyMessages ReturnSummary: <Summary> element not found in XML")
             
-            return {"folders": folders}
+            if not folders and (total_message_count or new_message_count):
+                logger.warning(
+                    f"GetMyMessages summary counts present (TotalMessageCount={total_message_count}, NewMessageCount={new_message_count}) but no folders parsed."
+                )
+            elif not folders and not (total_message_count or new_message_count):
+                logger.info("GetMyMessages summary indicates 0 folders/messages (no counts and no FolderSummary elements)")
+            
+            return {"folders": folders, "total_message_count": total_message_count, "new_message_count": new_message_count}
         except Exception as e:
             logger.error(f"Failed to get message folders: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to get message folders: {str(e)}")
