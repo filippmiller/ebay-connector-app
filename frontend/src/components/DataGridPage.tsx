@@ -63,6 +63,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const resizingColRef = useRef<string | null>(null);
   const startXRef = useRef<number>(0);
   const startWidthRef = useRef<number>(0);
+  const draggingColRef = useRef<string | null>(null);
 
   const extraParamsKey = useMemo(() => {
     if (!extraParams) return '';
@@ -169,6 +170,17 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     availableColumnsMap[c.name] = c;
   });
 
+  const reorderColumns = (list: string[], fromName: string, toName: string): string[] => {
+    if (fromName === toName) return list;
+    const current = [...list];
+    const fromIndex = current.indexOf(fromName);
+    const toIndex = current.indexOf(toName);
+    if (fromIndex === -1 || toIndex === -1) return list;
+    current.splice(fromIndex, 1);
+    current.splice(toIndex, 0, fromName);
+    return current;
+  };
+
   const toggleColumnVisibility = (name: string) => {
     setVisibleColumns((prev) => {
       if (prev.includes(name)) {
@@ -250,6 +262,37 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     window.addEventListener('mouseup', onMouseUpResize);
   };
 
+  const handleDragStart = (e: React.DragEvent, colName: string) => {
+    draggingColRef.current = colName;
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', colName);
+    } catch {
+      // dataTransfer may not be available in some environments; ignore
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, _colName: string) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent, targetColName: string) => {
+    e.preventDefault();
+    const sourceColName = draggingColRef.current;
+    draggingColRef.current = null;
+    if (!sourceColName || sourceColName === targetColName) return;
+
+    setVisibleColumns((prev) => {
+      const nextVisible = reorderColumns(prev, sourceColName, targetColName);
+      const widths: Record<string, number> = {};
+      columns.forEach((c) => {
+        widths[c.name] = c.width;
+      });
+      persistLayout(nextVisible, widths, sort);
+      return nextVisible;
+    });
+  };
+
   const onMouseMoveResize = (e: MouseEvent) => {
     const colName = resizingColRef.current;
     if (!colName) return;
@@ -323,17 +366,29 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                       key={col.name}
                       style={{ width: col.width, minWidth: col.width }}
                       className="border-b border-r px-2 py-1 text-left font-mono text-[11px] relative select-none"
+                      onDragOver={(e) => handleDragOver(e, col.name)}
+                      onDrop={(e) => handleDrop(e, col.name)}
                     >
-                      <div
-                        className="flex items-center cursor-pointer"
-                        onClick={() => handleHeaderClick(col.name)}
-                      >
-                        <span>{meta?.label || col.label}</span>
-                        {isSorted && (
-                          <span className="ml-1 text-[9px]">
-                            {sort?.direction === 'asc' ? '▲' : '▼'}
-                          </span>
-                        )}
+                      <div className="flex items-center gap-1">
+                        <span
+                          className="cursor-move select-none text-gray-400"
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, col.name)}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          ⋮⋮
+                        </span>
+                        <div
+                          className="flex items-center cursor-pointer flex-1"
+                          onClick={() => handleHeaderClick(col.name)}
+                        >
+                          <span>{meta?.label || col.label}</span>
+                          {isSorted && (
+                            <span className="ml-1 text-[9px]">
+                              {sort?.direction === 'asc' ? '▲' : '▼'}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div
                         className="absolute right-0 top-0 h-full w-1 cursor-col-resize"

@@ -2971,8 +2971,8 @@ class EbayService:
                     read_elem = msg_elem.find("ebay:Read", ns)
                     flagged_elem = msg_elem.find("ebay:Flagged", ns)
                     
-                    message["read"] = read_elem.text.lower() == "true" if read_elem is not None else False
-                    message["flagged"] = flagged_elem.text.lower() == "true" if flagged_elem is not None else False
+                    message["read"] = read_elem is not None and read_elem.text == "true"
+                    message["flagged"] = flagged_elem is not None and flagged_elem.text == "true"
                     
                     messages.append(message)
             
@@ -2980,6 +2980,395 @@ class EbayService:
         except Exception as e:
             logger.error(f"Failed to get message bodies: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to get message bodies: {str(e)}")
+
+    async def sync_all_messages(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronize messages from eBay Trading GetMyMessages into ebay_messages.
+
+        This mirrors the logic used in the /messages/sync background job but is
+        adapted for the multi-account worker model (user_id + ebay_account_id).
+        Time window (window_from/window_to) is passed through to GetMyMessages
+        StartTimeFrom/StartTimeTo to support incremental sync.
+        """
+        from app.services.sync_event_logger import SyncEventLogger, is_cancelled
+        from app.services.ebay_database import ebay_db
+        from app.models_sqlalchemy import SessionLocal
+        from app.models_sqlalchemy.models import Message as SqlMessage
+        import time
+
+        event_logger = SyncEventLogger(user_id, "messages", run_id=run_id)
+        job_id = ebay_db.create_sync_job(user_id, "messages")
+        start_time = time.time()
+
+        db_session = SessionLocal()
+        try:
+            total_fetched = 0
+            total_stored = 0
+
+            from app.config import settings
+            import asyncio
+            from datetime import datetime
+
+            event_logger.log_start(
+                f"Starting Messages sync from eBay ({settings.EBAY_ENVIRONMENT})",
+            )
+            event_logger.log_info(
+                "API Configuration: Trading API (XML), message headers limit=200, bodies batch=10",
+            )
+
+            # Determine effective time window for headers
+            now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            start_from_iso = window_from or "2015-01-01T00:00:00.000Z"
+            start_to_iso = window_to or now_iso
+
+            event_logger.log_info(
+                f"Time window: {start_from_iso} .. {start_to_iso}",
+            )
+
+            await asyncio.sleep(0.5)
+
+            if is_cancelled(event_logger.run_id):
+                event_logger.log_warning("Sync operation cancelled before start")
+                duration_ms = int((time.time() - start_time) * 1000)
+                event_logger.log_done(
+                    "Messages sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    duration_ms,
+                )
+                ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id,
+                }
+
+            # Step 1: get folders summary
+            event_logger.log_info(
+                "→ Requesting: GetMyMessages (ReturnSummary) for folders",
+            )
+            request_start = time.time()
+            folders_response = await self.get_message_folders(access_token)
+            request_duration = int((time.time() - request_start) * 1000)
+            folders = folders_response.get("folders", [])
+
+            event_logger.log_http_request(
+                "POST",
+                "/ws/eBayISAPI.dll (GetMyMessages - ReturnSummary)",
+                200,
+                request_duration,
+                len(folders),
+            )
+            event_logger.log_info(
+                f"← Response: 200 OK ({request_duration}ms) - Received {len(folders)} folders",
+            )
+
+            if not folders:
+                event_logger.log_warning("No message folders found")
+                duration_ms = int((time.time() - start_time) * 1000)
+                event_logger.log_done(
+                    "Messages sync completed: no folders found",
+                    0,
+                    0,
+                    duration_ms,
+                )
+                ebay_db.update_sync_job(job_id, "completed", 0, 0)
+                return {
+                    "status": "completed",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id,
+                }
+
+            total_messages_declared = sum(f.get("total_count", 0) for f in folders)
+            event_logger.log_info(
+                f"Found {len(folders)} folders with {total_messages_declared} total messages",
+            )
+
+            await asyncio.sleep(0.3)
+
+            folder_index = 0
+            for folder in folders:
+                if is_cancelled(event_logger.run_id):
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        f"Messages sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", total_fetched, total_stored)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                folder_index += 1
+                folder_id = folder.get("folder_id")
+                folder_name = folder.get("folder_name")
+                folder_total = folder.get("total_count", 0)
+
+                event_logger.log_progress(
+                    f"Processing folder {folder_index}/{len(folders)}: {folder_name} ({folder_total} messages)",
+                    folder_index,
+                    len(folders),
+                    total_fetched,
+                    total_stored,
+                )
+
+                if not folder_id or folder_total == 0:
+                    continue
+
+                # Step 2: enumerate headers in this folder with pagination + window
+                all_message_ids: List[str] = []
+                page_number = 1
+                max_pages = 1000
+                consecutive_empty_pages = 0
+                max_empty_pages = 3
+
+                while page_number <= max_pages:
+                    if is_cancelled(event_logger.run_id):
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        event_logger.log_done(
+                            f"Messages sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            duration_ms,
+                        )
+                        ebay_db.update_sync_job(
+                            job_id,
+                            "cancelled",
+                            total_fetched,
+                            total_stored,
+                        )
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id,
+                        }
+
+                    event_logger.log_info(
+                        f"→ Requesting headers page {page_number}: GetMyMessages (ReturnHeaders, folder={folder_name})",
+                    )
+
+                    try:
+                        request_start = time.time()
+                        headers_response = await self.get_message_headers(
+                            access_token,
+                            folder_id,
+                            page_number=page_number,
+                            entries_per_page=MESSAGES_HEADERS_LIMIT,
+                            start_time_from=start_from_iso,
+                            start_time_to=start_to_iso,
+                        )
+                        request_duration = int((time.time() - request_start) * 1000)
+
+                        message_ids = headers_response.get("message_ids", [])
+                        alert_ids = headers_response.get("alert_ids", [])
+                        total_pages = headers_response.get("total_pages", 1) or 1
+
+                        all_message_ids.extend(message_ids)
+                        all_message_ids.extend(alert_ids)
+
+                        event_logger.log_http_request(
+                            "POST",
+                            f"/ws/eBayISAPI.dll (GetMyMessages - {folder_name} page {page_number})",
+                            200,
+                            request_duration,
+                            len(message_ids) + len(alert_ids),
+                        )
+                        event_logger.log_info(
+                            f"← Response: 200 OK ({request_duration}ms) - Page {page_number}/{total_pages}: {len(message_ids)} messages, {len(alert_ids)} alerts",
+                        )
+
+                        if not message_ids and not alert_ids:
+                            consecutive_empty_pages += 1
+                            if consecutive_empty_pages >= max_empty_pages:
+                                event_logger.log_warning(
+                                    f"Stopping pagination after {consecutive_empty_pages} consecutive empty pages",
+                                )
+                                break
+                        else:
+                            consecutive_empty_pages = 0
+
+                        if page_number >= total_pages:
+                            break
+
+                        page_number += 1
+                        await asyncio.sleep(0.5)
+
+                    except Exception as e:
+                        error_msg = (
+                            f"Error fetching headers page {page_number} for folder {folder_name}: {str(e)}"
+                        )
+                        event_logger.log_error(error_msg, e)
+                        page_number += 1
+                        await asyncio.sleep(0.5)
+                        continue
+
+                # Step 3: fetch bodies in batches of 10 and upsert
+                if not all_message_ids:
+                    continue
+
+                total_batches = (len(all_message_ids) + MESSAGES_BODIES_BATCH - 1) // MESSAGES_BODIES_BATCH
+                batch_index = 0
+
+                for i in range(0, len(all_message_ids), MESSAGES_BODIES_BATCH):
+                    if is_cancelled(event_logger.run_id):
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        event_logger.log_done(
+                            f"Messages sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            duration_ms,
+                        )
+                        ebay_db.update_sync_job(
+                            job_id,
+                            "cancelled",
+                            total_fetched,
+                            total_stored,
+                        )
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id,
+                        }
+
+                    batch_ids = all_message_ids[i : i + MESSAGES_BODIES_BATCH]
+                    batch_index += 1
+                    event_logger.log_info(
+                        f"→ Requesting bodies batch {batch_index}/{total_batches}: {len(batch_ids)} IDs",
+                    )
+
+                    request_start = time.time()
+                    try:
+                        messages = await self.get_message_bodies(access_token, batch_ids)
+                        request_duration = int((time.time() - request_start) * 1000)
+
+                        event_logger.log_http_request(
+                            "POST",
+                            f"/ws/eBayISAPI.dll (GetMyMessages - {folder_name} batch {batch_index}/{total_batches})",
+                            200,
+                            request_duration,
+                            len(messages),
+                        )
+                        event_logger.log_info(
+                            f"← Response: 200 OK ({request_duration}ms) - Received {len(messages)} message bodies",
+                        )
+
+                        total_fetched += len(messages)
+
+                        # Store messages
+                        for msg in messages:
+                            message_id = msg.get("messageid") or msg.get("externalmessageid")
+                            if not message_id:
+                                continue
+
+                            existing = (
+                                db_session.query(SqlMessage)
+                                .filter(
+                                    SqlMessage.message_id == message_id,
+                                    SqlMessage.user_id == user_id,
+                                    SqlMessage.ebay_account_id == ebay_account_id,
+                                )
+                                .first()
+                            )
+                            if existing:
+                                continue
+
+                            sender = msg.get("sender", "")
+                            recipient = msg.get("recipientuserid", "")
+                            direction = "INCOMING"
+
+                            receive_date_str = msg.get("receivedate", "")
+                            message_date = datetime.utcnow()
+                            if receive_date_str:
+                                try:
+                                    message_date = datetime.fromisoformat(
+                                        receive_date_str.replace("Z", "+00:00")
+                                    )
+                                except Exception:
+                                    pass
+
+                            db_message = SqlMessage(
+                                ebay_account_id=ebay_account_id,
+                                user_id=user_id,
+                                message_id=message_id,
+                                thread_id=msg.get("externalmessageid") or message_id,
+                                sender_username=sender,
+                                recipient_username=recipient,
+                                subject=msg.get("subject", ""),
+                                body=msg.get("text", ""),
+                                message_type="MEMBER_MESSAGE",
+                                is_read=msg.get("read", False),
+                                is_flagged=msg.get("flagged", False),
+                                is_archived=msg.get("folderid") == "2",
+                                direction=direction,
+                                message_date=message_date,
+                                order_id=None,
+                                listing_id=msg.get("itemid"),
+                                raw_data=str(msg),
+                            )
+                            db_session.add(db_message)
+                            total_stored += 1
+
+                        db_session.commit()
+
+                    except Exception as e:
+                        db_session.rollback()
+                        error_msg = (
+                            f"Error fetching/storing bodies batch {batch_index} for folder {folder_name}: {str(e)}"
+                        )
+                        event_logger.log_error(error_msg, e)
+                        await asyncio.sleep(0.5)
+                        continue
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            ebay_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
+            event_logger.log_done(
+                f"Messages sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms,
+            )
+
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "job_id": job_id,
+                "run_id": event_logger.run_id,
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            event_logger.log_error(f"Messages sync failed: {error_msg}", e)
+            ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
+            raise
+        finally:
+            db_session.close()
+            event_logger.close()
 
 
 ebay_service = EbayService()
