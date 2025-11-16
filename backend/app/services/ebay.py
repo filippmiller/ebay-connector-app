@@ -3107,36 +3107,36 @@ class EbayService:
                 len(folders),
             )
             event_logger.log_info(
-                f"← Response: 200 OK ({request_duration}ms) - Received {len(folders)} folders",
+                f"← Response: 200 OK ({request_duration}ms) - Received {len(folders)} custom folders (Inbox/Sent are not included in FolderSummary)",
             )
-
-            if not folders:
-                event_logger.log_warning("No message folders found")
-                duration_ms = int((time.time() - start_time) * 1000)
-                event_logger.log_done(
-                    "Messages sync completed: no folders found",
-                    0,
-                    0,
-                    duration_ms,
-                )
-                ebay_db.update_sync_job(job_id, "completed", 0, 0)
-                return {
-                    "status": "completed",
-                    "total_fetched": 0,
-                    "total_stored": 0,
-                    "job_id": job_id,
-                    "run_id": event_logger.run_id,
-                }
 
             total_messages_declared = sum(f.get("total_count", 0) for f in folders)
             event_logger.log_info(
-                f"Found {len(folders)} folders with {total_messages_declared} total messages",
+                f"Summary reports {total_messages_declared} messages across {len(folders)} custom folders (excluding Inbox/Sent)",
             )
 
             await asyncio.sleep(0.3)
 
+            # Build folder list for sync: always include Inbox (0) and Sent (1),
+            # plus any custom folders returned in Summary. This ensures we do
+            # not incorrectly treat "no FolderSummary" as "no messages".
+            folder_specs: List[Dict[str, Any]] = [
+                {"folder_id": "0", "folder_name": "Inbox", "total_count": None},
+                {"folder_id": "1", "folder_name": "Sent", "total_count": None},
+            ]
+            # Append custom folders (if any)
+            for f in folders:
+                fid = f.get("folder_id")
+                if fid in ("0", "1"):
+                    continue
+                folder_specs.append({
+                    "folder_id": fid,
+                    "folder_name": f.get("folder_name"),
+                    "total_count": f.get("total_count", 0),
+                })
+
             folder_index = 0
-            for folder in folders:
+            for folder in folder_specs:
                 if is_cancelled(event_logger.run_id):
                     event_logger.log_warning("Sync operation cancelled by user")
                     duration_ms = int((time.time() - start_time) * 1000)
@@ -3161,14 +3161,17 @@ class EbayService:
                 folder_total = folder.get("total_count", 0)
 
                 event_logger.log_progress(
-                    f"Processing folder {folder_index}/{len(folders)}: {folder_name} ({folder_total} messages)",
+                    f"Processing folder {folder_index}/{len(folder_specs)}: {folder_name} ({folder_total if folder_total is not None else 'unknown'} messages)",
                     folder_index,
-                    len(folders),
+                    len(folder_specs),
                     total_fetched,
                     total_stored,
                 )
 
-                if not folder_id or folder_total == 0:
+                # Skip only if folder_id is missing; do not skip just because
+                # total_count==0, since Inbox/Sent are not represented in
+                # Summary counts and may still have messages.
+                if not folder_id:
                     continue
 
                 # Step 2: enumerate headers in this folder with pagination + window
