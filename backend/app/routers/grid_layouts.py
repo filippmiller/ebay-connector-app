@@ -25,41 +25,33 @@ class ColumnMeta(BaseModel):
 
 
 # Column definitions per grid
-# Orders grid: one row per order_line_items record, enriched with order fields.
+# Orders grid: one row per order_line_items record (public.order_line_items).
 ORDERS_COLUMNS_META: List[ColumnMeta] = [
-  ColumnMeta(name="created_at", label="Line created", type="datetime", width_default=180),
-  ColumnMeta(name="updated_at", label="Line updated", type="datetime", width_default=180),
+  ColumnMeta(name="created_at", label="Created at", type="datetime", width_default=180),
+  ColumnMeta(name="order_id", label="Order ID", type="string", width_default=220),
   ColumnMeta(name="line_item_id", label="Line item ID", type="string", width_default=220),
-  ColumnMeta(name="order_id", label="Order row ID", type="string", width_default=220),
-  ColumnMeta(name="order_id_display", label="Order ID", type="string", width_default=200),
-  ColumnMeta(name="listing_id", label="Listing ID", type="string", width_default=200),
   ColumnMeta(name="sku", label="SKU", type="string", width_default=160),
   ColumnMeta(name="title", label="Title", type="string", width_default=260),
   ColumnMeta(name="quantity", label="Qty", type="number", width_default=80),
-  ColumnMeta(name="unit_price", label="Unit price", type="money", width_default=120),
-  ColumnMeta(name="total_price", label="Total price", type="money", width_default=140),
-  ColumnMeta(name="discount_amount", label="Discount", type="money", width_default=120),
-  ColumnMeta(name="buyer_username", label="Buyer", type="string", width_default=180),
-  ColumnMeta(name="buyer_email", label="Buyer email", type="string", width_default=220),
-  ColumnMeta(name="order_status", label="Order status", type="string", width_default=120),
-  ColumnMeta(name="order_date", label="Order date", type="datetime", width_default=180),
+  ColumnMeta(name="total_value", label="Total value", type="money", width_default=140),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  ColumnMeta(name="ebay_user_id", label="eBay user", type="string", width_default=200),
 ]
 
-# Transactions grid: backed by ebay_transactions (legacy) table.
+# Transactions grid: backed by public.ebay_transactions.
 TRANSACTIONS_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="transaction_date", label="Transaction date", type="string", width_default=200),
+  ColumnMeta(name="transaction_id", label="Transaction ID", type="string", width_default=220),
+  ColumnMeta(name="order_id", label="Order ID", type="string", width_default=200),
+  ColumnMeta(name="transaction_type", label="Type", type="string", width_default=140),
+  ColumnMeta(name="transaction_status", label="Status", type="string", width_default=140),
+  ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
   ColumnMeta(name="created_at", label="Created at", type="datetime", width_default=180),
   ColumnMeta(name="updated_at", label="Updated at", type="datetime", width_default=180),
-  ColumnMeta(name="transaction_id", label="Transaction ID", type="string", width_default=220),
-  ColumnMeta(name="transaction_type", label="Type", type="string", width_default=140),
-  ColumnMeta(name="order_id", label="Order row ID", type="string", width_default=200),
-  ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
-  ColumnMeta(name="fee_amount", label="Fee", type="money", width_default=120),
-  ColumnMeta(name="net_amount", label="Net", type="money", width_default=120),
-  ColumnMeta(name="currency_code", label="Currency", type="string", width_default=80),
-  ColumnMeta(name="transaction_date", label="Transaction date", type="datetime", width_default=180),
-  ColumnMeta(name="transaction_status", label="Status", type="string", width_default=140),
-  ColumnMeta(name="payout_id", label="Payout ID", type="string", width_default=200),
-  ColumnMeta(name="payout_date", label="Payout date", type="datetime", width_default=180),
+  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  ColumnMeta(name="ebay_user_id", label="eBay user", type="string", width_default=200),
 ]
 
 MESSAGES_COLUMNS_META: List[ColumnMeta] = [
@@ -97,30 +89,26 @@ OFFERS_COLUMNS_META: List[ColumnMeta] = [
 GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "orders": {
         "visible_columns": [
-            "order_date",
-            "order_id_display",
+            "created_at",
+            "order_id",
             "line_item_id",
             "sku",
             "title",
             "quantity",
-            "unit_price",
-            "total_price",
-            "buyer_username",
-            "order_status",
+            "total_value",
+            "currency",
         ],
-        "sort": {"column": "order_date", "direction": "desc"},
+        "sort": {"column": "created_at", "direction": "desc"},
     },
     "transactions": {
         "visible_columns": [
             "transaction_date",
             "transaction_id",
+            "order_id",
             "transaction_type",
-            "amount",
-            "fee_amount",
-            "net_amount",
-            "currency_code",
             "transaction_status",
-            "payout_id",
+            "amount",
+            "currency",
         ],
         "sort": {"column": "transaction_date", "direction": "desc"},
     },

@@ -59,9 +59,9 @@ async def get_grid_data(
     # Determine sort column
     default_sort_col = None
     if grid_key == "orders":
-        default_sort_col = "order_date"
+        default_sort_col = "created_at"
     elif grid_key == "transactions":
-        default_sort_col = "sale_date"
+        default_sort_col = "transaction_date"
     elif grid_key == "messages":
         default_sort_col = "message_date"
     elif grid_key == "offers":
@@ -125,46 +125,44 @@ async def _get_orders_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    """Orders grid backed by order_line_items (one row per line item).
+    """Minimal Orders grid backed only by public.order_line_items.
 
-    Joins to ebay_orders to enrich with buyer/order info where needed.
+    No joins or derived fields – this is designed to be schema-safe and to stop
+    500s caused by undefined columns. We can add enrichments later.
     """
-    from sqlalchemy import join
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    base_query = db.query(OrderLineItem, Order).join(
-        Order, OrderLineItem.order_id == Order.id
-    ).filter(Order.user_id == current_user.id)
+    # Base query – for now we do not filter by user/account to avoid relying on
+    # columns that may not exist in all environments.
+    query = db.query(OrderLineItem)
 
-    total = base_query.count()
+    total = query.count()
 
-    if sort_column:
-        # Prefer sorting on order_line_items if column exists there, otherwise on orders.
-        if hasattr(OrderLineItem, sort_column):
-            sort_attr = getattr(OrderLineItem, sort_column)
-        elif hasattr(Order, sort_column):
-            sort_attr = getattr(Order, sort_column)
+    # Allow sorting only on a safe whitelist of real columns.
+    allowed_sort_cols = {
+        "created_at",
+        "order_id",
+        "line_item_id",
+        "sku",
+        "title",
+        "quantity",
+        "total_value",
+        "currency",
+    }
+    if sort_column in allowed_sort_cols and hasattr(OrderLineItem, sort_column):
+        sort_attr = getattr(OrderLineItem, sort_column)
+        if sort_dir == "desc":
+            query = query.order_by(desc(sort_attr))
         else:
-            sort_attr = None
+            query = query.order_by(asc(sort_attr))
 
-        if sort_attr is not None:
-            if sort_dir == "desc":
-                base_query = base_query.order_by(desc(sort_attr))
-            else:
-                base_query = base_query.order_by(asc(sort_attr))
+    rows_db: List[OrderLineItem] = query.offset(offset).limit(limit).all()
 
-    rows_db: List[tuple[OrderLineItem, Order]] = base_query.offset(offset).limit(limit).all()
-
-    def _serialize(line: OrderLineItem, order: Order) -> Dict[str, Any]:
+    def _serialize(li: OrderLineItem) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            # Map logical column names to either line item or order fields.
-            if hasattr(OrderLineItem, col):
-                value = getattr(line, col, None)
-            else:
-                value = getattr(order, col, None)
-
+            value = getattr(li, col, None)
             if isinstance(value, dt_type):
                 row[col] = value.isoformat()
             elif isinstance(value, Decimal):
@@ -173,7 +171,7 @@ async def _get_orders_data(
                 row[col] = value
         return row
 
-    rows = [_serialize(li, o) for (li, o) in rows_db]
+    rows = [_serialize(li) for li in rows_db]
 
     return {
         "rows": rows,
@@ -193,17 +191,27 @@ def _get_transactions_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    """Transactions grid backed by ebay_transactions table.
+    """Minimal Transactions grid backed by public.ebay_transactions.
 
-    Uses the legacy db_models.Transaction mapped to the ebay_transactions table.
+    Uses only existing columns, no joins or derived fields.
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    query = db.query(EbayLegacyTransaction).filter(EbayLegacyTransaction.user_id == current_user.id)
+    query = db.query(EbayLegacyTransaction)
+
     total = query.count()
 
-    if sort_column and hasattr(EbayLegacyTransaction, sort_column):
+    allowed_sort_cols = {
+        "transaction_date",
+        "transaction_type",
+        "transaction_status",
+        "amount",
+        "currency",
+        "created_at",
+        "updated_at",
+    }
+    if sort_column in allowed_sort_cols and hasattr(EbayLegacyTransaction, sort_column):
         sort_attr = getattr(EbayLegacyTransaction, sort_column)
         if sort_dir == "desc":
             query = query.order_by(desc(sort_attr))
