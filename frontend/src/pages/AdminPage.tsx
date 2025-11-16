@@ -37,9 +37,9 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">Browse Supabase tables and recent rows (read-only)</p>
           </Card>
           
-          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/migration')}>
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/data-migration')}>
             <h2 className="text-lg font-semibold">Data Migration</h2>
-            <p className="text-sm text-gray-600 mt-1">Run database migrations and data imports</p>
+            <p className="text-sm text-gray-600 mt-1">Explore external MSSQL DB and prepare migration</p>
           </Card>
           
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/todolist')}>
