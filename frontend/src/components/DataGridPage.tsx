@@ -205,11 +205,20 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
   const persistLayout = async (nextVisible: string[], nextWidths: Record<string, number>, nextSort: typeof sort) => {
     try {
-      await api.put(`/api/grids/${gridKey}/layout`, {
+      const resp = await api.put<GridLayoutResponse>(`/api/grids/${gridKey}/layout`, {
         visible_columns: nextVisible,
         column_widths: nextWidths,
         sort: nextSort,
       });
+      const data = resp.data;
+      setLayout(data);
+      const colMap: Record<string, GridColumnMeta> = {};
+      data.available_columns.forEach((c) => {
+        colMap[c.name] = c;
+      });
+      const updatedVisible = data.visible_columns.filter((c) => colMap[c]);
+      setVisibleColumns(updatedVisible);
+      setSort(data.sort || null);
     } catch (e) {
       console.error('Failed to save grid layout', e);
     }
