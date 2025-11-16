@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 import enum
 
 from app.database import get_db
-from app.db_models.order import Order
+from app.db_models import Order, OrderLineItem, Transaction as EbayLegacyTransaction
 from app.models_sqlalchemy import get_db as get_db_sqla
-from app.models_sqlalchemy.models import Transaction, Message as EbayMessage, Offer as OfferModel, OfferState, OfferDirection
+from app.models_sqlalchemy.models import Message as EbayMessage, Offer as OfferModel, OfferState, OfferDirection
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
 from app.routers.grid_layouts import _allowed_columns_for_grid
@@ -72,12 +72,8 @@ async def get_grid_data(
     if grid_key == "orders":
         return await _get_orders_data(db, current_user, requested_cols, limit, offset, sort_column, sort_dir)
     elif grid_key == "transactions":
-        # Use separate SQLAlchemy session for models_sqlalchemy
-        db_sqla = next(get_db_sqla())
-        try:
-            return _get_transactions_data(db_sqla, current_user, requested_cols, limit, offset, sort_column, sort_dir)
-        finally:
-            db_sqla.close()
+        # Use main DB session and legacy ebay_transactions table
+        return _get_transactions_data(db, current_user, requested_cols, limit, offset, sort_column, sort_dir)
     elif grid_key == "messages":
         db_sqla = next(get_db_sqla())
         try:
@@ -129,25 +125,46 @@ async def _get_orders_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    query = db.query(Order).filter(Order.user_id == current_user.id)
-    total = query.count()
+    """Orders grid backed by order_line_items (one row per line item).
 
-    if sort_column:
-        order_attr = getattr(Order, sort_column)
-        if sort_dir == "desc":
-            query = query.order_by(desc(order_attr))
-        else:
-            query = query.order_by(asc(order_attr))
-
-    rows_db: List[Order] = query.offset(offset).limit(limit).all()
-
+    Joins to ebay_orders to enrich with buyer/order info where needed.
+    """
+    from sqlalchemy import join
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    def _serialize(o: Order) -> Dict[str, Any]:
+    base_query = db.query(OrderLineItem, Order).join(
+        Order, OrderLineItem.order_id == Order.id
+    ).filter(Order.user_id == current_user.id)
+
+    total = base_query.count()
+
+    if sort_column:
+        # Prefer sorting on order_line_items if column exists there, otherwise on orders.
+        if hasattr(OrderLineItem, sort_column):
+            sort_attr = getattr(OrderLineItem, sort_column)
+        elif hasattr(Order, sort_column):
+            sort_attr = getattr(Order, sort_column)
+        else:
+            sort_attr = None
+
+        if sort_attr is not None:
+            if sort_dir == "desc":
+                base_query = base_query.order_by(desc(sort_attr))
+            else:
+                base_query = base_query.order_by(asc(sort_attr))
+
+    rows_db: List[tuple[OrderLineItem, Order]] = base_query.offset(offset).limit(limit).all()
+
+    def _serialize(line: OrderLineItem, order: Order) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = getattr(o, col, None)
+            # Map logical column names to either line item or order fields.
+            if hasattr(OrderLineItem, col):
+                value = getattr(line, col, None)
+            else:
+                value = getattr(order, col, None)
+
             if isinstance(value, dt_type):
                 row[col] = value.isoformat()
             elif isinstance(value, Decimal):
@@ -156,7 +173,7 @@ async def _get_orders_data(
                 row[col] = value
         return row
 
-    rows = [_serialize(o) for o in rows_db]
+    rows = [_serialize(li, o) for (li, o) in rows_db]
 
     return {
         "rows": rows,
@@ -176,22 +193,26 @@ def _get_transactions_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    query = db.query(Transaction).filter(Transaction.user_id == current_user.id)
-    total = query.count()
+    """Transactions grid backed by ebay_transactions table.
 
-    if sort_column:
-        order_attr = getattr(Transaction, sort_column)
-        if sort_dir == "desc":
-            query = query.order_by(desc(order_attr))
-        else:
-            query = query.order_by(asc(order_attr))
-
-    rows_db: List[Transaction] = query.offset(offset).limit(limit).all()
-
+    Uses the legacy db_models.Transaction mapped to the ebay_transactions table.
+    """
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    def _serialize(t: Transaction) -> Dict[str, Any]:
+    query = db.query(EbayLegacyTransaction).filter(EbayLegacyTransaction.user_id == current_user.id)
+    total = query.count()
+
+    if sort_column and hasattr(EbayLegacyTransaction, sort_column):
+        sort_attr = getattr(EbayLegacyTransaction, sort_column)
+        if sort_dir == "desc":
+            query = query.order_by(desc(sort_attr))
+        else:
+            query = query.order_by(asc(sort_attr))
+
+    rows_db: List[EbayLegacyTransaction] = query.offset(offset).limit(limit).all()
+
+    def _serialize(t: EbayLegacyTransaction) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
             value = getattr(t, col, None)
