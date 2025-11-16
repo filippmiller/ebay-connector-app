@@ -49,6 +49,8 @@ REQUIRED_SCOPES = {
     "inventory": ["https://api.ebay.com/oauth/api_scope/sell.inventory"],
     "offers": ["https://api.ebay.com/oauth/api_scope/sell.inventory"],
     "disputes": ["https://api.ebay.com/oauth/api_scope/sell.fulfillment"],
+    # New Post-Order cases API (INR/SNAD)
+    "cases": ["https://api.ebay.com/oauth/api_scope/sell.post-order"],
     "messages": ["https://api.ebay.com/oauth/api_scope/trading"],
     "seller_transactions": ["https://api.ebay.com/oauth/api_scope/trading"],
 }
@@ -60,6 +62,7 @@ ALL_AVAILABLE_SCOPES = [
     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
     "https://api.ebay.com/oauth/api_scope/sell.finances",
     "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    "https://api.ebay.com/oauth/api_scope/sell.post-order",
     "https://api.ebay.com/oauth/api_scope/trading",
     "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
 ]

@@ -90,6 +90,7 @@ class EbayService:
                     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
                     "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
                     "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
+                    "https://api.ebay.com/oauth/api_scope/sell.post-order",  # For Post-Order cases (INR/SNAD)
                     # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
                 ]
             
@@ -1268,6 +1269,9 @@ class EbayService:
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
             "Content-Type": "application/json",
+            # Many modern eBay REST APIs require marketplace id; include it here
+            # so Post-Order requests are properly routed.
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
         }
 
         search_body = filter_params or {}
@@ -1278,17 +1282,19 @@ class EbayService:
             request_data={
                 "environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
-                "method": "POST",
-                "body": search_body,
+                "method": "GET",
+                "params": search_body,
             },
         )
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(
+                # NOTE: According to eBay Post-Order docs, casemanagement/search is
+                # a GET endpoint and expects filters as query parameters.
+                response = await client.get(
                     api_url,
                     headers=headers,
-                    json=search_body,
+                    params=search_body,
                     timeout=timeout_seconds,
                 )
 
@@ -1313,7 +1319,7 @@ class EbayService:
                 )
 
                 message = (
-                    f"EBAY Post-Order error {response.status_code} on POST "
+                    f"EBAY Post-Order error {response.status_code} on GET "
                     f"/post-order/v2/casemanagement/search; "
                     f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
                 )
@@ -1356,7 +1362,7 @@ class EbayService:
 
         except httpx.TimeoutException as e:
             message = (
-                f"Timeout calling EBAY Post-Order /post-order/v2/casemanagement/search "
+                f"Timeout calling EBAY Post-Order GET /post-order/v2/casemanagement/search "
                 f"after {timeout_seconds}s: {str(e)}"
             )
             ebay_logger.log_ebay_event(
@@ -1373,7 +1379,7 @@ class EbayService:
         except httpx.RequestError as e:
             # Non-timeout network / connection error.
             message = (
-                "Network error calling EBAY Post-Order "
+                "Network error calling EBAY Post-Order GET "
                 "/post-order/v2/casemanagement/search: "
                 f"{str(e)}"
             )
@@ -2210,7 +2216,7 @@ class EbayService:
                     "run_id": event_logger.run_id,
                 }
 
-            event_logger.log_info("→ Requesting: POST /post-order/v2/casemanagement/search")
+            event_logger.log_info("→ Requesting: GET /post-order/v2/casemanagement/search")
             request_start = time.time()
             try:
                 cases_response = await self.fetch_postorder_cases(access_token)
@@ -2243,7 +2249,7 @@ class EbayService:
             total_fetched = len(cases)
 
             event_logger.log_http_request(
-                "POST",
+                "GET",
                 "/post-order/v2/casemanagement/search",
                 200,
                 request_duration,
