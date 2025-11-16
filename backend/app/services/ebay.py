@@ -2957,19 +2957,25 @@ class EbayService:
             raise HTTPException(status_code=500, detail=f"Failed to get message headers: {str(e)}")
     
     async def get_message_bodies(self, access_token: str, message_ids: List[str]) -> List[Dict[str, Any]]:
-        """Get message bodies using GetMyMessages with ReturnMessages (batch of up to 10 IDs)"""
+        """Get message bodies using GetMyMessages with ReturnMessages (batch of up to 10 IDs).
+
+        IMPORTANT: When requesting by MessageID, the Trading API expects a
+        <MessageIDs> container with one or more <MessageID> children and no
+        additional filters (no StartTime/EndTime/FolderID/Pagination).
+        """
         import xml.etree.ElementTree as ET
-        
+
         if not message_ids:
             return []
-        
+
         if len(message_ids) > 10:
             raise ValueError("Cannot fetch more than 10 message IDs at once")
-        
+
         api_url = "https://api.ebay.com/ws/api.dll"
-        
-        message_id_xml = "".join([f"<MessageID>{mid}</MessageID>" for mid in message_ids])
-        
+
+        # Wrap message IDs in the required <MessageIDs><MessageID>...</MessageID></MessageIDs> container
+        message_id_xml = "".join(f"<MessageID>{mid}</MessageID>" for mid in message_ids)
+
         xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
 <GetMyMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
   <RequesterCredentials>
@@ -2977,42 +2983,58 @@ class EbayService:
   </RequesterCredentials>
   <DetailLevel>ReturnMessages</DetailLevel>
   <WarningLevel>High</WarningLevel>
-  {message_id_xml}
+  <MessageIDs>
+    {message_id_xml}
+  </MessageIDs>
 </GetMyMessagesRequest>"""
-        
+
         headers = {
             "X-EBAY-API-SITEID": "0",
             "X-EBAY-API-COMPATIBILITY-LEVEL": "1193",
             "X-EBAY-API-CALL-NAME": "GetMyMessages",
-            "Content-Type": "text/xml"
+            "Content-Type": "text/xml",
         }
-        
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(api_url, content=xml_request, headers=headers)
-            
-            root = ET.fromstring(response.text)
+
+            raw_xml = response.text or ""
+            # Log a truncated copy of the raw XML for debugging the first few batches
+            logger.info(f"GetMyMessages ReturnMessages raw XML (first 2000 chars): {raw_xml[:2000]}")
+
+            root = ET.fromstring(raw_xml)
             ns = {"ebay": "urn:ebay:apis:eBLBaseComponents"}
-            
-            messages = []
+
+            messages: List[Dict[str, Any]] = []
             messages_elem = root.find(".//ebay:Messages", ns)
             if messages_elem is not None:
                 for msg_elem in messages_elem.findall("ebay:Message", ns):
-                    message = {}
-                    
-                    for field in ["MessageID", "ExternalMessageID", "Subject", "Text", "Sender", "RecipientUserID", "ReceiveDate", "ExpirationDate", "ItemID", "FolderID"]:
+                    message: Dict[str, Any] = {}
+
+                    for field in [
+                        "MessageID",
+                        "ExternalMessageID",
+                        "Subject",
+                        "Text",
+                        "Sender",
+                        "RecipientUserID",
+                        "ReceiveDate",
+                        "ExpirationDate",
+                        "ItemID",
+                        "FolderID",
+                    ]:
                         elem = msg_elem.find(f"ebay:{field}", ns)
-                        if elem is not None:
+                        if elem is not None and elem.text is not None:
                             message[field.lower()] = elem.text
-                    
+
                     read_elem = msg_elem.find("ebay:Read", ns)
                     flagged_elem = msg_elem.find("ebay:Flagged", ns)
-                    
                     message["read"] = read_elem is not None and read_elem.text == "true"
                     message["flagged"] = flagged_elem is not None and flagged_elem.text == "true"
-                    
+
                     messages.append(message)
-            
+
             return messages
         except Exception as e:
             logger.error(f"Failed to get message bodies: {str(e)}")
