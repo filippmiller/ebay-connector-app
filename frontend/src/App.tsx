@@ -27,6 +27,8 @@ import ReturnsPage from './pages/ReturnsPage';
 import CasesPage from './pages/CasesPage';
 import AdminPage from './pages/AdminPage';
 import AdminDataMigrationPage from './pages/AdminDataMigrationPage';
+import MyTimesheetPage from './pages/MyTimesheetPage';
+import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -160,6 +162,22 @@ function App() {
           <Route
             path="/todolist"
             element={<TodoListPage />}
+          />
+          <Route
+            path="/timesheets/my"
+            element={
+              <ProtectedRoute>
+                <MyTimesheetPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/timesheets/admin"
+            element={
+              <ProtectedRoute>
+                <AdminTimesheetsPage />
+              </ProtectedRoute>
+            }
           />
           <Route
             path="/buying"
