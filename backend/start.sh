@@ -6,6 +6,23 @@ echo "[entry] Starting backend service..."
 echo "[entry] PORT=${PORT:-8000}"
 echo "[entry] Database configured: ${DATABASE_URL:+yes}"
 
+# 0) Ensure Microsoft ODBC Driver 18 for SQL Server (msodbcsql18) is installed
+#    This is idempotent and safe to run on each container start.
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${INSTALL_MSODBC18:-1}" == "1" ]]; then
+  echo "[entry] Checking for ODBC Driver 18 for SQL Server..."
+  if command -v odbcinst >/dev/null 2>&1 && odbcinst -q -d | grep -q "ODBC Driver 18 for SQL Server"; then
+    echo "[entry] ODBC Driver 18 for SQL Server already installed."
+  else
+    echo "[entry] Installing Microsoft ODBC Driver 18 for SQL Server (msodbcsql18)..."
+    if bash "${ROOT_DIR}/scripts/install_msodbc18.sh"; then
+      echo "[entry] msodbcsql18 install script completed successfully."
+    else
+      echo "[entry] WARNING: msodbcsql18 install script failed; MSSQL connections may not work." >&2
+    fi
+  fi
+fi
+
 # 1) Миграции (можно временно выключить RUN_MIGRATIONS=0 в Railway Variables)
 if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
   echo "[entry] Checking Alembic state..."

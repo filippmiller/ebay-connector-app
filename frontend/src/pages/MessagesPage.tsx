@@ -1,13 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
 import { getMessages, updateMessage, getMessageStats, MessagesListResponse } from '../api/messages';
-import { Mail, MailOpen, Star, Archive, Search, Inbox, Send, Flag } from 'lucide-react';
+import { Mail, MailOpen, Star, Archive, Search, Inbox, Send, Flag, FolderPlus, Folder, Trash2 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
 import FixedHeader from '@/components/FixedHeader';
-import { DataGridPage } from '@/components/DataGridPage';
 import apiClient from '../api/client';
 
 interface Message {
@@ -35,41 +33,64 @@ interface MessageStats {
 }
 
 export const MessagesPage = () => {
-  const { } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [stats, setStats] = useState<MessageStats>({ unread_count: 0, flagged_count: 0 });
   const [selectedFolder, setSelectedFolder] = useState<'inbox' | 'sent' | 'flagged' | 'archived'>('inbox');
-  const [selectedBucket, setSelectedBucket] = useState<'all' | 'offers' | 'cases' | 'ebay'>('all');
-  const [bucketCounts, setBucketCounts] = useState<{ all: number; offers: number; cases: number; ebay: number }>({
-    all: 0,
-    offers: 0,
-    cases: 0,
-    ebay: 0,
-  });
+  const [selectedBucket, setSelectedBucket] = useState<'primary' | 'offers' | 'cases' | 'ebay'>('primary');
+  const [bucketCounts, setBucketCounts] = useState<{ primary: number; offers: number; cases: number; ebay: number }>(
+    {
+      primary: 0,
+      offers: 0,
+      cases: 0,
+      ebay: 0,
+    },
+  );
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState('');
   const [draftLoading, setDraftLoading] = useState(false);
-  const [gridRefresh, setGridRefresh] = useState(0);
+  const [customFolders, setCustomFolders] = useState<string[]>([]);
+  const [selectedCustomFolder, setSelectedCustomFolder] = useState<string | null>(null);
 
   useEffect(() => {
     loadMessages();
     loadStats();
-    setGridRefresh((v) => v + 1);
   }, [selectedFolder, selectedBucket]);
 
   const loadMessages = async () => {
     try {
       setLoading(true);
-      const data: MessagesListResponse = await getMessages(selectedFolder, false, searchQuery, selectedBucket);
-      setMessages(Array.isArray(data.items) ? (data.items as Message[]) : []);
-      setBucketCounts(data.counts);
-      setGridRefresh((v) => v + 1);
+
+      // Map UI bucket to API bucket. "primary" reuses "all" data but filters out system messages on the client.
+      const apiBucket: 'all' | 'offers' | 'cases' | 'ebay' =
+        selectedBucket === 'primary' ? 'all' : selectedBucket;
+
+      const data: MessagesListResponse = await getMessages(selectedFolder, false, searchQuery, apiBucket);
+      const rawItems: Message[] = Array.isArray(data.items) ? (data.items as Message[]) : [];
+
+      const filteredItems =
+        selectedBucket === 'primary'
+          ? rawItems.filter((m) => (m.bucket ?? 'other') === 'other')
+          : rawItems;
+
+      setMessages(filteredItems);
+
+      const primaryCount = Math.max(
+        0,
+        (data.counts.all || 0) - (data.counts.offers || 0) - (data.counts.cases || 0) - (data.counts.ebay || 0),
+      );
+
+      setBucketCounts({
+        primary: primaryCount,
+        offers: data.counts.offers ?? 0,
+        cases: data.counts.cases ?? 0,
+        ebay: data.counts.ebay ?? 0,
+      });
     } catch (error) {
       console.error('Failed to load messages:', error);
       setMessages([]);
-      setBucketCounts({ all: 0, offers: 0, cases: 0, ebay: 0 });
+      setBucketCounts({ primary: 0, offers: 0, cases: 0, ebay: 0 });
     } finally {
       setLoading(false);
     }
@@ -107,12 +128,42 @@ export const MessagesPage = () => {
     loadMessages();
   };
 
-  const handleToggleRead = async (message: Message) => {
-    const nextRead = !message.is_read;
-    await updateMessage(message.id, { is_read: nextRead });
-    setSelectedMessage((prev) => (prev && prev.id === message.id ? { ...prev, is_read: nextRead } : prev));
-    loadMessages();
-    loadStats();
+  const handleDelete = async (message: Message) => {
+    // Placeholder for real delete logic – for now just clear selection and refresh list.
+    console.log('Delete message (not yet wired to backend):', message.id);
+    setSelectedMessage(null);
+    await loadMessages();
+  };
+
+  const handleDraftWithAI = async (message: Message) => {
+    try {
+      setDraftLoading(true);
+      const resp = await apiClient.post(`/api/ai/messages/${message.id}/draft`, {
+        ebay_account_id: undefined,
+        house_name: undefined,
+      });
+      setReplyText(resp.data?.draft || '');
+    } catch (e) {
+      console.error('Failed to draft reply with AI', e);
+    } finally {
+      setDraftLoading(false);
+    }
+  };
+
+  const visibleMessages = useMemo(() => {
+    if (selectedBucket === 'primary') {
+      return messages.filter((m) => (m.bucket ?? 'other') === 'other');
+    }
+    return messages;
+  }, [messages, selectedBucket]);
+
+  const handleAddCustomFolder = () => {
+    const name = window.prompt('Folder name');
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCustomFolders((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setSelectedCustomFolder(trimmed);
   };
 
   const formatDate = (dateString: string) => {
@@ -145,28 +196,20 @@ export const MessagesPage = () => {
     }
   };
 
-  const gridParams = useMemo(() => {
-    const params: Record<string, string | number | boolean> = {
-      folder: selectedFolder,
-      search: searchQuery,
-      unread_only: false,
-      _refresh: gridRefresh,
-      bucket: selectedBucket,
-    };
-    return params;
-  }, [selectedFolder, searchQuery, gridRefresh, selectedBucket]);
-
   return (
     <div className="h-screen flex flex-col bg-white">
       <FixedHeader />
       <div className="pt-12 flex flex-1 overflow-hidden">
         {/* Left Sidebar - Folders */}
-        <div className="w-64 border-r bg-gray-50 p-4">
+        <div className="w-64 border-r bg-gray-50 p-4 flex flex-col">
           <div className="space-y-1">
             <Button
               variant={selectedFolder === 'inbox' ? 'secondary' : 'ghost'}
               className="w-full justify-start"
-              onClick={() => setSelectedFolder('inbox')}
+              onClick={() => {
+                setSelectedFolder('inbox');
+                setSelectedCustomFolder(null);
+              }}
             >
               <Inbox className="mr-2 h-4 w-4" />
               Inbox
@@ -180,7 +223,10 @@ export const MessagesPage = () => {
             <Button
               variant={selectedFolder === 'sent' ? 'secondary' : 'ghost'}
               className="w-full justify-start"
-              onClick={() => setSelectedFolder('sent')}
+              onClick={() => {
+                setSelectedFolder('sent');
+                setSelectedCustomFolder(null);
+              }}
             >
               <Send className="mr-2 h-4 w-4" />
               Sent
@@ -189,7 +235,10 @@ export const MessagesPage = () => {
             <Button
               variant={selectedFolder === 'flagged' ? 'secondary' : 'ghost'}
               className="w-full justify-start"
-              onClick={() => setSelectedFolder('flagged')}
+              onClick={() => {
+                setSelectedFolder('flagged');
+                setSelectedCustomFolder(null);
+              }}
             >
               <Flag className="mr-2 h-4 w-4" />
               Flagged
@@ -203,79 +252,153 @@ export const MessagesPage = () => {
             <Button
               variant={selectedFolder === 'archived' ? 'secondary' : 'ghost'}
               className="w-full justify-start"
-              onClick={() => setSelectedFolder('archived')}
+              onClick={() => {
+                setSelectedFolder('archived');
+                setSelectedCustomFolder(null);
+              }}
             >
               <Archive className="mr-2 h-4 w-4" />
               Archived
             </Button>
           </div>
-        </div>
 
-        {/* Middle - Message List + Buckets */}
-        <div className="w-96 border-r flex flex-col">
-          <div className="p-4 border-b space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Search messages..."
-                className="pl-10"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && loadMessages()}
-              />
+          {/* Custom folders */}
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <span>Custom folders</span>
+              <button
+                type="button"
+                className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-700"
+                onClick={handleAddCustomFolder}
+              >
+                <FolderPlus className="h-3 w-3" />
+                Add
+              </button>
             </div>
-
-            {/* Gmail-like buckets */}
-            <div className="flex gap-2 text-xs">
-              {([
-                { key: 'all', label: 'All' },
-                { key: 'offers', label: 'Offers' },
-                { key: 'cases', label: 'Cases & Disputes' },
-                { key: 'ebay', label: 'eBay Messages' },
-              ] as const).map((b) => (
+            <div className="space-y-1">
+              {customFolders.length === 0 && (
+                <div className="text-[11px] text-gray-400 px-1">No custom folders yet</div>
+              )}
+              {customFolders.map((name) => (
                 <Button
-                  key={b.key}
-                  variant={selectedBucket === b.key ? 'secondary' : 'ghost'}
-                  size="sm"
-                  className="flex items-center gap-1 px-2"
-                  onClick={() => setSelectedBucket(b.key)}
+                  key={name}
+                  variant={selectedCustomFolder === name ? 'secondary' : 'ghost'}
+                  className="w-full justify-start"
+                  onClick={() => setSelectedCustomFolder(name)}
                 >
-                  <span>{b.label}</span>
-                  <Badge variant={selectedBucket === b.key ? 'default' : 'outline'} className="ml-1">
-                    {bucketCounts[b.key] ?? 0}
-                  </Badge>
+                  <Folder className="mr-2 h-4 w-4" />
+                  {name}
                 </Button>
               ))}
             </div>
           </div>
+        </div>
 
-          <ScrollArea className="flex-1">
-            {loading ? (
-              <div className="p-4 text-center text-gray-500">Loading...</div>
-            ) : messages.length === 0 ? (
-              <div className="p-4 text-center text-gray-500">No messages</div>
-            ) : (
-              <div className="divide-y">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`p-4 cursor-pointer hover:bg-gray-50 ${
-                      selectedMessage?.id === message.id ? 'bg-blue-50' : ''
-                    } ${!message.is_read && message.direction === 'INCOMING' ? 'bg-blue-50/30' : ''}`}
-                    onClick={() => handleMessageClick(message)}
+        {/* Right side: top list + bottom detail */}
+        <div className="flex-1 flex flex-col">
+          {/* Toolbar with search + Gmail-like buckets */}
+          <div className="border-b bg-white">
+            <div className="p-4 flex items-center gap-3">
+              <div className="relative flex-1 max-w-xl">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Search messages..."
+                  className="pl-10"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && loadMessages()}
+                />
+              </div>
+            </div>
+            <div className="pb-3 flex justify-center">
+              <div className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-1 text-xs">
+                {([
+                  { key: 'primary', label: 'Primary' },
+                  { key: 'offers', label: 'Offers' },
+                  { key: 'cases', label: 'Cases & Disputes' },
+                  { key: 'ebay', label: 'eBay Messages' },
+                ] as const).map((b) => (
+                  <Button
+                    key={b.key}
+                    variant={selectedBucket === b.key ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className="flex items-center gap-1 px-3 rounded-full"
+                    onClick={() => setSelectedBucket(b.key)}
                   >
-                    <div className="flex items-start justify-between mb-1">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span>{b.label}</span>
+                    <Badge
+                      variant={selectedBucket === b.key ? 'default' : 'outline'}
+                      className="ml-1"
+                    >
+                      {bucketCounts[b.key] ?? 0}
+                    </Badge>
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Top panel - message list */}
+          <div className="flex-1 border-b bg-white">
+            <ScrollArea className="h-full">
+              {loading ? (
+                <div className="p-4 text-center text-gray-500">Loading...</div>
+              ) : visibleMessages.length === 0 ? (
+                <div className="p-4 text-center text-gray-500">No messages</div>
+              ) : (
+                <div className="divide-y">
+                  {visibleMessages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`px-4 py-3 cursor-pointer hover:bg-gray-50 text-sm flex items-start justify-between gap-3 ${
+                        selectedMessage?.id === message.id ? 'bg-blue-50' : ''
+                      } ${
+                        !message.is_read && message.direction === 'INCOMING' ? 'bg-blue-50/40' : ''
+                      }`}
+                      onClick={() => handleMessageClick(message)}
+                    >
+                      <div className="flex items-start gap-2 flex-1 min-w-0">
                         {message.direction === 'INCOMING' && !message.is_read ? (
-                          <Mail className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                          <Mail className="h-4 w-4 text-blue-600 flex-shrink-0 mt-[2px]" />
                         ) : (
-                          <MailOpen className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                          <MailOpen className="h-4 w-4 text-gray-400 flex-shrink-0 mt-[2px]" />
                         )}
-                        <span className={`truncate ${!message.is_read && message.direction === 'INCOMING' ? 'font-semibold' : ''}`}>
-                          {message.direction === 'INCOMING' ? message.sender_username : message.recipient_username}
-                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className={`truncate ${
+                                !message.is_read && message.direction === 'INCOMING'
+                                  ? 'font-semibold'
+                                  : ''
+                              }`}
+                            >
+                              {message.direction === 'INCOMING'
+                                ? message.sender_username
+                                : message.recipient_username}
+                            </span>
+                            {message.message_type && (
+                              <Badge
+                                className={`text-[10px] ${getMessageTypeColor(message.message_type)}`}
+                              >
+                                {message.message_type}
+                              </Badge>
+                            )}
+                          </div>
+                          <div
+                            className={`truncate text-xs ${
+                              !message.is_read && message.direction === 'INCOMING'
+                                ? 'font-semibold'
+                                : 'text-gray-600'
+                            }`}
+                          >
+                            {message.subject || '(No subject)'}
+                          </div>
+                          <div className="truncate text-xs text-gray-500">
+                            {message.body}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
                         <Star
                           className={`h-4 w-4 cursor-pointer ${
                             message.is_flagged ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'
@@ -287,197 +410,161 @@ export const MessagesPage = () => {
                         </span>
                       </div>
                     </div>
-                    <div className={`text-sm mb-1 truncate ${!message.is_read && message.direction === 'INCOMING' ? 'font-semibold' : ''}`}>
-                      {message.subject || '(No subject)'}
-                    </div>
-                    <div className="text-sm text-gray-500 truncate">
-                      {message.body}
-                    </div>
-                    {message.message_type && (
-                      <Badge className={`mt-2 text-xs ${getMessageTypeColor(message.message_type)}`}>
-                        {message.message_type}
-                      </Badge>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-        </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </div>
 
-        {/* Right - Message Detail + Reply */}
-        <div className="flex-1 flex flex-col">
-          {selectedMessage ? (
-            <>
-              <div className="border-b p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <h2 className="text-xl font-semibold mb-2">
-                      {selectedMessage.subject || '(No subject)'}
-                    </h2>
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <span className="font-medium">
-                        {selectedMessage.direction === 'INCOMING' ? 'From:' : 'To:'}
-                      </span>
-                      <span>
-                        {selectedMessage.direction === 'INCOMING'
-                          ? selectedMessage.sender_username
-                          : selectedMessage.recipient_username}
-                      </span>
+          {/* Bottom panel - message detail & reply */}
+          <div className="flex-[0.9] min-h-[40%] flex flex-col bg-white">
+            {selectedMessage ? (
+              <>
+                <div className="border-b p-4 md:p-6">
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div className="flex-1 min-w-0">
+                      <h2 className="text-lg md:text-xl font-semibold mb-1 truncate">
+                        {selectedMessage.subject || '(No subject)'}
+                      </h2>
+                      <div className="flex items-center gap-2 text-sm text-gray-600 flex-wrap">
+                        <span className="font-medium">
+                          {selectedMessage.direction === 'INCOMING' ? 'From:' : 'To:'}
+                        </span>
+                        <span>
+                          {selectedMessage.direction === 'INCOMING'
+                            ? selectedMessage.sender_username
+                            : selectedMessage.recipient_username}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {new Date(selectedMessage.message_date).toLocaleString()}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {new Date(selectedMessage.message_date).toLocaleString()}
+                    <div className="flex flex-col gap-2 items-end">
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        <Badge variant="outline">
+                          {selectedMessage.bucket === 'offers'
+                            ? 'OFFERS'
+                            : selectedMessage.bucket === 'cases'
+                            ? 'CASES & DISPUTES'
+                            : selectedMessage.bucket === 'ebay'
+                            ? 'EBAY MESSAGE'
+                            : 'OTHER'}
+                        </Badge>
+                        <Badge variant="outline">
+                          {selectedMessage.direction === 'INCOMING' ? 'Inbox' : 'Sent'}
+                        </Badge>
+                        {selectedMessage.is_read ? (
+                          <Badge variant="outline">Read</Badge>
+                        ) : (
+                          <Badge variant="default">Unread</Badge>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => {
+                            const textarea = document.getElementById('reply-textarea');
+                            textarea?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            (textarea as HTMLTextAreaElement | null)?.focus?.();
+                          }}
+                        >
+                          <Send className="h-4 w-4 mr-1" /> Reply
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={draftLoading}
+                          onClick={() => handleDraftWithAI(selectedMessage)}
+                        >
+                          {draftLoading ? 'AI answering…' : 'AI Answer'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleArchive(selectedMessage)}
+                        >
+                          <Archive className="h-4 w-4 mr-1" /> Archive
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDelete(selectedMessage)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" /> Delete
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-2 items-end">
-                    <div className="flex gap-2">
-                      <Badge variant="outline">
-                        {selectedMessage.bucket === 'offers'
-                          ? 'OFFERS'
-                          : selectedMessage.bucket === 'cases'
-                          ? 'CASES & DISPUTES'
-                          : selectedMessage.bucket === 'ebay'
-                          ? 'EBAY MESSAGE'
-                          : 'OTHER'}
-                      </Badge>
-                      <Badge variant="outline">
-                        {selectedMessage.direction === 'INCOMING' ? 'Inbox' : 'Sent'}
-                      </Badge>
-                      {selectedMessage.is_read ? (
-                        <Badge variant="outline">Read</Badge>
-                      ) : (
-                        <Badge variant="default">Unread</Badge>
+                </div>
+
+                <ScrollArea className="flex-1 p-4 md:p-6">
+                  <div className="whitespace-pre-wrap text-gray-800 text-sm">
+                    {selectedMessage.body}
+                  </div>
+
+                  {(selectedMessage.order_id || selectedMessage.listing_id) && (
+                    <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                      <h3 className="font-semibold mb-2">Related Items</h3>
+                      {selectedMessage.order_id && (
+                        <div className="text-sm text-gray-600">
+                          Order: {selectedMessage.order_id}
+                        </div>
+                      )}
+                      {selectedMessage.listing_id && (
+                        <div className="text-sm text-gray-600">
+                          Listing: {selectedMessage.listing_id}
+                        </div>
                       )}
                     </div>
-                    <div className="flex gap-2">
+                  )}
+
+                  {/* Reply box */}
+                  <div className="mt-6 border-t pt-4" id="reply-section">
+                    <h3 className="font-semibold mb-2">Reply message</h3>
+                    <textarea
+                      id="reply-textarea"
+                      className="w-full border rounded-md p-2 text-sm min-h-[120px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Type your reply here..."
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                    />
+                    <div className="mt-3 flex flex-wrap gap-2 justify-end">
                       <Button
-                        variant="outline"
+                        variant="default"
                         size="sm"
-                        onClick={() => handleToggleRead(selectedMessage)}
-                      >
-                        {selectedMessage.is_read ? 'Mark as unread' : 'Mark as read'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleArchive(selectedMessage)}
-                      >
-                        <Archive className="h-4 w-4 mr-2" />
-                        Archive
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleFlagged(selectedMessage, e);
+                        onClick={() => {
+                          console.log('Send reply (stub):', {
+                            messageId: selectedMessage.id,
+                            replyText,
+                          });
+                          setReplyText('');
                         }}
                       >
-                        <Star
-                          className={`h-4 w-4 mr-2 ${
-                            selectedMessage.is_flagged ? 'fill-yellow-400 text-yellow-400' : ''
-                          }`}
-                        />
-                        {selectedMessage.is_flagged ? 'Unflag' : 'Flag'}
+                        <Send className="h-4 w-4 mr-1" /> Reply
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setReplyText('')}
+                      >
+                        Clear
                       </Button>
                     </div>
                   </div>
+                </ScrollArea>
+              </>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-gray-400">
+                <div className="text-center">
+                  <Mail className="h-16 w-16 mx-auto mb-4 opacity-20" />
+                  <p>Select a message above to read</p>
                 </div>
               </div>
-
-              <ScrollArea className="flex-1 p-6">
-                <div className="whitespace-pre-wrap text-gray-800">
-                  {selectedMessage.body}
-                </div>
-
-                {(selectedMessage.order_id || selectedMessage.listing_id) && (
-                  <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                    <h3 className="font-semibold mb-2">Related Items</h3>
-                    {selectedMessage.order_id && (
-                      <div className="text-sm text-gray-600">
-                        Order: {selectedMessage.order_id}
-                      </div>
-                    )}
-                    {selectedMessage.listing_id && (
-                      <div className="text-sm text-gray-600">
-                        Listing: {selectedMessage.listing_id}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Reply box with AI draft */}
-                <div className="mt-6 border-t pt-4">
-                  <h3 className="font-semibold mb-2">Reply</h3>
-                  <textarea
-                    className="w-full border rounded-md p-2 text-sm min-h-[120px] focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Type your reply here..."
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                  />
-                  <div className="mt-3 flex gap-2 justify-end">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={draftLoading}
-                      onClick={async () => {
-                        if (!selectedMessage) return;
-                        try {
-                          setDraftLoading(true);
-                          const resp = await apiClient.post(`/api/ai/messages/${selectedMessage.id}/draft`, {
-                            ebay_account_id: undefined,
-                            house_name: undefined,
-                          });
-                          setReplyText(resp.data?.draft || '');
-                        } catch (e) {
-                          console.error('Failed to draft reply with AI', e);
-                        } finally {
-                          setDraftLoading(false);
-                        }
-                      }}
-                    >
-                      {draftLoading ? 'Drafting…' : 'Draft with AI'}
-                    </Button>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={() => {
-                        console.log('Send reply (stub):', {
-                          messageId: selectedMessage.id,
-                          replyText,
-                        });
-                        setReplyText('');
-                      }}
-                    >
-                      <Send className="h-4 w-4 mr-1" />
-                      Send
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setReplyText('')}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              </ScrollArea>
-            </>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-400">
-              <div className="text-center">
-                <Mail className="h-16 w-16 mx-auto mb-4 opacity-20" />
-                <p>Select a message to read</p>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
-
-      {/* Grid view (beta) */}
-      <div className="border-t h-[45vh] bg-gray-50 p-4">
-        <h2 className="text-lg font-semibold mb-2">Messages grid (beta)</h2>
-        <DataGridPage gridKey="messages" title="Messages" extraParams={gridParams} />
       </div>
     </div>
   );
