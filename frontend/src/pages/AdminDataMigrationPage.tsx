@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import api from '@/lib/apiClient';
 
 type MainTab = 'mssql-database' | 'temp';
@@ -732,7 +731,6 @@ const DualDbMigrationStudioShell: React.FC = () => {
   const [targetError, setTargetError] = useState<string | null>(null);
   const [selectedTargetTable, setSelectedTargetTable] = useState<TargetTableInfo | null>(null);
   const [targetSchema, setTargetSchema] = useState<TargetSchemaResponse | null>(null);
-  const [targetSchemaLoading, setTargetSchemaLoading] = useState(false);
 
   // Basic mapping summary state (stubbed for now)
   interface MappingRow {
@@ -836,7 +834,6 @@ const DualDbMigrationStudioShell: React.FC = () => {
     setSelectedTargetTable(table);
     setTargetSchema(null);
     try {
-      setTargetSchemaLoading(true);
       const resp = await api.get<TargetSchemaResponse>(`/api/admin/db/tables/${encodeURIComponent(table.name)}/schema`);
       setTargetSchema(resp.data);
       // SCREEN 2: basic mapping summary auto-matching stub
@@ -845,8 +842,6 @@ const DualDbMigrationStudioShell: React.FC = () => {
       }
     } catch (e: any) {
       setTargetError(e?.response?.data?.detail || e.message || 'Failed to load Supabase table schema');
-    } finally {
-      setTargetSchemaLoading(false);
     }
   };
 
