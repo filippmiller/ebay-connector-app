@@ -2,6 +2,10 @@ import React, { useMemo, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import api from '@/lib/apiClient';
 
 type MainTab = 'mssql-database' | 'temp';
@@ -45,6 +49,7 @@ interface SelectedTable {
 }
 
 const AdminDataMigrationPage: React.FC = () => {
+  // SCREEN 1: Global Migration Dashboard shell
   const [activeTab, setActiveTab] = useState<MainTab>('mssql-database');
 
   return (
@@ -54,28 +59,29 @@ const AdminDataMigrationPage: React.FC = () => {
         <h1 className="text-2xl font-bold mb-2">Admin &rarr; Data Migration</h1>
         <p className="text-sm text-gray-600 mb-4 max-w-3xl">
           Internal admin-only workspace for exploring an external MSSQL database (schemas, tables, columns, and sample
-          data) as preparation for future migration into Supabase. Credentials are never stored and are sent only to
-          backend admin endpoints.
+          data) and mapping it into Supabase. Credentials are never stored and are sent only to backend admin endpoints
+          for the current admin session.
         </p>
 
+        {/* Global modes: legacy MSSQL explorer vs new Dual-DB Migration Studio */}
         <div className="flex gap-2 mb-4">
           <Button
             variant={activeTab === 'mssql-database' ? 'default' : 'outline'}
             size="sm"
             onClick={() => setActiveTab('mssql-database')}
           >
-            MSSQL database
+            MSSQL Explorer (legacy)
           </Button>
           <Button
             variant={activeTab === 'temp' ? 'default' : 'outline'}
             size="sm"
             onClick={() => setActiveTab('temp')}
           >
-            Temp
+            Dual-DB Migration Studio
           </Button>
         </div>
 
-        {activeTab === 'mssql-database' ? <MssqlDatabaseTab /> : <TempWorkspaceTab />}
+        {activeTab === 'mssql-database' ? <MssqlDatabaseTab /> : <DualDbMigrationStudioShell />}
       </div>
     </div>
   );
@@ -676,27 +682,571 @@ const PreviewView: React.FC<PreviewViewProps> = ({
   );
 };
 
-const TempWorkspaceTab: React.FC = () => {
-  const [notes, setNotes] = useState('');
+// SCREEN 2: Dual-DB Migration Studio main shell (3-column layout)
+const DualDbMigrationStudioShell: React.FC = () => {
+  // Reuse MSSQL connection config from the legacy tab shape, but keep it local to this component.
+  const [config, setConfig] = useState<MssqlConnectionConfig>({
+    host: '',
+    port: 1433,
+    database: '',
+    username: '',
+    password: '',
+    encrypt: true,
+  });
+
+  const [isTesting, setIsTesting] = useState(false);
+  const [testOk, setTestOk] = useState<boolean | null>(null);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
+
+  const [schemaTree, setSchemaTree] = useState<MssqlSchemaTreeResponse | null>(null);
+  const [schemaLoading, setSchemaLoading] = useState(false);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [schemaSearch, setSchemaSearch] = useState('');
+  const [selectedSourceTable, setSelectedSourceTable] = useState<SelectedTable | null>(null);
+
+  // Supabase (target) summary, reusing AdminDbExplorer endpoints
+  interface TargetTableInfo {
+    schema: string;
+    name: string;
+    row_estimate: number | null;
+  }
+
+  interface TargetColumnInfo {
+    name: string;
+    data_type: string;
+    is_nullable: boolean;
+    is_primary_key: boolean;
+    is_foreign_key: boolean;
+    default: string | null;
+  }
+
+  interface TargetSchemaResponse {
+    schema: string;
+    name: string;
+    columns: TargetColumnInfo[];
+  }
+
+  const [targetTables, setTargetTables] = useState<TargetTableInfo[]>([]);
+  const [targetSearch, setTargetSearch] = useState('');
+  const [targetTablesLoading, setTargetTablesLoading] = useState(false);
+  const [targetError, setTargetError] = useState<string | null>(null);
+  const [selectedTargetTable, setSelectedTargetTable] = useState<TargetTableInfo | null>(null);
+  const [targetSchema, setTargetSchema] = useState<TargetSchemaResponse | null>(null);
+  const [targetSchemaLoading, setTargetSchemaLoading] = useState(false);
+
+  // Basic mapping summary state (stubbed for now)
+  interface MappingRow {
+    sourceColumn: string;
+    sourceType: string;
+    targetColumn: string | null;
+    targetType: string | null;
+    status: 'auto-mapped' | 'missing' | 'needs-review';
+  }
+
+  const [mappingRows, setMappingRows] = useState<MappingRow[]>([]);
+  const [isConfirmOneToOneOpen, setIsConfirmOneToOneOpen] = useState(false);
+
+  const handleConfigChange = (field: keyof MssqlConnectionConfig, value: string | number | boolean) => {
+    setConfig((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestOk(null);
+    setTestMessage(null);
+    setSchemaTree(null);
+    setSelectedSourceTable(null);
+
+    try {
+      const resp = await api.post<{ ok: boolean; error?: string; message?: string }>(
+        '/api/admin/mssql/test-connection',
+        config,
+      );
+      if (resp.data.ok) {
+        setTestOk(true);
+        setTestMessage(resp.data.message || 'Connection successful. Loading schema tree...');
+        await loadSchemaTree();
+      } else {
+        setTestOk(false);
+        setTestMessage(resp.data.error || 'Connection failed');
+      }
+    } catch (e: any) {
+      setTestOk(false);
+      const message = e?.response?.data?.detail || e.message || 'Connection failed';
+      setTestMessage(message);
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const loadSchemaTree = async () => {
+    setSchemaLoading(true);
+    setSchemaError(null);
+    try {
+      const resp = await api.post<MssqlSchemaTreeResponse>('/api/admin/mssql/schema-tree', config);
+      setSchemaTree(resp.data);
+    } catch (e: any) {
+      const message = e?.response?.data?.detail || e.message || 'Failed to load schema tree';
+      setSchemaError(message);
+      setSchemaTree(null);
+    } finally {
+      setSchemaLoading(false);
+    }
+  };
+
+  const filteredSchemas = useMemo(() => {
+    if (!schemaTree) return [];
+    const q = schemaSearch.trim().toLowerCase();
+    if (!q) return schemaTree.schemas;
+    return schemaTree.schemas
+      .map((s) => ({
+        ...s,
+        tables: s.tables.filter((t) => t.name.toLowerCase().includes(q) || `${s.name}.${t.name}`.toLowerCase().includes(q)),
+      }))
+      .filter((s) => s.tables.length > 0);
+  }, [schemaTree, schemaSearch]);
+
+  const handleSelectSourceTable = (schema: string, name: string) => {
+    setSelectedSourceTable({ schema, name });
+    // When source or target changes, we rebuild a very simple mapping summary later.
+    setMappingRows([]);
+  };
+
+  const loadTargetTables = async () => {
+    setTargetTablesLoading(true);
+    setTargetError(null);
+    try {
+      const resp = await api.get<TargetTableInfo[]>('/api/admin/db/tables');
+      setTargetTables(resp.data);
+    } catch (e: any) {
+      setTargetError(e?.response?.data?.detail || e.message || 'Failed to load Supabase tables');
+      setTargetTables([]);
+    } finally {
+      setTargetTablesLoading(false);
+    }
+  };
+
+  const filteredTargetTables = useMemo(() => {
+    const q = targetSearch.trim().toLowerCase();
+    if (!q) return targetTables;
+    return targetTables.filter((t) => `${t.schema}.${t.name}`.toLowerCase().includes(q) || t.name.toLowerCase().includes(q));
+  }, [targetTables, targetSearch]);
+
+  const handleSelectTargetTable = async (table: TargetTableInfo) => {
+    setSelectedTargetTable(table);
+    setTargetSchema(null);
+    try {
+      setTargetSchemaLoading(true);
+      const resp = await api.get<TargetSchemaResponse>(`/api/admin/db/tables/${encodeURIComponent(table.name)}/schema`);
+      setTargetSchema(resp.data);
+      // SCREEN 2: basic mapping summary auto-matching stub
+      if (targetSchema && selectedSourceTable) {
+        // will be recomputed in useEffect below
+      }
+    } catch (e: any) {
+      setTargetError(e?.response?.data?.detail || e.message || 'Failed to load Supabase table schema');
+    } finally {
+      setTargetSchemaLoading(false);
+    }
+  };
+
+  // When both sides are selected and we have column metadata, build a simple mapping summary (name-based).
+  React.useEffect(() => {
+    if (!selectedSourceTable || !targetSchema) {
+      setMappingRows([]);
+      return;
+    }
+
+    const build = async () => {
+      try {
+        const resp = await api.post<MssqlColumnInfo[]>('/api/admin/mssql/table-columns', {
+          ...config,
+          schema: selectedSourceTable.schema,
+          table: selectedSourceTable.name,
+        });
+        const sourceCols = resp.data;
+        const rows: MappingRow[] = sourceCols.map((col) => {
+          const match = targetSchema.columns.find((c) => c.name.toLowerCase() === col.name.toLowerCase());
+          if (!match) {
+            return {
+              sourceColumn: col.name,
+              sourceType: col.dataType,
+              targetColumn: null,
+              targetType: null,
+              status: 'missing',
+            };
+          }
+          const typeMatches = match.data_type.toLowerCase().includes(col.dataType.toLowerCase());
+          return {
+            sourceColumn: col.name,
+            sourceType: col.dataType,
+            targetColumn: match.name,
+            targetType: match.data_type,
+            status: typeMatches ? 'auto-mapped' : 'needs-review',
+          };
+        });
+        setMappingRows(rows);
+      } catch (e) {
+        // We keep mapping summary best-effort; errors are surfaced in logs only.
+        // eslint-disable-next-line no-console
+        console.error('Failed to load MSSQL columns for mapping summary', e);
+        setMappingRows([]);
+      }
+    };
+
+    void build();
+  }, [selectedSourceTable, targetSchema, config]);
+
+  const canRunOneToOne = Boolean(selectedSourceTable && selectedTargetTable);
+
+  const renderOneToOneDialog = () => {
+    if (!selectedSourceTable || !selectedTargetTable) return null;
+
+    const sourceLabel = `${selectedSourceTable.schema}.${selectedSourceTable.name}`;
+    const targetLabel = `${selectedTargetTable.schema}.${selectedTargetTable.name}`;
+
+    return (
+      <Dialog open={isConfirmOneToOneOpen} onOpenChange={setIsConfirmOneToOneOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Confirm 1:1 migration</DialogTitle>
+            <DialogDescription>
+              Migrate table 1:1 from <span className="font-mono">{sourceLabel}</span> (MSSQL) to{' '}
+              <span className="font-mono">{targetLabel}</span> (Supabase).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm text-gray-700">
+            <p>
+              MSSQL will remain read-only. All writes will go to Supabase. Column names, types, nullability, and defaults
+              will be used as-is where possible.
+            </p>
+            <p className="text-xs text-gray-600">
+              Before running this in production, use the full mapping flow to review incompatible types and schema
+              differences.
+            </p>
+          </div>
+          <DialogFooter className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setIsConfirmOneToOneOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                // SCREEN 10 (stub): navigate to Migration Runner later
+                // For now we just close the dialog; backend wiring will be added in Phase 7.
+                setIsConfirmOneToOneOpen(false);
+              }}
+            >
+              Continue to migration runner (stub)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
+  React.useEffect(() => {
+    // Load Supabase tables on mount so the right panel is ready.
+    void loadTargetTables();
+  }, []);
+
+  const showConnectionOverlay = !testOk && !schemaTree && !schemaLoading;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Temp workspace</CardTitle>
-        <CardDescription>
-          Scratchpad for mapping MSSQL tables/columns to Supabase schema. Nothing here is persisted; it lives only in
-          your browser tab.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <textarea
-          className="w-full min-h-[300px] border rounded px-2 py-1 text-sm font-mono"
-          placeholder="Paste JSON, notes, or mapping plans here..."
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      {/* Keep the small MSSQL connection fields at the top */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Database Connection</CardTitle>
+          <CardDescription>
+            Connect to an external MSSQL database. Credentials are used only for this session and are never stored in
+            Supabase.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="space-y-1">
+              <Label className="block text-xs font-medium text-gray-700">Host / IP</Label>
+              <Input
+                type="text"
+                value={config.host}
+                onChange={(e) => handleConfigChange('host', e.target.value)}
+                placeholder="mssql.example.internal"
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="block text-xs font-medium text-gray-700">Port</Label>
+              <Input
+                type="number"
+                value={config.port}
+                onChange={(e) => handleConfigChange('port', Number(e.target.value) || 1433)}
+                placeholder="1433"
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="block text-xs font-medium text-gray-700">Database</Label>
+              <Input
+                type="text"
+                value={config.database}
+                onChange={(e) => handleConfigChange('database', e.target.value)}
+                placeholder="DB_A28F26_parts"
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="block text-xs font-medium text-gray-700">Username</Label>
+              <Input
+                type="text"
+                value={config.username}
+                onChange={(e) => handleConfigChange('username', e.target.value)}
+                placeholder="dbadmin"
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="block text-xs font-medium text-gray-700">Password</Label>
+              <Input
+                type="password"
+                value={config.password}
+                onChange={(e) => handleConfigChange('password', e.target.value)}
+                placeholder="••••••••"
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2 mt-6">
+              <input
+                id="studio-encrypt"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={config.encrypt}
+                onChange={(e) => handleConfigChange('encrypt', e.target.checked)}
+              />
+              <Label htmlFor="studio-encrypt" className="text-xs text-gray-700">
+                Use SSL / Encrypt
+              </Label>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button size="sm" onClick={handleTestConnection} disabled={isTesting}>
+              {isTesting ? 'Testing connection...' : 'Test connection'}
+            </Button>
+            {testOk === true && testMessage && (
+              <span className="text-xs text-green-700 font-medium">{testMessage}</span>
+            )}
+            {testOk === false && testMessage && (
+              <span className="text-xs text-red-700 font-medium">{testMessage}</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* SCREEN 2: Main 3-column layout */}
+      <Card className="max-w-6xl mx-auto">
+        <CardHeader>
+          <CardTitle className="text-base">Dual-DB Migration Studio</CardTitle>
+          <CardDescription className="text-xs">
+            MSSQL on the left, mapping actions in the middle, Supabase target on the right.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* LEFT: MSSQL source */}
+            <div className="md:w-1/3 border rounded bg-white p-3 flex flex-col min-h-[320px] relative">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="font-semibold text-sm">MSSQL (legacy)</div>
+                  <div className="text-[11px] text-gray-500">
+                    {testOk ? 'Connected' : 'Not connected'}
+                  </div>
+                </div>
+                {schemaLoading && <div className="text-[11px] text-gray-500">Loading schema...</div>}
+              </div>
+              <Input
+                placeholder="Search tables..."
+                value={schemaSearch}
+                onChange={(e) => setSchemaSearch(e.target.value)}
+                className="mb-2 h-8 text-sm"
+              />
+              {schemaError && <div className="mb-2 text-[11px] text-red-600">{schemaError}</div>}
+              {schemaTree && (
+                <div className="flex-1 overflow-auto border rounded p-2 text-xs">
+                  <div className="font-mono text-[11px] mb-1 text-gray-700">{schemaTree.database}</div>
+                  {filteredSchemas.length === 0 && (
+                    <div className="text-[11px] text-gray-500">No tables match the search.</div>
+                  )}
+                  {filteredSchemas.map((s) => (
+                    <div key={s.name} className="mb-1">
+                      <div className="font-mono text-[11px] font-semibold text-gray-800">{s.name}</div>
+                      <div className="ml-3">
+                        {s.tables.map((t) => {
+                          const isSelected =
+                            selectedSourceTable?.schema === s.name && selectedSourceTable?.name === t.name;
+                          return (
+                            <div
+                              key={t.name}
+                              className={`cursor-pointer px-1 py-0.5 rounded border-b border-dotted border-gray-100 hover:bg-blue-50 ${
+                                isSelected ? 'bg-blue-100 font-semibold' : ''
+                              }`}
+                              onClick={() => handleSelectSourceTable(s.name, t.name)}
+                            >
+                              <span className="font-mono text-[11px]">{t.name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showConnectionOverlay && (
+                <div className="absolute inset-0 bg-white/70 flex flex-col items-center justify-center text-xs text-gray-600 gap-2">
+                  {/* STATE 2a: No MSSQL connection / error overlay */}
+                  <div className="font-medium">Connect to MSSQL first</div>
+                  <Button size="sm" variant="outline" onClick={handleTestConnection} disabled={isTesting}>
+                    {isTesting ? 'Testing...' : 'Test connection'}
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* CENTER: Mapping summary & actions */}
+            <div className="md:w-1/3 border rounded bg-white p-3 flex flex-col min-h-[320px]">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-semibold text-sm">Mapping / Actions</div>
+              </div>
+              <div className="flex gap-2 mb-3 flex-wrap">
+                <Button
+                  size="sm"
+                  disabled={!canRunOneToOne}
+                  onClick={() => {
+                    if (!canRunOneToOne) return;
+                    setIsConfirmOneToOneOpen(true);
+                  }}
+                >
+                  Migrate 1:1 (structure + data)
+                </Button>
+                <Button size="sm" variant="outline" disabled={!selectedSourceTable || !selectedTargetTable}>
+                  Configure mapping…
+                </Button>
+              </div>
+              <div className="mb-2 text-xs text-gray-600 space-y-1">
+                <div>
+                  <span className="font-semibold">Source:</span>{' '}
+                  {selectedSourceTable ? (
+                    <span className="font-mono">
+                      {selectedSourceTable.schema}.{selectedSourceTable.name}
+                    </span>
+                  ) : (
+                    <span className="text-gray-500">Select a table on the left</span>
+                  )}
+                </div>
+                <div>
+                  <span className="font-semibold">Target:</span>{' '}
+                  {selectedTargetTable ? (
+                    <span className="font-mono">
+                      {selectedTargetTable.schema}.{selectedTargetTable.name}
+                    </span>
+                  ) : (
+                    <span className="text-gray-500">Select a table on the right</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto border rounded">
+                <table className="min-w-full text-[11px]">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-2 py-1 border text-left">Source column</th>
+                      <th className="px-2 py-1 border text-left">Type (MSSQL)</th>
+                      <th className="px-2 py-1 border text-left">Target column</th>
+                      <th className="px-2 py-1 border text-left">Type (Supabase)</th>
+                      <th className="px-2 py-1 border text-left">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mappingRows.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-2 py-4 text-center text-xs text-gray-500">
+                          Mapping summary will appear after you select both source and target tables.
+                        </td>
+                      </tr>
+                    )}
+                    {mappingRows.map((row) => (
+                      <tr key={row.sourceColumn} className="border-t">
+                        <td className="px-2 py-1 border font-mono">{row.sourceColumn}</td>
+                        <td className="px-2 py-1 border">{row.sourceType}</td>
+                        <td className="px-2 py-1 border font-mono">{row.targetColumn ?? '-'}</td>
+                        <td className="px-2 py-1 border">{row.targetType ?? '-'}</td>
+                        <td className="px-2 py-1 border">
+                          {row.status === 'auto-mapped' && (
+                            <span className="text-[11px] text-green-700 font-medium">auto mapped</span>
+                          )}
+                          {row.status === 'missing' && (
+                            <span className="text-[11px] text-red-700 font-medium">missing</span>
+                          )}
+                          {row.status === 'needs-review' && (
+                            <span className="text-[11px] text-yellow-700 font-medium">needs review</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-2 flex gap-2 text-[11px] text-gray-500">
+                <Button size="sm" variant="outline" disabled>
+                  Compare schemas (stub)
+                </Button>
+                <span>Schema compare and full mapping screens will live here (Screens 3–4).</span>
+              </div>
+            </div>
+
+            {/* RIGHT: Supabase target */}
+            <div className="md:w-1/3 border rounded bg-white p-3 flex flex-col min-h-[320px]">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-semibold text-sm">Supabase (target)</div>
+                {targetTablesLoading && <div className="text-[11px] text-gray-500">Loading tables...</div>}
+              </div>
+              <Input
+                placeholder="Search tables..."
+                value={targetSearch}
+                onChange={(e) => setTargetSearch(e.target.value)}
+                className="mb-2 h-8 text-sm"
+              />
+              {targetError && <div className="mb-2 text-[11px] text-red-600">{targetError}</div>}
+              <div className="flex-1 overflow-auto border rounded">
+                {filteredTargetTables.map((t) => {
+                  const isSelected = selectedTargetTable?.schema === t.schema && selectedTargetTable?.name === t.name;
+                  return (
+                    <button
+                      type="button"
+                      key={`${t.schema}.${t.name}`}
+                      className={`w-full text-left px-2 py-1 text-xs cursor-pointer border-b hover:bg-gray-50 ${
+                        isSelected ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                      onClick={() => handleSelectTargetTable(t)}
+                    >
+                      <div className="font-mono text-[11px]">{t.name}</div>
+                      {t.row_estimate != null && (
+                        <div className="text-[10px] text-gray-500">~{Math.round(t.row_estimate)} rows</div>
+                      )}
+                    </button>
+                  );
+                })}
+                {!targetTablesLoading && filteredTargetTables.length === 0 && (
+                  <div className="px-2 py-3 text-[11px] text-gray-500 text-center">No tables found.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {renderOneToOneDialog()}
+    </div>
   );
 };
 
