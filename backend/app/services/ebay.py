@@ -809,23 +809,22 @@ class EbayService:
         window_from: Optional[str] = None,
         window_to: Optional[str] = None,
     ) -> Dict[str, Any]:
-    """
-    Synchronize orders from eBay to database with pagination (limit=200).
+        """Synchronize orders from eBay to database with pagination (limit=200).
 
-    If ``window_from``/``window_to`` are provided, they are used as a logical
-    time window for logging and for future filtering once the Fulfillment API
-    exposes stable filters; for now they are recorded in logs while the
-    underlying API still relies on its default 90-day window.
+        If ``window_from``/``window_to`` are provided, they are used as a logical
+        time window for logging and for future filtering once the Fulfillment API
+        exposes stable filters; for now they are recorded in logs while the
+        underlying API still relies on its default 90-day window.
 
-    Args:
-        user_id: User ID
-        access_token: eBay OAuth access token
-        run_id: Optional run_id for sync event logging
-        ebay_account_id: Optional internal eBay account id for tagging
-        ebay_user_id: Optional eBay user id for tagging
-        window_from: Optional ISO8601 datetime (UTC) for the start of the window
-        window_to: Optional ISO8601 datetime (UTC) for the end of the window
-    """
+        Args:
+            user_id: User ID
+            access_token: eBay OAuth access token
+            run_id: Optional run_id for sync event logging
+            ebay_account_id: Optional internal eBay account id for tagging
+            ebay_user_id: Optional eBay user id for tagging
+            window_from: Optional ISO8601 datetime (UTC) for the start of the window
+            window_to: Optional ISO8601 datetime (UTC) for the end of the window
+        """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
