@@ -466,11 +466,11 @@ def _get_cases_data(
     from_date: Optional[str],
     to_date: Optional[str],
 ) -> Dict[str, Any]:
-    """Unified INR/SNAD Cases & Disputes grid backed by ebay_disputes + ebay_cases.
+    """Unified Cases & Disputes grid backed by ebay_disputes + ebay_cases.
 
-    We materialize rows for the current user and filter to INR/SNAD-like items
-    in application code – expected volume is low so this stays cheap and avoids
-    schema coupling.
+    We materialize rows for the current user and enrich them with an inferred
+    ``issue_type`` (INR/SNAD/OTHER). Expected volume is low so this stays cheap
+    and avoids tight schema coupling.
     """
     import json
     from datetime import datetime as dt_type
@@ -523,8 +523,6 @@ def _get_cases_data(
     rows_all: List[Dict[str, Any]] = []
     for row in result:
         issue = _issue_type(row.reason)
-        if not issue:
-            continue
 
         raw_payload = row.raw_payload
         try:
@@ -577,7 +575,8 @@ def _get_cases_data(
                 "external_id": row.external_id,
                 "order_id": row.order_id,
                 "status": row.status,
-                "issue_type": issue,
+                # Preserve INR/SNAD labels but keep non-matching cases visible as OTHER.
+                "issue_type": issue or "OTHER",
                 "buyer_username": buyer_username,
                 "amount": amount,
                 "currency": currency,
