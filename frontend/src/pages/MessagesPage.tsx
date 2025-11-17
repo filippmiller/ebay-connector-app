@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { getMessages, updateMessage, getMessageStats } from '../api/messages';
+import { getMessages, updateMessage, getMessageStats, MessagesListResponse } from '../api/messages';
 import { Mail, MailOpen, Star, Archive, Search, Inbox, Send, Flag } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -8,6 +8,7 @@ import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
+import apiClient from '../api/client';
 
 interface Message {
   id: string;
@@ -25,6 +26,7 @@ interface Message {
   message_date: string;
   order_id: string | null;
   listing_id: string | null;
+  bucket?: 'offers' | 'cases' | 'ebay' | 'other';
 }
 
 interface MessageStats {
@@ -37,27 +39,37 @@ export const MessagesPage = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [stats, setStats] = useState<MessageStats>({ unread_count: 0, flagged_count: 0 });
   const [selectedFolder, setSelectedFolder] = useState<'inbox' | 'sent' | 'flagged' | 'archived'>('inbox');
+  const [selectedBucket, setSelectedBucket] = useState<'all' | 'offers' | 'cases' | 'ebay'>('all');
+  const [bucketCounts, setBucketCounts] = useState<{ all: number; offers: number; cases: number; ebay: number }>({
+    all: 0,
+    offers: 0,
+    cases: 0,
+    ebay: 0,
+  });
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [replyText, setReplyText] = useState('');
+  const [draftLoading, setDraftLoading] = useState(false);
   const [gridRefresh, setGridRefresh] = useState(0);
 
   useEffect(() => {
     loadMessages();
     loadStats();
     setGridRefresh((v) => v + 1);
-  }, [selectedFolder]);
+  }, [selectedFolder, selectedBucket]);
 
   const loadMessages = async () => {
     try {
       setLoading(true);
-      const data = await getMessages(selectedFolder, false, searchQuery);
-      console.log('Messages data:', data);
-      setMessages(Array.isArray(data) ? data : []);
+      const data: MessagesListResponse = await getMessages(selectedFolder, false, searchQuery, selectedBucket);
+      setMessages(Array.isArray(data.items) ? (data.items as Message[]) : []);
+      setBucketCounts(data.counts);
       setGridRefresh((v) => v + 1);
     } catch (error) {
       console.error('Failed to load messages:', error);
       setMessages([]);
+      setBucketCounts({ all: 0, offers: 0, cases: 0, ebay: 0 });
     } finally {
       setLoading(false);
     }
@@ -74,6 +86,7 @@ export const MessagesPage = () => {
 
   const handleMessageClick = async (message: Message) => {
     setSelectedMessage(message);
+    setReplyText('');
     if (!message.is_read && message.direction === 'INCOMING') {
       await updateMessage(message.id, { is_read: true });
       loadMessages();
@@ -92,6 +105,14 @@ export const MessagesPage = () => {
     await updateMessage(message.id, { is_archived: true });
     setSelectedMessage(null);
     loadMessages();
+  };
+
+  const handleToggleRead = async (message: Message) => {
+    const nextRead = !message.is_read;
+    await updateMessage(message.id, { is_read: nextRead });
+    setSelectedMessage((prev) => (prev && prev.id === message.id ? { ...prev, is_read: nextRead } : prev));
+    loadMessages();
+    loadStats();
   };
 
   const formatDate = (dateString: string) => {
@@ -130,9 +151,10 @@ export const MessagesPage = () => {
       search: searchQuery,
       unread_only: false,
       _refresh: gridRefresh,
+      bucket: selectedBucket,
     };
     return params;
-  }, [selectedFolder, searchQuery, gridRefresh]);
+  }, [selectedFolder, searchQuery, gridRefresh, selectedBucket]);
 
   return (
     <div className="h-screen flex flex-col bg-white">
@@ -189,9 +211,9 @@ export const MessagesPage = () => {
           </div>
         </div>
 
-        {/* Middle - Message List */}
+        {/* Middle - Message List + Buckets */}
         <div className="w-96 border-r flex flex-col">
-          <div className="p-4 border-b">
+          <div className="p-4 border-b space-y-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
               <Input
@@ -201,6 +223,29 @@ export const MessagesPage = () => {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && loadMessages()}
               />
+            </div>
+
+            {/* Gmail-like buckets */}
+            <div className="flex gap-2 text-xs">
+              {([
+                { key: 'all', label: 'All' },
+                { key: 'offers', label: 'Offers' },
+                { key: 'cases', label: 'Cases & Disputes' },
+                { key: 'ebay', label: 'eBay Messages' },
+              ] as const).map((b) => (
+                <Button
+                  key={b.key}
+                  variant={selectedBucket === b.key ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="flex items-center gap-1 px-2"
+                  onClick={() => setSelectedBucket(b.key)}
+                >
+                  <span>{b.label}</span>
+                  <Badge variant={selectedBucket === b.key ? 'default' : 'outline'} className="ml-1">
+                    {bucketCounts[b.key] ?? 0}
+                  </Badge>
+                </Button>
+              ))}
             </div>
           </div>
 
@@ -260,7 +305,7 @@ export const MessagesPage = () => {
           </ScrollArea>
         </div>
 
-        {/* Right - Message Detail */}
+        {/* Right - Message Detail + Reply */}
         <div className="flex-1 flex flex-col">
           {selectedMessage ? (
             <>
@@ -275,8 +320,8 @@ export const MessagesPage = () => {
                         {selectedMessage.direction === 'INCOMING' ? 'From:' : 'To:'}
                       </span>
                       <span>
-                        {selectedMessage.direction === 'INCOMING' 
-                          ? selectedMessage.sender_username 
+                        {selectedMessage.direction === 'INCOMING'
+                          ? selectedMessage.sender_username
                           : selectedMessage.recipient_username}
                       </span>
                     </div>
@@ -284,26 +329,58 @@ export const MessagesPage = () => {
                       {new Date(selectedMessage.message_date).toLocaleString()}
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleArchive(selectedMessage)}
-                    >
-                      <Archive className="h-4 w-4 mr-2" />
-                      Archive
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleToggleFlagged(selectedMessage, e);
-                      }}
-                    >
-                      <Star className={`h-4 w-4 mr-2 ${selectedMessage.is_flagged ? 'fill-yellow-400 text-yellow-400' : ''}`} />
-                      {selectedMessage.is_flagged ? 'Unflag' : 'Flag'}
-                    </Button>
+                  <div className="flex flex-col gap-2 items-end">
+                    <div className="flex gap-2">
+                      <Badge variant="outline">
+                        {selectedMessage.bucket === 'offers'
+                          ? 'OFFERS'
+                          : selectedMessage.bucket === 'cases'
+                          ? 'CASES & DISPUTES'
+                          : selectedMessage.bucket === 'ebay'
+                          ? 'EBAY MESSAGE'
+                          : 'OTHER'}
+                      </Badge>
+                      <Badge variant="outline">
+                        {selectedMessage.direction === 'INCOMING' ? 'Inbox' : 'Sent'}
+                      </Badge>
+                      {selectedMessage.is_read ? (
+                        <Badge variant="outline">Read</Badge>
+                      ) : (
+                        <Badge variant="default">Unread</Badge>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleToggleRead(selectedMessage)}
+                      >
+                        {selectedMessage.is_read ? 'Mark as unread' : 'Mark as read'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleArchive(selectedMessage)}
+                      >
+                        <Archive className="h-4 w-4 mr-2" />
+                        Archive
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleFlagged(selectedMessage, e);
+                        }}
+                      >
+                        <Star
+                          className={`h-4 w-4 mr-2 ${
+                            selectedMessage.is_flagged ? 'fill-yellow-400 text-yellow-400' : ''
+                          }`}
+                        />
+                        {selectedMessage.is_flagged ? 'Unflag' : 'Flag'}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -328,14 +405,63 @@ export const MessagesPage = () => {
                     )}
                   </div>
                 )}
-              </ScrollArea>
 
-              <div className="border-t p-4">
-                <Button className="w-full">
-                  <Send className="h-4 w-4 mr-2" />
-                  Reply
-                </Button>
-              </div>
+                {/* Reply box with AI draft */}
+                <div className="mt-6 border-t pt-4">
+                  <h3 className="font-semibold mb-2">Reply</h3>
+                  <textarea
+                    className="w-full border rounded-md p-2 text-sm min-h-[120px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Type your reply here..."
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                  />
+                  <div className="mt-3 flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={draftLoading}
+                      onClick={async () => {
+                        if (!selectedMessage) return;
+                        try {
+                          setDraftLoading(true);
+                          const resp = await apiClient.post(`/api/ai/messages/${selectedMessage.id}/draft`, {
+                            ebay_account_id: undefined,
+                            house_name: undefined,
+                          });
+                          setReplyText(resp.data?.draft || '');
+                        } catch (e) {
+                          console.error('Failed to draft reply with AI', e);
+                        } finally {
+                          setDraftLoading(false);
+                        }
+                      }}
+                    >
+                      {draftLoading ? 'Drafting…' : 'Draft with AI'}
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => {
+                        console.log('Send reply (stub):', {
+                          messageId: selectedMessage.id,
+                          replyText,
+                        });
+                        setReplyText('');
+                      }}
+                    >
+                      <Send className="h-4 w-4 mr-1" />
+                      Send
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setReplyText('')}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </ScrollArea>
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-400">

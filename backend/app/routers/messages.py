@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy import func, or_
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from app.database import get_db
 from app.db_models import Message
@@ -30,48 +31,135 @@ class MessageResponse(BaseModel):
     message_date: datetime
     order_id: Optional[str]
     listing_id: Optional[str]
+    bucket: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class MessagesListResponse(BaseModel):
+    items: List[MessageResponse]
+    total: int
+    counts: Dict[str, int]
 
 class MessageUpdate(BaseModel):
     is_read: Optional[bool] = None
     is_flagged: Optional[bool] = None
     is_archived: Optional[bool] = None
 
-@router.get("/", response_model=List[MessageResponse])
+def _classify_bucket(msg: Message) -> str:
+    """Classify a message into one of the Gmail-like buckets.
+
+    OFFERS, CASES & DISPUTES, EBAY MESSAGES, OTHER.
+    """
+    mt = (msg.message_type or "").upper()
+    subj = (msg.subject or "").lower()
+    raw = (msg.raw_data or "").lower() if hasattr(msg, "raw_data") else ""
+    sender = (msg.sender_username or "").lower()
+
+    # OFFERS
+    if mt in {"OFFER", "BEST_OFFER", "COUNTER_OFFER"} or "offer" in subj or "offer" in raw:
+        return "offers"
+
+    # CASES & DISPUTES
+    if mt in {"CASE", "INQUIRY", "RETURN", "CANCELLATION", "CANCEL_REQUEST", "UNPAID_ITEM"}:
+        return "cases"
+    if any(k in subj for k in ["case", "dispute"]) or (
+        ("opened" in subj or "closed" in subj) and "ebay" in sender
+    ):
+        return "cases"
+
+    # EBAY MESSAGES
+    if "ebay" in sender or mt == "EBAY_MESSAGE":
+        return "ebay"
+
+    return "other"
+
+
+@router.get("/", response_model=MessagesListResponse)
 async def get_messages(
     folder: str = Query("inbox", regex="^(inbox|sent|flagged|archived)$"),
     unread_only: bool = False,
     search: Optional[str] = None,
+    bucket: Optional[str] = Query("all", regex="^(all|offers|cases|ebay)$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Message).filter(Message.user_id == current_user.id)
-    
+    base_query = db.query(Message).filter(Message.user_id == current_user.id)
+
+    # Folder filter
     if folder == "inbox":
-        query = query.filter(Message.direction == "INCOMING", Message.is_archived == False)
+        base_query = base_query.filter(Message.direction == "INCOMING", Message.is_archived == False)
     elif folder == "sent":
-        query = query.filter(Message.direction == "OUTGOING")
+        base_query = base_query.filter(Message.direction == "OUTGOING")
     elif folder == "flagged":
-        query = query.filter(Message.is_flagged == True)
+        base_query = base_query.filter(Message.is_flagged == True)
     elif folder == "archived":
-        query = query.filter(Message.is_archived == True)
-    
+        base_query = base_query.filter(Message.is_archived == True)
+
+    # Unread filter
     if unread_only:
-        query = query.filter(Message.is_read == False)
-    
+        base_query = base_query.filter(Message.is_read == False)
+
+    # Search filter
     if search:
-        query = query.filter(
-            (Message.subject.contains(search)) |
-            (Message.body.contains(search)) |
-            (Message.sender_username.contains(search))
+        like = f"%{search}%"
+        base_query = base_query.filter(
+            or_(
+                Message.subject.ilike(like),
+                Message.body.ilike(like),
+                Message.sender_username.ilike(like),
+            )
         )
-    
-    messages = query.order_by(Message.message_date.desc()).offset(skip).limit(limit).all()
-    return messages
+
+    # For now, compute bucket classification in Python for current page and counts.
+    # Fetch a superset (without bucket restriction) for counts, then page.
+    all_msgs = base_query.order_by(Message.message_date.desc()).all()
+
+    counts = {"all": 0, "offers": 0, "cases": 0, "ebay": 0}
+    classified: List[Message] = []
+    for m in all_msgs:
+        b = _classify_bucket(m)
+        counts["all"] += 1
+        if b in counts:
+            counts[b] += 1
+        classified.append(m)
+
+    # Apply bucket filter in-memory
+    if bucket and bucket != "all":
+        classified = [m for m in classified if _classify_bucket(m) == bucket]
+
+    total = len(classified)
+    page_items = classified[skip : skip + limit]
+
+    # Attach bucket to each response object
+    items: List[MessageResponse] = []
+    for m in page_items:
+        b = _classify_bucket(m)
+        items.append(
+            MessageResponse(
+                id=m.id,
+                message_id=m.message_id,
+                thread_id=m.thread_id,
+                sender_username=m.sender_username,
+                recipient_username=m.recipient_username,
+                subject=m.subject,
+                body=m.body or "",
+                message_type=m.message_type,
+                is_read=m.is_read,
+                is_flagged=m.is_flagged,
+                is_archived=m.is_archived,
+                direction=m.direction,
+                message_date=m.message_date,
+                order_id=m.order_id,
+                listing_id=m.listing_id,
+                bucket=b,
+            )
+        )
+
+    return MessagesListResponse(items=items, total=total, counts=counts)
 
 @router.get("/{message_id}", response_model=MessageResponse)
 async def get_message(
@@ -125,22 +213,20 @@ async def get_message_stats(
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    from sqlalchemy import func
-    
     unread_count = db.query(func.count(Message.id)).filter(
         Message.user_id == current_user.id,
         Message.is_read == False,
         Message.direction == "INCOMING"
     ).scalar()
-    
+
     flagged_count = db.query(func.count(Message.id)).filter(
         Message.user_id == current_user.id,
         Message.is_flagged == True
     ).scalar()
-    
+
     return {
         "unread_count": unread_count,
-        "flagged_count": flagged_count
+        "flagged_count": flagged_count,
     }
 
 @router.post("/sync", status_code=202)

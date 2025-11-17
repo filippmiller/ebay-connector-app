@@ -1,19 +1,32 @@
 import apiClient from './client';
 
+export interface MessagesListResponse {
+  items: any[];
+  total: number;
+  counts: {
+    all: number;
+    offers: number;
+    cases: number;
+    ebay: number;
+  };
+}
+
 export const getMessages = async (
   folder: string = 'inbox',
   unreadOnly: boolean = false,
   search: string = '',
+  bucket: 'all' | 'offers' | 'cases' | 'ebay' = 'all',
   skip: number = 0,
   limit: number = 50
-) => {
+): Promise<MessagesListResponse> => {
   const params = new URLSearchParams({
     folder,
     unread_only: unreadOnly.toString(),
+    bucket,
     skip: skip.toString(),
     limit: limit.toString(),
   });
-  
+
   if (search) {
     params.append('search', search);
   }
