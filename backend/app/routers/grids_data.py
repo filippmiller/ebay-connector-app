@@ -317,8 +317,11 @@ def _get_messages_data(
 
     query = db.query(EbayMessage).filter(EbayMessage.user_id == current_user.id)
 
+    # Inbox: show all incoming messages regardless of archived flag so counts
+    # and UI remain consistent. Archived view can still be used to focus on
+    # archived messages only.
     if actual_folder == "inbox":
-        query = query.filter(EbayMessage.direction == "INCOMING", EbayMessage.is_archived == False)  # noqa: E712
+        query = query.filter(EbayMessage.direction == "INCOMING")
     elif actual_folder == "sent":
         query = query.filter(EbayMessage.direction == "OUTGOING")
     elif actual_folder == "flagged":

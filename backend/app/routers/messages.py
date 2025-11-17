@@ -90,8 +90,11 @@ async def get_messages(
     base_query = db.query(Message).filter(Message.user_id == current_user.id)
 
     # Folder filter
+    # Inbox: show all incoming messages regardless of archived flag so that
+    # badge counts and list contents line up. "Archived" can still be used to
+    # focus on archived messages only.
     if folder == "inbox":
-        base_query = base_query.filter(Message.direction == "INCOMING", Message.is_archived == False)
+        base_query = base_query.filter(Message.direction == "INCOMING")
     elif folder == "sent":
         base_query = base_query.filter(Message.direction == "OUTGOING")
     elif folder == "flagged":
