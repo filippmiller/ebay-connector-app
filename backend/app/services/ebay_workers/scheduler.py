@@ -123,10 +123,10 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
 
 
 async def run_cycle_for_all_accounts() -> None:
-    """Run one sync cycle for all accounts that have any workers configured.
+    """Run one sync cycle for all *active* eBay accounts.
 
-    This is intended to be triggered by an external scheduler (Railway cron,
-    Cloudflare, etc.) approximately every 5 minutes.
+    This is the core entry point used by the background scheduler loop. It is
+    safe to call from an external cron as well (e.g. Railway/Cloudflare).
     """
 
     db = _get_db()
@@ -135,15 +135,32 @@ async def run_cycle_for_all_accounts() -> None:
             logger.info("Global workers_enabled=false – skipping cycle for all accounts")
             return
 
-        accounts: List[EbayAccount] = ebay_account_service.get_accounts_by_org(db, org_id="*", active_only=True)  # placeholder
-        # NOTE: ebay_account_service currently expects org_id; for now we can
-        # simply fetch all accounts directly until we add a dedicated query.
+        # Fetch all active ebay accounts. Each account will have its own set of
+        # worker sync states (orders, transactions, offers, messages, etc.).
+        accounts: List[EbayAccount] = (
+            db.query(EbayAccount)
+            .filter(EbayAccount.is_active == True)  # noqa: E712
+            .all()
+        )
         if not accounts:
+            logger.info("No active eBay accounts found – skipping worker cycle")
             return
     finally:
         db.close()
 
-    # In this initial implementation we will not fan out; the router will call
-    # run_cycle_for_account for specific accounts. A full "all accounts" cycle
-    # can be wired later once we add an efficient query for all active accounts.
-    logger.info("run_cycle_for_all_accounts is currently a placeholder – call run_cycle_for_account per account")
+    for account in accounts:
+        try:
+            logger.info(
+                "Running worker cycle for account id=%s ebay_user_id=%s house_name=%s",
+                account.id,
+                getattr(account, "ebay_user_id", "unknown"),
+                getattr(account, "house_name", None),
+            )
+            await run_cycle_for_account(account.id)
+        except Exception as exc:
+            logger.error(
+                "Worker cycle failed for account id=%s: %s",
+                account.id,
+                exc,
+                exc_info=True,
+            )
