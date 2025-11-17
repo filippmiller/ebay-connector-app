@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List
-from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -40,8 +39,8 @@ def _build_url(config: MssqlConnectionConfig) -> URL:
     accordingly (e.g. ``use_tls=1`` if supported).
     """
 
-    username = quote_plus(config.username)
-    password = quote_plus(config.password)
+    username = config.username
+    password = config.password
 
     # Base query params; charset=utf8 is recommended for SQL Server.
     query: Dict[str, Any] = {
