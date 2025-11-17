@@ -2149,10 +2149,7 @@ class EbayService:
                     }
 
                 event_logger.log_info(
-                    "→ Requesting page %s: GET /sell/finances/v1/transaction?limit=%s&offset=%s",
-                    current_page,
-                    limit,
-                    offset,
+                    f"→ Requesting page {current_page}: GET /sell/finances/v1/transaction?limit={limit}&offset={offset}"
                 )
 
                 request_start = time.time()
@@ -2220,10 +2217,7 @@ class EbayService:
                 )
 
                 event_logger.log_info(
-                    "← Response: 200 OK (%sms) - Received %s transactions (Total available: %s)",
-                    request_duration,
-                    len(transactions),
-                    total,
+                    f"← Response: 200 OK ({request_duration}ms) - Received {len(transactions)} transactions (Total available: {total})"
                 )
 
                 # Early exit if total == 0 (no transactions in window)
@@ -2263,7 +2257,7 @@ class EbayService:
                     }
 
                 event_logger.log_info(
-                    "→ Storing %s finances transactions in database...", len(transactions)
+                    f"→ Storing {len(transactions)} finances transactions in database..."
                 )
                 store_start = time.time()
                 batch_stored = 0
@@ -2279,9 +2273,7 @@ class EbayService:
                 store_duration = int((time.time() - store_start) * 1000)
 
                 event_logger.log_info(
-                    "← Database: Stored %s finances transactions (%sms)",
-                    batch_stored,
-                    store_duration,
+                    f"← Database: Stored {batch_stored} finances transactions ({store_duration}ms)"
                 )
 
                 event_logger.log_progress(
