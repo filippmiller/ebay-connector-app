@@ -27,6 +27,40 @@ interface Message {
   bucket?: 'offers' | 'cases' | 'ebay' | 'other';
 }
 
+const classifyBucket = (msg: Message): 'offers' | 'cases' | 'ebay' | 'other' => {
+  const mt = (msg.message_type || '').toUpperCase();
+  const subj = (msg.subject || '').toLowerCase();
+  const body = (msg.body || '').toLowerCase();
+  const sender = (msg.sender_username || '').toLowerCase();
+
+  // OFFERS – any message that clearly looks like an offer
+  if (
+    mt.includes('OFFER') ||
+    subj.includes('offer') ||
+    body.includes('offer')
+  ) {
+    return 'offers';
+  }
+
+  // CASES & DISPUTES – keywords in subject/body or certain message types
+  if (
+    ['CASE', 'INQUIRY', 'RETURN', 'CANCELLATION', 'UNPAID'].some((k) => mt.includes(k)) ||
+    subj.includes('case') ||
+    subj.includes('dispute') ||
+    body.includes('case') ||
+    body.includes('dispute')
+  ) {
+    return 'cases';
+  }
+
+  // EBAY MESSAGES – anything obviously from eBay system
+  if (sender.includes('ebay') || mt.includes('EBAY')) {
+    return 'ebay';
+  }
+
+  return 'other';
+};
+
 interface MessageStats {
   unread_count: number;
   flagged_count: number;
@@ -62,31 +96,37 @@ export const MessagesPage = () => {
     try {
       setLoading(true);
 
-      // Map UI bucket to API bucket. "primary" reuses "all" data but filters out system messages on the client.
+      // Map UI bucket to API bucket. "primary" reuses "all" data but we compute buckets/counts on the client.
       const apiBucket: 'all' | 'offers' | 'cases' | 'ebay' =
         selectedBucket === 'primary' ? 'all' : selectedBucket;
 
       const data: MessagesListResponse = await getMessages(selectedFolder, false, searchQuery, apiBucket);
       const rawItems: Message[] = Array.isArray(data.items) ? (data.items as Message[]) : [];
 
+      const itemsWithBuckets = rawItems.map((m) => ({ ...m, bucket: classifyBucket(m) }));
+
+      // Compute counts locally so we don't depend on backend version.
+      const counts = {
+        primary: 0,
+        offers: 0,
+        cases: 0,
+        ebay: 0,
+      };
+
+      for (const m of itemsWithBuckets) {
+        if (m.bucket === 'offers') counts.offers += 1;
+        else if (m.bucket === 'cases') counts.cases += 1;
+        else if (m.bucket === 'ebay') counts.ebay += 1;
+        else counts.primary += 1;
+      }
+
       const filteredItems =
         selectedBucket === 'primary'
-          ? rawItems.filter((m) => (m.bucket ?? 'other') === 'other')
-          : rawItems;
+          ? itemsWithBuckets.filter((m) => m.bucket === 'other')
+          : itemsWithBuckets.filter((m) => m.bucket === apiBucket || apiBucket === 'all');
 
       setMessages(filteredItems);
-
-      const primaryCount = Math.max(
-        0,
-        (data.counts.all || 0) - (data.counts.offers || 0) - (data.counts.cases || 0) - (data.counts.ebay || 0),
-      );
-
-      setBucketCounts({
-        primary: primaryCount,
-        offers: data.counts.offers ?? 0,
-        cases: data.counts.cases ?? 0,
-        ebay: data.counts.ebay ?? 0,
-      });
+      setBucketCounts(counts);
     } catch (error) {
       console.error('Failed to load messages:', error);
       setMessages([]);
@@ -150,12 +190,7 @@ export const MessagesPage = () => {
     }
   };
 
-  const visibleMessages = useMemo(() => {
-    if (selectedBucket === 'primary') {
-      return messages.filter((m) => (m.bucket ?? 'other') === 'other');
-    }
-    return messages;
-  }, [messages, selectedBucket]);
+  const visibleMessages = useMemo(() => messages, [messages]);
 
   const handleAddCustomFolder = () => {
     const name = window.prompt('Folder name');
