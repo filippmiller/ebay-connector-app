@@ -50,21 +50,20 @@ When deploying to Railway with Nixpacks:
    This typically requires adding Microsoft's apt repository. One common
    pattern is to add a prebuild script (via Railway's `NIXPACKS_PREBUILD`
    environment variable) which runs a shell script in the repo to install
-   the driver. Example (pseudo-code):
+   the driver.
 
-   ```bash
-   #!/usr/bin/env bash
-   set -euo pipefail
+   This repository already includes such a script:
 
-   curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
-   curl https://packages.microsoft.com/config/debian/12/prod.list \
-     > /etc/apt/sources.list.d/mssql-release.list
+   - Path: `scripts/install_msodbc18.sh`
+   - Recommended Railway variable:
 
-   apt-get update
-   ACCEPT_EULA=Y apt-get install -y msodbcsql18
-   ```
+     ```text
+     NIXPACKS_PREBUILD=bash scripts/install_msodbc18.sh
+     ```
 
-   Adjust the distro identifier (`debian/12`) if your base image differs.
+   The script defaults to the Microsoft repo config for Debian 11
+   (`debian/11`). You can override this by setting `MSODBCSQL_DISTRO`,
+   for example `debian/12`.
 
 ### Admin MSSQL test-connection endpoint
 

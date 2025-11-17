@@ -54,7 +54,21 @@ async def test_connection_endpoint(
         else:
             safe_message = raw_message
 
-        return {"ok": False, "error": safe_message, "raw_error": raw_message}
+        # Best-effort introspection of installed ODBC drivers for debugging.
+        drivers: List[str] = []
+        try:
+            import pyodbc  # type: ignore[import]
+
+            drivers = list(pyodbc.drivers())  # type: ignore[call-arg]
+        except Exception:
+            drivers = []
+
+        return {
+            "ok": False,
+            "error": safe_message,
+            "raw_error": raw_message,
+            "drivers": drivers,
+        }
 
 
 @router.post("/schema-tree")

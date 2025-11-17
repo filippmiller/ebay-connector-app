@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import URL, create_engine, Engine
 
+try:
+    import pyodbc  # type: ignore[import]
+except Exception:  # pragma: no cover - optional debug dependency at runtime
+    pyodbc = None
+
 # Default ODBC driver name for SQL Server on Linux containers.
 # Can be overridden via MSSQL_ODBC_DRIVER env var if your system uses a different name.
 MSSQL_ODBC_DRIVER_NAME = os.getenv("MSSQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
@@ -73,9 +78,17 @@ def test_connection(config: MssqlConnectionConfig) -> Dict[str, Any]:
         version_row = version_result.fetchone()
         server_version = str(version_row[0]) if version_row else "unknown"
 
+    drivers: List[str] = []
+    if pyodbc is not None:  # pragma: no cover - depends on system ODBC setup
+        try:
+            drivers = list(pyodbc.drivers())  # type: ignore[call-arg]
+        except Exception:
+            drivers = []
+
     return {
         "server_version": server_version,
         "driver": MSSQL_ODBC_DRIVER_NAME,
+        "available_drivers": drivers,
     }
 
 
