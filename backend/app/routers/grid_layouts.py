@@ -111,6 +111,22 @@ CASES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
 ]
 
+FINANCES_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="booking_date", label="Date", type="datetime", width_default=180),
+  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  ColumnMeta(name="transaction_type", label="Type", type="string", width_default=140),
+  ColumnMeta(name="transaction_status", label="Status", type="string", width_default=140),
+  ColumnMeta(name="order_id", label="Order ID", type="string", width_default=200),
+  ColumnMeta(name="transaction_id", label="Transaction ID", type="string", width_default=220),
+  ColumnMeta(name="transaction_amount_value", label="Amount", type="money", width_default=140),
+  ColumnMeta(name="transaction_amount_currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="final_value_fee", label="Final value fee", type="money", width_default=140),
+  ColumnMeta(name="promoted_listing_fee", label="Promoted listing fee", type="money", width_default=160),
+  ColumnMeta(name="shipping_label_fee", label="Shipping label fee", type="money", width_default=160),
+  ColumnMeta(name="other_fees", label="Other fees", type="money", width_default=140),
+  ColumnMeta(name="total_fees", label="Total fees", type="money", width_default=140),
+]
+
 
 GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "orders": {
@@ -197,6 +213,23 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "open_date", "direction": "desc"},
     },
+    "finances": {
+        "visible_columns": [
+            "booking_date",
+            "ebay_account_id",
+            "transaction_type",
+            "transaction_status",
+            "order_id",
+            "transaction_id",
+            "transaction_amount_value",
+            "transaction_amount_currency",
+            "final_value_fee",
+            "promoted_listing_fee",
+            "shipping_label_fee",
+            "total_fees",
+        ],
+        "sort": {"column": "booking_date", "direction": "desc"},
+    },
 }
 
 
@@ -213,6 +246,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return ACTIVE_INVENTORY_COLUMNS_META
     if grid_key == "cases":
         return CASES_COLUMNS_META
+    if grid_key == "finances":
+        return FINANCES_COLUMNS_META
     return []
 
 def _allowed_columns_for_grid(grid_key: str) -> List[str]:

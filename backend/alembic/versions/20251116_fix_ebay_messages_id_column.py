@@ -1,7 +1,7 @@
 """Fix ebay_messages schema to match SQLAlchemy model
 
 Revision ID: fix_ebay_messages_id_column_001
-Revises: add_active_inventory_snapshot_001
+Revises: active_inventory_snapshot_01
 Create Date: 2025-11-16
 
 """
@@ -12,7 +12,7 @@ from uuid import uuid4
 
 # revision identifiers, used by Alembic.
 revision = 'fix_ebay_messages_id_column_001'
-down_revision = 'add_active_inventory_snapshot_001'
+down_revision = 'active_inventory_snapshot_01'
 branch_labels = None
 depends_on = None
 

@@ -34,6 +34,8 @@ async def get_grid_data(
     sku: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
+    # Finances-specific filters
+    transaction_type: Optional[str] = Query(None),
     # Messages-specific filters (mirroring /messages)
     folder: Optional[str] = Query(None),
     unread_only: bool = False,
@@ -66,6 +68,8 @@ async def get_grid_data(
         default_sort_col = "message_date"
     elif grid_key == "offers":
         default_sort_col = "created_at"
+    elif grid_key == "finances":
+        default_sort_col = "booking_date"
 
     sort_column = sort_by if sort_by in allowed_cols else default_sort_col
 
@@ -141,6 +145,25 @@ async def get_grid_data(
                 sort_dir,
                 state=state,
                 buyer=buyer,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "finances":
+        # Finances transactions live in ebay_finances_transactions / ebay_finances_fees
+        # and are always backed by the Postgres SQLAlchemy session.
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_finances_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                transaction_type=transaction_type,
                 from_date=from_date,
                 to_date=to_date,
             )
@@ -622,6 +645,219 @@ def _get_cases_data(
         rows_all = [r for r in rows_all if _within_window(r)]
 
     # Sort
+    if sort_column and sort_column in {"open_date", "status", "buyer_username", "amount", "respond_by_date"}:
+        reverse = sort_dir == "desc"
+        rows_all.sort(key=lambda r: r.get(sort_column) or "", reverse=reverse)
+    else:
+        rows_all.sort(key=lambda r: r.get("open_date") or "", reverse=True)
+
+    total = len(rows_all)
+    page_rows = rows_all[offset : offset + limit]
+
+    projected: List[Dict[str, Any]] = []
+    for r in page_rows:
+        projected.append({col: r.get(col) for col in selected_cols})
+
+    return {
+        "rows": projected,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_finances_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    transaction_type: Optional[str],
+    from_date: Optional[str],
+    to_date: Optional[str],
+) -> Dict[str, Any]:
+    """Finances ledger grid backed by ebay_finances_transactions + fees.
+
+    This endpoint exposes raw Finances transactions with per-transaction fee
+    aggregates, filtered to the current user's eBay accounts.
+    """
+    from decimal import Decimal
+    from datetime import datetime as dt_type
+    from sqlalchemy import text as sa_text
+
+    # Build dynamic WHERE clause joined to ebay_accounts for org-level scoping
+    where_clauses = ["a.org_id = :user_id"]
+    params: Dict[str, Any] = {"user_id": current_user.id}
+
+    if transaction_type:
+        where_clauses.append("t.transaction_type = :txn_type")
+        params["txn_type"] = transaction_type
+
+    if from_date:
+        where_clauses.append("t.booking_date >= :from_date")
+        params["from_date"] = from_date
+
+    if to_date:
+        where_clauses.append("t.booking_date <= :to_date")
+        params["to_date"] = to_date
+
+    where_sql = " AND ".join(where_clauses)
+
+    # Count query
+    count_sql = sa_text(
+        f"""
+        SELECT COUNT(*) AS cnt
+        FROM ebay_finances_transactions t
+        JOIN ebay_accounts a ON a.id = t.ebay_account_id
+        WHERE {where_sql}
+        """
+    )
+    total = db.execute(count_sql, params).scalar() or 0
+
+    # Sorting
+    allowed_sort_cols = {
+        "booking_date",
+        "transaction_type",
+        "transaction_status",
+        "transaction_amount_value",
+        "transaction_amount_currency",
+        "order_id",
+        "transaction_id",
+    }
+    order_clause = ""
+    if sort_column in allowed_sort_cols:
+        direction = "DESC" if sort_dir == "desc" else "ASC"
+        order_clause = f"ORDER BY t.{sort_column} {direction}"
+
+    data_sql = sa_text(
+        f"""
+        SELECT
+            t.ebay_account_id,
+            t.ebay_user_id,
+            t.transaction_id,
+            t.transaction_type,
+            t.transaction_status,
+            t.booking_date,
+            t.transaction_amount_value,
+            t.transaction_amount_currency,
+            t.order_id,
+            t.order_line_item_id,
+            t.payout_id,
+            t.seller_reference,
+            t.transaction_memo
+        FROM ebay_finances_transactions t
+        JOIN ebay_accounts a ON a.id = t.ebay_account_id
+        WHERE {where_sql}
+        {order_clause}
+        LIMIT :limit OFFSET :offset
+        """
+    )
+
+    params_with_paging = dict(params)
+    params_with_paging["limit"] = limit
+    params_with_paging["offset"] = offset
+
+    result = db.execute(data_sql, params_with_paging)
+    rows_db = [dict(row._mapping) for row in result]
+
+    # Collect transaction_ids for fee lookup
+    txn_ids = [r["transaction_id"] for r in rows_db]
+    fees_by_txn: Dict[str, List[Dict[str, Any]]] = {}
+    if txn_ids:
+        placeholders = ",".join(f":tid{i}" for i in range(len(txn_ids)))
+        fee_sql = sa_text(
+            f"""
+            SELECT transaction_id, fee_type, amount_value, amount_currency
+            FROM ebay_finances_fees
+            WHERE transaction_id IN ({placeholders})
+            """
+        )
+        fee_params = {f"tid{i}": txn_ids[i] for i in range(len(txn_ids))}
+        fee_result = db.execute(fee_sql, fee_params)
+        for row in fee_result:
+            m = row._mapping
+            tid = m["transaction_id"]
+            fees_by_txn.setdefault(tid, []).append(dict(m))
+
+    def _aggregate_fees(tid: str) -> Dict[str, Optional[float]]:
+        rows = fees_by_txn.get(tid, [])
+        final_value = Decimal("0")
+        promoted = Decimal("0")
+        shipping = Decimal("0")
+        other = Decimal("0")
+
+        for f in rows:
+            ftype = (f.get("fee_type") or "").upper()
+            val = f.get("amount_value")
+            if val is None:
+                continue
+            if not isinstance(val, Decimal):
+                try:
+                    val = Decimal(str(val))
+                except Exception:
+                    continue
+
+            if "FINAL_VALUE_FEE" in ftype:
+                final_value += val
+            elif "PROMOTED_LISTING" in ftype:
+                promoted += val
+            elif "SHIPPING_LABEL" in ftype:
+                shipping += val
+            else:
+                other += val
+
+        total_local = final_value + promoted + shipping + other
+
+        def _to_float(d: Decimal) -> Optional[float]:
+            return float(d) if d != 0 else None
+
+        return {
+            "final_value_fee": _to_float(final_value),
+            "promoted_listing_fee": _to_float(promoted),
+            "shipping_label_fee": _to_float(shipping),
+            "other_fees": _to_float(other),
+            "total_fees": _to_float(total_local),
+        }
+
+    def _serialize(row: Dict[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for col in selected_cols:
+            if col in {
+                "final_value_fee",
+                "promoted_listing_fee",
+                "shipping_label_fee",
+                "other_fees",
+                "total_fees",
+            }:
+                # Filled from fee aggregates below
+                continue
+            value = row.get(col)
+            if isinstance(value, dt_type):
+                out[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                out[col] = float(value)
+            else:
+                out[col] = value
+
+        agg = _aggregate_fees(row["transaction_id"])
+        for k, v in agg.items():
+            if k in selected_cols:
+                out[k] = v
+
+        return out
+
+    rows = [_serialize(r) for r in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
     if sort_column and sort_column in {"open_date", "status", "buyer_username", "amount", "respond_by_date"}:
         reverse = sort_dir == "desc"
         rows_all.sort(key=lambda r: r.get(sort_column) or "", reverse=reverse)

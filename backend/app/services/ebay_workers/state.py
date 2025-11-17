@@ -18,6 +18,9 @@ API_FAMILIES = [
     "disputes",
     "offers",
     "messages",
+    "active_inventory",
+    "cases",
+    "finances",
 ]
 
 

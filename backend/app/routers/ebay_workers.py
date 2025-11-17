@@ -25,6 +25,7 @@ from app.services.ebay_workers.offers_worker import run_offers_worker_for_accoun
 from app.services.ebay_workers.messages_worker import run_messages_worker_for_account
 from app.services.ebay_workers.active_inventory_worker import run_active_inventory_worker_for_account
 from app.services.ebay_workers.cases_worker import run_cases_worker_for_account
+from app.services.ebay_workers.finances_worker import run_finances_worker_for_account
 from app.services.ebay_workers.runs import get_active_run
 
 
@@ -92,6 +93,7 @@ async def get_worker_config(
         "messages",
         "active_inventory",
         "cases",
+        "finances",
     ]
     ebay_user_id = account.ebay_user_id or "unknown"
     for api_family in ensured_families:
@@ -207,7 +209,7 @@ async def run_worker_once(
     if not are_workers_globally_enabled(db):
         return {"status": "skipped", "reason": "workers_disabled"}
 
-    if api not in {"orders", "transactions", "offers", "messages", "active_inventory", "cases"}:
+    if api not in {"orders", "transactions", "offers", "messages", "active_inventory", "cases", "finances"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
 
     account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
@@ -235,6 +237,9 @@ async def run_worker_once(
         elif api == "cases":
             run_id = await run_cases_worker_for_account(account_id)
             api_family = "cases"
+        elif api == "finances":
+            run_id = await run_finances_worker_for_account(account_id)
+            api_family = "finances"
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
     except HTTPException:

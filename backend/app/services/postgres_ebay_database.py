@@ -697,6 +697,204 @@ class PostgresEbayDatabase:
         finally:
             session.close()
 
+    def upsert_finances_transaction(
+        self,
+        user_id: str,
+        transaction: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a Finances transaction and its fee lines.
+
+        This writes into ebay_finances_transactions and ebay_finances_fees.
+        Existing fee rows for the (account, transaction_id) pair are replaced.
+        """
+        session = self._get_session()
+
+        try:
+            txn_id = transaction.get("transactionId")
+            if not txn_id:
+                logger.error("Finances transaction missing transactionId")
+                return False
+
+            now = datetime.utcnow()
+
+            txn_type = transaction.get("transactionType")
+            txn_status = transaction.get("transactionStatus")
+            booking_date = transaction.get("transactionDate")
+
+            amount_obj = transaction.get("amount") or {}
+            amount_value = amount_obj.get("value")
+            amount_currency = amount_obj.get("currency")
+
+            # bookingEntry indicates CREDIT (money to seller) vs DEBIT (money from seller)
+            booking_entry = (transaction.get("bookingEntry") or "").upper()
+            signed_amount = None
+            if amount_value is not None:
+                try:
+                    from decimal import Decimal
+
+                    val = Decimal(str(amount_value))
+                    if booking_entry == "DEBIT":
+                        val = -val
+                    signed_amount = val
+                except Exception:
+                    logger.warning(f"Could not parse finances amount '{amount_value}' for txn {txn_id}")
+
+            order_id = transaction.get("orderId")
+            # For now, take the first order line item id if present.
+            order_line_items = transaction.get("orderLineItems") or []
+            order_line_item_id = None
+            if order_line_items:
+                try:
+                    order_line_item_id = (order_line_items[0] or {}).get("lineItemId")
+                except Exception:
+                    order_line_item_id = None
+
+            payout_id = transaction.get("payoutId")
+            seller_reference = transaction.get("salesRecordReference")
+            txn_memo = transaction.get("transactionMemo")
+
+            query_txn = text(
+                """
+                INSERT INTO ebay_finances_transactions
+                (ebay_account_id, ebay_user_id,
+                 transaction_id, transaction_type, transaction_status,
+                 booking_date, transaction_amount_value, transaction_amount_currency,
+                 order_id, order_line_item_id, payout_id, seller_reference,
+                 transaction_memo, raw_payload,
+                 created_at, updated_at)
+                VALUES (:ebay_account_id, :ebay_user_id,
+                        :transaction_id, :transaction_type, :transaction_status,
+                        :booking_date, :transaction_amount_value, :transaction_amount_currency,
+                        :order_id, :order_line_item_id, :payout_id, :seller_reference,
+                        :transaction_memo, :raw_payload,
+                        :created_at, :updated_at)
+                ON CONFLICT (ebay_account_id, transaction_id)
+                DO UPDATE SET
+                    transaction_type = EXCLUDED.transaction_type,
+                    transaction_status = EXCLUDED.transaction_status,
+                    booking_date = EXCLUDED.booking_date,
+                    transaction_amount_value = EXCLUDED.transaction_amount_value,
+                    transaction_amount_currency = EXCLUDED.transaction_amount_currency,
+                    order_id = EXCLUDED.order_id,
+                    order_line_item_id = EXCLUDED.order_line_item_id,
+                    payout_id = EXCLUDED.payout_id,
+                    seller_reference = EXCLUDED.seller_reference,
+                    transaction_memo = EXCLUDED.transaction_memo,
+                    raw_payload = EXCLUDED.raw_payload,
+                    ebay_user_id = EXCLUDED.ebay_user_id,
+                    updated_at = EXCLUDED.updated_at
+                """
+            )
+
+            session.execute(
+                query_txn,
+                {
+                    "ebay_account_id": ebay_account_id,
+                    "ebay_user_id": ebay_user_id,
+                    "transaction_id": txn_id,
+                    "transaction_type": txn_type,
+                    "transaction_status": txn_status,
+                    "booking_date": booking_date,
+                    "transaction_amount_value": signed_amount,
+                    "transaction_amount_currency": amount_currency,
+                    "order_id": order_id,
+                    "order_line_item_id": order_line_item_id,
+                    "payout_id": payout_id,
+                    "seller_reference": seller_reference,
+                    "transaction_memo": txn_memo,
+                    "raw_payload": json.dumps(transaction),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+            # Replace fees for this transaction/account
+            delete_fees = text(
+                "DELETE FROM ebay_finances_fees WHERE ebay_account_id = :ebay_account_id AND transaction_id = :transaction_id"
+            )
+            session.execute(delete_fees, {"ebay_account_id": ebay_account_id, "transaction_id": txn_id})
+
+            # Collect fee lines from orderLineItems.marketplaceFees and donations
+            fee_rows = []
+
+            for oli in order_line_items:
+                if not oli:
+                    continue
+                for fee in (oli.get("marketplaceFees") or []):
+                    if not fee:
+                        continue
+                    fee_rows.append(fee)
+                for donation in (oli.get("donations") or []):
+                    if not donation:
+                        continue
+                    fee_rows.append(donation)
+
+            # Some NON_SALE_CHARGE / other fee-only transactions expose feeType at the top level.
+            top_fee_type = transaction.get("feeType")
+            if top_fee_type:
+                top_amount = transaction.get("amount") or {}
+                fee_rows.append(
+                    {
+                        "feeType": top_fee_type,
+                        "amount": top_amount,
+                    }
+                )
+
+            if fee_rows:
+                insert_fee = text(
+                    """
+                    INSERT INTO ebay_finances_fees
+                    (ebay_account_id, transaction_id, fee_type,
+                     amount_value, amount_currency, raw_payload,
+                     created_at, updated_at)
+                    VALUES (:ebay_account_id, :transaction_id, :fee_type,
+                            :amount_value, :amount_currency, :raw_payload,
+                            :created_at, :updated_at)
+                    """
+                )
+
+                from decimal import Decimal
+
+                for fee in fee_rows:
+                    fee_type = fee.get("feeType")
+                    amount_obj = fee.get("amount") or {}
+                    raw_val = amount_obj.get("value")
+                    cur = amount_obj.get("currency")
+                    amt_val = None
+                    if raw_val is not None:
+                        try:
+                            amt_val = Decimal(str(raw_val))
+                        except Exception:
+                            logger.warning(
+                                f"Could not parse fee amount '{raw_val}' for txn {txn_id} fee_type={fee_type}"
+                            )
+
+                    session.execute(
+                        insert_fee,
+                        {
+                            "ebay_account_id": ebay_account_id,
+                            "transaction_id": txn_id,
+                            "fee_type": fee_type,
+                            "amount_value": amt_val,
+                            "amount_currency": cur,
+                            "raw_payload": json.dumps(fee),
+                            "created_at": now,
+                            "updated_at": now,
+                        },
+                    )
+
+            session.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error upserting finances transaction {transaction.get('transactionId')}: {str(e)}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
     def upsert_offer(
         self,
         user_id: str,

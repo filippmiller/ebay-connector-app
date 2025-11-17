@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2 } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
+import { DataGridPage } from '@/components/DataGridPage';
 
 export default function FinancialsPage() {
   const [summary, setSummary] = useState({
@@ -13,7 +14,12 @@ export default function FinancialsPage() {
     refunds: 0
   });
   const [loading, setLoading] = useState(true);
-  
+
+  // Filters for the Finances ledger grid
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [transactionType, setTransactionType] = useState('');
+
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
@@ -38,12 +44,20 @@ export default function FinancialsPage() {
     }
   };
 
+  const financesExtraParams = useMemo(() => {
+    const params: Record<string, string> = {};
+    if (fromDate) params.from = fromDate;
+    if (toDate) params.to = toDate;
+    if (transactionType) params.transaction_type = transactionType;
+    return params;
+  }, [fromDate, toDate, transactionType]);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
       <div className="w-full pt-16 px-4 py-6">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-6">Financials</h1>
+          <h1 className="text-3xl font-bold mb-6">Finances</h1>
 
           {loading ? (
             <div className="flex justify-center p-12">
@@ -53,6 +67,7 @@ export default function FinancialsPage() {
             <Tabs defaultValue="summary" className="w-full">
               <TabsList>
                 <TabsTrigger value="summary">Summary</TabsTrigger>
+                <TabsTrigger value="ledger">Ledger</TabsTrigger>
                 <TabsTrigger value="fees">Fees</TabsTrigger>
                 <TabsTrigger value="payouts">Payouts</TabsTrigger>
               </TabsList>
@@ -75,6 +90,52 @@ export default function FinancialsPage() {
                     <div className="text-sm text-gray-600">Payouts</div>
                     <div className="text-2xl font-bold">${summary.payouts_total.toFixed(2)}</div>
                   </Card>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="ledger">
+                <div className="mt-6 space-y-4">
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+                      <input
+                        type="date"
+                        className="border rounded px-2 py-1 text-sm"
+                        value={fromDate}
+                        onChange={(e) => setFromDate(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+                      <input
+                        type="date"
+                        className="border rounded px-2 py-1 text-sm"
+                        value={toDate}
+                        onChange={(e) => setToDate(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Transaction type</label>
+                      <select
+                        className="border rounded px-2 py-1 text-sm"
+                        value={transactionType}
+                        onChange={(e) => setTransactionType(e.target.value)}
+                      >
+                        <option value="">All</option>
+                        <option value="SALE">SALE</option>
+                        <option value="REFUND">REFUND</option>
+                        <option value="SHIPPING_LABEL">SHIPPING_LABEL</option>
+                        <option value="NON_SALE_CHARGE">NON_SALE_CHARGE</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="h-[600px]">
+                    <DataGridPage
+                      gridKey="finances"
+                      title="Finances ledger"
+                      extraParams={financesExtraParams}
+                    />
+                  </div>
                 </div>
               </TabsContent>
               

@@ -1971,6 +1971,407 @@ class EbayService:
         finally:
             event_logger.close()
 
+    async def sync_finances_transactions(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronize Finances transactions into Postgres tables.
+
+        This mirrors ``sync_all_transactions`` but writes into
+        ``ebay_finances_transactions`` / ``ebay_finances_fees`` using
+        ``PostgresEbayDatabase.upsert_finances_transaction``.
+        """
+        from app.services.postgres_ebay_database import PostgresEbayDatabase
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
+
+        fin_db = PostgresEbayDatabase()
+
+        # Use provided run_id if available, otherwise create new one
+        event_logger = SyncEventLogger(user_id, "finances", run_id=run_id)
+        job_id = fin_db.create_sync_job(user_id, "finances")
+        start_time = time.time()
+
+        try:
+            total_fetched = 0
+            total_stored = 0
+
+            from datetime import datetime, timedelta, timezone
+
+            # Determine effective date range
+            now_utc = datetime.now(timezone.utc)
+
+            def _parse_iso(dt_str: str) -> Optional[datetime]:
+                try:
+                    # Support both "...Z" and "+00:00" style
+                    if dt_str.endswith("Z"):
+                        dt_str = dt_str.replace("Z", "+00:00")
+                    return datetime.fromisoformat(dt_str)
+                except Exception:
+                    return None
+
+            end_date: datetime
+            if window_to:
+                parsed_to = _parse_iso(window_to)
+                end_date = parsed_to or now_utc
+            else:
+                end_date = now_utc
+
+            if window_from:
+                parsed_from = _parse_iso(window_from)
+                if parsed_from:
+                    start_date = parsed_from
+                else:
+                    start_date = end_date - timedelta(days=90)
+            else:
+                start_date = end_date - timedelta(days=90)
+
+            limit = TRANSACTIONS_PAGE_LIMIT
+            offset = 0
+            has_more = True
+            current_page = 0
+            max_pages = 200  # Safety limit to prevent infinite loops
+
+            # Get user identity for logging "who we are"
+            identity = await self.get_user_identity(access_token)
+            username = identity.get("username", "unknown")
+            identity_ebay_user_id = identity.get("userId", "unknown")
+
+            effective_ebay_user_id = ebay_user_id or identity_ebay_user_id
+
+            # Log Identity API errors if any
+            if identity.get("error"):
+                event_logger.log_error(f"Identity API error: {identity.get('error')}")
+                event_logger.log_warning(
+                    "⚠️ Token may be invalid or missing required scopes. Please reconnect to eBay."
+                )
+
+            days_span = (end_date - start_date).days
+            event_logger.log_start(
+                f"Starting Finances transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}"
+            )
+            event_logger.log_info("=== WHO WE ARE ===")
+            event_logger.log_info(
+                f"Connected as: {username} (eBay UserID: {effective_ebay_user_id})"
+            )
+            event_logger.log_info(f"Environment: {settings.EBAY_ENVIRONMENT}")
+            event_logger.log_info(
+                f"API Configuration: Finances API v1, max batch size: {limit} transactions per request"
+            )
+            event_logger.log_info(
+                f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} (~{days_span} days)"
+            )
+            event_logger.log_info(
+                f"Window: {start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
+            )
+            event_logger.log_info(f"Safety limit: max {max_pages} pages")
+            logger.info(
+                f"Starting finances transaction sync for user {user_id} ({username}) with limit={limit}, "
+                f"window={start_date.isoformat()}..{end_date.isoformat()}"
+            )
+
+            await asyncio.sleep(0.5)
+
+            from app.services.sync_event_logger import is_cancelled
+
+            while has_more:
+                # Safety check: max pages limit
+                if current_page >= max_pages:
+                    event_logger.log_warning(
+                        f"Reached safety limit of {max_pages} pages. Stopping to prevent infinite loop."
+                    )
+                    logger.warning(
+                        "Finances transactions sync reached max_pages limit (%s) for run_id %s",
+                        max_pages,
+                        event_logger.run_id,
+                    )
+                    break
+
+                # Check for cancellation
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        "Finances transactions sync cancelled for run_id %s",
+                        event_logger.run_id,
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Finances transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000),
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                current_page += 1
+                # Use RSQL filter format: restrict transactionDate to our effective window
+                filter_params = {
+                    "filter": (
+                        f"transactionDate:[{start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}.."
+                        f"{end_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
+                    ),
+                    "limit": limit,
+                    "offset": offset,
+                }
+
+                # Check for cancellation BEFORE making the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        "Finances transactions sync cancelled for run_id %s (before API request)",
+                        event_logger.run_id,
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Finances transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000),
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                event_logger.log_info(
+                    "→ Requesting page %s: GET /sell/finances/v1/transaction?limit=%s&offset=%s",
+                    current_page,
+                    limit,
+                    offset,
+                )
+
+                request_start = time.time()
+                try:
+                    transactions_response = await self.fetch_transactions(
+                        access_token, filter_params
+                    )
+                except Exception as e:
+                    # Check for cancellation after error
+                    if is_cancelled(event_logger.run_id):
+                        logger.info(
+                            "Finances transactions sync cancelled for run_id %s (after API error)",
+                            event_logger.run_id,
+                        )
+                        event_logger.log_warning("Sync operation cancelled by user")
+                        event_logger.log_done(
+                            f"Finances transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                            total_fetched,
+                            total_stored,
+                            int((time.time() - start_time) * 1000),
+                        )
+                        event_logger.close()
+                        return {
+                            "status": "cancelled",
+                            "total_fetched": total_fetched,
+                            "total_stored": total_stored,
+                            "job_id": job_id,
+                            "run_id": event_logger.run_id,
+                        }
+                    raise
+                request_duration = int((time.time() - request_start) * 1000)
+
+                # Check for cancellation AFTER the API request
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        "Finances transactions sync cancelled for run_id %s (after API request)",
+                        event_logger.run_id,
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Finances transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000),
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                transactions = transactions_response.get("transactions", [])
+                total = transactions_response.get("total", 0) or 0
+                total_pages = (total + limit - 1) // limit if total > 0 else 1
+
+                event_logger.log_http_request(
+                    "GET",
+                    f"/sell/finances/v1/transaction?limit={limit}&offset={offset}",
+                    200,
+                    request_duration,
+                    len(transactions),
+                )
+
+                event_logger.log_info(
+                    "← Response: 200 OK (%sms) - Received %s transactions (Total available: %s)",
+                    request_duration,
+                    len(transactions),
+                    total,
+                )
+
+                # Early exit if total == 0 (no transactions in window)
+                if total == 0 and current_page == 1:
+                    event_logger.log_info(
+                        "✓ No finances transactions found in date window. Total available: 0"
+                    )
+                    event_logger.log_warning(
+                        "No finances transactions in window - check date range, account, or environment"
+                    )
+                    break
+
+                total_fetched += len(transactions)
+
+                await asyncio.sleep(0.3)
+
+                # Check for cancellation before storing
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        "Finances transactions sync cancelled for run_id %s (before storing)",
+                        event_logger.run_id,
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Finances transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000),
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                event_logger.log_info(
+                    "→ Storing %s finances transactions in database...", len(transactions)
+                )
+                store_start = time.time()
+                batch_stored = 0
+                for transaction in transactions:
+                    if fin_db.upsert_finances_transaction(
+                        user_id,
+                        transaction,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=effective_ebay_user_id,
+                    ):
+                        batch_stored += 1
+                total_stored += batch_stored
+                store_duration = int((time.time() - store_start) * 1000)
+
+                event_logger.log_info(
+                    "← Database: Stored %s finances transactions (%sms)",
+                    batch_stored,
+                    store_duration,
+                )
+
+                event_logger.log_progress(
+                    "Page %s/%s complete: %s fetched, %s stored | Running total: %s/%s fetched, %s stored",
+                    current_page,
+                    total_pages,
+                    len(transactions),
+                    batch_stored,
+                    total_fetched,
+                    total,
+                    total_stored,
+                )
+
+                logger.info(
+                    "Synced finances batch: %s transactions (total: %s/%s, stored: %s)",
+                    len(transactions),
+                    total_fetched,
+                    total,
+                    total_stored,
+                )
+
+                # Check for cancellation before continuing to next page
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        "Finances transactions sync cancelled for run_id %s (before next page)",
+                        event_logger.run_id,
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    event_logger.log_done(
+                        f"Finances transactions sync cancelled: {total_fetched} fetched, {total_stored} stored",
+                        total_fetched,
+                        total_stored,
+                        int((time.time() - start_time) * 1000),
+                    )
+                    event_logger.close()
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": total_stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                # Update has_more BEFORE incrementing offset to prevent infinite loops
+                has_more = (
+                    len(transactions) > 0
+                    and len(transactions) == limit
+                    and (offset + limit) < total
+                )
+
+                offset += limit
+
+                if has_more:
+                    await asyncio.sleep(0.8)
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            fin_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
+
+            event_logger.log_done(
+                f"Finances transactions sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms,
+            )
+
+            logger.info(
+                "Finances transactions sync completed: fetched=%s, stored=%s, window=%s..%s",
+                total_fetched,
+                total_stored,
+                start_date.isoformat(),
+                end_date.isoformat(),
+            )
+
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "job_id": job_id,
+                "run_id": event_logger.run_id,
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            event_logger.log_error(f"Finances transactions sync failed: {error_msg}", e)
+            logger.error(f"Finances transactions sync failed: {error_msg}")
+            fin_db.update_sync_job(job_id, "failed", error_message=error_msg)
+            raise
+        finally:
+            event_logger.close()
+
     async def sync_all_disputes(
         self,
         user_id: str,
@@ -3255,160 +3656,6 @@ class EbayService:
         finally:
             event_logger.close()
 
-                def _norm(col: str) -> str:
-                    return col.strip().lower().replace(" ", "_") if col else ""
-
-                for row in rows:
-                    normalized = { _norm(k): v for k, v in row.items() }
-
-                    sku = (
-                        normalized.get("sku")
-                        or normalized.get("sku_id")
-                        or normalized.get("seller_sku")
-                    )
-                    item_id = (
-                        normalized.get("item_id")
-                        or normalized.get("listing_id")
-                        or normalized.get("itemid")
-                    )
-                    title = normalized.get("title") or normalized.get("item_title")
-
-                    qty_str = (
-                        normalized.get("quantity_available")
-                        or normalized.get("available_quantity")
-                    )
-                    try:
-                        quantity_available = (
-                            int(qty_str) if qty_str not in (None, "") else None
-                        )
-                    except ValueError:
-                        quantity_available = None
-
-                    price_str = (
-                        normalized.get("price")
-                        or normalized.get("current_price")
-                        or normalized.get("buy_it_now_price")
-                    )
-                    currency = (
-                        normalized.get("currency")
-                        or normalized.get("currency_code")
-                        or normalized.get("price_currency")
-                    )
-
-                    price_val: Optional[Decimal] = None
-                    if price_str not in (None, ""):
-                        try:
-                            price_val = Decimal(str(price_str))
-                        except InvalidOperation:
-                            price_val = None
-
-                    listing_status = (
-                        normalized.get("listing_status")
-                        or normalized.get("status")
-                        or normalized.get("listing_state")
-                    )
-                    condition_id = normalized.get("condition_id")
-                    condition_text = (
-                        normalized.get("condition_display_name")
-                        or normalized.get("condition")
-                        or normalized.get("condition_text")
-                    )
-
-                    if not sku and not item_id:
-                        continue
-
-                    existing = (
-                        db_session.query(ActiveInventory)
-                        .filter(
-                            ActiveInventory.ebay_account_id == ebay_account_id,
-                            ActiveInventory.sku == sku,
-                            ActiveInventory.item_id == item_id,
-                        )
-                        .one_or_none()
-                    )
-
-                    if existing:
-                        existing.ebay_user_id = ebay_user_id
-                        existing.title = title
-                        existing.quantity_available = quantity_available
-                        existing.price = price_val
-                        existing.currency = currency
-                        existing.listing_status = listing_status
-                        existing.condition_id = condition_id
-                        existing.condition_text = condition_text
-                        existing.raw_payload = row
-                        existing.last_seen_at = now_utc
-                    else:
-                        obj = ActiveInventory(
-                            ebay_account_id=ebay_account_id,
-                            ebay_user_id=ebay_user_id,
-                            sku=sku,
-                            item_id=item_id,
-                            title=title,
-                            quantity_available=quantity_available,
-                            price=price_val,
-                            currency=currency,
-                            listing_status=listing_status,
-                            condition_id=condition_id,
-                            condition_text=condition_text,
-                            raw_payload=row,
-                            last_seen_at=now_utc,
-                        )
-                        db_session.add(obj)
-                        total_stored += 1
-
-                db_session.commit()
-            except Exception as e:
-                db_session.rollback()
-                msg = f"Error upserting active inventory rows: {e}"
-                event_logger.log_error(msg, e)
-                logger.error(msg)
-                ebay_db.update_sync_job(
-                    job_id,
-                    "failed",
-                    records_fetched=total_fetched,
-                    records_stored=total_stored,
-                    error_message=msg,
-                )
-                raise
-            finally:
-                db_session.close()
-
-            duration_ms = int((time.time() - start_time) * 1000)
-            ebay_db.update_sync_job(
-                job_id,
-                "completed",
-                records_fetched=total_fetched,
-                records_stored=total_stored,
-            )
-
-            event_logger.log_done(
-                f"Active inventory sync completed: {total_fetched} rows fetched, {total_stored} stored in {duration_ms}ms",
-                total_fetched,
-                total_stored,
-                duration_ms,
-            )
-
-            logger.info(
-                f"Active inventory sync completed for user={user_id} ebay_account_id={ebay_account_id}: fetched={total_fetched}, stored={total_stored}"
-            )
-
-            return {
-                "status": "completed",
-                "total_fetched": total_fetched,
-                "total_stored": total_stored,
-                "job_id": job_id,
-                "run_id": event_logger.run_id,
-            }
-
-        except Exception as e:
-            error_msg = str(e)
-            event_logger.log_error(f"Active inventory sync failed: {error_msg}", e)
-            logger.error(f"Active inventory sync failed: {error_msg}")
-            ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
-            raise
-        finally:
-            event_logger.close()
 
     async def get_ebay_user_id(
         self,

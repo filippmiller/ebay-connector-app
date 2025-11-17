@@ -1,6 +1,6 @@
 """Add ebay_active_inventory snapshot table
 
-Revision ID: add_active_inventory_snapshot_001
+Revision ID: active_inventory_snapshot_01
 Revises: ebay_identity_20251115
 Create Date: 2025-11-16
 
@@ -12,7 +12,7 @@ from sqlalchemy import Numeric, CHAR, Index
 
 
 # revision identifiers, used by Alembic.
-revision = 'add_active_inventory_snapshot_001'
+revision = 'active_inventory_snapshot_01'
 down_revision = 'ebay_identity_20251115'
 branch_labels = None
 depends_on = None
