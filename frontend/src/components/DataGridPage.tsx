@@ -327,21 +327,21 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const gridTitle = title || layout?.grid_key || gridKey;
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-xl font-semibold">{gridTitle}</h2>
-        <div className="flex items-center gap-2 text-sm">
+    <div className="flex flex-col h-full app-grid">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
+        <div className="flex items-center gap-3 text-sm">
           <span className="text-xs text-gray-500">
             {loadingData ? 'Loading data…' : `${total} rows`}
           </span>
           <button
-            className="px-2 py-1 border rounded text-xs bg-white hover:bg-gray-50"
+            className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50 shadow-sm"
             onClick={() => setShowColumnsPanel(true)}
           >
             Columns
           </button>
           <select
-            className="px-2 py-1 border rounded text-xs"
+            className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50"
             value={limit}
             onChange={(e) => {
               setOffset(0);
@@ -358,13 +358,13 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
       {error && <div className="mb-2 text-xs text-red-600">{error}</div>}
 
-      <div className="flex-1 min-h-0 border rounded bg-white overflow-auto">
+      <div className="flex-1 min-h-0 border rounded-lg bg-white overflow-auto">
         {loadingLayout ? (
           <div className="p-4 text-sm text-gray-500">Loading layout…</div>
         ) : !layout ? (
           <div className="p-4 text-sm text-gray-500">No layout available.</div>
         ) : (
-          <table className="min-w-full text-xs border-collapse">
+          <table className="min-w-full text-[13px] border-collapse">
             <thead className="bg-gray-100">
               <tr>
                 {columns.map((col) => {
@@ -374,7 +374,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                     <th
                       key={col.name}
                       style={{ width: col.width, minWidth: col.width }}
-                      className="border-b border-r px-2 py-1 text-left font-mono text-[11px] relative select-none"
+                      className="border-b border-r px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wide text-gray-600 sticky top-0 bg-gray-100 z-10 relative select-none"
                       onDragOver={(e) => handleDragOver(e, col.name)}
                       onDrop={(e) => handleDrop(e, col.name)}
                     >
@@ -423,7 +423,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                 </tr>
               ) : (
                 rows.map((row, idx) => (
-                  <tr key={idx} className="border-t hover:bg-gray-50">
+                  <tr
+                    key={idx}
+                    className="border-t odd:bg-white even:bg-gray-50 hover:bg-indigo-50 transition-colors"
+                  >
                     {columns.map((col) => {
                       const raw = row[col.name];
                       let value: any = raw;
@@ -444,7 +447,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                       return (
                         <td
                           key={col.name}
-                          className="px-2 py-1 border-t border-r whitespace-nowrap max-w-xs overflow-hidden text-ellipsis"
+                          className="px-3 py-2 border-t border-r whitespace-nowrap max-w-xs overflow-hidden text-ellipsis align-middle"
                           style={{ width: col.width, minWidth: col.width }}
                         >
                           {value}
