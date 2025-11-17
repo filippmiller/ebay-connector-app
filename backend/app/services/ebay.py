@@ -2277,14 +2277,12 @@ class EbayService:
                 )
 
                 event_logger.log_progress(
-                    "Page %s/%s complete: %s fetched, %s stored | Running total: %s/%s fetched, %s stored",
+                    f"Page {current_page}/{total_pages} complete: {len(transactions)} fetched, {batch_stored} stored | "
+                    f"Running total: {total_fetched}/{total} fetched, {total_stored} stored",
                     current_page,
                     total_pages,
                     len(transactions),
                     batch_stored,
-                    total_fetched,
-                    total,
-                    total_stored,
                 )
 
                 logger.info(
