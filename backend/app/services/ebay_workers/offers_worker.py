@@ -81,17 +81,13 @@ async def run_offers_worker_for_account(ebay_account_id: str) -> Optional[str]:
         overlap_minutes = OVERLAP_MINUTES_DEFAULT
         initial_backfill_days = INITIAL_BACKFILL_DAYS_DEFAULT
 
-        now = _now_utc()
-        if state.cursor_value:
-            try:
-                cursor_dt = datetime.fromisoformat(state.cursor_value)
-            except Exception:
-                cursor_dt = now - timedelta(days=initial_backfill_days)
-            window_from = cursor_dt - timedelta(minutes=overlap_minutes)
-        else:
-            window_from = now - timedelta(days=initial_backfill_days)
+        from app.services.ebay_workers.state import compute_sync_window
 
-        window_to = now
+        window_from, window_to = compute_sync_window(
+            state,
+            overlap_minutes=overlap_minutes,
+            initial_backfill_days=initial_backfill_days,
+        )
 
         from_iso = window_from.replace(microsecond=0).isoformat() + "Z"
         to_iso = window_to.replace(microsecond=0).isoformat() + "Z"

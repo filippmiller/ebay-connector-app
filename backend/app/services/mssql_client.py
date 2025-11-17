@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import URL, create_engine, Engine
+
+# Default ODBC driver name for SQL Server on Linux containers.
+# Can be overridden via MSSQL_ODBC_DRIVER env var if your system uses a different name.
+MSSQL_ODBC_DRIVER_NAME = os.getenv("MSSQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
 
 
 class MssqlConnectionConfig(BaseModel):
@@ -24,11 +29,13 @@ class MssqlConnectionConfig(BaseModel):
 def _build_url(config: MssqlConnectionConfig) -> URL:
     """Build a SQLAlchemy URL for MSSQL+pyodbc without leaking passwords in logs.
 
-    We rely on the standard `ODBC Driver 18 for SQL Server` by default.
+    We rely on an ODBC driver such as `ODBC Driver 18 for SQL Server`.
+    The exact driver name can be overridden via MSSQL_ODBC_DRIVER env var
+    so that deployments with a different installed driver can still work.
     """
 
     query: Dict[str, Any] = {
-        "driver": "ODBC Driver 18 for SQL Server",
+        "driver": MSSQL_ODBC_DRIVER_NAME,
         # Encrypt flag can be toggled; TrustServerCertificate=yes is convenient for internal use.
         "Encrypt": "yes" if config.encrypt else "no",
         "TrustServerCertificate": "yes",
@@ -52,15 +59,24 @@ def _create_engine(config: MssqlConnectionConfig) -> Engine:
     return engine
 
 
-def test_connection(config: MssqlConnectionConfig) -> None:
+def test_connection(config: MssqlConnectionConfig) -> Dict[str, Any]:
     """Validate that we can connect and run a trivial query.
 
+    Returns basic metadata (e.g. server version, driver name).
     Raises an exception on failure.
     """
 
     engine = _create_engine(config)
     with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
+        # Use @@VERSION to get a human-readable SQL Server version string.
+        version_result = conn.execute(text("SELECT @@VERSION AS version"))
+        version_row = version_result.fetchone()
+        server_version = str(version_row[0]) if version_row else "unknown"
+
+    return {
+        "server_version": server_version,
+        "driver": MSSQL_ODBC_DRIVER_NAME,
+    }
 
 
 def get_schema_tree(config: MssqlConnectionConfig) -> Dict[str, Any]:

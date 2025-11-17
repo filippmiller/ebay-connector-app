@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Tuple
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -26,6 +26,42 @@ API_FAMILIES = [
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def compute_sync_window(
+    state: EbaySyncState,
+    *,
+    now: Optional[datetime] = None,
+    overlap_minutes: int = 60,
+    initial_backfill_days: int = 90,
+) -> Tuple[datetime, datetime]:
+    """Compute an incremental sync window for a worker based on its cursor.
+
+    - If cursor_value exists and parses, start from (cursor - overlap).
+    - If cursor_value is missing or invalid, use an initial backfill window
+      of ``initial_backfill_days`` ending at ``now``.
+    - Returns (window_from, window_to) as timezone-aware datetimes.
+    """
+
+    if now is None:
+        now = _now_utc()
+
+    window_to = now
+
+    cursor_raw = state.cursor_value
+    if cursor_raw:
+        try:
+            # Support both "...Z" and "+00:00" styles
+            if cursor_raw.endswith("Z"):
+                cursor_raw = cursor_raw.replace("Z", "+00:00")
+            cursor_dt = datetime.fromisoformat(cursor_raw)
+        except Exception:
+            cursor_dt = now - timedelta(days=initial_backfill_days)
+        window_from = cursor_dt - timedelta(minutes=overlap_minutes)
+    else:
+        window_from = now - timedelta(days=initial_backfill_days)
+
+    return window_from, window_to
 
 
 def get_or_create_global_config(db: Session) -> EbayWorkerGlobalConfig:
