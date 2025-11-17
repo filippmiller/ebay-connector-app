@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
 import enum
+import uuid
 
 from . import Base
 
@@ -865,7 +866,7 @@ class EbayHealthEvent(Base):
 class Message(Base):
     __tablename__ = "ebay_messages"
     
-    id = Column(String(36), primary_key=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
     house_name = Column(Text, nullable=True)
     user_id = Column(String(36), ForeignKey('users.id'), nullable=False)

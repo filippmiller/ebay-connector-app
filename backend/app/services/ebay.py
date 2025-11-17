@@ -90,7 +90,7 @@ class EbayService:
                     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
                     "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
                     "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
-                    "https://api.ebay.com/oauth/api_scope/sell.post-order",  # For Post-Order cases (INR/SNAD)
+                    "https://api.ebay.com/oauth/api_scope/sell.postorder",  # For Post-Order cases (INR/SNAD)
                     # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
                 ]
             
@@ -1266,7 +1266,9 @@ class EbayService:
         timeout_seconds = 30.0
 
         headers = {
-            "Authorization": f"Bearer {access_token}",
+            # Post-Order API expects OAuth user tokens in the IAF scheme, not Bearer.
+            # See eBay Post-Order docs: Authorization: IAF <user_access_token>
+            "Authorization": f"IAF {access_token}",
             "Accept": "application/json",
             "Content-Type": "application/json",
             # Many modern eBay REST APIs require marketplace id; include it here
