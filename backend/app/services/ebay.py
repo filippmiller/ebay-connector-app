@@ -2598,14 +2598,14 @@ class EbayService:
         window_from: Optional[str] = None,
         window_to: Optional[str] = None,
     ) -> Dict[str, Any]:
-    """Sync INR/SNAD Post-Order cases into ebay_cases.
+        """Sync INR/SNAD Post-Order cases into ebay_cases.
 
-    The Post-Order casemanagement/search endpoint does not expose a precise
-    time-based filter that matches our internal cursor model, but we still
-    accept ``window_from``/``window_to`` for logging and future use. For now,
-    these values are recorded in the sync logs and the worker cursor while the
-    API request itself fetches the latest available cases.
-    """
+        The Post-Order casemanagement/search endpoint does not expose a precise
+        time-based filter that matches our internal cursor model, but we still
+        accept ``window_from``/``window_to`` for logging and future use. For now,
+        these values are recorded in the sync logs and the worker cursor while the
+        API request itself fetches the latest available cases.
+        """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
