@@ -806,15 +806,26 @@ class EbayService:
         run_id: Optional[str] = None,
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Synchronize all orders from eBay to database with pagination (limit=200)
-        
-        Args:
-            user_id: User ID
-            access_token: eBay OAuth access token
-            run_id: Optional run_id for sync event logging
-        """
+    """
+    Synchronize orders from eBay to database with pagination (limit=200).
+
+    If ``window_from``/``window_to`` are provided, they are used as a logical
+    time window for logging and for future filtering once the Fulfillment API
+    exposes stable filters; for now they are recorded in logs while the
+    underlying API still relies on its default 90-day window.
+
+    Args:
+        user_id: User ID
+        access_token: eBay OAuth access token
+        run_id: Optional run_id for sync event logging
+        ebay_account_id: Optional internal eBay account id for tagging
+        ebay_user_id: Optional eBay user id for tagging
+        window_from: Optional ISO8601 datetime (UTC) for the start of the window
+        window_to: Optional ISO8601 datetime (UTC) for the end of the window
+    """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time
@@ -882,14 +893,32 @@ class EbayService:
 
             # Persist context so PostgresEbayDatabase can tag rows
             from app.services.ebay_database import ebay_db
-            
-            # Date window with 5-10 minute cushion
-            from datetime import datetime, timedelta
-            until_date = datetime.utcnow()
-            since_date = until_date - timedelta(days=90)  # Default 90 days, can be adjusted
-            # Add 5 minute cushion
-            since_date = since_date - timedelta(minutes=5)
-            
+
+            # Determine effective date window for logging. Fulfillment API does
+            # not yet accept a precise lastModifiedDate filter in this path, but
+            # workers compute a window and pass it through for observability.
+            from datetime import datetime, timedelta, timezone
+
+            now_utc = datetime.now(timezone.utc)
+
+            def _parse_iso(dt_str: str) -> Optional[datetime]:
+                try:
+                    if dt_str.endswith("Z"):
+                        dt_str = dt_str.replace("Z", "+00:00")
+                    return datetime.fromisoformat(dt_str)
+                except Exception:
+                    return None
+
+            if window_to:
+                end_dt = _parse_iso(window_to) or now_utc
+            else:
+                end_dt = now_utc
+
+            if window_from:
+                start_dt = _parse_iso(window_from) or (end_dt - timedelta(days=90))
+            else:
+                start_dt = end_dt - timedelta(days=90)
+
             event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
             event_logger.log_info(f"=== WHO WE ARE ===")
             event_logger.log_info(f"Connected as: {username} (eBay UserID: {effective_ebay_user_id})")
@@ -2567,8 +2596,17 @@ class EbayService:
         run_id: Optional[str] = None,
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Sync INR/SNAD Post-Order cases into ebay_cases."""
+    """Sync INR/SNAD Post-Order cases into ebay_cases.
+
+    The Post-Order casemanagement/search endpoint does not expose a precise
+    time-based filter that matches our internal cursor model, but we still
+    accept ``window_from``/``window_to`` for logging and future use. For now,
+    these values are recorded in the sync logs and the worker cursor while the
+    API request itself fetches the latest available cases.
+    """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
         import time

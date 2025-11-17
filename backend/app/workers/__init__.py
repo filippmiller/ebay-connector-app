@@ -11,10 +11,13 @@ Workers:
 
 from app.workers.token_refresh_worker import refresh_expiring_tokens, run_token_refresh_worker_loop
 from app.workers.health_check_worker import run_all_health_checks, run_health_check_worker_loop
+from app.workers.ebay_workers_loop import run_ebay_workers_loop, run_ebay_workers_once
 
 __all__ = [
     "refresh_expiring_tokens",
     "run_token_refresh_worker_loop",
     "run_all_health_checks",
-    "run_health_check_worker_loop"
+    "run_health_check_worker_loop",
+    "run_ebay_workers_loop",
+    "run_ebay_workers_once",
 ]

@@ -60,6 +60,27 @@ class GlobalToggleRequest(BaseModel):
     workers_enabled: bool
 
 
+class WorkerScheduleRun(BaseModel):
+    run_at: str
+    window_from: str | None
+    window_to: str | None
+
+
+class WorkerScheduleItem(BaseModel):
+    api_family: str
+    enabled: bool
+    overlap_minutes: int | None = None
+    initial_backfill_days: int | None = None
+    runs: List[WorkerScheduleRun]
+
+
+class WorkerScheduleResponse(BaseModel):
+    account: Dict[str, Any]
+    interval_minutes: int
+    hours: int
+    workers: List[WorkerScheduleItem]
+
+
 @router.get("/config", response_model=WorkerConfigResponse)
 async def get_worker_config(
     account_id: str = Query(..., description="eBay account id"),
@@ -298,6 +319,182 @@ async def list_worker_runs(
         )
 
     return {"runs": result}
+
+
+@router.get("/schedule", response_model=WorkerScheduleResponse)
+async def get_worker_schedule(
+    account_id: str = Query(..., description="eBay account id"),
+    hours: int = Query(5, ge=1, le=24, description="How many hours ahead to simulate"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return a simulated schedule of worker runs and windows for the next N hours.
+
+    This does *not* mutate any state; it simply projects what windows each
+    worker would use on future 5-minute runs, based on the current cursor.
+    """
+
+    account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
+    if not account or account.org_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    # Load or create sync states for known workers so they always appear.
+    ensured_families = [
+        "orders",
+        "transactions",
+        "offers",
+        "messages",
+        "active_inventory",
+        "cases",
+        "finances",
+    ]
+    ebay_user_id = account.ebay_user_id or "unknown"
+
+    existing_states: List[EbaySyncState] = (
+        db.query(EbaySyncState)
+        .filter(EbaySyncState.ebay_account_id == account_id)
+        .all()
+    )
+    states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
+
+    for api_family in ensured_families:
+        if api_family not in states_by_api:
+            states_by_api[api_family] = get_or_create_sync_state(
+                db,
+                ebay_account_id=account_id,
+                ebay_user_id=ebay_user_id,
+                api_family=api_family,
+            )
+
+    # Per-API overlap/backfill configuration (mirrors worker constants).
+    overlap_by_api: Dict[str, int] = {
+        "orders": 60,
+        "transactions": 60,
+        "finances": 60,
+        "cases": 60,
+        "offers": 360,
+        "messages": 360,
+    }
+    backfill_by_api: Dict[str, int] = {
+        "orders": 90,
+        "transactions": 90,
+        "finances": 90,
+        "cases": 90,
+        "offers": 90,
+        "messages": 90,
+    }
+
+    interval_minutes = 5
+    total_runs = hours * (60 // interval_minutes)
+
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+
+    def compute_window_from_cursor(
+        cursor_value: str | None,
+        *,
+        now_dt: datetime,
+        overlap_min: int,
+        backfill_days: int,
+    ) -> tuple[datetime, datetime]:
+        """Pure version of compute_sync_window for schedule simulation."""
+
+        window_to = now_dt
+        if cursor_value:
+            raw = cursor_value
+            try:
+                if raw.endswith("Z"):
+                    raw = raw.replace("Z", "+00:00")
+                cursor_dt = datetime.fromisoformat(raw)
+            except Exception:
+                cursor_dt = window_to - timedelta(days=backfill_days)
+            window_from_dt = cursor_dt - timedelta(minutes=overlap_min)
+        else:
+            window_from_dt = window_to - timedelta(days=backfill_days)
+        return window_from_dt, window_to
+
+    worker_items: List[WorkerScheduleItem] = []
+
+    for api_family, state in sorted(states_by_api.items()):
+        enabled = bool(state.enabled)
+
+        # Active inventory is a snapshot worker – no date window, but we still
+        # show the planned run times.
+        if api_family == "active_inventory":
+            runs: List[WorkerScheduleRun] = []
+            for i in range(total_runs):
+                run_at_dt = now + timedelta(minutes=interval_minutes * (i + 1))
+                run_at_iso = run_at_dt.replace(microsecond=0).isoformat() + "Z"
+                runs.append(
+                    WorkerScheduleRun(
+                        run_at=run_at_iso,
+                        window_from=None,
+                        window_to=None,
+                    )
+                )
+
+            worker_items.append(
+                WorkerScheduleItem(
+                    api_family=api_family,
+                    enabled=enabled,
+                    overlap_minutes=None,
+                    initial_backfill_days=None,
+                    runs=runs,
+                )
+            )
+            continue
+
+        overlap = overlap_by_api.get(api_family, 60)
+        backfill = backfill_by_api.get(api_family, 90)
+
+        # Simulate future windows by evolving a local cursor.
+        cursor_value = state.cursor_value
+        api_runs: List[WorkerScheduleRun] = []
+        for i in range(total_runs):
+            run_at_dt = now + timedelta(minutes=interval_minutes * (i + 1))
+            window_from_dt, window_to_dt = compute_window_from_cursor(
+                cursor_value,
+                now_dt=run_at_dt,
+                overlap_min=overlap,
+                backfill_days=backfill,
+            )
+
+            from_iso = window_from_dt.replace(microsecond=0).isoformat() + "Z"
+            to_iso = window_to_dt.replace(microsecond=0).isoformat() + "Z"
+
+            api_runs.append(
+                WorkerScheduleRun(
+                    run_at=run_at_dt.replace(microsecond=0).isoformat() + "Z",
+                    window_from=from_iso,
+                    window_to=to_iso,
+                )
+            )
+
+            # Next run will treat this run's window_to as the new cursor.
+            cursor_value = to_iso
+
+        worker_items.append(
+            WorkerScheduleItem(
+                api_family=api_family,
+                enabled=enabled,
+                overlap_minutes=overlap,
+                initial_backfill_days=backfill,
+                runs=api_runs,
+            )
+        )
+
+    return WorkerScheduleResponse(
+        account={
+            "id": account.id,
+            "ebay_user_id": account.ebay_user_id,
+            "username": account.username,
+            "house_name": account.house_name,
+        },
+        interval_minutes=interval_minutes,
+        hours=hours,
+        workers=worker_items,
+    )
 
 
 @router.get("/logs/{run_id}")

@@ -161,13 +161,23 @@ async def startup_event():
     if start_workers:
         logger.info("🔄 Starting background workers...")
         try:
-            from app.workers import run_token_refresh_worker_loop, run_health_check_worker_loop
+            from app.workers import (
+                run_token_refresh_worker_loop,
+                run_health_check_worker_loop,
+                run_ebay_workers_loop,
+            )
             
             asyncio.create_task(run_token_refresh_worker_loop())
             logger.info("✅ Token refresh worker started (runs every 10 minutes)")
             
             asyncio.create_task(run_health_check_worker_loop())
             logger.info("✅ Health check worker started (runs every 15 minutes)")
+
+            # eBay data workers loop – runs every 5 minutes and triggers all
+            # enabled workers (orders, transactions, offers, messages, cases,
+            # finances, active inventory) for all active accounts.
+            asyncio.create_task(run_ebay_workers_loop())
+            logger.info("✅ eBay workers loop started (runs every 5 minutes)")
             
         except Exception as e:
             logger.error(f"⚠️  Failed to start background workers: {e}")

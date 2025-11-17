@@ -128,6 +128,8 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
                 run_id=sync_run_id,
                 ebay_account_id=ebay_account_id,
                 ebay_user_id=ebay_user_id,
+                window_from=from_iso,
+                window_to=to_iso,
             )
 
             total_fetched = int(result.get("total_fetched", 0))

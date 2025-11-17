@@ -26,6 +26,32 @@ interface WorkerConfigResponse {
   workers: WorkerConfigItem[];
 }
 
+interface WorkerScheduleRun {
+  run_at: string;
+  window_from: string | null;
+  window_to: string | null;
+}
+
+interface WorkerScheduleItem {
+  api_family: string;
+  enabled: boolean;
+  overlap_minutes?: number | null;
+  initial_backfill_days?: number | null;
+  runs: WorkerScheduleRun[];
+}
+
+interface WorkerScheduleResponse {
+  account: {
+    id: string;
+    ebay_user_id?: string;
+    username?: string;
+    house_name?: string;
+  };
+  interval_minutes: number;
+  hours: number;
+  workers: WorkerScheduleItem[];
+}
+
 interface EbayWorkersPanelProps {
   accountId: string;
   accountLabel: string;
@@ -36,6 +62,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<WorkerConfigResponse | null>(null);
+  const [schedule, setSchedule] = useState<WorkerScheduleResponse | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [detailsRunId, setDetailsRunId] = useState<string | null>(null);
   const [detailsData, setDetailsData] = useState<any | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -62,6 +90,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       // Also refresh recent worker runs so the terminal can attach to the
       // latest activity across all APIs.
       fetchRecentRuns();
+      // Refresh schedule projection for this account.
+      fetchSchedule();
     } catch (e: any) {
       console.error("Failed to load worker config", e);
       setError(e?.response?.data?.detail || e.message || "Failed to load workers");
@@ -73,8 +103,27 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   useEffect(() => {
     fetchConfig();
     fetchRecentRuns();
+    fetchSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
+
+  const fetchSchedule = async () => {
+    if (!accountId) return;
+    try {
+      const resp = await api.get<WorkerScheduleResponse>(
+        `/ebay/workers/schedule`,
+        {
+          params: { account_id: accountId, hours: 5 },
+        }
+      );
+      setSchedule(resp.data);
+      setScheduleError(null);
+    } catch (e: any) {
+      console.error("Failed to load worker schedule", e);
+      setSchedule(null);
+      setScheduleError(e?.response?.data?.detail || e.message || "Failed to load schedule");
+    }
+  };
 
   const fetchRecentRuns = async () => {
     if (!accountId) return;
@@ -397,6 +446,64 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
             </tbody>
           </table>
         </>
+      )}
+
+      {/* Schedule projection for the next 5 hours */}
+      {schedule && (
+        <div className="mt-6 border rounded p-3 bg-gray-50">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-semibold">Schedule (next {schedule.hours} hours)</div>
+            <button
+              className="text-xs border rounded px-2 py-1 bg-white"
+              onClick={fetchSchedule}
+            >
+              Refresh schedule
+            </button>
+          </div>
+          {scheduleError && (
+            <div className="text-xs text-red-600 mb-2">{scheduleError}</div>
+          )}
+          <div className="text-xs text-gray-600 mb-2">
+            Interval: every {schedule.interval_minutes} minutes. Windows are computed from the last cursor with overlap.
+          </div>
+          <div className="space-y-3 max-h-80 overflow-auto">
+            {schedule.workers.map((w) => (
+              <div key={w.api_family} className="border rounded bg-white">
+                <div className="px-3 py-2 flex items-center justify-between border-b bg-gray-100">
+                  <div>
+                    <span className="font-semibold mr-2 capitalize">{w.api_family}</span>
+                    <span className="text-xs text-gray-600">
+                      {w.enabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </div>
+                  {w.overlap_minutes != null && (
+                    <div className="text-[11px] text-gray-500">
+                      overlap {w.overlap_minutes} min · backfill {w.initial_backfill_days} days
+                    </div>
+                  )}
+                </div>
+                <table className="min-w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="px-2 py-1 text-left">Run at</th>
+                      <th className="px-2 py-1 text-left">Window from</th>
+                      <th className="px-2 py-1 text-left">Window to</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {w.runs.map((r, idx) => (
+                      <tr key={idx} className="border-t">
+                        <td className="px-2 py-1 whitespace-nowrap">{r.run_at}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{r.window_from || "–"}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{r.window_to || "–"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Workers sync terminal occupying lower half of the tab */}
