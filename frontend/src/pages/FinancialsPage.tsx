@@ -53,18 +53,19 @@ export default function FinancialsPage() {
   }, [fromDate, toDate, transactionType]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       <FixedHeader />
-      <div className="w-full pt-16 px-4 py-6">
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-6">Finances</h1>
+      {/* Content area below fixed header fills remaining viewport height */}
+      <div className="flex-1 pt-16 px-4 pb-4">
+        <div className="h-full w-full flex flex-col">
+          <h1 className="text-3xl font-bold mb-4">Finances</h1>
 
           {loading ? (
-            <div className="flex justify-center p-12">
+            <div className="flex-1 flex justify-center items-center">
               <Loader2 className="h-8 w-8 animate-spin" />
             </div>
           ) : (
-            <Tabs defaultValue="summary" className="w-full">
+            <Tabs defaultValue="summary" className="w-full h-full flex flex-col">
               <TabsList>
                 <TabsTrigger value="summary">Summary</TabsTrigger>
                 <TabsTrigger value="ledger">Ledger</TabsTrigger>
@@ -93,8 +94,8 @@ export default function FinancialsPage() {
                 </div>
               </TabsContent>
 
-              <TabsContent value="ledger">
-                <div className="mt-6 space-y-4">
+              <TabsContent value="ledger" className="flex-1 flex flex-col">
+                <div className="mt-4 space-y-4">
                   <div className="flex flex-wrap items-end gap-4">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
@@ -129,7 +130,7 @@ export default function FinancialsPage() {
                       </select>
                     </div>
                   </div>
-                  <div className="h-[600px]">
+                  <div className="flex-1 min-h-0">
                     <DataGridPage
                       gridKey="finances"
                       title="Finances ledger"
@@ -139,8 +140,8 @@ export default function FinancialsPage() {
                 </div>
               </TabsContent>
               
-              <TabsContent value="fees">
-                <div className="mt-6 h-[600px]">
+              <TabsContent value="fees" className="flex-1 flex flex-col">
+                <div className="mt-4 flex-1 min-h-0">
                   <DataGridPage
                     gridKey="finances_fees"
                     title="Finances fees"
