@@ -127,19 +127,25 @@ async def get_grid_data(
         finally:
             db_sqla.close()
     elif grid_key == "cases":
-        return _get_cases_data(
-            db,
-            current_user,
-            requested_cols,
-            limit,
-            offset,
-            sort_column,
-            sort_dir,
-            state=state,
-            buyer=buyer,
-            from_date=from_date,
-            to_date=to_date,
-        )
+        # Cases & disputes live in the Postgres-backed ebay_cases / ebay_disputes
+        # tables, so we must use the SQLAlchemy session from app.models_sqlalchemy.
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_cases_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                state=state,
+                buyer=buyer,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        finally:
+            db_sqla.close()
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Grid not implemented yet")
 

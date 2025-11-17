@@ -171,6 +171,20 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
         const runId = resp.data.run_id as string;
         setActiveApiFamily(apiFamily);
         setSelectedRunId(runId);
+        // Optimistically add this run to the recentRuns list so the dropdown
+        // immediately reflects the new run without waiting for the next
+        // polling/refresh cycle.
+        setRecentRuns((prev) => [
+          {
+            id: runId,
+            api_family: apiFamily,
+            status: "running",
+            started_at: new Date().toISOString(),
+            finished_at: null,
+            summary: null,
+          },
+          ...prev,
+        ]);
         // Immediately fetch logs for this run to resolve the underlying
         // sync_run_id for the terminal.
         try {
