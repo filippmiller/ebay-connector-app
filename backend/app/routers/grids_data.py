@@ -70,6 +70,8 @@ async def get_grid_data(
         default_sort_col = "created_at"
     elif grid_key == "finances":
         default_sort_col = "booking_date"
+    elif grid_key == "finances_fees":
+        default_sort_col = "created_at"
 
     sort_column = sort_by if sort_by in allowed_cols else default_sort_col
 
@@ -164,6 +166,23 @@ async def get_grid_data(
                 sort_column,
                 sort_dir,
                 transaction_type=transaction_type,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "finances_fees":
+        # Per-fee breakdown backed directly by ebay_finances_fees.
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_finances_fees_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
                 from_date=from_date,
                 to_date=to_date,
             )
@@ -861,21 +880,106 @@ def _get_finances_data(
         "total": total,
         "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
     }
-    if sort_column and sort_column in {"open_date", "status", "buyer_username", "amount", "respond_by_date"}:
-        reverse = sort_dir == "desc"
-        rows_all.sort(key=lambda r: r.get(sort_column) or "", reverse=reverse)
-    else:
-        rows_all.sort(key=lambda r: r.get("open_date") or "", reverse=True)
 
-    total = len(rows_all)
-    page_rows = rows_all[offset : offset + limit]
 
-    projected: List[Dict[str, Any]] = []
-    for r in page_rows:
-        projected.append({col: r.get(col) for col in selected_cols})
+def _get_finances_fees_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    from_date: Optional[str],
+    to_date: Optional[str],
+) -> Dict[str, Any]:
+    """Finances fees grid backed by ebay_finances_fees.
+
+    Shows one row per fee line for accounts belonging to the current org/user.
+    """
+    from decimal import Decimal
+    from datetime import datetime as dt_type
+    from sqlalchemy import text as sa_text
+
+    where_clauses = ["a.org_id = :user_id"]
+    params: Dict[str, Any] = {"user_id": current_user.id}
+
+    if from_date:
+        where_clauses.append("f.created_at >= :from_date")
+        params["from_date"] = from_date
+
+    if to_date:
+        where_clauses.append("f.created_at <= :to_date")
+        params["to_date"] = to_date
+
+    where_sql = " AND ".join(where_clauses)
+
+    count_sql = sa_text(
+        f"""
+        SELECT COUNT(*) AS cnt
+        FROM ebay_finances_fees f
+        JOIN ebay_accounts a ON a.id = f.ebay_account_id
+        WHERE {where_sql}
+        """
+    )
+    total = db.execute(count_sql, params).scalar() or 0
+
+    allowed_sort_cols = {
+        "created_at",
+        "updated_at",
+        "fee_type",
+        "amount_value",
+        "amount_currency",
+        "transaction_id",
+    }
+    order_clause = ""
+    if sort_column in allowed_sort_cols:
+        direction = "DESC" if sort_dir == "desc" else "ASC"
+        order_clause = f"ORDER BY f.{sort_column} {direction}"
+
+    data_sql = sa_text(
+        f"""
+        SELECT
+            f.id,
+            f.ebay_account_id,
+            f.transaction_id,
+            f.fee_type,
+            f.amount_value,
+            f.amount_currency,
+            f.raw_payload,
+            f.created_at,
+            f.updated_at
+        FROM ebay_finances_fees f
+        JOIN ebay_accounts a ON a.id = f.ebay_account_id
+        WHERE {where_sql}
+        {order_clause}
+        LIMIT :limit OFFSET :offset
+        """
+    )
+
+    params_with_paging = dict(params)
+    params_with_paging["limit"] = limit
+    params_with_paging["offset"] = offset
+
+    result = db.execute(data_sql, params_with_paging)
+    rows_db = [dict(row._mapping) for row in result]
+
+    def _serialize(row: Dict[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for col in selected_cols:
+            value = row.get(col)
+            if isinstance(value, dt_type):
+                out[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                out[col] = float(value)
+            else:
+                out[col] = value
+        return out
+
+    rows = [_serialize(r) for r in rows_db]
 
     return {
-        "rows": projected,
+        "rows": rows,
         "limit": limit,
         "offset": offset,
         "total": total,

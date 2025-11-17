@@ -140,9 +140,13 @@ export default function FinancialsPage() {
               </TabsContent>
               
               <TabsContent value="fees">
-                <Card className="p-6 mt-4">
-                  <p className="text-gray-600">Fees module ready</p>
-                </Card>
+                <div className="mt-6 h-[600px]">
+                  <DataGridPage
+                    gridKey="finances_fees"
+                    title="Finances fees"
+                    extraParams={financesExtraParams}
+                  />
+                </div>
               </TabsContent>
               
               <TabsContent value="payouts">
