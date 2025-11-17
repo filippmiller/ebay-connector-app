@@ -1,36 +1,25 @@
 # Backend README
 
-## MSSQL Data Migration – Driver & ODBC Requirements
+## MSSQL Data Migration – Driver (no ODBC required)
 
 The Admin → Data Migration → MSSQL workspace uses SQLAlchemy with the
-`mssql+pyodbc` dialect, talking to an external SQL Server instance.
+`mssql+pytds` dialect (provided by `sqlalchemy-pytds`), talking to an
+external SQL Server instance.
 
 ### Python driver
 
-- Python dependency: `pyodbc` (declared in `pyproject.toml`).
+- Python dependency: `sqlalchemy-pytds` (and its dependency `python-tds`).
 - SQLAlchemy URL is built in `app/services/mssql_client.py` using the
-  `mssql+pyodbc` dialect.
+  `mssql+pytds` dialect.
 
-### ODBC driver on the server
+### ODBC / system libraries
 
-The runtime container must have:
+This implementation does **not** require any system-level ODBC libraries
+(`libodbc.so.2`, `msodbcsql18`, etc.). All communication with SQL Server
+happens via the pure-Python TDS implementation.
 
-- `libodbc.so.2` and related libraries (from the `unixodbc` / `unixodbc-dev` packages).
-- A SQL Server ODBC driver (for example `ODBC Driver 18 for SQL Server`).
-
-By default, the backend will use the driver name from the environment
-variable `MSSQL_ODBC_DRIVER` or fall back to:
-
-```text
-ODBC Driver 18 for SQL Server
-```
-
-If your system uses a different driver name (for example `ODBC Driver 17 for SQL Server`
-or a FreeTDS-based driver), set:
-
-```bash
-export MSSQL_ODBC_DRIVER="<your-driver-name>"
-```
+You may keep `unixodbc` packages in the `Aptfile` (they are harmless), but
+MSSQL connectivity no longer depends on them.
 
 ### Railway / Nixpacks notes
 

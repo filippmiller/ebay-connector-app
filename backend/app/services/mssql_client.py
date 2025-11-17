@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List
+from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import URL, create_engine, Engine
 
-try:
-    import pyodbc  # type: ignore[import]
-except Exception:  # pragma: no cover - optional debug dependency at runtime
-    pyodbc = None
-
-# Default ODBC driver name for SQL Server on Linux containers.
-# Can be overridden via MSSQL_ODBC_DRIVER env var if your system uses a different name.
-MSSQL_ODBC_DRIVER_NAME = os.getenv("MSSQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
+# NOTE: We intentionally avoid any ODBC-based drivers (pyodbc/msodbcsql).
+# The MSSQL client uses the pure-Python `sqlalchemy-pytds` dialect
+# (`mssql+pytds`) which only depends on python-tds and does not require
+# unixODBC or system-level drivers. This is much more reliable on Railway.
 
 
 class MssqlConnectionConfig(BaseModel):
@@ -32,24 +29,29 @@ class MssqlConnectionConfig(BaseModel):
 
 
 def _build_url(config: MssqlConnectionConfig) -> URL:
-    """Build a SQLAlchemy URL for MSSQL+pyodbc without leaking passwords in logs.
+    """Build a SQLAlchemy URL for MSSQL using the pure-Python pytds dialect.
 
-    We rely on an ODBC driver such as `ODBC Driver 18 for SQL Server`.
-    The exact driver name can be overridden via MSSQL_ODBC_DRIVER env var
-    so that deployments with a different installed driver can still work.
+    Driver string: ``mssql+pytds``
+
+    We URL-encode username/password to avoid issues with special characters.
+    The `encrypt` flag is currently not wired to pytds-specific params; for
+    typical intranet / VPN deployments this is acceptable. If strict TLS
+    configuration is required later, we can extend the query parameters
+    accordingly (e.g. ``use_tls=1`` if supported).
     """
 
+    username = quote_plus(config.username)
+    password = quote_plus(config.password)
+
+    # Base query params; charset=utf8 is recommended for SQL Server.
     query: Dict[str, Any] = {
-        "driver": MSSQL_ODBC_DRIVER_NAME,
-        # Encrypt flag can be toggled; TrustServerCertificate=yes is convenient for internal use.
-        "Encrypt": "yes" if config.encrypt else "no",
-        "TrustServerCertificate": "yes",
+        "charset": "utf8",
     }
 
     return URL.create(
-        drivername="mssql+pyodbc",
-        username=config.username,
-        password=config.password,
+        drivername="mssql+pytds",
+        username=username,
+        password=password,
         host=config.host,
         port=config.port,
         database=config.database,
@@ -72,23 +74,18 @@ def test_connection(config: MssqlConnectionConfig) -> Dict[str, Any]:
     """
 
     engine = _create_engine(config)
-    with engine.connect() as conn:
-        # Use @@VERSION to get a human-readable SQL Server version string.
-        version_result = conn.execute(text("SELECT @@VERSION AS version"))
-        version_row = version_result.fetchone()
-        server_version = str(version_row[0]) if version_row else "unknown"
-
-    drivers: List[str] = []
-    if pyodbc is not None:  # pragma: no cover - depends on system ODBC setup
-        try:
-            drivers = list(pyodbc.drivers())  # type: ignore[call-arg]
-        except Exception:
-            drivers = []
+    try:
+        with engine.connect() as conn:
+            # Use @@VERSION to get a human-readable SQL Server version string.
+            version_result = conn.execute(text("SELECT @@VERSION AS version"))
+            version_row = version_result.fetchone()
+            server_version = str(version_row[0]) if version_row else "unknown"
+    finally:
+        engine.dispose()
 
     return {
         "server_version": server_version,
-        "driver": MSSQL_ODBC_DRIVER_NAME,
-        "available_drivers": drivers,
+        "driver": "pytds",
     }
 
 

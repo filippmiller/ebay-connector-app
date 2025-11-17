@@ -48,26 +48,14 @@ async def test_connection_endpoint(
     except Exception as e:  # noqa: BLE001 - we want to surface driver errors as text
         raw_message = str(e) or "Connection failed"
 
-        # Hide very low-level driver messages from the UI, but keep them in raw_error for logs.
-        if "libodbc.so" in raw_message:
-            safe_message = "MSSQL ODBC driver is not available on the server. Please contact the administrator."
-        else:
-            safe_message = raw_message
-
-        # Best-effort introspection of installed ODBC drivers for debugging.
-        drivers: List[str] = []
-        try:
-            import pyodbc  # type: ignore[import]
-
-            drivers = list(pyodbc.drivers())  # type: ignore[call-arg]
-        except Exception:
-            drivers = []
+        # For the pure-Python driver we no longer special-case ODBC-level errors.
+        # Just propagate a concise message and include the raw exception string.
+        safe_message = raw_message
 
         return {
             "ok": False,
             "error": safe_message,
             "raw_error": raw_message,
-            "drivers": drivers,
         }
 
 
