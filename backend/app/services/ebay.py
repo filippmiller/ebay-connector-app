@@ -2948,24 +2948,17 @@ class EbayService:
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Request and ingest the ACTIVE_INVENTORY_REPORT via Sell Feed API.
+        """Build Active Inventory snapshot using Trading GetMyeBaySelling.
 
-        The Inventory API only exposes SKUs that were created through that API,
-        which is why you saw a sample "GoPro helmet" item that doesn't belong
-        to your store. To get a true snapshot of *all* active listings on the
-        account (including those created via the Trading API), we use the Sell
-        Feed ACTIVE_INVENTORY_REPORT instead.
-
-        Flow (per eBay Sell Feed docs):
-        1) POST /sell/feed/v1/task with feedType=ACTIVE_INVENTORY_REPORT
-        2) Poll GET /sell/feed/v1/task/{taskId} until status is COMPLETED
-        3) When completed, locate result fileId
-        4) GET /sell/feed/v1/file/{fileId}/download (CSV, possibly gzip)
-        5) Parse rows and upsert into ebay_active_inventory
+        Sell Feed does not expose a usable feedType for active inventory for
+        this app, and Inventory API only returns items created via that API
+        (plus shared demo SKUs like the GoPro helmet). To get a real snapshot
+        of all *active* listings for the seller account (including those
+        created via Trading/UI), we use the Trading API GetMyeBaySelling
+        ActiveList and persist the results into ebay_active_inventory.
         """
         import time
-        import csv
-        import io
+        import xml.etree.ElementTree as ET
         from datetime import datetime, timezone
         from decimal import Decimal, InvalidOperation
 
@@ -2991,218 +2984,276 @@ class EbayService:
         job_id = ebay_db.create_sync_job(user_id, "active_inventory")
         start_time = time.time()
 
-        # Sell Feed base URL lives on api.ebay.com / api.sandbox.ebay.com
-        base_url = f"{settings.ebay_api_base_url}/sell/feed/v1"
-
-        headers_json = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-        }
+        api_url = "https://api.ebay.com/ws/api.dll"
 
         try:
             total_fetched = 0
             total_stored = 0
 
+            from app.config import settings
+            import asyncio
+
             event_logger.log_start(
-                f"Starting Active Inventory snapshot sync via ACTIVE_INVENTORY_REPORT ({settings.EBAY_ENVIRONMENT})"
+                f"Starting Active Inventory snapshot via Trading GetMyeBaySelling ({settings.EBAY_ENVIRONMENT})",
             )
             event_logger.log_info(
-                "API Configuration: Sell Feed task=create ACTIVE_INVENTORY_REPORT, poll task, download CSV"
+                "API Configuration: Trading GetMyeBaySelling ActiveList, paginate and upsert into ebay_active_inventory",
             )
 
-            # 1) Create task
-            create_task_body: Dict[str, Any] = {
-                "feedType": "ACTIVE_INVENTORY_REPORT",
-                # Marketplace filter is required by docs; default to EBAY_US for now
-                "filterCriteria": {"marketplaceIds": ["EBAY_US"]},
-            }
-
-            event_logger.log_info("→ Creating ACTIVE_INVENTORY_REPORT task (POST /sell/feed/v1/task)")
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
-                    create_resp = await client.post(
-                        f"{base_url}/task",
-                        headers=headers_json,
-                        json=create_task_body,
-                    )
-            except httpx.RequestError as e:
-                msg = f"HTTP error when creating feed task: {e}"
-                event_logger.log_error(msg)
-                logger.error(msg)
-                ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=msg,
-                )
-
-            if create_resp.status_code not in (200, 201):
-                msg = f"Failed to create feed task: HTTP {create_resp.status_code} - {create_resp.text[:1000]}"
-                event_logger.log_error(msg)
-                logger.error(msg)
-                ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                raise HTTPException(
-                    status_code=create_resp.status_code,
-                    detail=msg,
-                )
-
-            task_payload = create_resp.json()
-            task_id = task_payload.get("taskId") or task_payload.get("id")
-            if not task_id:
-                msg = f"Feed create task response missing taskId/id: {task_payload}"
-                event_logger.log_error(msg)
-                logger.error(msg)
-                ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Feed taskId not returned by eBay",
-                )
-
-            event_logger.log_info(f"✓ Created feed taskId={task_id}")
-
-            # 2) Poll task until completed
-            poll_interval_sec = 15
-            max_wait_sec = 15 * 60  # 15 minutes safety limit
-            deadline = time.time() + max_wait_sec
-            status_value: str = "PENDING"
-            last_task_json: Dict[str, Any] = {}
-
-            while time.time() < deadline:
-                await asyncio.sleep(poll_interval_sec)
-
-                try:
-                    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
-                        task_resp = await client.get(
-                            f"{base_url}/task/{task_id}",
-                            headers=headers_json,
-                        )
-                except httpx.RequestError as e:
-                    msg = f"HTTP error polling feed task {task_id}: {e}"
-                    event_logger.log_warning(msg)
-                    logger.warning(msg)
-                    continue
-
-                if task_resp.status_code != 200:
-                    msg = f"Failed to poll feed task {task_id}: HTTP {task_resp.status_code} - {task_resp.text[:1000]}"
-                    event_logger.log_warning(msg)
-                    logger.warning(msg)
-                    continue
-
-                last_task_json = task_resp.json()
-                status_value = (last_task_json.get("status") or "").upper()
-                event_logger.log_progress(
-                    f"Task {task_id} status={status_value}",
-                    current_page=0,
-                    total_pages=0,
-                    items_fetched=total_fetched,
-                    items_stored=total_stored,
-                )
-
-                if status_value in {"COMPLETED", "COMPLETED_WITH_ERROR"}:
-                    break
-                if status_value in {"CANCELLED", "FAILED"}:
-                    msg = f"Feed task {task_id} failed with status {status_value}"
-                    event_logger.log_error(msg)
-                    logger.error(msg)
-                    ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail=msg,
-                    )
-
-            if status_value not in {"COMPLETED", "COMPLETED_WITH_ERROR"}:
-                msg = f"Feed task {task_id} did not complete within timeout (last status={status_value})"
-                event_logger.log_error(msg)
-                logger.error(msg)
-                ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail=msg,
-                )
-
-            # 3) Determine result file id
-            file_id: Optional[str] = None
-            result_files = last_task_json.get("resultFiles") or last_task_json.get("resultFile")
-            if isinstance(result_files, list) and result_files:
-                file_id = result_files[0].get("fileId") or result_files[0].get("id")
-            elif isinstance(result_files, dict):
-                file_id = result_files.get("fileId") or result_files.get("id")
-
-            if not file_id:
-                file_id = last_task_json.get("fileId") or last_task_json.get("resultFileId")
-
-            if not file_id:
-                msg = f"Completed feed task {task_id} has no result fileId: {last_task_json}"
-                event_logger.log_error(msg)
-                logger.error(msg)
-                ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Active inventory feed completed but no result file was returned",
-                )
-
-            event_logger.log_info(f"✓ Task {task_id} completed with fileId={file_id}")
-
-            # 4) Download CSV (may be gzip or plain CSV)
-            download_headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "text/csv, application/octet-stream",
-            }
-            event_logger.log_info(
-                f"→ Downloading feed file {file_id} (GET /sell/feed/v1/file/{file_id}/download)"
-            )
-
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
-                    download_resp = await client.get(
-                        f"{base_url}/file/{file_id}/download",
-                        headers=download_headers,
-                    )
-            except httpx.RequestError as e:
-                msg = f"HTTP error downloading feed file {file_id}: {e}"
-                event_logger.log_error(msg)
-                logger.error(msg)
-                ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=msg,
-                )
-
-            if download_resp.status_code != 200:
-                msg = (
-                    f"Failed to download feed file {file_id}: HTTP {download_resp.status_code} - "
-                    f"{download_resp.text[:1000]}"
-                )
-                event_logger.log_error(msg)
-                logger.error(msg)
-                ebay_db.update_sync_job(job_id, "failed", error_message=msg)
-                raise HTTPException(
-                    status_code=download_resp.status_code,
-                    detail=msg,
-                )
-
-            raw_bytes = download_resp.content or b""
-            content_encoding = download_resp.headers.get("Content-Encoding", "").lower()
-            if content_encoding == "gzip":
-                import gzip
-
-                raw_bytes = gzip.decompress(raw_bytes)
-
-            text_data = raw_bytes.decode("utf-8", errors="replace")
-
-            # 5) Parse CSV and upsert into ebay_active_inventory
-            reader = csv.DictReader(io.StringIO(text_data))
-            rows = list(reader)
-            total_fetched = len(rows)
-
-            event_logger.log_info(
-                f"✓ Downloaded {total_fetched} active inventory rows from feed"
-            )
+            entries_per_page = 200
+            page_number = 1
+            max_pages = 200
+            has_more = True
 
             db_session = next(get_db())
             try:
-                now_utc = datetime.now(timezone.utc)
+                while has_more and page_number <= max_pages:
+                    event_logger.log_info(
+                        f"→ Requesting ActiveList page {page_number}: GetMyeBaySelling",
+                    )
+
+                    xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{access_token}</eBayAuthToken>
+  </RequesterCredentials>
+  <ActiveList>
+    <Include>true</Include>
+    <Pagination>
+      <EntriesPerPage>{entries_per_page}</EntriesPerPage>
+      <PageNumber>{page_number}</PageNumber>
+    </Pagination>
+  </ActiveList>
+  <WarningLevel>High</WarningLevel>
+</GetMyeBaySellingRequest>"""
+
+                    headers = {
+                        "X-EBAY-API-SITEID": "0",
+                        "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
+                        "X-EBAY-API-CALL-NAME": "GetMyeBaySelling",
+                        "Content-Type": "text/xml",
+                    }
+
+                    request_start = time.time()
+                    try:
+                        async with httpx.AsyncClient(timeout=30.0) as client:
+                            response = await client.post(
+                                api_url,
+                                content=xml_request,
+                                headers=headers,
+                            )
+                    except httpx.RequestError as e:
+                        msg = f"HTTP error calling GetMyeBaySelling: {e}"
+                        event_logger.log_error(msg)
+                        logger.error(msg)
+                        ebay_db.update_sync_job(job_id, "failed", error_message=msg)
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=msg,
+                        )
+
+                    request_duration = int((time.time() - request_start) * 1000)
+                    event_logger.log_http_request(
+                        "POST",
+                        f"/ws/api.dll (GetMyeBaySelling ActiveList page {page_number})",
+                        response.status_code,
+                        request_duration,
+                        0,
+                    )
+
+                    if response.status_code != 200:
+                        msg = f"GetMyeBaySelling failed: HTTP {response.status_code} - {response.text[:1000]}"
+                        event_logger.log_error(msg)
+                        logger.error(msg)
+                        ebay_db.update_sync_job(job_id, "failed", error_message=msg)
+                        raise HTTPException(
+                            status_code=response.status_code,
+                            detail=msg,
+                        )
+
+                    raw_xml = response.text or ""
+                    logger.info(
+                        f"GetMyeBaySelling ActiveList raw XML (first 2000 chars): {raw_xml[:2000]}"
+                    )
+
+                    root = ET.fromstring(raw_xml)
+                    ns = {"ebay": "urn:ebay:apis:eBLBaseComponents"}
+
+                    items_elem = root.find(".//ebay:ActiveList/ebay:ItemArray", ns)
+                    item_elems = (
+                        items_elem.findall("ebay:Item", ns) if items_elem is not None else []
+                    )
+
+                    fetched_this_page = len(item_elems)
+                    total_fetched += fetched_this_page
+
+                    event_logger.log_info(
+                        f"← Page {page_number}: received {fetched_this_page} active items",
+                    )
+
+                    now_utc = datetime.now(timezone.utc)
+
+                    for item in item_elems:
+                        def _text(path: str) -> Optional[str]:
+                            elem = item.find(path, ns)
+                            return elem.text if elem is not None else None
+
+                        item_id = _text("ebay:ItemID")
+                        sku = _text("ebay:SKU")
+                        title = _text("ebay:Title")
+
+                        qty_str = _text("ebay:Quantity") or "0"
+                        qty_sold_str = item.findtext(
+                            "ebay:SellingStatus/ebay:QuantitySold", default="0", namespaces=ns
+                        )
+                        try:
+                            quantity_total = int(qty_str)
+                        except ValueError:
+                            quantity_total = 0
+                        try:
+                            quantity_sold = int(qty_sold_str or "0")
+                        except ValueError:
+                            quantity_sold = 0
+                        quantity_available = max(quantity_total - quantity_sold, 0)
+
+                        start_price_elem = item.find("ebay:StartPrice", ns)
+                        price_val: Optional[Decimal] = None
+                        currency: Optional[str] = None
+                        if start_price_elem is not None and start_price_elem.text is not None:
+                            raw_price = start_price_elem.text
+                            currency = start_price_elem.attrib.get("currencyID")
+                            try:
+                                price_val = Decimal(str(raw_price))
+                            except InvalidOperation:
+                                price_val = None
+
+                        listing_status = item.findtext(
+                            "ebay:SellingStatus/ebay:ListingStatus",
+                            default=None,
+                            namespaces=ns,
+                        )
+
+                        condition_id = item.findtext(
+                            "ebay:ConditionID", default=None, namespaces=ns
+                        )
+                        condition_text = item.findtext(
+                            "ebay:ConditionDisplayName", default=None, namespaces=ns
+                        )
+
+                        if not item_id and not sku:
+                            continue
+
+                        existing = (
+                            db_session.query(ActiveInventory)
+                            .filter(
+                                ActiveInventory.ebay_account_id == ebay_account_id,
+                                ActiveInventory.sku == sku,
+                                ActiveInventory.item_id == item_id,
+                            )
+                            .one_or_none()
+                        )
+
+                        raw_payload = {
+                            "ItemID": item_id,
+                            "SKU": sku,
+                            "Title": title,
+                            "Quantity": quantity_total,
+                            "QuantitySold": quantity_sold,
+                            "ListingStatus": listing_status,
+                            "ConditionID": condition_id,
+                            "ConditionDisplayName": condition_text,
+                        }
+
+                        if existing:
+                            existing.ebay_user_id = ebay_user_id
+                            existing.title = title
+                            existing.quantity_available = quantity_available
+                            existing.price = price_val
+                            existing.currency = currency
+                            existing.listing_status = listing_status
+                            existing.condition_id = condition_id
+                            existing.condition_text = condition_text
+                            existing.raw_payload = raw_payload
+                            existing.last_seen_at = now_utc
+                        else:
+                            obj = ActiveInventory(
+                                ebay_account_id=ebay_account_id,
+                                ebay_user_id=ebay_user_id,
+                                sku=sku,
+                                item_id=item_id,
+                                title=title,
+                                quantity_available=quantity_available,
+                                price=price_val,
+                                currency=currency,
+                                listing_status=listing_status,
+                                condition_id=condition_id,
+                                condition_text=condition_text,
+                                raw_payload=raw_payload,
+                                last_seen_at=now_utc,
+                            )
+                            db_session.add(obj)
+                            total_stored += 1
+
+                    db_session.commit()
+
+                    total_pages_elem = root.find(
+                        ".//ebay:ActiveList/ebay:PaginationResult/ebay:TotalNumberOfPages",
+                        ns,
+                    )
+                    total_pages = 1
+                    if total_pages_elem is not None and total_pages_elem.text:
+                        try:
+                            total_pages = int(total_pages_elem.text)
+                        except ValueError:
+                            total_pages = 1
+
+                    has_more = page_number < total_pages and fetched_this_page > 0
+                    page_number += 1
+
+                    if has_more:
+                        await asyncio.sleep(0.5)
+
+            except Exception:
+                db_session.rollback()
+                raise
+            finally:
+                db_session.close()
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            ebay_db.update_sync_job(
+                job_id,
+                "completed",
+                records_fetched=total_fetched,
+                records_stored=total_stored,
+            )
+
+            event_logger.log_done(
+                f"Active inventory sync completed: {total_fetched} items fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms,
+            )
+
+            logger.info(
+                f"Active inventory sync completed for user={user_id} ebay_account_id={ebay_account_id}: fetched={total_fetched}, stored={total_stored}"
+            )
+
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "job_id": job_id,
+                "run_id": event_logger.run_id,
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            event_logger.log_error(f"Active inventory sync failed: {error_msg}", e)
+            logger.error(f"Active inventory sync failed: {error_msg}")
+            ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
+            raise
+        finally:
+            event_logger.close()
 
                 def _norm(col: str) -> str:
                     return col.strip().lower().replace(" ", "_") if col else ""
