@@ -72,6 +72,8 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
             return None
 
         run_id = run.id
+        # Use a deterministic sync_event run_id so the SyncTerminal can attach
+        # to this worker even while it is still running.
         sync_run_id = f"worker_buyer_{run_id}"
 
         # Determine window using cursor + overlap
@@ -102,11 +104,22 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
 
         ebay_service = EbayService()
 
+        # Wire into the generic SyncEventLogger so the workers terminal can
+        # stream live progress (start → progress → done/error) for this worker.
+        from app.services.sync_event_logger import SyncEventLogger
+
+        user_id = account.org_id
+        event_logger = SyncEventLogger(user_id, "buyer", run_id=sync_run_id)
+
         total_fetched = 0
         total_stored = 0
 
         start_time = time.time()
         try:
+            event_logger.log_start(
+                "Starting Buyer purchases sync for worker window "
+                f"{from_iso}..{to_iso} (account={ebay_account_id})"
+            )
             # For purchases, we call a per-account helper and do ORM upserts here.
             since_dt = window_from
             purchases = await ebay_service.get_purchases(
@@ -115,6 +128,13 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
             )
 
             total_fetched = len(purchases)
+            event_logger.log_info(
+                f"Fetched {total_fetched} purchases from Buying API for account={ebay_account_id}",
+                extra_data={
+                    "window_from": from_iso,
+                    "window_to": to_iso,
+                },
+            )
 
             # Upsert into ebay_buyer, preserving warehouse-driven fields.
             stored = 0
@@ -212,6 +232,16 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
             db.commit()
             total_stored = stored
 
+            # Emit a single progress event with a 100% bar so the terminal
+            # shows clear completion information for this worker run.
+            event_logger.log_progress(
+                "Upserted Buyer purchases into ebay_buyer",
+                current_page=1,
+                total_pages=1,
+                items_fetched=total_fetched,
+                items_stored=total_stored,
+            )
+
             # One logical "page" at worker level
             log_page(
                 db,
@@ -235,6 +265,13 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
                 total_fetched=total_fetched,
                 total_stored=total_stored,
                 duration_ms=duration_ms,
+            )
+
+            event_logger.log_done(
+                "Buyer purchases sync completed",
+                total_fetched,
+                total_stored,
+                duration_ms,
             )
 
             # Advance cursor to window_to (we maintain an overlap window so this is safe)
@@ -274,6 +311,17 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
 
             duration_ms = int((time.time() - start_time) * 1000)
             msg = str(exc)
+
+            event_logger.log_error(
+                f"Buyer purchases worker failed: {msg}",
+                error=exc,
+                extra_data={
+                    "ebay_account_id": ebay_account_id,
+                    "window_from": from_iso,
+                    "window_to": to_iso,
+                },
+            )
+
             log_error(
                 db,
                 run_id=run_id,
@@ -297,6 +345,10 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
             )
             logger.error(f"Purchases worker for account={ebay_account_id} failed: {msg}")
             return run_id
+
+        finally:
+            # Always release SyncEventLogger resources
+            event_logger.close()
 
     finally:
         db.close()

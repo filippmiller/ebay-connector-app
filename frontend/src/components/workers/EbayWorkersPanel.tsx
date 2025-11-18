@@ -74,6 +74,11 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | "latest" | null>("latest");
 
+  const deriveSyncRunId = (run: { id: string; api_family: string } | null | undefined): string | null => {
+    if (!run || !run.id || !run.api_family) return null;
+    return `worker_${run.api_family}_${run.id}`;
+  };
+
   const fetchConfig = async () => {
     if (!accountId) return;
     setLoading(true);
@@ -142,16 +147,19 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
         const latest = runs[0];
         setSelectedRunId(latest.id);
         if (!activeSyncRunId) {
+          // Derive a deterministic sync_run_id so we can attach even while the
+          // worker run is still in progress.
+          let syncRunId: string | null = deriveSyncRunId(latest);
           try {
             const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
             const summary = logsResp.data?.run?.summary as any;
-            const syncRunId = summary?.sync_run_id || summary?.run_id || null;
-            if (syncRunId) {
-              setActiveSyncRunId(syncRunId);
-              setActiveApiFamily(latest.api_family);
-            }
+            syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
           } catch (err) {
             console.error("Failed to auto-attach workers terminal to latest run", err);
+          }
+          if (syncRunId) {
+            setActiveSyncRunId(syncRunId);
+            setActiveApiFamily(latest.api_family);
           }
         }
       }
@@ -234,34 +242,36 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
           },
           ...prev,
         ]);
-        // Immediately fetch logs for this run to resolve the underlying
-        // sync_run_id for the terminal.
+        // Immediately attach the terminal to the deterministic sync_run_id so
+        // live progress is visible even before the worker finishes.
+        let syncRunId: string | null = deriveSyncRunId({ id: runId, api_family: apiFamily });
         try {
           const logsResp = await api.get(`/ebay/workers/logs/${runId}`);
           const summary = logsResp.data?.run?.summary as any;
-          const syncRunId = summary?.sync_run_id || summary?.run_id || null;
-          if (syncRunId) {
-            setActiveSyncRunId(syncRunId);
-          } else {
-            setActiveSyncRunId(null);
-          }
+          syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
         } catch (err) {
           console.error("Failed to load logs for new worker run", err);
+        }
+        if (syncRunId) {
+          setActiveSyncRunId(syncRunId);
+        } else {
+          setActiveSyncRunId(null);
         }
       } else if (resp.data?.status === "skipped" && resp.data?.run_id) {
         // Already running; attach terminal to the active run.
         const runId = resp.data.run_id as string;
         setActiveApiFamily(apiFamily);
         setSelectedRunId(runId);
+        let syncRunId: string | null = deriveSyncRunId({ id: runId, api_family: apiFamily });
         try {
           const logsResp = await api.get(`/ebay/workers/logs/${runId}`);
           const summary = logsResp.data?.run?.summary as any;
-          const syncRunId = summary?.sync_run_id || summary?.run_id || null;
-          if (syncRunId) {
-            setActiveSyncRunId(syncRunId);
-          }
+          syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
         } catch (err) {
           console.error("Failed to load logs for existing worker run", err);
+        }
+        if (syncRunId) {
+          setActiveSyncRunId(syncRunId);
         }
       }
       // Refresh config + recent runs to pick up the latest state.
@@ -524,25 +534,30 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     // Re-resolve latest run from recentRuns
                     if (recentRuns.length > 0) {
                       const latest = recentRuns[0];
+                      let syncRunId: string | null = deriveSyncRunId(latest);
                       try {
                         const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
                         const summary = logsResp.data?.run?.summary as any;
-                        const syncRunId = summary?.sync_run_id || summary?.run_id || null;
-                        if (syncRunId) {
-                          setActiveSyncRunId(syncRunId);
-                          setActiveApiFamily(latest.api_family);
-                          setSelectedRunId(latest.id);
-                        }
+                        syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
                       } catch (err) {
                         console.error("Failed to load logs for latest worker run", err);
+                      }
+                      if (syncRunId) {
+                        setActiveSyncRunId(syncRunId);
+                        setActiveApiFamily(latest.api_family);
+                        setSelectedRunId(latest.id);
                       }
                     }
                   } else {
                     setSelectedRunId(val);
+                    // Try to find the run in the local recentRuns list so we can
+                    // derive a sync_run_id even if summary is still null.
+                    const run = recentRuns.find((r) => r.id === val);
+                    let syncRunId: string | null = deriveSyncRunId(run);
                     try {
                       const logsResp = await api.get(`/ebay/workers/logs/${val}`);
                       const summary = logsResp.data?.run?.summary as any;
-                      const syncRunId = summary?.sync_run_id || summary?.run_id || null;
+                      syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
                       if (syncRunId) {
                         setActiveSyncRunId(syncRunId);
                         setActiveApiFamily(logsResp.data?.run?.api_family || null);
