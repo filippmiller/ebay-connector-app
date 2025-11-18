@@ -341,6 +341,22 @@ const AdminDbExplorerPage: React.FC = () => {
     });
   };
 
+  useEffect(() => {
+    if (!migrationSource || !migrationTarget) return;
+    if (migrationHasUserEdits) return;
+    const skeleton: MigrationCommand = {
+      source: migrationSource,
+      target: migrationTarget,
+      mode: migrationMode,
+      batch_size: 1000,
+      mapping: {},
+      raw_payload: { enabled: false, target_column: 'raw_payload' },
+      dry_run: false,
+    };
+    setMigrationCommandText(JSON.stringify(skeleton, null, 2));
+    setMigrationParseError(null);
+  }, [migrationSource, migrationTarget, migrationMode, migrationHasUserEdits]);
+
   const handleMigrationCommandChange = (text: string) => {
     setMigrationCommandText(text);
     setMigrationHasUserEdits(true);
@@ -440,17 +456,6 @@ const AdminDbExplorerPage: React.FC = () => {
     } finally {
       setMigrationBusy('idle');
     }
-  };
-
-  const handleDataHeaderClick = (column: string) => {
-    setDataSortColumn((prevCol) => {
-      if (prevCol === column) {
-        setDataSortDirection((prevDir) => (prevDir === 'asc' ? 'desc' : 'asc'));
-        return prevCol;
-      }
-      setDataSortDirection('asc');
-      return column;
-    });
   };
 
   const handleChangeLimit = (newLimit: number) => {
