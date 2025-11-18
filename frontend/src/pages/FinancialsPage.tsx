@@ -5,8 +5,16 @@ import { Loader2 } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 
+interface FinancialSummaryData {
+  gross_sales: number;
+  total_fees: number;
+  net: number;
+  payouts_total: number;
+  refunds: number;
+}
+
 export default function FinancialsPage() {
-  const [summary, setSummary] = useState({
+  const [summary, setSummary] = useState<FinancialSummaryData>({
     gross_sales: 0,
     total_fees: 0,
     net: 0,
@@ -19,6 +27,7 @@ export default function FinancialsPage() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [transactionType, setTransactionType] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -49,8 +58,9 @@ export default function FinancialsPage() {
     if (fromDate) params.from = fromDate;
     if (toDate) params.to = toDate;
     if (transactionType) params.transaction_type = transactionType;
+    if (searchQuery) params.search = searchQuery;
     return params;
-  }, [fromDate, toDate, transactionType]);
+  }, [fromDate, toDate, transactionType, searchQuery]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -65,7 +75,7 @@ export default function FinancialsPage() {
               <Loader2 className="h-8 w-8 animate-spin" />
             </div>
           ) : (
-            <Tabs defaultValue="summary" className="w-full h-full flex flex-col">
+            <Tabs defaultValue="ledger" className="w-full h-full flex flex-col">
               <TabsList>
                 <TabsTrigger value="summary">Summary</TabsTrigger>
                 <TabsTrigger value="ledger">Ledger</TabsTrigger>
@@ -74,28 +84,13 @@ export default function FinancialsPage() {
               </TabsList>
               
               <TabsContent value="summary">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                  <Card className="p-4">
-                    <div className="text-sm text-gray-600">Gross Sales</div>
-                    <div className="text-2xl font-bold">${summary.gross_sales.toFixed(2)}</div>
-                  </Card>
-                  <Card className="p-4">
-                    <div className="text-sm text-gray-600">Total Fees</div>
-                    <div className="text-2xl font-bold">${summary.total_fees.toFixed(2)}</div>
-                  </Card>
-                  <Card className="p-4">
-                    <div className="text-sm text-gray-600">Net</div>
-                    <div className="text-2xl font-bold text-green-600">${summary.net.toFixed(2)}</div>
-                  </Card>
-                  <Card className="p-4">
-                    <div className="text-sm text-gray-600">Payouts</div>
-                    <div className="text-2xl font-bold">${summary.payouts_total.toFixed(2)}</div>
-                  </Card>
-                </div>
+                <FinancialSummaryCards summary={summary} />
               </TabsContent>
 
               <TabsContent value="ledger" className="flex-1 flex flex-col">
-                <div className="mt-4 space-y-4">
+                <FinancialSummaryCards summary={summary} />
+                {/* Full-width ledger grid directly under summary */}
+                <div className="mt-6 space-y-4 flex-1 flex flex-col">
                   <div className="flex flex-wrap items-end gap-4">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
@@ -129,6 +124,16 @@ export default function FinancialsPage() {
                         <option value="NON_SALE_CHARGE">NON_SALE_CHARGE</option>
                       </select>
                     </div>
+                    <div className="flex-1 min-w-[200px]">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Search</label>
+                      <input
+                        type="text"
+                        className="border rounded px-2 py-1 text-sm w-full"
+                        placeholder="Search across financial transactions..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                      />
+                    </div>
                   </div>
                   <div className="flex-1 min-h-0">
                     <DataGridPage
@@ -158,7 +163,30 @@ export default function FinancialsPage() {
             </Tabs>
           )}
         </div>
-      </div>
+    </div>
+    </div>
+  );
+}
+
+function FinancialSummaryCards({ summary }: { summary: FinancialSummaryData }) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 w-full">
+      <Card className="p-4">
+        <div className="text-sm text-gray-600">Gross Sales</div>
+        <div className="text-2xl font-bold">${summary.gross_sales.toFixed(2)}</div>
+      </Card>
+      <Card className="p-4">
+        <div className="text-sm text-gray-600">Total Fees</div>
+        <div className="text-2xl font-bold">${summary.total_fees.toFixed(2)}</div>
+      </Card>
+      <Card className="p-4">
+        <div className="text-sm text-gray-600">Net</div>
+        <div className="text-2xl font-bold text-green-600">${summary.net.toFixed(2)}</div>
+      </Card>
+      <Card className="p-4">
+        <div className="text-sm text-gray-600">Payouts</div>
+        <div className="text-2xl font-bold">${summary.payouts_total.toFixed(2)}</div>
+      </Card>
     </div>
   );
 }

@@ -1038,25 +1038,25 @@ const DualDbMigrationStudioShell: React.FC = () => {
       </Card>
 
       {/* SCREEN 2: Main 3-column layout */}
-      <Card className="max-w-6xl mx-auto">
+      <Card className="w-full">
         <CardHeader>
-          <CardTitle className="text-base">Dual-DB Migration Studio</CardTitle>
-          <CardDescription className="text-xs">
+          <CardTitle className="text-lg">Dual-DB Migration Studio</CardTitle>
+          <CardDescription className="text-sm">
             MSSQL on the left, mapping actions in the middle, Supabase target on the right.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex flex-col md:flex-row gap-6">
             {/* LEFT: MSSQL source */}
-            <div className="md:w-1/3 border rounded bg-white p-3 flex flex-col min-h-[320px] relative">
-              <div className="flex items-center justify-between mb-2">
+            <div className="md:w-1/3 border rounded bg-white p-4 flex flex-col min-h-[360px] relative">
+              <div className="flex items-center justify-between mb-3">
                 <div>
-                  <div className="font-semibold text-sm">MSSQL (legacy)</div>
-                  <div className="text-[11px] text-gray-500">
+                  <div className="font-semibold text-base">MSSQL (legacy)</div>
+                  <div className="text-xs text-gray-500">
                     {testOk ? 'Connected' : 'Not connected'}
                   </div>
                 </div>
-                {schemaLoading && <div className="text-[11px] text-gray-500">Loading schema...</div>}
+                {schemaLoading && <div className="text-xs text-gray-500">Loading schema...</div>}
               </div>
               <Input
                 placeholder="Search tables..."
@@ -1066,14 +1066,14 @@ const DualDbMigrationStudioShell: React.FC = () => {
               />
               {schemaError && <div className="mb-2 text-[11px] text-red-600">{schemaError}</div>}
               {schemaTree && (
-                <div className="flex-1 overflow-auto border rounded p-2 text-xs">
-                  <div className="font-mono text-[11px] mb-1 text-gray-700">{schemaTree.database}</div>
+                <div className="flex-1 overflow-auto border rounded p-2 text-sm">
+                  <div className="font-mono text-xs mb-1 text-gray-700">{schemaTree.database}</div>
                   {filteredSchemas.length === 0 && (
-                    <div className="text-[11px] text-gray-500">No tables match the search.</div>
+                    <div className="text-xs text-gray-500">No tables match the search.</div>
                   )}
                   {filteredSchemas.map((s) => (
                     <div key={s.name} className="mb-1">
-                      <div className="font-mono text-[11px] font-semibold text-gray-800">{s.name}</div>
+                      <div className="font-mono text-xs font-semibold text-gray-800">{s.name}</div>
                       <div className="ml-3">
                         {s.tables.map((t) => {
                           const isSelected =
@@ -1086,7 +1086,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                               }`}
                               onClick={() => handleSelectSourceTable(s.name, t.name)}
                             >
-                              <span className="font-mono text-[11px]">{t.name}</span>
+                              <span className="font-mono text-xs">{t.name}</span>
                             </div>
                           );
                         })}
@@ -1096,7 +1096,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 </div>
               )}
               {showConnectionOverlay && (
-                <div className="absolute inset-0 bg-white/70 flex flex-col items-center justify-center text-xs text-gray-600 gap-2">
+                <div className="absolute inset-0 bg-white/70 flex flex-col items-center justify-center text-sm text-gray-600 gap-2">
                   {/* STATE 2a: No MSSQL connection / error overlay */}
                   <div className="font-medium">Connect to MSSQL first</div>
                   <Button size="sm" variant="outline" onClick={handleTestConnection} disabled={isTesting}>
@@ -1107,11 +1107,11 @@ const DualDbMigrationStudioShell: React.FC = () => {
             </div>
 
             {/* CENTER: Mapping summary & actions */}
-            <div className="md:w-1/3 border rounded bg-white p-3 flex flex-col min-h-[320px]">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-semibold text-sm">Mapping / Actions</div>
+            <div className="md:w-1/3 border rounded bg-white p-4 flex flex-col min-h-[360px]">
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-semibold text-base">Mapping / Actions</div>
               </div>
-              <div className="flex gap-2 mb-3 flex-wrap">
+              <div className="flex gap-3 mb-4 flex-wrap">
                 <Button
                   size="sm"
                   disabled={!canRunOneToOne}
@@ -1126,7 +1126,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                   Configure mapping…
                 </Button>
               </div>
-              <div className="mb-2 text-xs text-gray-600 space-y-1">
+              <div className="mb-3 text-sm text-gray-700 space-y-1">
                 <div>
                   <span className="font-semibold">Source:</span>{' '}
                   {selectedSourceTable ? (
@@ -1150,7 +1150,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
               </div>
 
               <div className="flex-1 overflow-auto border rounded">
-                <table className="min-w-full text-[11px]">
+                <table className="min-w-full text-sm">
                   <thead className="bg-gray-100">
                     <tr>
                       <th className="px-2 py-1 border text-left">Source column</th>
@@ -1163,7 +1163,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                   <tbody>
                     {mappingRows.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-2 py-4 text-center text-xs text-gray-500">
+                        <td colSpan={5} className="px-2 py-4 text-center text-sm text-gray-500">
                           Mapping summary will appear after you select both source and target tables.
                         </td>
                       </tr>
@@ -1176,13 +1176,13 @@ const DualDbMigrationStudioShell: React.FC = () => {
                         <td className="px-2 py-1 border">{row.targetType ?? '-'}</td>
                         <td className="px-2 py-1 border">
                           {row.status === 'auto-mapped' && (
-                            <span className="text-[11px] text-green-700 font-medium">auto mapped</span>
+                            <span className="text-xs text-green-700 font-medium">auto mapped</span>
                           )}
                           {row.status === 'missing' && (
-                            <span className="text-[11px] text-red-700 font-medium">missing</span>
+                            <span className="text-xs text-red-700 font-medium">missing</span>
                           )}
                           {row.status === 'needs-review' && (
-                            <span className="text-[11px] text-yellow-700 font-medium">needs review</span>
+                            <span className="text-xs text-yellow-700 font-medium">needs review</span>
                           )}
                         </td>
                       </tr>
@@ -1191,7 +1191,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 </table>
               </div>
 
-              <div className="mt-2 flex gap-2 text-[11px] text-gray-500">
+              <div className="mt-3 flex gap-2 text-xs text-gray-500">
                 <Button size="sm" variant="outline" disabled>
                   Compare schemas (stub)
                 </Button>
@@ -1200,10 +1200,10 @@ const DualDbMigrationStudioShell: React.FC = () => {
             </div>
 
             {/* RIGHT: Supabase target */}
-            <div className="md:w-1/3 border rounded bg-white p-3 flex flex-col min-h-[320px]">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-semibold text-sm">Supabase (target)</div>
-                {targetTablesLoading && <div className="text-[11px] text-gray-500">Loading tables...</div>}
+            <div className="md:w-1/3 border rounded bg-white p-4 flex flex-col min-h-[360px]">
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-semibold text-base">Supabase (target)</div>
+                {targetTablesLoading && <div className="text-xs text-gray-500">Loading tables...</div>}
               </div>
               <Input
                 placeholder="Search tables..."
@@ -1211,7 +1211,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 onChange={(e) => setTargetSearch(e.target.value)}
                 className="mb-2 h-8 text-sm"
               />
-              {targetError && <div className="mb-2 text-[11px] text-red-600">{targetError}</div>}
+              {targetError && <div className="mb-2 text-xs text-red-600">{targetError}</div>}
               <div className="flex-1 overflow-auto border rounded">
                 {filteredTargetTables.map((t) => {
                   const isSelected = selectedTargetTable?.schema === t.schema && selectedTargetTable?.name === t.name;
@@ -1219,20 +1219,20 @@ const DualDbMigrationStudioShell: React.FC = () => {
                     <button
                       type="button"
                       key={`${t.schema}.${t.name}`}
-                      className={`w-full text-left px-2 py-1 text-xs cursor-pointer border-b hover:bg-gray-50 ${
+                      className={`w-full text-left px-3 py-1.5 text-sm cursor-pointer border-b hover:bg-gray-50 ${
                         isSelected ? 'bg-blue-50 font-semibold' : ''
                       }`}
                       onClick={() => handleSelectTargetTable(t)}
                     >
-                      <div className="font-mono text-[11px]">{t.name}</div>
+                      <div className="font-mono text-sm">{t.name}</div>
                       {t.row_estimate != null && (
-                        <div className="text-[10px] text-gray-500">~{Math.round(t.row_estimate)} rows</div>
+                        <div className="text-xs text-gray-500">~{Math.round(t.row_estimate)} rows</div>
                       )}
                     </button>
                   );
                 })}
                 {!targetTablesLoading && filteredTargetTables.length === 0 && (
-                  <div className="px-2 py-3 text-[11px] text-gray-500 text-center">No tables found.</div>
+                  <div className="px-3 py-4 text-sm text-gray-500 text-center">No tables found.</div>
                 )}
               </div>
             </div>
