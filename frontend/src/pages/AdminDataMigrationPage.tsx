@@ -55,7 +55,7 @@ const AdminDataMigrationPage: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-gray-50">
       <FixedHeader />
       <div className="pt-12 flex-1 px-4 pb-4">
-        <div className="w-full max-w-7xl mx-auto flex flex-col">
+        <div className="w-full mx-auto flex flex-col">
           <h1 className="text-2xl font-bold mb-2">Admin &rarr; Data Migration</h1>
           <p className="text-sm text-gray-600 mb-4 max-w-3xl">
             Internal admin-only workspace for exploring an external MSSQL database (schemas, tables, columns, and sample
@@ -978,14 +978,21 @@ const DualDbMigrationStudioShell: React.FC = () => {
             {oneToOneError && (
               <p className="text-xs text-red-700">{oneToOneError}</p>
             )}
-            {oneToOneResult && (
-              <p className="text-xs text-green-700">
-                Migration completed: {oneToOneResult.rows_inserted ?? 0} rows inserted in{' '}
-                {oneToOneResult.batches ?? 0} batches into {plannedTargetTable.schema}.{
-                  plannedTargetTable.name
-                }
-                .
-              </p>
+          {oneToOneResult && (
+              <div className="space-y-1 text-xs text-green-700">
+                <p>
+                  Migration completed: {oneToOneResult.rows_inserted ?? 0} rows inserted in{' '}
+                  {oneToOneResult.batches ?? 0} batches into {plannedTargetTable.schema}.{
+                    plannedTargetTable.name
+                  }
+                  .
+                </p>
+                <p className="text-[11px] text-green-700">
+                  Source rows at start: {oneToOneResult.source_row_count ?? 'n/a'}; target rows before:{' '}
+                  {oneToOneResult.target_row_count_before ?? 'n/a'}; target rows after:{' '}
+                  {oneToOneResult.target_row_count_after ?? 'n/a'}.
+                </p>
+              </div>
             )}
             {needsReview && (
               <p className="text-xs text-yellow-700">

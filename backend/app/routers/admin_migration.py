@@ -41,6 +41,9 @@ class OneToOneMigrationResult(BaseModel):
     target: Dict[str, str]
     rows_inserted: int
     batches: int
+    source_row_count: int | None = None
+    target_row_count_before: int | None = None
+    target_row_count_after: int | None = None
 
 
 def _ensure_target_table_exists(
@@ -162,6 +165,9 @@ async def run_one_to_one_migration(
     mssql_engine: Engine = create_engine_for_session(payload.mssql)
     rows_inserted = 0
     batches = 0
+    source_row_count: int | None = None
+    target_row_count_before: int | None = None
+    target_row_count_after: int | None = None
 
     try:
         with mssql_engine.connect() as mssql_conn, pg_engine.begin() as pg_conn:
@@ -191,6 +197,17 @@ async def run_one_to_one_migration(
                         "missing_columns": missing,
                     },
                 )
+
+            # Compute counts before migration for visibility/verification.
+            count_sql_mssql = text(
+                f"SELECT COUNT(*) FROM [{payload.source_schema}].[{payload.source_table}]"
+            )
+            source_row_count = int(mssql_conn.execute(count_sql_mssql).scalar() or 0)
+
+            count_sql_pg = text(
+                f'SELECT COUNT(*) FROM "{payload.target_schema}"."{payload.target_table}"'
+            )
+            target_row_count_before = int(pg_conn.execute(count_sql_pg).scalar() or 0)
 
             # Column list for SELECT and INSERT (preserve MSSQL order).
             column_names: List[str] = [c["name"] for c in mssql_columns]
@@ -226,6 +243,9 @@ async def run_one_to_one_migration(
                 batches += 1
                 offset += batch_count
 
+            # Count rows after migration for verification.
+            target_row_count_after = int(pg_conn.execute(count_sql_pg).scalar() or 0)
+
     finally:
         mssql_engine.dispose()
 
@@ -236,4 +256,7 @@ async def run_one_to_one_migration(
         target={"schema": payload.target_schema, "table": payload.target_table},
         rows_inserted=rows_inserted,
         batches=batches,
+        source_row_count=source_row_count,
+        target_row_count_before=target_row_count_before,
+        target_row_count_after=target_row_count_after,
     )
