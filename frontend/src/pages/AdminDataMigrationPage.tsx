@@ -52,10 +52,10 @@ const AdminDataMigrationPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<MainTab>('mssql-database');
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="min-h-screen flex flex-col bg-gray-50">
       <FixedHeader />
-      <div className="pt-12 flex-1 overflow-hidden px-4 pb-4">
-        <div className="h-full w-full max-w-7xl mx-auto flex flex-col">
+      <div className="pt-12 flex-1 px-4 pb-4">
+        <div className="w-full max-w-7xl mx-auto flex flex-col">
           <h1 className="text-2xl font-bold mb-2">Admin &rarr; Data Migration</h1>
           <p className="text-sm text-gray-600 mb-4 max-w-3xl">
             Internal admin-only workspace for exploring an external MSSQL database (schemas, tables, columns, and sample
