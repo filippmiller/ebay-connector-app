@@ -56,6 +56,38 @@ interface DuplicatesResponse {
   delete_sql: string | null;
 }
 
+interface MssqlConnectionConfig {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+  encrypt: boolean;
+}
+
+interface MssqlSchemaTreeResponse {
+  database: string;
+  schemas: {
+    name: string;
+    tables: { name: string }[];
+  }[];
+}
+
+interface MssqlTablePreviewResponse {
+  columns: string[];
+  rows: any[][];
+  limit: number;
+  offset: number;
+}
+
+interface MssqlColumnInfo {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  isPrimaryKey: boolean;
+  defaultValue: string | null;
+}
+
 const AdminDbExplorerPage: React.FC = () => {
   const [activeDb, setActiveDb] = useState<DbMode>('supabase');
   const [tables, setTables] = useState<TableInfo[]>([]);
@@ -107,10 +139,10 @@ const AdminDbExplorerPage: React.FC = () => {
           return;
         }
         const resp = await api.post<MssqlSchemaTreeResponse>('/api/admin/mssql/schema-tree', buildMssqlConfig());
-        const tree = resp.data;
+        const tree: MssqlSchemaTreeResponse = resp.data;
         const list: TableInfo[] = [];
-        tree.schemas.forEach((s) => {
-          s.tables.forEach((t) => {
+        tree.schemas.forEach((s: { name: string; tables: { name: string }[] }) => {
+          s.tables.forEach((t: { name: string }) => {
             list.push({ schema: s.name, name: t.name, row_estimate: null });
           });
         });
@@ -198,11 +230,11 @@ const AdminDbExplorerPage: React.FC = () => {
           limit,
           offset,
         });
-        const preview = resp.data;
+        const preview: MssqlTablePreviewResponse = resp.data;
         const cols = preview.columns;
-        const rowObjects: Record<string, any>[] = preview.rows.map((row) => {
+        const rowObjects: Record<string, any>[] = preview.rows.map((row: any[]) => {
           const obj: Record<string, any> = {};
-          cols.forEach((c, idx) => {
+          cols.forEach((c: string, idx: number) => {
             obj[c] = row[idx];
           });
           return obj;
