@@ -374,25 +374,6 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "sort": {"column": "date", "direction": "desc"},
     },
 }
-        "visible_columns": [
-            "id",
-            "tracking_number",
-            "refund_flag",
-            "storage",
-            "profit",
-            "buyer_id",
-            "seller_id",
-            "paid_time",
-            "amount_paid",
-            "days_since_paid",
-            "status_label",
-            "record_created_at",
-            "title",
-            "comment",
-        ],
-        "sort": {"column": "paid_time", "direction": "desc"},
-    },
-}
 
 
 
