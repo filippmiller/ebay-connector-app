@@ -59,6 +59,7 @@ class MigrationValidationResult(BaseModel):
 class MigrationRunResult(MigrationValidationResult):
     rows_inserted: int = 0
     batches: int = 0
+    batch_logs: List[str] = Field(default_factory=list)
 
 
 SUPPORTED_SOURCE_DBS = {"mssql"}
@@ -287,6 +288,7 @@ async def run_migration_command(
 
     rows_inserted = 0
     batches = 0
+    batch_logs: List[str] = []
     batch_size = max(1, min(cmd.batch_size or 1000, 10_000))
 
     try:
@@ -332,6 +334,9 @@ async def run_migration_command(
                 rows_inserted += batch_count
                 batches += 1
                 offset += batch_count
+                batch_logs.append(
+                    f"Batch {batches} inserted {batch_count} row(s); total so far {rows_inserted}."
+                )
 
     finally:
         mssql_engine.dispose()
@@ -345,4 +350,5 @@ async def run_migration_command(
         missing_target_columns=validation.missing_target_columns,
         rows_inserted=rows_inserted,
         batches=batches,
+        batch_logs=batch_logs,
     )
