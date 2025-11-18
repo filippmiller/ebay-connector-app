@@ -56,6 +56,43 @@ interface DuplicatesResponse {
   delete_sql: string | null;
 }
 
+type MigrationDb = 'mssql' | 'supabase';
+
+interface MigrationEndpoint {
+  db: MigrationDb;
+  database?: string;
+  schema?: string;
+  table: string;
+}
+
+type MigrationMappingRule =
+  | {
+      type: 'column';
+      source: string;
+    }
+  | {
+      type: 'expression';
+      sql: string;
+    }
+  | {
+      type: 'constant';
+      value: string | number | boolean | null;
+    };
+
+interface MigrationCommand {
+  source: MigrationEndpoint;
+  target: MigrationEndpoint;
+  mode?: 'append' | 'truncate_and_insert';
+  filter?: string;
+  batch_size?: number;
+  mapping: Record<string, MigrationMappingRule>;
+  raw_payload?: {
+    enabled: boolean;
+    target_column?: string;
+  };
+  dry_run?: boolean;
+}
+
 interface MssqlConnectionConfig {
   host: string;
   port: number;
@@ -113,6 +150,16 @@ const AdminDbExplorerPage: React.FC = () => {
   const [truncateLoading, setTruncateLoading] = useState(false);
   const [mssqlDatabase, setMssqlDatabase] = useState('DB_A28F26_parts');
 
+  // Migration console state
+  const [migrationCommandText, setMigrationCommandText] = useState('');
+  const [migrationMode, setMigrationMode] = useState<'append' | 'truncate_and_insert'>('append');
+  const [migrationParseError, setMigrationParseError] = useState<string | null>(null);
+  const [migrationLog, setMigrationLog] = useState<string[]>([]);
+  const [migrationBusy, setMigrationBusy] = useState<'idle' | 'validating' | 'running'>('idle');
+  const [migrationHasUserEdits, setMigrationHasUserEdits] = useState(false);
+  const [migrationSource, setMigrationSource] = useState<MigrationEndpoint | null>(null);
+  const [migrationTarget, setMigrationTarget] = useState<MigrationEndpoint | null>(null);
+
   const buildMssqlConfig = (): MssqlConnectionConfig => ({
     host: '',
     port: 1433,
@@ -121,6 +168,10 @@ const AdminDbExplorerPage: React.FC = () => {
     password: '',
     encrypt: true,
   });
+
+  const appendMigrationLog = (line: string) => {
+    setMigrationLog((prev) => [...prev, line]);
+  };
 
   const fetchTables = async () => {
     setLoadingTables(true);
@@ -262,6 +313,13 @@ const AdminDbExplorerPage: React.FC = () => {
     setRows(null);
     setRowsOffset(0);
     setDuplicates(null);
+
+    if (activeDb === 'mssql') {
+      setMigrationSource({ db: 'mssql', database: mssqlDatabase, schema: table.schema, table: table.name });
+    } else {
+      setMigrationTarget({ db: 'supabase', schema: table.schema, table: table.name });
+    }
+
     loadSchema(table);
   };
 
@@ -269,6 +327,118 @@ const AdminDbExplorerPage: React.FC = () => {
     setActiveTab(tab);
     if (tab === 'data' && selectedTable && !rows) {
       loadRows(selectedTable, rowsLimit, rowsOffset);
+    }
+  };
+
+  const handleDataHeaderClick = (column: string) => {
+    setDataSortColumn((prevCol) => {
+      if (prevCol === column) {
+        setDataSortDirection((prevDir) => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevCol;
+      }
+      setDataSortDirection('asc');
+      return column;
+    });
+  };
+
+  const handleMigrationCommandChange = (text: string) => {
+    setMigrationCommandText(text);
+    setMigrationHasUserEdits(true);
+    if (!text.trim()) {
+      setMigrationParseError(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(text) as MigrationCommand;
+      setMigrationParseError(null);
+      if (parsed.mode === 'append' || parsed.mode === 'truncate_and_insert') {
+        setMigrationMode(parsed.mode);
+      }
+    } catch (err: any) {
+      setMigrationParseError(err?.message || 'Invalid JSON');
+    }
+  };
+
+  const safeParseMigrationCommand = (): MigrationCommand | null => {
+    if (!migrationCommandText.trim()) {
+      const msg = 'Migration command JSON is empty.';
+      setMigrationParseError(msg);
+      appendMigrationLog(`Parse error: ${msg}`);
+      return null;
+    }
+    try {
+      const cmd = JSON.parse(migrationCommandText) as MigrationCommand;
+      if (!cmd.mode) {
+        cmd.mode = migrationMode;
+      }
+      setMigrationParseError(null);
+      return cmd;
+    } catch (err: any) {
+      const msg = err?.message || 'Invalid JSON';
+      setMigrationParseError(msg);
+      appendMigrationLog(`Parse error: ${msg}`);
+      return null;
+    }
+  };
+
+  const handleMigrationModeChange = (mode: 'append' | 'truncate_and_insert') => {
+    setMigrationMode(mode);
+    try {
+      if (!migrationCommandText.trim()) return;
+      const cmd = JSON.parse(migrationCommandText) as MigrationCommand;
+      cmd.mode = mode;
+      setMigrationCommandText(JSON.stringify(cmd, null, 2));
+    } catch {
+      // ignore if JSON is invalid; user will see parse error
+    }
+  };
+
+  const handleValidateMigration = async () => {
+    const cmd = safeParseMigrationCommand();
+    if (!cmd) return;
+    setMigrationBusy('validating');
+    appendMigrationLog('Validating migration command...');
+    try {
+      cmd.dry_run = true;
+      const resp = await api.post('/api/admin/db-migration/validate', cmd);
+      const res = resp.data as any;
+      appendMigrationLog(
+        `Validation ${res.ok ? 'OK' : 'FAILED'} – estimated rows: ${
+          res.estimated_rows ?? 'unknown'
+        }, issues: ${res.issues && res.issues.length ? res.issues.join('; ') : 'none'}`,
+      );
+      if (res.missing_target_columns && res.missing_target_columns.length) {
+        appendMigrationLog(`Missing required target columns: ${res.missing_target_columns.join(', ')}`);
+      }
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e.message || 'Validation failed';
+      appendMigrationLog(`Validation error: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+    } finally {
+      setMigrationBusy('idle');
+    }
+  };
+
+  const handleRunMigration = async () => {
+    const cmd = safeParseMigrationCommand();
+    if (!cmd) return;
+    setMigrationBusy('running');
+    appendMigrationLog('Starting migration run...');
+    try {
+      const resp = await api.post('/api/admin/db-migration/run', cmd);
+      const res = resp.data as any;
+      if (Array.isArray(res.batch_logs)) {
+        res.batch_logs.forEach((line: string) => appendMigrationLog(line));
+      }
+      appendMigrationLog(
+        `Migration finished – inserted ${res.rows_inserted ?? 0} row(s) in ${
+          res.batches ?? 0
+        } batch(es) into ${res.target?.schema}.${res.target?.table}`,
+      );
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e.message || 'Run failed';
+      appendMigrationLog(`Run error: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+    } finally {
+      setMigrationBusy('idle');
     }
   };
 
@@ -799,6 +969,69 @@ const AdminDbExplorerPage: React.FC = () => {
                   {activeTab === 'structure' ? renderStructure() : renderData()}
                 </div>
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* Migration Console */}
+        <div className="mt-6 border rounded bg-white p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-semibold">Migration Console</h2>
+            <div className="flex items-center gap-2 text-xs">
+              <span>Target mode:</span>
+              <select
+                className="border rounded px-2 py-1 text-xs"
+                value={migrationMode}
+                onChange={(e) => handleMigrationModeChange(e.target.value as 'append' | 'truncate_and_insert')}
+              >
+                <option value="append">append</option>
+                <option value="truncate_and_insert">truncate_and_insert</option>
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-gray-600 mb-2">
+            Define MSSQL → Supabase migrations as JSON commands. Select MSSQL and Supabase tables above to prefill the
+            command, then Validate or Run.
+          </p>
+          {migrationParseError && (
+            <div className="mb-2 text-xs text-red-600">JSON parse error: {migrationParseError}</div>
+          )}
+          <textarea
+            className="w-full border rounded px-2 py-1 text-xs font-mono h-48 mb-2"
+            value={migrationCommandText}
+            onChange={(e) => handleMigrationCommandChange(e.target.value)}
+            placeholder="Paste or edit a MigrationCommand JSON here..."
+          />
+          <div className="flex items-center gap-2 mb-2 text-xs">
+            <button
+              className="px-3 py-1 border rounded bg-white hover:bg-gray-50"
+              onClick={handleValidateMigration}
+              disabled={migrationBusy === 'running'}
+            >
+              {migrationBusy === 'validating' ? 'Validating…' : 'Validate'}
+            </button>
+            <button
+              className="px-3 py-1 border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              onClick={handleRunMigration}
+              disabled={migrationBusy === 'validating' || migrationBusy === 'running'}
+            >
+              {migrationBusy === 'running' ? 'Running…' : 'Run migration'}
+            </button>
+            {migrationHasUserEdits && (
+              <span className="text-[11px] text-gray-500">Command has manual edits.</span>
+            )}
+          </div>
+          <div className="border rounded bg-gray-50 p-2 text-xs max-h-40 overflow-auto">
+            {migrationLog.length === 0 ? (
+              <div className="text-gray-500">No migration messages yet.</div>
+            ) : (
+              <ul className="space-y-1">
+                {migrationLog.map((line, idx) => (
+                  <li key={idx} className="font-mono whitespace-pre-wrap break-all">
+                    {line}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>
