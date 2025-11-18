@@ -302,3 +302,111 @@ async def get_table_rows(
         }
     finally:
         conn.close()
+
+
+@router.get("/tables/{table_name}/duplicates")
+async def get_table_duplicates(
+    table_name: str,
+    limit: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Detect duplicate groups in a table by grouping on all columns.
+
+    This is meant for admin troubleshooting (e.g. repeated migrations). It returns
+    a sample of duplicate groups and a suggested SQL snippet to remove duplicates
+    while keeping a single row per group.
+    """
+
+    tbl = _validate_table_name(db, table_name)
+    schema = tbl["schema"]
+
+    conn = engine.connect()
+    try:
+        # Determine column list
+        cols_sql = text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = :schema AND table_name = :table
+            ORDER BY ordinal_position
+            """
+        )
+        col_rows = conn.execute(cols_sql, {"schema": schema, "table": table_name}).fetchall()
+        column_names = [r[0] for r in col_rows]
+        if not column_names:
+            return {
+                "schema": schema,
+                "name": table_name,
+                "total_duplicate_groups": 0,
+                "groups": [],
+                "delete_sql": None,
+            }
+
+        cols_list = ", ".join(f'"{c}"' for c in column_names)
+
+        dup_groups_sql = text(
+            f"""
+            SELECT {cols_list}, COUNT(*) AS row_count
+            FROM {schema}."{table_name}"
+            GROUP BY {cols_list}
+            HAVING COUNT(*) > 1
+            ORDER BY row_count DESC
+            LIMIT :limit
+            """
+        )
+        groups = conn.execute(dup_groups_sql, {"limit": limit}).mappings().all()
+
+        total_sql = text(
+            f"""
+            SELECT COUNT(*) FROM (
+              SELECT 1
+              FROM {schema}."{table_name}"
+              GROUP BY {cols_list}
+              HAVING COUNT(*) > 1
+            ) AS dup
+            """
+        )
+        total_groups = int(conn.execute(total_sql).scalar() or 0)
+
+        delete_sql = (
+            f"DELETE FROM {schema}.\"{table_name}\" t USING (\n"
+            f"  SELECT ctid, ROW_NUMBER() OVER (PARTITION BY {cols_list} ORDER BY ctid) AS rn\n"
+            f"  FROM {schema}.\"{table_name}\"\n"
+            f") d\nWHERE t.ctid = d.ctid AND d.rn > 1;"
+        )
+
+        formatted_groups = []
+        for g in groups:
+            sample = {c: g[c] for c in column_names}
+            formatted_groups.append({"row_count": int(g["row_count"]), "sample": sample})
+
+        return {
+            "schema": schema,
+            "name": table_name,
+            "total_duplicate_groups": total_groups,
+            "groups": formatted_groups,
+            "delete_sql": delete_sql,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/tables/{table_name}/truncate")
+async def truncate_table(
+    table_name: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Delete all rows from a table (admin-only)."""
+
+    tbl = _validate_table_name(db, table_name)
+    schema = tbl["schema"]
+
+    conn = engine.connect()
+    try:
+        sql = text(f'TRUNCATE TABLE {schema}."{table_name}" RESTART IDENTITY CASCADE')
+        conn.execute(sql)
+        return {"status": "ok", "schema": schema, "name": table_name}
+    finally:
+        conn.close()

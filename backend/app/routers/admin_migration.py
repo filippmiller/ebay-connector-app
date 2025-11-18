@@ -198,6 +198,35 @@ async def run_one_to_one_migration(
                     },
                 )
 
+            # Duplicate check for existing tables: if there are already duplicate groups in
+            # the target based on all columns, abort to avoid compounding duplicates.
+            if payload.mode == "existing":
+                if not pg_columns:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Target table has no columns; cannot perform duplicate check.",
+                    )
+                cols_list = ", ".join(f'"{c["name"]}'" for c in pg_columns)
+                dup_sql = text(
+                    f"""
+                    SELECT COUNT(*) FROM (
+                      SELECT 1
+                      FROM {payload.target_schema}."{payload.target_table}"
+                      GROUP BY {cols_list}
+                      HAVING COUNT(*) > 1
+                    ) AS dup
+                    """
+                )
+                dup_groups = int(pg_conn.execute(dup_sql).scalar() or 0)
+                if dup_groups > 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "message": "Target table already contains duplicate groups; clean up duplicates before running another 1:1 migration.",
+                            "duplicate_groups": dup_groups,
+                        },
+                    )
+
             # Compute counts before migration for visibility/verification.
             count_sql_mssql = text(
                 f"SELECT COUNT(*) FROM [{payload.source_schema}].[{payload.source_table}]"

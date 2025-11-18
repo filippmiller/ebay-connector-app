@@ -139,6 +139,23 @@ FINANCES_FEES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="raw_payload", label="Raw payload", type="string", width_default=400),
 ]
 
+# Buying grid: logical view over purchases (derived from tbl_ebay_buyer).
+BUYING_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="creation_date", label="Created at", type="datetime", width_default=180),
+  ColumnMeta(name="purchase_id", label="Purchase ID", type="string", width_default=220),
+  ColumnMeta(name="buyer_username", label="Buyer", type="string", width_default=180),
+  ColumnMeta(name="seller_username", label="Seller", type="string", width_default=180),
+  ColumnMeta(name="total_value", label="Total value", type="money", width_default=140),
+  ColumnMeta(name="total_currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="payment_status", label="Payment status", type="string", width_default=140),
+  ColumnMeta(name="fulfillment_status", label="Fulfillment status", type="string", width_default=160),
+  ColumnMeta(name="tracking_number", label="Tracking #", type="string", width_default=180),
+  ColumnMeta(name="line_items_count", label="# line items", type="number", width_default=120),
+  ColumnMeta(name="ship_to_name", label="Ship to name", type="string", width_default=200),
+  ColumnMeta(name="ship_to_city", label="Ship to city", type="string", width_default=160),
+  ColumnMeta(name="ship_to_state", label="Ship to state", type="string", width_default=120),
+]
+
 
 GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "orders": {
@@ -254,7 +271,21 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "created_at", "direction": "desc"},
     },
+    "buying": {
+        "visible_columns": [
+            "creation_date",
+            "purchase_id",
+            "buyer_username",
+            "seller_username",
+            "total_value",
+            "total_currency",
+            "payment_status",
+            "fulfillment_status",
+        ],
+        "sort": {"column": "creation_date", "direction": "desc"},
+    },
 }
+
 
 
 def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
@@ -274,6 +305,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return FINANCES_COLUMNS_META
     if grid_key == "finances_fees":
         return FINANCES_FEES_COLUMNS_META
+    if grid_key == "buying":
+        return BUYING_COLUMNS_META
     return []
 
 def _allowed_columns_for_grid(grid_key: str) -> List[str]:

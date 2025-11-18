@@ -42,6 +42,19 @@ interface GlobalSearchResponse {
   tables: GlobalSearchResultTable[];
 }
 
+interface DuplicatesGroup {
+  row_count: number;
+  sample: Record<string, any>;
+}
+
+interface DuplicatesResponse {
+  schema: string;
+  name: string;
+  total_duplicate_groups: number;
+  groups: DuplicatesGroup[];
+  delete_sql: string | null;
+}
+
 const AdminDbExplorerPage: React.FC = () => {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [filteredTables, setFilteredTables] = useState<TableInfo[]>([]);
@@ -59,7 +72,9 @@ const AdminDbExplorerPage: React.FC = () => {
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [globalSearchResult, setGlobalSearchResult] = useState<GlobalSearchResponse | null>(null);
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
-
+  const [duplicates, setDuplicates] = useState<DuplicatesResponse | null>(null);
+  const [duplicatesLoading, setDuplicatesLoading] = useState(false);
+  const [truncateLoading, setTruncateLoading] = useState(false);
   useEffect(() => {
     const fetchTables = async () => {
       setLoadingTables(true);
@@ -127,6 +142,7 @@ const AdminDbExplorerPage: React.FC = () => {
     setActiveTab('structure');
     setRows(null);
     setRowsOffset(0);
+    setDuplicates(null);
     loadSchema(table);
   };
 
@@ -150,6 +166,50 @@ const AdminDbExplorerPage: React.FC = () => {
     const newOffset = rowsOffset + rowsLimit;
     setRowsOffset(newOffset);
     loadRows(selectedTable, rowsLimit, newOffset);
+  };
+
+  const handleCheckDuplicates = async () => {
+    if (!selectedTable) return;
+    setDuplicatesLoading(true);
+    setError(null);
+    try {
+      const resp = await api.get<DuplicatesResponse>(
+        `/api/admin/db/tables/${encodeURIComponent(selectedTable.name)}/duplicates`,
+        {
+          params: { limit: 50 },
+        }
+      );
+      setDuplicates(resp.data);
+    } catch (e: any) {
+      console.error('Failed to check duplicates', e);
+      setError(e?.response?.data?.detail || e.message || 'Failed to check duplicates');
+      setDuplicates(null);
+    } finally {
+      setDuplicatesLoading(false);
+    }
+  };
+
+  const handleTruncateTable = async () => {
+    if (!selectedTable) return;
+    const confirm = window.confirm(
+      `This will DELETE ALL ROWS from ${selectedTable.schema}.${selectedTable.name}. Are you sure?`
+    );
+    if (!confirm) return;
+    setTruncateLoading(true);
+    setError(null);
+    try {
+      await api.post(`/api/admin/db/tables/${encodeURIComponent(selectedTable.name)}/truncate`);
+      // Clear local state and reload table metadata
+      setRows(null);
+      setSchema(null);
+      setDuplicates(null);
+      await loadSchema(selectedTable);
+    } catch (e: any) {
+      console.error('Failed to truncate table', e);
+      setError(e?.response?.data?.detail || e.message || 'Failed to clear table data');
+    } finally {
+      setTruncateLoading(false);
+    }
   };
 
   const renderStructure = () => {
@@ -432,7 +492,21 @@ const AdminDbExplorerPage: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <div className="flex gap-2 text-sm">
+                  <div className="flex items-center gap-2 text-sm">
+                    <button
+                      className="px-3 py-1 rounded border text-xs bg-white hover:bg-gray-50"
+                      onClick={handleCheckDuplicates}
+                      disabled={duplicatesLoading}
+                    >
+                      {duplicatesLoading ? 'Checking duplicates...' : 'Check duplicates'}
+                    </button>
+                    <button
+                      className="px-3 py-1 rounded border text-xs bg-white hover:bg-red-50 text-red-700 border-red-300"
+                      onClick={handleTruncateTable}
+                      disabled={truncateLoading}
+                    >
+                      {truncateLoading ? 'Clearing...' : 'Clear table data'}
+                    </button>
                     <button
                       className={`px-3 py-1 rounded border text-xs ${
                         activeTab === 'structure' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'
@@ -451,6 +525,41 @@ const AdminDbExplorerPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {duplicates && (
+                  <div className="mt-3 mb-2 border rounded bg-yellow-50 p-2 text-xs max-h-64 overflow-auto">
+                    <div className="font-semibold mb-1">Duplicate groups</div>
+                    {duplicates.total_duplicate_groups === 0 ? (
+                      <div className="text-gray-600">No duplicates found (grouping by all columns).</div>
+                    ) : (
+                      <>
+                        <div className="mb-2 text-gray-700">
+                          Found {duplicates.total_duplicate_groups} duplicate group(s). Below is a sample and a
+                          suggested SQL snippet you can run (carefully!) to delete duplicates while keeping one row per
+                          group.
+                        </div>
+                        <div className="space-y-2 mb-2">
+                          {duplicates.groups.map((g, idx) => (
+                            <div key={idx} className="border rounded bg-white p-2">
+                              <div className="mb-1 font-mono">Row count in group: {g.row_count}</div>
+                              <pre className="text-[11px] whitespace-pre-wrap break-all bg-gray-50 p-1 rounded">
+                                {JSON.stringify(g.sample, null, 2)}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                        {duplicates.delete_sql && (
+                          <div className="mt-2">
+                            <div className="mb-1 font-semibold">Suggested DELETE SQL</div>
+                            <pre className="text-[11px] whitespace-pre-wrap break-all bg-gray-100 p-2 rounded">
+                              {duplicates.delete_sql}
+                            </pre>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex-1 overflow-auto mt-2">
                   {activeTab === 'structure' ? renderStructure() : renderData()}

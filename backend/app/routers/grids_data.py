@@ -10,7 +10,14 @@ import enum
 from app.database import get_db
 from app.db_models import Order, OrderLineItem, Transaction as EbayLegacyTransaction
 from app.models_sqlalchemy import get_db as get_db_sqla
-from app.models_sqlalchemy.models import Message as EbayMessage, Offer as OfferModel, OfferState, OfferDirection, ActiveInventory
+from app.models_sqlalchemy.models import (
+    Message as EbayMessage,
+    Offer as OfferModel,
+    OfferState,
+    OfferDirection,
+    ActiveInventory,
+    Purchase,
+)
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
 from app.routers.grid_layouts import _allowed_columns_for_grid
@@ -188,6 +195,21 @@ async def get_grid_data(
             )
         finally:
             db_sqla.close()
+    elif grid_key == "buying":
+        # Buying grid is backed by the purchases table (derived from tbl_ebay_buyer).
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_buying_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+            )
+        finally:
+            db_sqla.close()
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Grid not implemented yet")
 
@@ -248,6 +270,67 @@ async def _get_orders_data(
         return row
 
     rows = [_serialize(li) for li in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_buying_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+) -> Dict[str, Any]:
+    """Buying grid backed by purchases (logical view of tbl_ebay_buyer).
+
+    For now we expose a flat row per purchase, matching the columns returned by
+    /api/buying, and filter by user_id.
+    """
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    query = db.query(Purchase).filter(Purchase.user_id == current_user.id)
+
+    total = query.count()
+
+    allowed_sort_cols = {
+        "creation_date",
+        "buyer_username",
+        "seller_username",
+        "total_value",
+        "payment_status",
+        "fulfillment_status",
+    }
+    if sort_column in allowed_sort_cols and hasattr(Purchase, sort_column):
+        sort_attr = getattr(Purchase, sort_column)
+        if sort_dir == "desc":
+            query = query.order_by(desc(sort_attr))
+        else:
+            query = query.order_by(asc(sort_attr))
+
+    rows_db: List[Purchase] = query.offset(offset).limit(limit).all()
+
+    def _serialize(p: Purchase) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            value = getattr(p, col, None)
+            if isinstance(value, dt_type):
+                row[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                row[col] = float(value)
+            else:
+                row[col] = value
+        return row
+
+    rows = [_serialize(p) for p in rows_db]
 
     return {
         "rows": rows,
