@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '@/lib/apiClient';
-import type { GridColumnMeta } from '@/components/DataGridPage';
+import type { GridColumnMeta, GridLayoutResponse } from '@/components/DataGridPage';
 
 export type GridDensity = 'compact' | 'normal' | 'comfortable';
 export type GridFontSize = 'small' | 'medium' | 'large';
@@ -72,6 +72,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     setLoading(true);
     setError(null);
     try {
+      // Primary: new unified grid preferences endpoint
       const resp = await api.get<GridPreferencesResponse>('/api/grid/preferences', {
         params: { grid_key: gridKey },
       });
@@ -80,11 +81,33 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
     } catch (e: any) {
       console.error('Failed to load grid preferences', e);
-      setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
-      // On error, fall back to defaults but keep going so the grid still renders.
-      setAvailableColumns([]);
-      setColumnsState(null);
-      setThemeState(DEFAULT_THEME);
+
+      // Fallback: try legacy /api/grids/{gridKey}/layout to keep existing grids working
+      try {
+        const legacyResp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
+        const layout = legacyResp.data;
+        const colsMeta = layout.available_columns || [];
+        const allowedNames = colsMeta.map((c) => c.name);
+        const visible = (layout.visible_columns || allowedNames).filter((name) => allowedNames.includes(name));
+        const colsCfg: GridColumnsConfig = {
+          visible,
+          order: visible,
+          widths: layout.column_widths || {},
+          sort: layout.sort || null,
+        };
+        setAvailableColumns(colsMeta);
+        setColumnsState(colsCfg);
+        // Legacy layout has no theme concept – use default theme locally
+        setThemeState(DEFAULT_THEME);
+        setError(null);
+      } catch (fallbackErr: any) {
+        console.error('Fallback to legacy grid layout failed', fallbackErr);
+        setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
+        // On error, fall back to defaults but keep going so the grid still renders.
+        setAvailableColumns([]);
+        setColumnsState(null);
+        setThemeState(DEFAULT_THEME);
+      }
     } finally {
       setLoading(false);
     }
