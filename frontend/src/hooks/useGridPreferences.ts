@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '@/lib/apiClient';
-import type { GridColumnMeta, GridLayoutResponse } from '@/components/DataGridPage';
+import type { GridColumnMeta, GridLayoutResponse, GridDataResponse } from '@/components/DataGridPage';
 
 export type GridDensity = 'compact' | 'normal' | 'comfortable';
 export type GridFontSize = 'small' | 'medium' | 'large';
@@ -102,11 +102,48 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         setError(null);
       } catch (fallbackErr: any) {
         console.error('Fallback to legacy grid layout failed', fallbackErr);
-        setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
-        // On error, fall back to defaults but keep going so the grid still renders.
-        setAvailableColumns([]);
-        setColumnsState(null);
-        setThemeState(DEFAULT_THEME);
+
+        // Last-resort fallback: try to infer columns from a sample of grid data.
+        try {
+          const dataResp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data`, {
+            params: { limit: 1, offset: 0 },
+          });
+          const data = dataResp.data;
+          const firstRow = (data.rows && data.rows[0]) || {};
+          const keys = Object.keys(firstRow);
+
+          if (keys.length > 0) {
+            const colsMeta: GridColumnMeta[] = keys.map((name) => ({
+              name,
+              label: name,
+              type: 'string',
+              width_default: 150,
+              sortable: true,
+            }));
+            const colsCfg: GridColumnsConfig = {
+              visible: keys,
+              order: keys,
+              widths: {},
+              sort: data.sort || null,
+            };
+            setAvailableColumns(colsMeta);
+            setColumnsState(colsCfg);
+            setThemeState(DEFAULT_THEME);
+            setError(null);
+          } else {
+            setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
+            setAvailableColumns([]);
+            setColumnsState(null);
+            setThemeState(DEFAULT_THEME);
+          }
+        } catch (dataErr: any) {
+          console.error('Fallback to sample grid data failed', dataErr);
+          setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
+          // On error, fall back to defaults but keep going so the grid still renders.
+          setAvailableColumns([]);
+          setColumnsState(null);
+          setThemeState(DEFAULT_THEME);
+        }
       }
     } finally {
       setLoading(false);
