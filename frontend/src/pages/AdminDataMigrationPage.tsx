@@ -912,36 +912,59 @@ const DualDbMigrationStudioShell: React.FC = () => {
   const canRunOneToOne = Boolean(selectedSourceTable);
 
   const renderOneToOneDialog = () => {
-    if (!selectedSourceTable || !selectedTargetTable) return null;
+    if (!selectedSourceTable || !plannedTargetTable) return null;
 
     const sourceLabel = `${selectedSourceTable.schema}.${selectedSourceTable.name}`;
-    const targetLabel = `${selectedTargetTable.schema}.${selectedTargetTable.name}`;
+    const targetLabel = `${plannedTargetTable.schema}.${plannedTargetTable.name}`;
+
+    const hasConflicts = mappingRows.some((r) => r.status === 'missing');
+    const needsReview = mappingRows.some((r) => r.status === 'needs-review');
 
     return (
       <Dialog open={isConfirmOneToOneOpen} onOpenChange={setIsConfirmOneToOneOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Confirm 1:1 migration</DialogTitle>
+            <DialogTitle>
+              {oneToOneMode === 'new-table' ? 'Confirm 1:1 migration (create new table)' : 'Confirm 1:1 migration'}
+            </DialogTitle>
             <DialogDescription>
-              Migrate table 1:1 from <span className="font-mono">{sourceLabel}</span> (MSSQL) to{' '}
-              <span className="font-mono">{targetLabel}</span> (Supabase).
+              {oneToOneMode === 'new-table' ? (
+                <>
+                  Create new Supabase table <span className="font-mono">{targetLabel}</span> from MSSQL source{' '}
+                  <span className="font-mono">{sourceLabel}</span> and migrate data 1:1.
+                </>
+              ) : (
+                <>
+                  Migrate table 1:1 from <span className="font-mono">{sourceLabel}</span> (MSSQL) to{' '}
+                  <span className="font-mono">{targetLabel}</span> (Supabase).
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-gray-700">
             <p>
               MSSQL will remain read-only. All writes will go to Supabase. Column names, types, nullability, and defaults
               will be used as-is where possible.
             </p>
-            <p className="text-xs text-gray-600">
-              Before running this in production, use the full mapping flow to review incompatible types and schema
-              differences.
-            </p>
+            {needsReview && (
+              <p className="text-xs text-yellow-700">
+                Warning: some columns have type differences between MSSQL and Supabase. 1:1 migration may still work but
+                you should verify types or use the mapping editor.
+              </p>
+            )}
+            {hasConflicts && (
+              <p className="text-xs text-red-700">
+                There are required source columns without matching targets. 1:1 migration into the existing table may be
+                unsafe. Consider using the mapping editor.
+              </p>
+            )}
           </div>
           <DialogFooter className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setIsConfirmOneToOneOpen(false)}>
               Cancel
             </Button>
             <Button
+              variant={hasConflicts ? 'outline' : 'default'}
               size="sm"
               onClick={() => {
                 // SCREEN 10 (stub): navigate to Migration Runner later
@@ -950,6 +973,89 @@ const DualDbMigrationStudioShell: React.FC = () => {
               }}
             >
               Continue to migration runner (stub)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
+  const renderCreateNewTableDialog = () => {
+    if (!selectedSourceTable) return null;
+
+    const sourceLabel = `${selectedSourceTable.schema}.${selectedSourceTable.name}`;
+
+    return (
+      <Dialog open={isCreateNewTableOpen} onOpenChange={setIsCreateNewTableOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Migrate MSSQL table as new Supabase table</DialogTitle>
+            <DialogDescription>
+              Migrate <span className="font-mono">{sourceLabel}</span> into a brand new Supabase table.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-medium text-gray-700">New table name</Label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  value={newTableName}
+                  onChange={(e) => setNewTableName(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-medium text-gray-700">Supabase schema</Label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  value={newTableSchema}
+                  onChange={(e) => setNewTableSchema(e.target.value || 'public')}
+                />
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-gray-700 mb-1">Columns to create</div>
+              <div className="border rounded max-h-56 overflow-auto text-xs bg-gray-50">
+                {!newTableColumns || newTableColumns.length === 0 ? (
+                  <div className="px-3 py-2 text-gray-500">Column metadata is not available.</div>
+                ) : (
+                  <table className="min-w-full text-[11px]">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="px-2 py-1 border text-left">Column</th>
+                        <th className="px-2 py-1 border text-left">MSSQL type</th>
+                        <th className="px-2 py-1 border text-left">Proposed Postgres type</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {newTableColumns.map((col) => (
+                        <tr key={col.name}>
+                          <td className="px-2 py-1 border font-mono">{col.name}</td>
+                          <td className="px-2 py-1 border">{col.dataType}</td>
+                          <td className="px-2 py-1 border font-mono">{mapMssqlToPostgresType(col.dataType)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setIsCreateNewTableOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!newTableName.trim()}
+              onClick={() => {
+                if (!selectedSourceTable || !newTableName.trim()) return;
+                setPlannedTargetTable({ schema: newTableSchema || 'public', name: newTableName.trim() });
+                setIsCreateNewTableOpen(false);
+                setIsConfirmOneToOneOpen(true);
+              }}
+            >
+              Continue
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1323,6 +1429,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
         </CardContent>
       </Card>
 
+      {renderCreateNewTableDialog()}
       {renderOneToOneDialog()}
     </div>
   );
