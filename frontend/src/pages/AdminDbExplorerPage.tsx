@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import api from '@/lib/apiClient';
 
+type DbMode = 'supabase' | 'mssql';
 interface TableInfo {
   schema: string;
   name: string;
@@ -56,6 +57,7 @@ interface DuplicatesResponse {
 }
 
 const AdminDbExplorerPage: React.FC = () => {
+  const [activeDb, setActiveDb] = useState<DbMode>('supabase');
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [filteredTables, setFilteredTables] = useState<TableInfo[]>([]);
   const [search, setSearch] = useState('');
@@ -75,24 +77,60 @@ const AdminDbExplorerPage: React.FC = () => {
   const [duplicates, setDuplicates] = useState<DuplicatesResponse | null>(null);
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
   const [truncateLoading, setTruncateLoading] = useState(false);
-  useEffect(() => {
-    const fetchTables = async () => {
-      setLoadingTables(true);
-      setError(null);
-      try {
+  const [mssqlDatabase, setMssqlDatabase] = useState('');
+
+  const buildMssqlConfig = (): MssqlConnectionConfig => ({
+    host: '',
+    port: 1433,
+    database: mssqlDatabase,
+    username: '',
+    password: '',
+    encrypt: true,
+  });
+
+  const fetchTables = async () => {
+    setLoadingTables(true);
+    setError(null);
+    setSelectedTable(null);
+    setSchema(null);
+    setRows(null);
+    setDuplicates(null);
+    try {
+      if (activeDb === 'supabase') {
         const resp = await api.get<TableInfo[]>('/api/admin/db/tables');
         setTables(resp.data);
         setFilteredTables(resp.data);
-      } catch (e: any) {
-        console.error('Failed to load tables', e);
-        setError(e?.response?.data?.detail || e.message || 'Failed to load tables');
-      } finally {
-        setLoadingTables(false);
+      } else {
+        if (!mssqlDatabase.trim()) {
+          setTables([]);
+          setFilteredTables([]);
+          return;
+        }
+        const resp = await api.post<MssqlSchemaTreeResponse>('/api/admin/mssql/schema-tree', buildMssqlConfig());
+        const tree = resp.data;
+        const list: TableInfo[] = [];
+        tree.schemas.forEach((s) => {
+          s.tables.forEach((t) => {
+            list.push({ schema: s.name, name: t.name, row_estimate: null });
+          });
+        });
+        setTables(list);
+        setFilteredTables(list);
       }
-    };
+    } catch (e: any) {
+      console.error('Failed to load tables', e);
+      setError(e?.response?.data?.detail || e.message || 'Failed to load tables');
+      setTables([]);
+      setFilteredTables([]);
+    } finally {
+      setLoadingTables(false);
+    }
+  };
 
+  useEffect(() => {
     fetchTables();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDb]);
 
   useEffect(() => {
     const q = search.trim().toLowerCase();
@@ -109,8 +147,31 @@ const AdminDbExplorerPage: React.FC = () => {
     setLoadingSchema(true);
     setError(null);
     try {
-      const resp = await api.get<TableSchemaResponse>(`/api/admin/db/tables/${encodeURIComponent(table.name)}/schema`);
-      setSchema(resp.data);
+      if (activeDb === 'supabase') {
+        const resp = await api.get<TableSchemaResponse>(
+          `/api/admin/db/tables/${encodeURIComponent(table.name)}/schema`,
+        );
+        setSchema(resp.data);
+      } else {
+        const resp = await api.post<MssqlColumnInfo[]>(
+          '/api/admin/mssql/table-columns',
+          {
+            ...buildMssqlConfig(),
+            schema: table.schema,
+            table: table.name,
+          },
+        );
+        const cols = resp.data;
+        const mappedCols: ColumnInfo[] = cols.map((c) => ({
+          name: c.name,
+          data_type: c.dataType,
+          is_nullable: c.isNullable,
+          is_primary_key: c.isPrimaryKey,
+          is_foreign_key: false,
+          default: c.defaultValue,
+        }));
+        setSchema({ schema: table.schema, name: table.name, columns: mappedCols });
+      }
     } catch (e: any) {
       console.error('Failed to load table schema', e);
       setError(e?.response?.data?.detail || e.message || 'Failed to load table schema');
@@ -124,10 +185,30 @@ const AdminDbExplorerPage: React.FC = () => {
     setLoadingRows(true);
     setError(null);
     try {
-      const resp = await api.get<RowsResponse>(`/api/admin/db/tables/${encodeURIComponent(table.name)}/rows`, {
-        params: { limit, offset },
-      });
-      setRows(resp.data);
+      if (activeDb === 'supabase') {
+        const resp = await api.get<RowsResponse>(`/api/admin/db/tables/${encodeURIComponent(table.name)}/rows`, {
+          params: { limit, offset },
+        });
+        setRows(resp.data);
+      } else {
+        const resp = await api.post<MssqlTablePreviewResponse>('/api/admin/mssql/table-preview', {
+          ...buildMssqlConfig(),
+          schema: table.schema,
+          table: table.name,
+          limit,
+          offset,
+        });
+        const preview = resp.data;
+        const cols = preview.columns;
+        const rowObjects: Record<string, any>[] = preview.rows.map((row) => {
+          const obj: Record<string, any> = {};
+          cols.forEach((c, idx) => {
+            obj[c] = row[idx];
+          });
+          return obj;
+        });
+        setRows({ rows: rowObjects, limit: preview.limit, offset: preview.offset, total_estimate: null });
+      }
     } catch (e: any) {
       console.error('Failed to load table rows', e);
       setError(e?.response?.data?.detail || e.message || 'Failed to load table rows');
@@ -334,31 +415,88 @@ const AdminDbExplorerPage: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
       <div className="pt-12 p-4">
-        <h1 className="text-2xl font-bold mb-4">Admin &rarr; DB Explorer</h1>
+        <h1 className="text-2xl font-bold mb-2">Admin &rarr; DB Explorer</h1>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex gap-2 text-sm">
+            <button
+              className={`px-3 py-1 rounded border text-xs ${
+                activeDb === 'supabase' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'
+              }`}
+              onClick={() => setActiveDb('supabase')}
+            >
+              Supabase (Postgres)
+            </button>
+            <button
+              className={`px-3 py-1 rounded border text-xs ${
+                activeDb === 'mssql' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'
+              }`}
+              onClick={() => setActiveDb('mssql')}
+            >
+              MSSQL (legacy)
+            </button>
+          </div>
+          {activeDb === 'mssql' && (
+            <div className="flex items-center gap-2 text-xs">
+              <span>MSSQL database:</span>
+              <input
+                type="text"
+                className="border rounded px-2 py-1 text-xs"
+                placeholder="DB_A28F26_parts"
+                value={mssqlDatabase}
+                onChange={(e) => setMssqlDatabase(e.target.value)}
+              />
+              <button
+                className="px-3 py-1 border rounded text-xs bg-white hover:bg-gray-50"
+                onClick={fetchTables}
+              >
+                Load tables
+              </button>
+            </div>
+          )}
+        </div>
         {error && <div className="mb-3 text-sm text-red-600">{error}</div>}
         <div className="mb-3 flex items-center gap-2">
           <input
             type="text"
             className="flex-1 border rounded px-2 py-1 text-sm"
-            placeholder="Global search (substring, case-insensitive) across text columns in public schema..."
+            placeholder={
+              activeDb === 'supabase'
+                ? 'Global search (substring, case-insensitive) across text columns in public schema...'
+                : 'Global search (substring, case-insensitive) across text columns in MSSQL database...'
+            }
             value={globalSearchQuery}
             onChange={(e) => setGlobalSearchQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && globalSearchQuery.trim()) {
-                setGlobalSearchLoading(true);
-                setGlobalSearchResult(null);
-                api
-                  .get<GlobalSearchResponse>('/api/admin/db/search', {
-                    params: { q: globalSearchQuery.trim(), limit: 20 },
-                  })
-                  .then((resp) => {
+                const run = async () => {
+                  try {
+                    setGlobalSearchLoading(true);
+                    setGlobalSearchResult(null);
+                    let resp;
+                    if (activeDb === 'supabase') {
+                      resp = await api.get<GlobalSearchResponse>('/api/admin/db/search', {
+                        params: { q: globalSearchQuery.trim(), limit: 20 },
+                      });
+                    } else {
+                      if (!mssqlDatabase.trim()) {
+                        setError('Enter MSSQL database name before running search');
+                        return;
+                      }
+                      resp = await api.post<GlobalSearchResponse>('/api/admin/mssql/search', {
+                        ...buildMssqlConfig(),
+                        q: globalSearchQuery.trim(),
+                        limit: 20,
+                      });
+                    }
                     setGlobalSearchResult(resp.data);
-                  })
-                  .catch((err: any) => {
+                  } catch (err: any) {
                     console.error('Global search failed', err);
                     setError(err?.response?.data?.detail || err.message || 'Global search failed');
-                  })
-                  .finally(() => setGlobalSearchLoading(false));
+                  } finally {
+                    setGlobalSearchLoading(false);
+                  }
+                };
+                void run();
               }
             }}
           />
@@ -367,20 +505,35 @@ const AdminDbExplorerPage: React.FC = () => {
             disabled={globalSearchLoading || !globalSearchQuery.trim()}
             onClick={() => {
               if (!globalSearchQuery.trim()) return;
-              setGlobalSearchLoading(true);
-              setGlobalSearchResult(null);
-              api
-                .get<GlobalSearchResponse>('/api/admin/db/search', {
-                  params: { q: globalSearchQuery.trim(), limit: 20 },
-                })
-                .then((resp) => {
+              const run = async () => {
+                try {
+                  setGlobalSearchLoading(true);
+                  setGlobalSearchResult(null);
+                  let resp;
+                  if (activeDb === 'supabase') {
+                    resp = await api.get<GlobalSearchResponse>('/api/admin/db/search', {
+                      params: { q: globalSearchQuery.trim(), limit: 20 },
+                    });
+                  } else {
+                    if (!mssqlDatabase.trim()) {
+                      setError('Enter MSSQL database name before running search');
+                      return;
+                    }
+                    resp = await api.post<GlobalSearchResponse>('/api/admin/mssql/search', {
+                      ...buildMssqlConfig(),
+                      q: globalSearchQuery.trim(),
+                      limit: 20,
+                    });
+                  }
                   setGlobalSearchResult(resp.data);
-                })
-                .catch((err: any) => {
+                } catch (err: any) {
                   console.error('Global search failed', err);
                   setError(err?.response?.data?.detail || err.message || 'Global search failed');
-                })
-                .finally(() => setGlobalSearchLoading(false));
+                } finally {
+                  setGlobalSearchLoading(false);
+                }
+              };
+              void run();
             }}
           >
             {globalSearchLoading ? 'Searching...' : 'Search all tables'}
@@ -451,7 +604,9 @@ const AdminDbExplorerPage: React.FC = () => {
             <div className="text-xs text-gray-500 mb-1">
               {loadingTables
                 ? 'Loading tables...'
-                : `${filteredTables.length} tables in public schema`}
+                : activeDb === 'supabase'
+                ? `${filteredTables.length} tables in public schema`
+                : `${filteredTables.length} tables in MSSQL database`}
             </div>
             <div className="flex-1 overflow-auto border rounded">
               {filteredTables.map((t) => {
@@ -493,20 +648,24 @@ const AdminDbExplorerPage: React.FC = () => {
                     )}
                   </div>
                   <div className="flex items-center gap-2 text-sm">
-                    <button
-                      className="px-3 py-1 rounded border text-xs bg-white hover:bg-gray-50"
-                      onClick={handleCheckDuplicates}
-                      disabled={duplicatesLoading}
-                    >
-                      {duplicatesLoading ? 'Checking duplicates...' : 'Check duplicates'}
-                    </button>
-                    <button
-                      className="px-3 py-1 rounded border text-xs bg-white hover:bg-red-50 text-red-700 border-red-300"
-                      onClick={handleTruncateTable}
-                      disabled={truncateLoading}
-                    >
-                      {truncateLoading ? 'Clearing...' : 'Clear table data'}
-                    </button>
+                    {activeDb === 'supabase' && (
+                      <>
+                        <button
+                          className="px-3 py-1 rounded border text-xs bg-white hover:bg-gray-50"
+                          onClick={handleCheckDuplicates}
+                          disabled={duplicatesLoading}
+                        >
+                          {duplicatesLoading ? 'Checking duplicates...' : 'Check duplicates'}
+                        </button>
+                        <button
+                          className="px-3 py-1 rounded border text-xs bg-white hover:bg-red-50 text-red-700 border-red-300"
+                          onClick={handleTruncateTable}
+                          disabled={truncateLoading}
+                        >
+                          {truncateLoading ? 'Clearing...' : 'Clear table data'}
+                        </button>
+                      </>
+                    )}
                     <button
                       className={`px-3 py-1 rounded border text-xs ${
                         activeTab === 'structure' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'
@@ -526,7 +685,7 @@ const AdminDbExplorerPage: React.FC = () => {
                   </div>
                 </div>
 
-                {duplicates && (
+                {activeDb === 'supabase' && duplicates && (
                   <div className="mt-3 mb-2 border rounded bg-yellow-50 p-2 text-xs max-h-64 overflow-auto">
                     <div className="font-semibold mb-1">Duplicate groups</div>
                     {duplicates.total_duplicate_groups === 0 ? (

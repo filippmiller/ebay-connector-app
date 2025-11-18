@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 
 from app.models.user import User
@@ -25,6 +25,11 @@ class TableColumnsRequest(MssqlConnectionConfig):
 class TablePreviewRequest(TableColumnsRequest):
     limit: int = 50
     offset: int = 0
+
+
+class SearchRequest(MssqlConnectionConfig):
+    q: str
+    limit: int = 50
 
 
 @router.post("/test-connection")
@@ -113,6 +118,31 @@ async def get_table_preview_endpoint(
         return preview
     except Exception as e:  # noqa: BLE001
         message = str(e) or "Failed to fetch table preview"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message,
+        ) from e
+
+
+@router.post("/search")
+async def search_mssql_database(
+    payload: SearchRequest,
+    current_user: User = Depends(get_current_admin_user),
+) -> Dict[str, Any]:
+    """Global search across text columns in the configured MSSQL database.
+
+    Mirrors the Postgres /api/admin/db/search endpoint but uses MSSQL. The
+    request body reuses the MSSQL connection config (database, etc.) plus `q`
+    and `limit`.
+    """
+
+    if not payload.q:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Search query is required")
+
+    try:
+        return mssql_client.search_database(payload, q=payload.q, limit_per_table=payload.limit)
+    except Exception as e:  # noqa: BLE001
+        message = str(e) or "Failed to search MSSQL database"
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=message,

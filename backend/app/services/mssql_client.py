@@ -272,3 +272,81 @@ def get_table_preview(
         "limit": limit,
         "offset": offset,
     }
+
+
+def search_database(
+    config: MssqlConnectionConfig,
+    q: str,
+    limit_per_table: int = 50,
+) -> Dict[str, Any]:
+    """Naive global search across all text-ish columns in the MSSQL database.
+
+    This mirrors the Postgres admin_db.search endpoint but uses INFORMATION_SCHEMA
+    and T-SQL. It is intended for ad-hoc admin troubleshooting, not for
+    high-performance querying.
+    """
+
+    if limit_per_table <= 0:
+        limit_per_table = 50
+
+    engine = _create_engine(config)
+    with engine.connect() as conn:
+        # Discover text-like columns across all base tables in the database.
+        cols_sql = text(
+            """
+            SELECT
+                t.TABLE_SCHEMA AS schema_name,
+                t.TABLE_NAME AS table_name,
+                c.COLUMN_NAME AS column_name,
+                c.DATA_TYPE AS data_type
+            FROM INFORMATION_SCHEMA.TABLES t
+            JOIN INFORMATION_SCHEMA.COLUMNS c
+              ON t.TABLE_SCHEMA = c.TABLE_SCHEMA
+             AND t.TABLE_NAME = c.TABLE_NAME
+            WHERE t.TABLE_TYPE = 'BASE TABLE'
+              AND c.DATA_TYPE IN (
+                'varchar','nvarchar','nchar','char','text','ntext'
+              )
+            ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+            """
+        )
+        rows = list(conn.execute(cols_sql).mappings())
+
+        tables: Dict[tuple[str, str], Dict[str, Any]] = {}
+        for row in rows:
+            key = (row["schema_name"], row["table_name"])
+            if key not in tables:
+                tables[key] = {"schema": row["schema_name"], "name": row["table_name"], "columns": []}
+            tables[key]["columns"].append(row["column_name"])
+
+        results: Dict[str, Any] = {"query": q, "tables": []}
+        pattern = f"%{q.lower()}%"
+
+        for (schema_name, table_name), info in tables.items():
+            text_cols = info["columns"]
+            if not text_cols:
+                continue
+
+            where_clauses = " OR ".join(
+                [
+                    f"LOWER(CAST([{col}] AS NVARCHAR(MAX))) LIKE :pattern"
+                    for col in text_cols
+                ]
+            )
+
+            search_sql = text(
+                f"SELECT * FROM [{schema_name}].[{table_name}] WHERE {where_clauses} "
+                "ORDER BY 1 OFFSET 0 ROWS FETCH NEXT :limit ROWS ONLY"
+            )
+            table_rows = conn.execute(search_sql, {"pattern": pattern, "limit": limit_per_table}).mappings().all()
+            if table_rows:
+                results["tables"].append(
+                    {
+                        "schema": schema_name,
+                        "name": table_name,
+                        "matched_columns": text_cols,
+                        "rows": [dict(r) for r in table_rows],
+                    }
+                )
+
+    return results
