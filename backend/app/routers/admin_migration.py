@@ -206,7 +206,7 @@ async def run_one_to_one_migration(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Target table has no columns; cannot perform duplicate check.",
                     )
-                cols_list = ", ".join(f'"{c["name"]}'" for c in pg_columns)
+                cols_list = ", ".join(f'"{c["name"]}"' for c in pg_columns)
                 dup_sql = text(
                     f"""
                     SELECT COUNT(*) FROM (
