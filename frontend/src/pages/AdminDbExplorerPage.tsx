@@ -109,7 +109,7 @@ const AdminDbExplorerPage: React.FC = () => {
   const [duplicates, setDuplicates] = useState<DuplicatesResponse | null>(null);
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
   const [truncateLoading, setTruncateLoading] = useState(false);
-  const [mssqlDatabase, setMssqlDatabase] = useState('');
+  const [mssqlDatabase, setMssqlDatabase] = useState('DB_A28F26_parts');
 
   const buildMssqlConfig = (): MssqlConnectionConfig => ({
     host: '',
@@ -160,9 +160,13 @@ const AdminDbExplorerPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchTables();
+    if (activeDb === 'supabase' || (activeDb === 'mssql' && mssqlDatabase.trim())) {
+      // Auto-load tables when switching DBs or when MSSQL database name becomes available.
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      fetchTables();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDb]);
+  }, [activeDb, mssqlDatabase]);
 
   useEffect(() => {
     const q = search.trim().toLowerCase();
