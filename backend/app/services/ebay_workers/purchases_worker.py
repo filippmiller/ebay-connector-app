@@ -265,6 +265,13 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
             return run_id
 
         except Exception as exc:  # noqa: BLE001
+            # Ensure the session is usable again after a failed DB operation.
+            try:
+                db.rollback()
+            except Exception:
+                # If rollback itself fails, we still want to capture the original error.
+                pass
+
             duration_ms = int((time.time() - start_time) * 1000)
             msg = str(exc)
             log_error(
