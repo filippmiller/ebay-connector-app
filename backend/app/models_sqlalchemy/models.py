@@ -662,6 +662,9 @@ class UserGridLayout(Base):
     column_widths = Column(JSONB, nullable=True)
     # Optional sort config: { "column": str, "direction": "asc"|"desc" }
     sort = Column(JSONB, nullable=True)
+    # Optional visual theme + layout options (density, font size, color scheme, etc.)
+    # Stored as a JSON object so backend and frontend can evolve independently.
+    theme = Column(JSONB, nullable=True)
     
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

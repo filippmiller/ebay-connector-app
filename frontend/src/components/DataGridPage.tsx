@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import api from '@/lib/apiClient';
+import { useGridPreferences, type GridThemeConfig, type GridColumnsConfig } from '@/hooks/useGridPreferences';
 
 export interface GridColumnMeta {
   name: string;
@@ -59,6 +60,8 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
 
   const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
+
+  const gridPrefs = useGridPreferences(gridKey);
 
   const resizingColRef = useRef<string | null>(null);
   const startXRef = useRef<number>(0);
@@ -326,8 +329,11 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
   const gridTitle = title || layout?.grid_key || gridKey;
 
+  const density = gridPrefs.theme?.density || 'normal';
+  const colorScheme = gridPrefs.theme?.colorScheme || 'default';
+
   return (
-    <div className="flex flex-col h-full app-grid">
+    <div className={`flex flex-col h-full app-grid grid-density-${density} grid-theme-${colorScheme}`}>
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
         <div className="flex items-center gap-3 text-sm">

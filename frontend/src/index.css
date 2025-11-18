@@ -12,7 +12,17 @@
     --sidebar-accent: 240 4.8% 95.9%;
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%}
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Global grid theme variables */
+    --grid-row-height: 32px;
+    --grid-header-height: 32px;
+    --grid-font-size: 13px;
+    --grid-header-bg: #f3f4f6; /* gray-100 */
+    --grid-header-text-color: #4b5563; /* gray-600 */
+    --grid-row-hover-bg: #eef2ff; /* indigo-50 */
+    --grid-row-selected-bg: #e0f2fe; /* sky-100 */
+  }
   .dark {
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
@@ -21,7 +31,72 @@
     --sidebar-accent: 240 3.7% 15.9%;
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
 }
 
+/* Grid theming helpers applied on .app-grid wrapper in DataGridPage */
+@layer components {
+  .app-grid {
+    font-size: var(--grid-font-size);
+  }
+
+  .app-grid table {
+    font-size: inherit;
+  }
+
+  .app-grid thead {
+    background-color: var(--grid-header-bg);
+    color: var(--grid-header-text-color);
+  }
+
+  .app-grid thead th {
+    height: var(--grid-header-height);
+  }
+
+  .app-grid tbody tr {
+    height: var(--grid-row-height);
+  }
+
+  .app-grid tbody tr:hover {
+    background-color: var(--grid-row-hover-bg);
+  }
+
+  .app-grid.grid-density-compact {
+    --grid-row-height: 24px;
+    --grid-header-height: 26px;
+    --grid-font-size: 11px;
+  }
+
+  .app-grid.grid-density-normal {
+    --grid-row-height: 32px;
+    --grid-header-height: 32px;
+    --grid-font-size: 13px;
+  }
+
+  .app-grid.grid-density-comfortable {
+    --grid-row-height: 40px;
+    --grid-header-height: 40px;
+    --grid-font-size: 14px;
+  }
+
+  .app-grid.grid-theme-default {
+    --grid-header-bg: #f3f4f6;
+    --grid-header-text-color: #4b5563;
+  }
+
+  .app-grid.grid-theme-blue {
+    --grid-header-bg: #e0f2fe;
+    --grid-header-text-color: #1d4ed8;
+  }
+
+  .app-grid.grid-theme-dark {
+    --grid-header-bg: #111827;
+    --grid-header-text-color: #e5e7eb;
+  }
+
+  .app-grid.grid-theme-highContrast {
+    --grid-header-bg: #000000;
+    --grid-header-text-color: #ffffff;
+  }
+}

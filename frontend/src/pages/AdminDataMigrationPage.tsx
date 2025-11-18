@@ -52,35 +52,39 @@ const AdminDataMigrationPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<MainTab>('mssql-database');
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="h-screen flex flex-col bg-gray-50">
       <FixedHeader />
-      <div className="pt-12 p-4">
-        <h1 className="text-2xl font-bold mb-2">Admin &rarr; Data Migration</h1>
-        <p className="text-sm text-gray-600 mb-4 max-w-3xl">
-          Internal admin-only workspace for exploring an external MSSQL database (schemas, tables, columns, and sample
-          data) and mapping it into Supabase. Credentials are never stored and are sent only to backend admin endpoints
-          for the current admin session.
-        </p>
+      <div className="pt-12 flex-1 overflow-hidden px-4 pb-4">
+        <div className="h-full w-full max-w-7xl mx-auto flex flex-col">
+          <h1 className="text-2xl font-bold mb-2">Admin &rarr; Data Migration</h1>
+          <p className="text-sm text-gray-600 mb-4 max-w-3xl">
+            Internal admin-only workspace for exploring an external MSSQL database (schemas, tables, columns, and sample
+            data) and mapping it into Supabase. Credentials are never stored and are sent only to backend admin endpoints
+            for the current admin session.
+          </p>
 
-        {/* Global modes: legacy MSSQL explorer vs new Dual-DB Migration Studio */}
-        <div className="flex gap-2 mb-4">
-          <Button
-            variant={activeTab === 'mssql-database' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setActiveTab('mssql-database')}
-          >
-            MSSQL Explorer (legacy)
-          </Button>
-          <Button
-            variant={activeTab === 'temp' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setActiveTab('temp')}
-          >
-            Dual-DB Migration Studio
-          </Button>
+          {/* Global modes: legacy MSSQL explorer vs new Dual-DB Migration Studio */}
+          <div className="flex gap-2 mb-4">
+            <Button
+              variant={activeTab === 'mssql-database' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('mssql-database')}
+            >
+              MSSQL Explorer (legacy)
+            </Button>
+            <Button
+              variant={activeTab === 'temp' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('temp')}
+            >
+              Dual-DB Migration Studio
+            </Button>
+          </div>
+
+          <div className="flex-1 min-h-0">
+            {activeTab === 'mssql-database' ? <MssqlDatabaseTab /> : <DualDbMigrationStudioShell />}
+          </div>
         </div>
-
-        {activeTab === 'mssql-database' ? <MssqlDatabaseTab /> : <DualDbMigrationStudioShell />}
       </div>
     </div>
   );
@@ -959,8 +963,8 @@ const DualDbMigrationStudioShell: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div className="space-y-1">
+          <div className="flex flex-wrap items-end gap-4 mb-4">
+            <div className="space-y-1 w-full sm:w-auto sm:min-w-[220px]">
               <Label className="block text-xs font-medium text-gray-700">Host / IP</Label>
               <Input
                 type="text"
@@ -970,7 +974,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 className="h-8 text-sm"
               />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 w-full sm:w-24">
               <Label className="block text-xs font-medium text-gray-700">Port</Label>
               <Input
                 type="number"
@@ -980,7 +984,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 className="h-8 text-sm"
               />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 w-full sm:w-56">
               <Label className="block text-xs font-medium text-gray-700">Database</Label>
               <Input
                 type="text"
@@ -990,7 +994,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 className="h-8 text-sm"
               />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 w-full sm:w-44">
               <Label className="block text-xs font-medium text-gray-700">Username</Label>
               <Input
                 type="text"
@@ -1000,7 +1004,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 className="h-8 text-sm"
               />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 w-full sm:w-44">
               <Label className="block text-xs font-medium text-gray-700">Password</Label>
               <Input
                 type="password"
@@ -1010,7 +1014,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 className="h-8 text-sm"
               />
             </div>
-            <div className="flex items-center gap-2 mt-6">
+            <div className="flex items-center gap-2 mt-2">
               <input
                 id="studio-encrypt"
                 type="checkbox"
