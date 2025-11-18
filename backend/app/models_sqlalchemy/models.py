@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc
+from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Date, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -672,6 +672,129 @@ class UserGridLayout(Base):
     __table_args__ = (
         Index('idx_user_grid_layouts_user_grid', 'user_id', 'grid_key', unique=True),
     )
+
+
+class AccountingExpenseCategory(Base):
+    __tablename__ = "accounting_expense_category"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(Text, nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+    type = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default="true")
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class AccountingBankStatement(Base):
+    __tablename__ = "accounting_bank_statement"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bank_name = Column(Text, nullable=False)
+    account_last4 = Column(Text, nullable=True)
+    currency = Column(Text, nullable=True)
+    statement_period_start = Column(Date, nullable=True)
+    statement_period_end = Column(Date, nullable=True)
+    opening_balance = Column(Numeric(14, 2), nullable=True)
+    closing_balance = Column(Numeric(14, 2), nullable=True)
+    total_debit = Column(Numeric(14, 2), nullable=True)
+    total_credit = Column(Numeric(14, 2), nullable=True)
+    status = Column(Text, nullable=False, default="uploaded")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+
+
+class AccountingBankStatementFile(Base):
+    __tablename__ = "accounting_bank_statement_file"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bank_statement_id = Column(BigInteger, ForeignKey('accounting_bank_statement.id', ondelete='CASCADE'), nullable=False)
+    file_type = Column(Text, nullable=False)
+    storage_path = Column(Text, nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    uploaded_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+
+
+class AccountingBankRow(Base):
+    __tablename__ = "accounting_bank_row"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bank_statement_id = Column(BigInteger, ForeignKey('accounting_bank_statement.id', ondelete='CASCADE'), nullable=False)
+    row_index = Column(Integer, nullable=True)
+    operation_date = Column(Date, nullable=True, index=True)
+    posting_date = Column(Date, nullable=True)
+    description_raw = Column(Text, nullable=False)
+    description_clean = Column(Text, nullable=True)
+    amount = Column(Numeric(14, 2), nullable=False)
+    balance_after = Column(Numeric(14, 2), nullable=True)
+    currency = Column(Text, nullable=True)
+    parsed_status = Column(Text, nullable=False, default="auto_parsed")
+    match_status = Column(Text, nullable=False, default="unmatched")
+    expense_category_id = Column(BigInteger, ForeignKey('accounting_expense_category.id'), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+
+
+class AccountingCashExpense(Base):
+    __tablename__ = "accounting_cash_expense"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    currency = Column(Text, nullable=True)
+    paid_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    counterparty = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    expense_category_id = Column(BigInteger, ForeignKey('accounting_expense_category.id'), nullable=False)
+    storage_id = Column(Text, nullable=True)
+    receipt_image_path = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+
+
+class AccountingTransaction(Base):
+    __tablename__ = "accounting_transaction"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False, index=True)
+    amount = Column(Numeric(14, 2), nullable=False)
+    direction = Column(Text, nullable=False)  # 'in' or 'out'
+    source_type = Column(Text, nullable=False, index=True)
+    source_id = Column(BigInteger, nullable=False)
+    account_name = Column(Text, nullable=True)
+    account_id = Column(Text, nullable=True)
+    counterparty = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    expense_category_id = Column(BigInteger, ForeignKey('accounting_expense_category.id'), nullable=True, index=True)
+    subcategory = Column(Text, nullable=True)
+    storage_id = Column(Text, nullable=True, index=True)
+    linked_object_type = Column(Text, nullable=True)
+    linked_object_id = Column(Text, nullable=True)
+    is_personal = Column(Boolean, nullable=False, server_default="false")
+    is_internal_transfer = Column(Boolean, nullable=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+
+
+class AccountingTransactionLog(Base):
+    __tablename__ = "accounting_transaction_log"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    transaction_id = Column(BigInteger, ForeignKey('accounting_transaction.id', ondelete='CASCADE'), nullable=False)
+    changed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    changed_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    field_name = Column(Text, nullable=False)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
 
 
 class PayoutItem(Base):

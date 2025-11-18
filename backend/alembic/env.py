@@ -12,7 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app.models_sqlalchemy import Base
 from app.models_sqlalchemy.models import (
     User, Buying, Warehouse, SKU, Listing, Inventory, Return,
-    SyncLog, Report, PasswordResetToken
+    SyncLog, Report, PasswordResetToken,
+    AccountingExpenseCategory, AccountingBankStatement, AccountingBankStatementFile,
+    AccountingBankRow, AccountingCashExpense, AccountingTransaction, AccountingTransactionLog,
 )
 
 # this is the Alembic Config object, which provides

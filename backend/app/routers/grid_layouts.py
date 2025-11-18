@@ -97,6 +97,46 @@ ACTIVE_INVENTORY_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
 ]
 
+ACCOUNTING_BANK_STATEMENTS_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="id", label="ID", type="number", width_default=80),
+  ColumnMeta(name="statement_period_start", label="Period start", type="date", width_default=140),
+  ColumnMeta(name="statement_period_end", label="Period end", type="date", width_default=140),
+  ColumnMeta(name="bank_name", label="Bank", type="string", width_default=160),
+  ColumnMeta(name="account_last4", label="Last4", type="string", width_default=80),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="rows_count", label="Rows", type="number", width_default=80),
+  ColumnMeta(name="status", label="Status", type="string", width_default=120),
+  ColumnMeta(name="created_at", label="Created at", type="datetime", width_default=180),
+]
+
+ACCOUNTING_CASH_EXPENSES_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="id", label="ID", type="number", width_default=80),
+  ColumnMeta(name="date", label="Date", type="date", width_default=140),
+  ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="expense_category_id", label="Category", type="string", width_default=140),
+  ColumnMeta(name="counterparty", label="Counterparty", type="string", width_default=200),
+  ColumnMeta(name="description", label="Description", type="string", width_default=260),
+  ColumnMeta(name="storage_id", label="Storage", type="string", width_default=140),
+  ColumnMeta(name="paid_by_user_id", label="Paid by", type="string", width_default=160),
+  ColumnMeta(name="created_by_user_id", label="Created by", type="string", width_default=160),
+]
+
+ACCOUNTING_TRANSACTIONS_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="id", label="ID", type="number", width_default=80),
+  ColumnMeta(name="date", label="Date", type="date", width_default=140),
+  ColumnMeta(name="direction", label="Direction", type="string", width_default=100),
+  ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
+  ColumnMeta(name="account_name", label="Account", type="string", width_default=180),
+  ColumnMeta(name="counterparty", label="Counterparty", type="string", width_default=200),
+  ColumnMeta(name="expense_category_id", label="Category", type="string", width_default=140),
+  ColumnMeta(name="storage_id", label="Storage", type="string", width_default=140),
+  ColumnMeta(name="source_type", label="Source type", type="string", width_default=140),
+  ColumnMeta(name="is_personal", label="Personal", type="boolean", width_default=100),
+  ColumnMeta(name="is_internal_transfer", label="Internal transfer", type="boolean", width_default=150),
+  ColumnMeta(name="description", label="Description", type="string", width_default=260),
+]
+
 CASES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="open_date", label="Opened at", type="datetime", width_default=180),
   ColumnMeta(name="external_id", label="Case/Dispute ID", type="string", width_default=220),
@@ -291,6 +331,67 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "paid_time", "direction": "desc"},
     },
+    "accounting_bank_statements": {
+        "visible_columns": [
+            "statement_period_start",
+            "statement_period_end",
+            "bank_name",
+            "account_last4",
+            "currency",
+            "rows_count",
+            "status",
+            "created_at",
+        ],
+        "sort": {"column": "statement_period_start", "direction": "desc"},
+    },
+    "accounting_cash_expenses": {
+        "visible_columns": [
+            "date",
+            "amount",
+            "currency",
+            "expense_category_id",
+            "counterparty",
+            "description",
+            "storage_id",
+            "paid_by_user_id",
+        ],
+        "sort": {"column": "date", "direction": "desc"},
+    },
+    "accounting_transactions": {
+        "visible_columns": [
+            "date",
+            "direction",
+            "amount",
+            "account_name",
+            "counterparty",
+            "expense_category_id",
+            "storage_id",
+            "source_type",
+            "is_personal",
+            "is_internal_transfer",
+            "description",
+        ],
+        "sort": {"column": "date", "direction": "desc"},
+    },
+}
+        "visible_columns": [
+            "id",
+            "tracking_number",
+            "refund_flag",
+            "storage",
+            "profit",
+            "buyer_id",
+            "seller_id",
+            "paid_time",
+            "amount_paid",
+            "days_since_paid",
+            "status_label",
+            "record_created_at",
+            "title",
+            "comment",
+        ],
+        "sort": {"column": "paid_time", "direction": "desc"},
+    },
 }
 
 
@@ -314,6 +415,12 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return FINANCES_FEES_COLUMNS_META
     if grid_key == "buying":
         return BUYING_COLUMNS_META
+    if grid_key == "accounting_bank_statements":
+        return ACCOUNTING_BANK_STATEMENTS_COLUMNS_META
+    if grid_key == "accounting_cash_expenses":
+        return ACCOUNTING_CASH_EXPENSES_COLUMNS_META
+    if grid_key == "accounting_transactions":
+        return ACCOUNTING_TRANSACTIONS_COLUMNS_META
     return []
 
 def _allowed_columns_for_grid(grid_key: str) -> List[str]:

@@ -17,6 +17,9 @@ from app.models_sqlalchemy.models import (
     OfferDirection,
     ActiveInventory,
     Purchase,
+    AccountingBankStatement,
+    AccountingCashExpense,
+    AccountingTransaction as AccountingTxn,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -245,6 +248,54 @@ async def get_grid_data(
                 offset,
                 sort_column,
                 sort_dir,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "accounting_bank_statements":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_accounting_bank_statements_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "accounting_cash_expenses":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_accounting_cash_expenses_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                date_from=from_date,
+                date_to=to_date,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "accounting_transactions":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_accounting_transactions_grid_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                date_from=from_date,
+                date_to=to_date,
+                source_type=source_type,
+                storage_id=storage_id,
             )
         finally:
             db_sqla.close()
@@ -1131,6 +1182,75 @@ def _get_finances_fees_data(
         return out
 
     rows = [_serialize(r) for r in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_accounting_transactions_grid_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    date_from: Optional[str],
+    date_to: Optional[str],
+    source_type: Optional[str],
+    storage_id: Optional[str],
+) -> Dict[str, Any]:
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    query = db.query(AccountingTxn)
+
+    if date_from:
+        try:
+            from_dt = dt_type.fromisoformat(date_from.replace("Z", "+00:00"))
+            query = query.filter(AccountingTxn.date >= from_dt.date())
+        except Exception:
+            pass
+    if date_to:
+        try:
+            to_dt = dt_type.fromisoformat(date_to.replace("Z", "+00:00"))
+            query = query.filter(AccountingTxn.date <= to_dt.date())
+        except Exception:
+            pass
+    if source_type:
+        query = query.filter(AccountingTxn.source_type == source_type)
+    if storage_id:
+        query = query.filter(AccountingTxn.storage_id == storage_id)
+
+    total = query.count()
+
+    if sort_column and hasattr(AccountingTxn, sort_column):
+        order_attr = getattr(AccountingTxn, sort_column)
+        if sort_dir == "desc":
+            query = query.order_by(desc(order_attr))
+        else:
+            query = query.order_by(asc(order_attr))
+
+    rows_db: List[AccountingTxn] = query.offset(offset).limit(limit).all()
+
+    def _serialize(txn: AccountingTxn) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            value = getattr(txn, col, None)
+            if isinstance(value, dt_type):
+                row[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                row[col] = float(value)
+            else:
+                row[col] = value
+        return row
+
+    rows = [_serialize(t) for t in rows_db]
 
     return {
         "rows": rows,
