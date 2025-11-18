@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -12,6 +12,9 @@ from app.services.admin_auth import get_current_admin_user
 from app.services.mssql_client import MssqlConnectionConfig, get_table_columns, create_engine_for_session
 from app.models_sqlalchemy import engine as pg_engine
 
+import threading
+import uuid
+from datetime import datetime
 
 router = APIRouter(prefix="/api/admin/migration", tags=["admin_migration"])
 
@@ -44,6 +47,30 @@ class OneToOneMigrationResult(BaseModel):
     source_row_count: int | None = None
     target_row_count_before: int | None = None
     target_row_count_after: int | None = None
+
+
+class OneToOneMigrationJobStatus(BaseModel):
+    job_id: str
+    status: Literal["pending", "running", "success", "error"]
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+    # Summary / progress fields
+    mode: Optional[str] = None
+    source: Optional[Dict[str, str]] = None
+    target: Optional[Dict[str, str]] = None
+    rows_inserted: int = 0
+    batches: int = 0
+    source_row_count: Optional[int] = None
+    target_row_count_before: Optional[int] = None
+    target_row_count_after: Optional[int] = None
+
+
+# In-memory store for long-running one-to-one migration jobs.
+_ONE_TO_ONE_JOBS: Dict[str, OneToOneMigrationJobStatus] = {}
+_ONE_TO_ONE_JOBS_LOCK = threading.Lock()
 
 
 def _ensure_target_table_exists(
@@ -136,16 +163,14 @@ def _map_mssql_to_postgres_type(mssql_type: str) -> str:
     return "text"
 
 
-@router.post("/mssql-to-supabase/one-to-one", response_model=OneToOneMigrationResult)
-async def run_one_to_one_migration(
+def _run_one_to_one_migration_sync(
     payload: OneToOneMigrationRequest,
-    current_user: User = Depends(get_current_admin_user),
+    *,
+    progress_cb: Optional[Callable[[int, int, Optional[int], Optional[int], Optional[int]], None]] = None,
 ) -> OneToOneMigrationResult:
-    """Run a synchronous 1:1 table migration from MSSQL into Supabase.
+    """Core 1:1 migration implementation (blocking).
 
-    This endpoint is admin-only and uses MSSQL credentials provided in the request
-    body (never persisted). Data is read-only on MSSQL and written into Supabase
-    using the main application PostgreSQL connection.
+    This function is used both by the synchronous API and by the async job runner.
     """
 
     # Load MSSQL column metadata first; this also validates connection and table.
@@ -272,11 +297,29 @@ async def run_one_to_one_migration(
                 batches += 1
                 offset += batch_count
 
+                if progress_cb:
+                    progress_cb(
+                        rows_inserted,
+                        batches,
+                        source_row_count,
+                        target_row_count_before,
+                        None,
+                    )
+
             # Count rows after migration for verification.
             target_row_count_after = int(pg_conn.execute(count_sql_pg).scalar() or 0)
 
     finally:
         mssql_engine.dispose()
+
+    if progress_cb:
+        progress_cb(
+            rows_inserted,
+            batches,
+            source_row_count,
+            target_row_count_before,
+            target_row_count_after,
+        )
 
     return OneToOneMigrationResult(
         status="success",
@@ -289,3 +332,97 @@ async def run_one_to_one_migration(
         target_row_count_before=target_row_count_before,
         target_row_count_after=target_row_count_after,
     )
+
+
+@router.post("/mssql-to-supabase/one-to-one", response_model=OneToOneMigrationResult)
+async def run_one_to_one_migration(
+    payload: OneToOneMigrationRequest,
+    current_user: User = Depends(get_current_admin_user),
+) -> OneToOneMigrationResult:
+    """Synchronous 1:1 migration endpoint (suitable for smaller tables)."""
+
+    return _run_one_to_one_migration_sync(payload)
+
+
+@router.post("/mssql-to-supabase/one-to-one/async", response_model=OneToOneMigrationJobStatus)
+async def start_one_to_one_migration_async(
+    payload: OneToOneMigrationRequest,
+    current_user: User = Depends(get_current_admin_user),
+) -> OneToOneMigrationJobStatus:
+    """Start a long-running 1:1 migration as a background job.
+
+    Returns immediately with a job_id and basic metadata; progress can be polled via the
+    job status endpoint. This avoids request timeouts for very large tables (millions of rows).
+    """
+
+    job_id = uuid.uuid4().hex
+    job = OneToOneMigrationJobStatus(
+        job_id=job_id,
+        status="pending",
+        created_at=datetime.utcnow(),
+        mode=payload.mode,
+        source={"schema": payload.source_schema, "table": payload.source_table},
+        target={"schema": payload.target_schema, "table": payload.target_table},
+    )
+
+    with _ONE_TO_ONE_JOBS_LOCK:
+        _ONE_TO_ONE_JOBS[job_id] = job
+
+    def _worker() -> None:
+        with _ONE_TO_ONE_JOBS_LOCK:
+            if job_id not in _ONE_TO_ONE_JOBS:
+                return
+            _ONE_TO_ONE_JOBS[job_id].status = "running"
+            _ONE_TO_ONE_JOBS[job_id].started_at = datetime.utcnow()
+
+        def _progress(rows_inserted: int, batches: int, source_count: Optional[int], target_before: Optional[int], target_after: Optional[int]) -> None:  # noqa: E501
+            with _ONE_TO_ONE_JOBS_LOCK:
+                j = _ONE_TO_ONE_JOBS.get(job_id)
+                if not j:
+                    return
+                j.rows_inserted = rows_inserted
+                j.batches = batches
+                if source_count is not None:
+                    j.source_row_count = source_count
+                if target_before is not None:
+                    j.target_row_count_before = target_before
+                if target_after is not None:
+                    j.target_row_count_after = target_after
+
+        try:
+            result = _run_one_to_one_migration_sync(payload, progress_cb=_progress)
+            with _ONE_TO_ONE_JOBS_LOCK:
+                j = _ONE_TO_ONE_JOBS.get(job_id)
+                if j:
+                    j.status = "success"
+                    j.finished_at = datetime.utcnow()
+                    j.rows_inserted = result.rows_inserted
+                    j.batches = result.batches
+                    j.source_row_count = result.source_row_count
+                    j.target_row_count_before = result.target_row_count_before
+                    j.target_row_count_after = result.target_row_count_after
+        except Exception as e:  # noqa: BLE001
+            with _ONE_TO_ONE_JOBS_LOCK:
+                j = _ONE_TO_ONE_JOBS.get(job_id)
+                if j:
+                    j.status = "error"
+                    j.finished_at = datetime.utcnow()
+                    j.error_message = str(e)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    return job
+
+
+@router.get("/mssql-to-supabase/one-to-one/jobs/{job_id}", response_model=OneToOneMigrationJobStatus)
+async def get_one_to_one_migration_job(
+    job_id: str,
+    current_user: User = Depends(get_current_admin_user),
+) -> OneToOneMigrationJobStatus:
+    """Return current status / progress of a 1:1 migration job."""
+
+    with _ONE_TO_ONE_JOBS_LOCK:
+        job = _ONE_TO_ONE_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Migration job not found")
+    return job

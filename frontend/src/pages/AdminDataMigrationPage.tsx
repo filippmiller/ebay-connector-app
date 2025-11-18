@@ -762,6 +762,8 @@ const DualDbMigrationStudioShell: React.FC = () => {
   const [isRunningOneToOne, setIsRunningOneToOne] = useState(false);
   const [oneToOneResult, setOneToOneResult] = useState<any | null>(null);
   const [oneToOneError, setOneToOneError] = useState<string | null>(null);
+  const [oneToOneJobId, setOneToOneJobId] = useState<string | null>(null);
+  const [oneToOneJobStatus, setOneToOneJobStatus] = useState<any | null>(null);
 
   const handleConfigChange = (field: keyof MssqlConnectionConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
@@ -920,8 +922,11 @@ const DualDbMigrationStudioShell: React.FC = () => {
     if (!selectedSourceTable || !plannedTargetTable) return;
     setIsRunningOneToOne(true);
     setOneToOneError(null);
+    setOneToOneResult(null);
+    setOneToOneJobStatus(null);
     try {
-      const resp = await api.post('/api/admin/migration/mssql-to-supabase/one-to-one', {
+      // Start async job so we don't hit HTTP/Cloudflare timeouts for very large tables.
+      const resp = await api.post('/api/admin/migration/mssql-to-supabase/one-to-one/async', {
         mssql: config,
         source_schema: selectedSourceTable.schema,
         source_table: selectedSourceTable.name,
@@ -929,16 +934,68 @@ const DualDbMigrationStudioShell: React.FC = () => {
         target_table: plannedTargetTable.name,
         mode: oneToOneMode,
       });
-      setOneToOneResult(resp.data);
-      // Refresh Supabase tables so newly created table appears on the right.
-      await loadTargetTables();
+      setOneToOneJobId(resp.data.job_id);
+      setOneToOneJobStatus(resp.data);
     } catch (e: any) {
-      const message = e?.response?.data?.detail || e.message || 'Migration failed';
+      const message = e?.response?.data?.detail || e.message || 'Migration failed to start';
       setOneToOneError(typeof message === 'string' ? message : JSON.stringify(message));
-    } finally {
       setIsRunningOneToOne(false);
     }
   };
+
+  // Poll async job status while migration is running.
+  React.useEffect(() => {
+    if (!oneToOneJobId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const resp = await api.get(`/api/admin/migration/mssql-to-supabase/one-to-one/jobs/${oneToOneJobId}`);
+        if (cancelled) return;
+        setOneToOneJobStatus(resp.data);
+
+        const status = resp.data.status as string;
+        if (status === 'success') {
+          setIsRunningOneToOne(false);
+          setOneToOneResult({
+            status: 'success',
+            mode: resp.data.mode,
+            source: resp.data.source,
+            target: resp.data.target,
+            rows_inserted: resp.data.rows_inserted,
+            batches: resp.data.batches,
+            source_row_count: resp.data.source_row_count,
+            target_row_count_before: resp.data.target_row_count_before,
+            target_row_count_after: resp.data.target_row_count_after,
+          });
+          setOneToOneJobId(null);
+          // Reload target tables so any new table shows up.
+          await loadTargetTables();
+        } else if (status === 'error') {
+          setIsRunningOneToOne(false);
+          setOneToOneError(resp.data.error_message || 'Migration failed');
+          setOneToOneJobId(null);
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+        // Do not spam errors; show a concise message.
+        const message = e?.response?.data?.detail || e.message || 'Failed to fetch migration status';
+        setOneToOneError(typeof message === 'string' ? message : JSON.stringify(message));
+        setIsRunningOneToOne(false);
+        setOneToOneJobId(null);
+      }
+    };
+
+    const interval = window.setInterval(poll, 2000);
+    // Fire once immediately for faster feedback.
+    void poll();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [oneToOneJobId]);
 
   const renderOneToOneDialog = () => {
     if (!selectedSourceTable || !plannedTargetTable) return null;
@@ -948,6 +1005,13 @@ const DualDbMigrationStudioShell: React.FC = () => {
 
     const hasConflicts = mappingRows.some((r) => r.status === 'missing');
     const needsReview = mappingRows.some((r) => r.status === 'needs-review');
+
+    const totalSource = oneToOneJobStatus?.source_row_count ?? oneToOneResult?.source_row_count;
+    const inserted = oneToOneJobStatus?.rows_inserted ?? oneToOneResult?.rows_inserted;
+    const progressPct =
+      typeof totalSource === 'number' && totalSource > 0 && typeof inserted === 'number'
+        ? Math.min(100, Math.round((inserted / totalSource) * 100))
+        : null;
 
     return (
       <Dialog open={isConfirmOneToOneOpen} onOpenChange={setIsConfirmOneToOneOpen}>
@@ -978,8 +1042,26 @@ const DualDbMigrationStudioShell: React.FC = () => {
             {oneToOneError && (
               <p className="text-xs text-red-700">{oneToOneError}</p>
             )}
-          {oneToOneResult && (
-              <div className="space-y-1 text-xs text-green-700">
+            {oneToOneJobStatus && (
+              <div className="mt-2 space-y-1 text-xs">
+                <p className="text-gray-700">
+                  Status: <span className="font-semibold">{oneToOneJobStatus.status}</span>
+                  {progressPct != null && ` • ~${progressPct}% complete`}
+                </p>
+                {typeof totalSource === 'number' && (
+                  <p className="text-[11px] text-gray-700">
+                    Rows inserted so far: {inserted ?? 0} / {totalSource}
+                  </p>
+                )}
+                {progressPct != null && (
+                  <div className="w-full bg-gray-200 rounded h-2 overflow-hidden">
+                    <div className="bg-blue-600 h-2" style={{ width: `${progressPct}%` }} />
+                  </div>
+                )}
+              </div>
+            )}
+            {oneToOneResult && (
+              <div className="mt-2 space-y-1 text-xs text-green-700">
                 <p>
                   Migration completed: {oneToOneResult.rows_inserted ?? 0} rows inserted in{' '}
                   {oneToOneResult.batches ?? 0} batches into {plannedTargetTable.schema}.{
