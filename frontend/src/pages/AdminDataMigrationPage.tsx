@@ -713,6 +713,14 @@ const DualDbMigrationStudioShell: React.FC = () => {
   const [oneToOneJobId, setOneToOneJobId] = useState<string | null>(null);
   const [oneToOneJobStatus, setOneToOneJobStatus] = useState<any | null>(null);
 
+  // Latest records modal state
+  const [latestOpen, setLatestOpen] = useState(false);
+  const [latestTitle, setLatestTitle] = useState('');
+  const [latestColumns, setLatestColumns] = useState<string[]>([]);
+  const [latestRows, setLatestRows] = useState<any[][]>([]);
+  const [latestLoading, setLatestLoading] = useState(false);
+  const [latestError, setLatestError] = useState<string | null>(null);
+
   const handleConfigChange = (field: keyof MssqlConnectionConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
   };
@@ -778,6 +786,32 @@ const DualDbMigrationStudioShell: React.FC = () => {
     // When source or target changes, we rebuild a very simple mapping summary later.
     setMappingRows([]);
     setPlannedTargetTable(null);
+  };
+
+  const openLatestForMssql = async (schema: string, name: string) => {
+    setLatestOpen(true);
+    setLatestTitle(`Latest 50 rows – MSSQL ${schema}.${name}`);
+    setLatestColumns([]);
+    setLatestRows([]);
+    setLatestError(null);
+    setLatestLoading(true);
+    try {
+      const resp = await api.post('/api/admin/mssql/latest-rows', {
+        ...config,
+        schema,
+        table: name,
+        limit: 50,
+        offset: 0,
+      });
+      const data = resp.data as { columns: string[]; rows: any[][] };
+      setLatestColumns(data.columns || []);
+      setLatestRows(data.rows || []);
+    } catch (e: any) {
+      const message = e?.response?.data?.detail || e.message || 'Failed to load latest MSSQL rows';
+      setLatestError(typeof message === 'string' ? message : JSON.stringify(message));
+    } finally {
+      setLatestLoading(false);
+    }
   };
 
   const loadTargetTables = async () => {
@@ -1156,6 +1190,35 @@ const DualDbMigrationStudioShell: React.FC = () => {
     }
   }, [selectedSourceTable, selectedTargetTable, targetTables]);
 
+  const openLatestForSupabase = async (table: TargetTableInfo) => {
+    setLatestOpen(true);
+    setLatestTitle(`Latest 50 rows – Supabase ${table.schema}.${table.name}`);
+    setLatestColumns([]);
+    setLatestRows([]);
+    setLatestError(null);
+    setLatestLoading(true);
+    try {
+      const resp = await api.get(`/api/admin/db/tables/${encodeURIComponent(table.name)}/rows`, {
+        params: { limit: 50, offset: 0 },
+      });
+      const data = resp.data as { rows: Record<string, any>[] };
+      const rows = data.rows || [];
+      if (!rows.length) {
+        setLatestColumns([]);
+        setLatestRows([]);
+      } else {
+        const columns = Object.keys(rows[0]);
+        setLatestColumns(columns);
+        setLatestRows(rows.map((r) => columns.map((c) => r[c])));
+      }
+    } catch (e: any) {
+      const message = e?.response?.data?.detail || e.message || 'Failed to load latest Supabase rows';
+      setLatestError(typeof message === 'string' ? message : JSON.stringify(message));
+    } finally {
+      setLatestLoading(false);
+    }
+  };
+
   const mapMssqlToPostgresType = (type: string): string => {
     const t = type.toLowerCase();
     if (t.includes('bigint')) return 'bigint';
@@ -1288,7 +1351,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
                   )}
                   {filteredSchemas.map((s) => (
                     <div key={s.name} className="mb-1">
-                      <div className="font-mono text-xs font-semibold text-gray-800">{s.name}</div>
+                      <div className="font-mono text-[11px] font-semibold text-gray-800">{s.name}</div>
                       <div className="ml-3">
                         {s.tables.map((t) => {
                           const isSelected =
@@ -1296,12 +1359,22 @@ const DualDbMigrationStudioShell: React.FC = () => {
                           return (
                             <div
                               key={t.name}
-                              className={`cursor-pointer px-1 py-0.5 rounded border-b border-dotted border-gray-100 hover:bg-blue-50 ${
+                              className={`flex items-center justify-between gap-2 cursor-pointer px-1 py-0.5 rounded border-b border-dotted border-gray-100 hover:bg-blue-50 ${
                                 isSelected ? 'bg-blue-100 font-semibold' : ''
                               }`}
                               onClick={() => handleSelectSourceTable(s.name, t.name)}
                             >
-                              <span className="font-mono text-xs">{t.name}</span>
+                              <span className="font-mono text-[11px] flex-1 truncate">{t.name}</span>
+                              <button
+                                type="button"
+                                className="text-[10px] px-1.5 py-0.5 border rounded bg-white hover:bg-gray-50"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void openLatestForMssql(s.name, t.name);
+                                }}
+                              >
+                                Latest 50
+                              </button>
                             </div>
                           );
                         })}
@@ -1433,19 +1506,32 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 {filteredTargetTables.map((t) => {
                   const isSelected = selectedTargetTable?.schema === t.schema && selectedTargetTable?.name === t.name;
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={`${t.schema}.${t.name}`}
-                      className={`w-full text-left px-3 py-1.5 text-sm cursor-pointer border-b hover:bg-gray-50 ${
+                      className={`w-full px-1 py-0.5 text-xs cursor-pointer border-b border-dotted border-gray-100 hover:bg-blue-50 ${
                         isSelected ? 'bg-blue-50 font-semibold' : ''
                       }`}
                       onClick={() => handleSelectTargetTable(t)}
                     >
-                      <div className="font-mono text-sm">{t.name}</div>
-                      {t.row_estimate != null && (
-                        <div className="text-xs text-gray-500">~{Math.round(t.row_estimate)} rows</div>
-                      )}
-                    </button>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-mono text-[11px] truncate">{t.name}</div>
+                          {t.row_estimate != null && (
+                            <div className="text-[10px] text-gray-500">~{Math.round(t.row_estimate)} rows</div>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="text-[10px] px-1.5 py-0.5 border rounded bg-white hover:bg-gray-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void openLatestForSupabase(t);
+                          }}
+                        >
+                          Latest 50
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
                 {!targetTablesLoading && filteredTargetTables.length === 0 && (
@@ -1459,6 +1545,55 @@ const DualDbMigrationStudioShell: React.FC = () => {
 
       {renderCreateNewTableDialog()}
       {renderOneToOneDialog()}
+
+      <Dialog open={latestOpen} onOpenChange={setLatestOpen}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>{latestTitle || 'Latest 50 rows'}</DialogTitle>
+          </DialogHeader>
+          <div className="text-xs text-gray-600 mb-2">
+            This view shows the 50 most recent rows for the selected table, ordered by created_at or primary key when
+            available.
+          </div>
+          {latestError && <div className="text-xs text-red-600 mb-2">{latestError}</div>}
+          {latestLoading ? (
+            <div className="text-sm text-gray-500">Loading latest rows...</div>
+          ) : latestColumns.length === 0 || latestRows.length === 0 ? (
+            <div className="text-sm text-gray-500">No rows found.</div>
+          ) : (
+            <div className="border rounded max-h-[70vh] overflow-auto">
+              <table className="min-w-full text-[11px] table-fixed">
+                <thead className="bg-gray-100">
+                  <tr>
+                    {latestColumns.map((col) => (
+                      <th key={col} className="px-2 py-1 border text-left font-mono whitespace-nowrap">
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {latestRows.map((row, idx) => (
+                    <tr key={idx} className="border-t">
+                      {latestColumns.map((col, colIdx) => (
+                        <td key={col} className="px-2 py-1 border whitespace-nowrap align-top">
+                          <div className="inline-block whitespace-pre select-text">
+                            {row[colIdx] === null || row[colIdx] === undefined
+                              ? ''
+                              : typeof row[colIdx] === 'object'
+                              ? JSON.stringify(row[colIdx], null, 2)
+                              : String(row[colIdx])}
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

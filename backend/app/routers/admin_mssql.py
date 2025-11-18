@@ -27,6 +27,11 @@ class TablePreviewRequest(TableColumnsRequest):
     offset: int = 0
 
 
+class LatestRowsRequest(TableColumnsRequest):
+    limit: int = 50
+    offset: int = 0
+
+
 class SearchRequest(MssqlConnectionConfig):
     q: str
     limit: int = 50
@@ -118,6 +123,33 @@ async def get_table_preview_endpoint(
         return preview
     except Exception as e:  # noqa: BLE001
         message = str(e) or "Failed to fetch table preview"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message,
+        ) from e
+
+
+@router.post("/latest-rows")
+async def get_latest_rows_endpoint(
+    payload: LatestRowsRequest,
+    current_user: User = Depends(get_current_admin_user),
+) -> Dict[str, Any]:
+    """Return the latest rows for a given MSSQL table.
+
+    Uses created_at or primary key ordering when possible, falling back to ORDER BY 1 DESC.
+    """
+
+    try:
+        latest = mssql_client.get_latest_rows(
+            payload,
+            schema=payload.schema,
+            table=payload.table,
+            limit=payload.limit,
+            offset=payload.offset,
+        )
+        return latest
+    except Exception as e:  # noqa: BLE001
+        message = str(e) or "Failed to fetch latest rows"
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=message,

@@ -274,6 +274,81 @@ def get_table_preview(
     }
 
 
+def get_latest_rows(
+    config: MssqlConnectionConfig,
+    schema: str,
+    table: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Return the latest rows for the given table.
+
+    Ordering rules (mirrors Postgres admin_db.get_table_rows):
+    - If table has created_at: ORDER BY created_at DESC
+    - Else if single-column primary key: ORDER BY pk DESC
+    - Else: ORDER BY 1 DESC
+    """
+
+    if limit <= 0:
+        limit = 50
+    if offset < 0:
+        offset = 0
+
+    engine = _create_engine(config)
+    with engine.connect() as conn:
+        # Detect created_at column
+        has_created_at_sql = text(
+            """
+            SELECT 1
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = :schema
+              AND TABLE_NAME = :table
+              AND COLUMN_NAME = 'created_at'
+            """
+        )
+        has_created_at = bool(
+            conn.execute(has_created_at_sql, {"schema": schema, "table": table}).scalar()
+        )
+
+        # Detect primary key columns
+        pk_sql = text(
+            """
+            SELECT kcu.COLUMN_NAME
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+              ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+             AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+            WHERE tc.TABLE_SCHEMA = :schema
+              AND tc.TABLE_NAME = :table
+              AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+            ORDER BY kcu.ORDINAL_POSITION
+            """
+        )
+        pk_cols = [row["COLUMN_NAME"] for row in conn.execute(pk_sql, {"schema": schema, "table": table}).mappings()]
+
+        if has_created_at:
+            order_by = "created_at"
+        elif len(pk_cols) == 1:
+            order_by = pk_cols[0]
+        else:
+            order_by = "1"
+
+        sql = text(
+            f"SELECT * FROM [{schema}].[{table}] ORDER BY {order_by} DESC OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
+        )
+        result = conn.execute(sql, {"offset": offset, "limit": limit})
+
+        columns = list(result.keys())
+        rows = [list(r) for r in result.fetchall()]
+
+    return {
+        "columns": columns,
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 def search_database(
     config: MssqlConnectionConfig,
     q: str,
