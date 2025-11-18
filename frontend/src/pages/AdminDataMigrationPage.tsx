@@ -748,6 +748,16 @@ const DualDbMigrationStudioShell: React.FC = () => {
   const [mappingRows, setMappingRows] = useState<MappingRow[]>([]);
   const [isConfirmOneToOneOpen, setIsConfirmOneToOneOpen] = useState(false);
 
+  // Planned 1:1 target for new-table flow (Flow A) or existing-table flow (Flow B).
+  const [plannedTargetTable, setPlannedTargetTable] = useState<{ schema: string; name: string } | null>(null);
+  const [oneToOneMode, setOneToOneMode] = useState<'new-table' | 'existing'>('existing');
+
+  // Flow A (new Supabase table) dialog state
+  const [isCreateNewTableOpen, setIsCreateNewTableOpen] = useState(false);
+  const [newTableName, setNewTableName] = useState('');
+  const [newTableSchema, setNewTableSchema] = useState('public');
+  const [newTableColumns, setNewTableColumns] = useState<MssqlColumnInfo[] | null>(null);
+
   const handleConfigChange = (field: keyof MssqlConnectionConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
   };
@@ -812,6 +822,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
     setSelectedSourceTable({ schema, name });
     // When source or target changes, we rebuild a very simple mapping summary later.
     setMappingRows([]);
+    setPlannedTargetTable(null);
   };
 
   const loadTargetTables = async () => {
@@ -896,7 +907,9 @@ const DualDbMigrationStudioShell: React.FC = () => {
     void build();
   }, [selectedSourceTable, targetSchema, config]);
 
-  const canRunOneToOne = Boolean(selectedSourceTable && selectedTargetTable);
+  // 1:1 migration can always start when a MSSQL source table is selected.
+  // Target table is optional: if absent, we create a new Supabase table from MSSQL schema (Flow A).
+  const canRunOneToOne = Boolean(selectedSourceTable);
 
   const renderOneToOneDialog = () => {
     if (!selectedSourceTable || !selectedTargetTable) return null;
@@ -949,7 +962,71 @@ const DualDbMigrationStudioShell: React.FC = () => {
     void loadTargetTables();
   }, []);
 
+  // Auto-detect same-name Supabase table when a MSSQL table is selected and no target chosen yet.
+  React.useEffect(() => {
+    if (!selectedSourceTable || selectedTargetTable || !targetTables.length) return;
+    const match = targetTables.find(
+      (t) => t.schema === 'public' && t.name.toLowerCase() === selectedSourceTable.name.toLowerCase(),
+    );
+    if (match) {
+      void handleSelectTargetTable(match);
+    }
+  }, [selectedSourceTable, selectedTargetTable, targetTables]);
+
+  const mapMssqlToPostgresType = (type: string): string => {
+    const t = type.toLowerCase();
+    if (t.includes('bigint')) return 'bigint';
+    if (t === 'int' || t.includes('int')) return 'integer';
+    if (t.includes('decimal') || t.includes('numeric') || t.includes('money')) return 'numeric';
+    if (t.includes('date') || t.includes('time')) return 'timestamp';
+    if (t.includes('bit')) return 'boolean';
+    if (t.includes('char') || t.includes('text') || t.includes('nchar') || t.includes('nvarchar')) return 'text';
+    return 'text';
+  };
+
+  const handleOneToOneClick = async () => {
+    if (!selectedSourceTable) return;
+
+    // Flow B: existing Supabase table explicitly selected.
+    if (selectedTargetTable) {
+      setOneToOneMode('existing');
+      setPlannedTargetTable({ schema: selectedTargetTable.schema, name: selectedTargetTable.name });
+      setIsConfirmOneToOneOpen(true);
+      return;
+    }
+
+    // Flow A: create new Supabase table from MSSQL schema.
+    try {
+      // Load MSSQL columns for the selected source table.
+      const resp = await api.post<MssqlColumnInfo[]>('/api/admin/mssql/table-columns', {
+        ...config,
+        schema: selectedSourceTable.schema,
+        table: selectedSourceTable.name,
+      });
+      const sourceCols = resp.data;
+      setNewTableColumns(sourceCols);
+      setNewTableName(selectedSourceTable.name.toLowerCase());
+      setNewTableSchema('public');
+      setOneToOneMode('new-table');
+      setIsCreateNewTableOpen(true);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load MSSQL columns for new-table 1:1 flow', e);
+    }
+  };
+
   const showConnectionOverlay = !testOk && !schemaTree && !schemaLoading;
+
+  const hasSource = Boolean(selectedSourceTable);
+  const hasTarget = Boolean(selectedTargetTable);
+  let oneToOneHint = 'Select a MSSQL table on the left.';
+  if (hasSource && !hasTarget) {
+    oneToOneHint =
+      "Click 'Migrate 1:1' to create a NEW Supabase table from this MSSQL table, or select a target on the right to use an existing table.";
+  } else if (hasSource && hasTarget) {
+    oneToOneHint =
+      "You selected source and target tables. Click 'Migrate 1:1' to migrate into the existing Supabase table, or open 'Configure mapping…' for custom mapping.";
+  }
 
   return (
     <div className="space-y-4">
@@ -1121,7 +1198,8 @@ const DualDbMigrationStudioShell: React.FC = () => {
                   disabled={!canRunOneToOne}
                   onClick={() => {
                     if (!canRunOneToOne) return;
-                    setIsConfirmOneToOneOpen(true);
+                    // Decide between Flow A (new table) and Flow B (existing table)
+                    void handleOneToOneClick();
                   }}
                 >
                   Migrate 1:1 (structure + data)
@@ -1148,9 +1226,10 @@ const DualDbMigrationStudioShell: React.FC = () => {
                       {selectedTargetTable.schema}.{selectedTargetTable.name}
                     </span>
                   ) : (
-                    <span className="text-gray-500">Select a table on the right</span>
+                    <span className="text-gray-500">(no Supabase table selected yet)</span>
                   )}
                 </div>
+                <p className="text-xs text-gray-500 mt-1">{oneToOneHint}</p>
               </div>
 
               <div className="flex-1 overflow-auto border rounded">
