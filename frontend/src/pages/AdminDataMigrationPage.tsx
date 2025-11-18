@@ -758,6 +758,11 @@ const DualDbMigrationStudioShell: React.FC = () => {
   const [newTableSchema, setNewTableSchema] = useState('public');
   const [newTableColumns, setNewTableColumns] = useState<MssqlColumnInfo[] | null>(null);
 
+  // 1:1 backend job state
+  const [isRunningOneToOne, setIsRunningOneToOne] = useState(false);
+  const [oneToOneResult, setOneToOneResult] = useState<any | null>(null);
+  const [oneToOneError, setOneToOneError] = useState<string | null>(null);
+
   const handleConfigChange = (field: keyof MssqlConnectionConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
   };
@@ -911,6 +916,30 @@ const DualDbMigrationStudioShell: React.FC = () => {
   // Target table is optional: if absent, we create a new Supabase table from MSSQL schema (Flow A).
   const canRunOneToOne = Boolean(selectedSourceTable);
 
+  const runOneToOneMigration = async () => {
+    if (!selectedSourceTable || !plannedTargetTable) return;
+    setIsRunningOneToOne(true);
+    setOneToOneError(null);
+    try {
+      const resp = await api.post('/api/admin/migration/mssql-to-supabase/one-to-one', {
+        mssql: config,
+        source_schema: selectedSourceTable.schema,
+        source_table: selectedSourceTable.name,
+        target_schema: plannedTargetTable.schema,
+        target_table: plannedTargetTable.name,
+        mode: oneToOneMode,
+      });
+      setOneToOneResult(resp.data);
+      // Refresh Supabase tables so newly created table appears on the right.
+      await loadTargetTables();
+    } catch (e: any) {
+      const message = e?.response?.data?.detail || e.message || 'Migration failed';
+      setOneToOneError(typeof message === 'string' ? message : JSON.stringify(message));
+    } finally {
+      setIsRunningOneToOne(false);
+    }
+  };
+
   const renderOneToOneDialog = () => {
     if (!selectedSourceTable || !plannedTargetTable) return null;
 
@@ -946,6 +975,18 @@ const DualDbMigrationStudioShell: React.FC = () => {
               MSSQL will remain read-only. All writes will go to Supabase. Column names, types, nullability, and defaults
               will be used as-is where possible.
             </p>
+            {oneToOneError && (
+              <p className="text-xs text-red-700">{oneToOneError}</p>
+            )}
+            {oneToOneResult && (
+              <p className="text-xs text-green-700">
+                Migration completed: {oneToOneResult.rows_inserted ?? 0} rows inserted in{' '}
+                {oneToOneResult.batches ?? 0} batches into {plannedTargetTable.schema}.{
+                  plannedTargetTable.name
+                }
+                .
+              </p>
+            )}
             {needsReview && (
               <p className="text-xs text-yellow-700">
                 Warning: some columns have type differences between MSSQL and Supabase. 1:1 migration may still work but
@@ -966,13 +1007,12 @@ const DualDbMigrationStudioShell: React.FC = () => {
             <Button
               variant={hasConflicts ? 'outline' : 'default'}
               size="sm"
+              disabled={isRunningOneToOne}
               onClick={() => {
-                // SCREEN 10 (stub): navigate to Migration Runner later
-                // For now we just close the dialog; backend wiring will be added in Phase 7.
-                setIsConfirmOneToOneOpen(false);
+                void runOneToOneMigration();
               }}
             >
-              Continue to migration runner (stub)
+              {isRunningOneToOne ? 'Running migration…' : 'Run 1:1 migration'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1092,6 +1132,9 @@ const DualDbMigrationStudioShell: React.FC = () => {
 
   const handleOneToOneClick = async () => {
     if (!selectedSourceTable) return;
+
+    setOneToOneResult(null);
+    setOneToOneError(null);
 
     // Flow B: existing Supabase table explicitly selected.
     if (selectedTargetTable) {

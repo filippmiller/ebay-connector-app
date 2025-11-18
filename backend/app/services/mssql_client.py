@@ -65,6 +65,16 @@ def _create_engine(config: MssqlConnectionConfig) -> Engine:
     return engine
 
 
+def create_engine_for_session(config: MssqlConnectionConfig) -> Engine:
+    """Public helper for creating a short-lived MSSQL engine.
+
+    Used by admin-only tools such as the Dual-DB Migration Studio. The caller is
+    responsible for disposing the engine after use.
+    """
+
+    return _create_engine(config)
+
+
 def test_connection(config: MssqlConnectionConfig) -> Dict[str, Any]:
     """Validate that we can connect and run a trivial query.
 
