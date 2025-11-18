@@ -47,19 +47,14 @@ interface ColumnState {
 }
 
 export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extraParams }) => {
-  const [layout, setLayout] = useState<GridLayoutResponse | null>(null);
   const [columns, setColumns] = useState<ColumnState[]>([]);
-  const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, any>[]>([]);
   const [limit, setLimit] = useState(50);
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
-  const [loadingLayout, setLoadingLayout] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
-
-  const [sort, setSort] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
 
   const gridPrefs = useGridPreferences(gridKey);
 
@@ -82,61 +77,62 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     setOffset(0);
   }, [gridKey, extraParamsKey]);
 
-  // Load layout
-  useEffect(() => {
-    const fetchLayout = async () => {
-      setLoadingLayout(true);
-      setError(null);
-      try {
-        const resp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
-        const data = resp.data;
-        setLayout(data);
-        const colMap: Record<string, GridColumnMeta> = {};
-        data.available_columns.forEach((c) => {
-          colMap[c.name] = c;
-        });
-        const initialVisible = data.visible_columns.filter((c) => colMap[c]);
-        setVisibleColumns(initialVisible);
-        const cols: ColumnState[] = initialVisible.map((name) => {
-          const meta = colMap[name];
-          const width = data.column_widths[name] || meta.width_default || 150;
-          return { name, label: meta.label || name, width };
-        });
-        setColumns(cols);
-        setSort(data.sort || null);
-      } catch (e: any) {
-        console.error('Failed to load grid layout', e);
-        setError(e?.response?.data?.detail || e.message || 'Failed to load grid layout');
-      } finally {
-        setLoadingLayout(false);
-      }
-    };
+  const availableColumnsMap = useMemo(() => {
+    const map: Record<string, GridColumnMeta> = {};
+    gridPrefs.availableColumns.forEach((c) => {
+      map[c.name] = c;
+    });
+    return map;
+  }, [gridPrefs.availableColumns]);
 
-    fetchLayout();
-  }, [gridKey]);
-
-  // Recompute columns whenever visibleColumns or layout change
+  // Ensure we have a columns config once preferences are loaded.
   useEffect(() => {
-    if (!layout) return;
-    if (!visibleColumns.length) {
+    if (gridPrefs.loading) return;
+    if (gridPrefs.columns || gridPrefs.availableColumns.length === 0) return;
+
+    const allNames = gridPrefs.availableColumns.map((c) => c.name);
+    gridPrefs.setColumns({
+      visible: allNames,
+      order: allNames,
+      widths: {},
+      sort: null,
+    });
+  }, [gridPrefs.loading, gridPrefs.columns, gridPrefs.availableColumns, gridPrefs.setColumns]);
+
+  const orderedVisibleColumns = useMemo(() => {
+    const cfg = gridPrefs.columns;
+    if (!cfg) return [] as string[];
+
+    const baseOrder = (cfg.order && cfg.order.length ? cfg.order : gridPrefs.availableColumns.map((c) => c.name));
+    return baseOrder.filter((name) => cfg.visible.includes(name) && !!availableColumnsMap[name]);
+  }, [gridPrefs.columns, gridPrefs.availableColumns, availableColumnsMap]);
+
+  // Recompute renderable columns whenever preferences or metadata change
+  useEffect(() => {
+    const cfg = gridPrefs.columns;
+    if (!cfg || orderedVisibleColumns.length === 0) {
       setColumns([]);
       return;
     }
-    const nextCols: ColumnState[] = visibleColumns
-      .map((name) => {
-        const meta = availableColumnsMap[name];
-        if (!meta) return null;
-        const width = layout.column_widths[name] || meta.width_default || 150;
-        return { name, label: meta.label || name, width };
-      })
-      .filter((c): c is ColumnState => c !== null);
-    setColumns(nextCols);
-  }, [layout, visibleColumns, layout?.column_widths, layout?.available_columns]);
 
-  // Load data whenever layout/visibleColumns/sort/limit/offset change
+    const nextCols: ColumnState[] = orderedVisibleColumns.map((name) => {
+      const meta = availableColumnsMap[name];
+      const width = cfg.widths[name] || meta?.width_default || 150;
+      return { name, label: meta?.label || name, width };
+    });
+    setColumns(nextCols);
+  }, [gridPrefs.columns, orderedVisibleColumns, availableColumnsMap]);
+
+  // Load data whenever preferences / pagination / filters change
   useEffect(() => {
-    if (!layout) return;
-    if (!visibleColumns.length) return;
+    if (gridPrefs.loading) return;
+    const cfg = gridPrefs.columns;
+    if (!cfg || orderedVisibleColumns.length === 0) {
+      setRows([]);
+      setTotal(0);
+      return;
+    }
+
     const fetchData = async () => {
       setLoadingData(true);
       setError(null);
@@ -144,11 +140,11 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
         const params: any = {
           limit,
           offset,
-          columns: visibleColumns.join(','),
+          columns: orderedVisibleColumns.join(','),
         };
-        if (sort && sort.column) {
-          params.sort_by = sort.column;
-          params.sort_dir = sort.direction;
+        if (cfg.sort && cfg.sort.column) {
+          params.sort_by = cfg.sort.column;
+          params.sort_dir = cfg.sort.direction;
         }
         if (extraParams) {
           Object.assign(params, extraParams);
@@ -166,12 +162,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     };
 
     fetchData();
-  }, [layout, visibleColumns, sort, limit, offset, gridKey, extraParamsKey]);
-
-  const availableColumnsMap: Record<string, GridColumnMeta> = {};
-  layout?.available_columns.forEach((c) => {
-    availableColumnsMap[c.name] = c;
-  });
+  }, [gridPrefs.loading, gridPrefs.columns, orderedVisibleColumns, limit, offset, gridKey, extraParamsKey, extraParams]);
 
   const reorderColumns = (list: string[], fromName: string, toName: string): string[] => {
     if (fromName === toName) return list;
@@ -185,82 +176,48 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   };
 
   const toggleColumnVisibility = (name: string) => {
-    setVisibleColumns((prev) => {
-      if (prev.includes(name)) {
-        return prev.filter((c) => c !== name);
-      }
-      return [...prev, name];
+    const cfg = gridPrefs.columns;
+    if (!cfg) return;
+    const alreadyVisible = cfg.visible.includes(name);
+    const nextVisible = alreadyVisible
+      ? cfg.visible.filter((c) => c !== name)
+      : [...cfg.visible, name];
+    gridPrefs.setColumns({ visible: nextVisible });
+  };
+
+  const handleSelectAllColumns = () => {
+    const allNames = gridPrefs.availableColumns.map((c) => c.name);
+    if (!allNames.length) return;
+    gridPrefs.setColumns({
+      visible: allNames,
+      order: allNames,
     });
   };
 
-  const resetToDefaults = () => {
-    if (!layout) return;
-    const defaults = layout.visible_columns;
-    setVisibleColumns(defaults);
-    const cols: ColumnState[] = defaults.map((name) => {
-      const meta = availableColumnsMap[name];
-      const width = layout.column_widths[name] || meta?.width_default || 150;
-      return { name, label: meta?.label || name, width };
-    });
-    setColumns(cols);
-    setSort(layout.sort || null);
+  const handleClearAllColumns = () => {
+    if (!gridPrefs.columns) return;
+    gridPrefs.setColumns({ visible: [] });
   };
 
-  const persistLayout = async (nextVisible: string[], nextWidths: Record<string, number>, nextSort: typeof sort) => {
-    try {
-      const resp = await api.put<GridLayoutResponse>(`/api/grids/${gridKey}/layout`, {
-        visible_columns: nextVisible,
-        column_widths: nextWidths,
-        sort: nextSort,
-      });
-      const data = resp.data;
-      setLayout(data);
-      const colMap: Record<string, GridColumnMeta> = {};
-      data.available_columns.forEach((c) => {
-        colMap[c.name] = c;
-      });
-      const updatedVisible = data.visible_columns.filter((c) => colMap[c]);
-      setVisibleColumns(updatedVisible);
-      setSort(data.sort || null);
-    } catch (e) {
-      console.error('Failed to save grid layout', e);
-    }
+  const handleResetToDefaults = async () => {
+    await gridPrefs.clearServerPreferences();
   };
 
-  const handleSaveColumns = () => {
+  const handleSaveColumns = async () => {
+    await gridPrefs.save();
     setShowColumnsPanel(false);
-    const nextVisible = visibleColumns.filter((c) => availableColumnsMap[c]);
-    const widths: Record<string, number> = {};
-    columns.forEach((c) => {
-      if (nextVisible.includes(c.name)) {
-        widths[c.name] = c.width;
-      }
-    });
-    persistLayout(nextVisible, widths, sort);
   };
 
   const handleHeaderClick = (colName: string) => {
     const meta = availableColumnsMap[colName];
-    if (!meta || !meta.sortable) return;
-    setSort((prev) => {
-      if (prev && prev.column === colName) {
-        const nextDir = prev.direction === 'asc' ? 'desc' : 'asc';
-        const nextSort = { column: colName, direction: nextDir } as const;
-        // Persist sort immediately
-        const widths: Record<string, number> = {};
-        columns.forEach((c) => {
-          widths[c.name] = c.width;
-        });
-        persistLayout(visibleColumns, widths, nextSort);
-        return nextSort;
-      }
-      const nextSort = { column: colName, direction: 'desc' } as const;
-      const widths: Record<string, number> = {};
-      columns.forEach((c) => {
-        widths[c.name] = c.width;
-      });
-      persistLayout(visibleColumns, widths, nextSort);
-      return nextSort;
+    if (!meta || !meta.sortable || !gridPrefs.columns) return;
+    const prevSort = gridPrefs.columns.sort;
+    let nextDirection: 'asc' | 'desc' = 'desc';
+    if (prevSort && prevSort.column === colName) {
+      nextDirection = prevSort.direction === 'asc' ? 'desc' : 'asc';
+    }
+    gridPrefs.setColumns({
+      sort: { column: colName, direction: nextDirection },
     });
   };
 
@@ -293,16 +250,13 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     const sourceColName = draggingColRef.current;
     draggingColRef.current = null;
     if (!sourceColName || sourceColName === targetColName) return;
+    if (!gridPrefs.columns) return;
 
-    setVisibleColumns((prev) => {
-      const nextVisible = reorderColumns(prev, sourceColName, targetColName);
-      const widths: Record<string, number> = {};
-      columns.forEach((c) => {
-        widths[c.name] = c.width;
-      });
-      persistLayout(nextVisible, widths, sort);
-      return nextVisible;
-    });
+    const currentOrder = gridPrefs.columns.order && gridPrefs.columns.order.length
+      ? gridPrefs.columns.order
+      : gridPrefs.columns.visible;
+    const nextOrder = reorderColumns(currentOrder, sourceColName, targetColName);
+    gridPrefs.setColumns({ order: nextOrder });
   };
 
   const onMouseMoveResize = (e: MouseEvent) => {
@@ -319,33 +273,48 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     resizingColRef.current = null;
     window.removeEventListener('mousemove', onMouseMoveResize);
     window.removeEventListener('mouseup', onMouseUpResize);
-    // Persist widths
-    const widths: Record<string, number> = {};
+    if (!gridPrefs.columns) return;
+    // Persist widths into preferences (local only; saved on explicit Save)
+    const widths: Record<string, number> = { ...gridPrefs.columns.widths };
     columns.forEach((c) => {
       widths[c.name] = c.width;
     });
-    persistLayout(visibleColumns, widths, sort);
+    gridPrefs.setColumns({ widths });
   };
 
-  const gridTitle = title || layout?.grid_key || gridKey;
+  const gridTitle = title || gridKey;
 
   const density = gridPrefs.theme?.density || 'normal';
   const colorScheme = gridPrefs.theme?.colorScheme || 'default';
+  const buttonLayout = gridPrefs.theme?.buttonLayout || 'right';
+  const currentSort = gridPrefs.columns?.sort || null;
 
   return (
     <div className={`flex flex-col h-full app-grid grid-density-${density} grid-theme-${colorScheme}`}>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
+          {(buttonLayout === 'left' || buttonLayout === 'split') && (
+            <button
+              className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50 shadow-sm"
+              onClick={() => setShowColumnsPanel(true)}
+            >
+              Columns
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-3 text-sm">
+          {buttonLayout === 'right' && (
+            <button
+              className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50 shadow-sm"
+              onClick={() => setShowColumnsPanel(true)}
+            >
+              Columns
+            </button>
+          )}
           <span className="text-xs text-gray-500">
             {loadingData ? 'Loading data…' : `${total} rows`}
           </span>
-          <button
-            className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50 shadow-sm"
-            onClick={() => setShowColumnsPanel(true)}
-          >
-            Columns
-          </button>
           <select
             className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50"
             value={limit}
@@ -365,16 +334,16 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       {error && <div className="mb-2 text-xs text-red-600">{error}</div>}
 
       <div className="flex-1 min-h-0 border rounded-lg bg-white overflow-auto">
-        {loadingLayout ? (
+        {gridPrefs.loading ? (
           <div className="p-4 text-sm text-gray-500">Loading layout…</div>
-        ) : !layout ? (
-          <div className="p-4 text-sm text-gray-500">No layout available.</div>
+        ) : orderedVisibleColumns.length === 0 ? (
+          <div className="p-4 text-sm text-gray-500">No columns configured.</div>
         ) : (
           <table className="min-w-full text-[13px] border-collapse">
             <thead className="bg-gray-100">
               <tr>
                 {columns.map((col) => {
-                  const isSorted = sort && sort.column === col.name;
+                  const isSorted = currentSort && currentSort.column === col.name;
                   const meta = availableColumnsMap[col.name];
                   return (
                     <th
@@ -400,7 +369,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                           <span>{meta?.label || col.label}</span>
                           {isSorted && (
                             <span className="ml-1 text-[9px]">
-                              {sort?.direction === 'asc' ? '▲' : '▼'}
+                              {currentSort?.direction === 'asc' ? '▲' : '▼'}
                             </span>
                           )}
                         </div>
@@ -468,12 +437,12 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
         )}
       </div>
 
-      {/* Columns panel */}
-      {showColumnsPanel && layout && (
+      {/* Columns / Layout & Theme panel */}
+      {showColumnsPanel && (
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
           <div className="bg-white rounded shadow-lg w-full max-w-md max-h-[80vh] flex flex-col">
             <div className="px-4 py-2 border-b flex items-center justify-between">
-              <div className="font-semibold text-sm">Columns for {gridKey}</div>
+              <div className="font-semibold text-sm">Columns & layout for {gridKey}</div>
               <button
                 className="text-xs text-gray-500"
                 onClick={() => setShowColumnsPanel(false)}
@@ -481,39 +450,108 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                 Close
               </button>
             </div>
-            <div className="p-3 flex-1 overflow-auto text-xs">
-              <div className="flex items-center justify-between mb-2">
-                <button
-                  className="px-2 py-1 border rounded text-[11px] bg-gray-50 hover:bg-gray-100"
-                  onClick={() => setVisibleColumns(layout.available_columns.map((c) => c.name))}
-                >
-                  Select all
-                </button>
-                <button
-                  className="px-2 py-1 border rounded text-[11px] bg-gray-50 hover:bg-gray-100"
-                  onClick={() => setVisibleColumns([])}
-                >
-                  Clear all
-                </button>
-                <button
-                  className="px-2 py-1 border rounded text-[11px] bg-gray-50 hover:bg-gray-100"
-                  onClick={resetToDefaults}
-                >
-                  Reset to defaults
-                </button>
+            <div className="p-3 flex-1 overflow-auto text-xs space-y-3">
+              {/* Columns section */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold text-[11px] uppercase tracking-wide text-gray-600">
+                    Columns
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="px-2 py-1 border rounded text-[11px] bg-gray-50 hover:bg-gray-100"
+                      onClick={handleSelectAllColumns}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      className="px-2 py-1 border rounded text-[11px] bg-gray-50 hover:bg-gray-100"
+                      onClick={handleClearAllColumns}
+                    >
+                      Clear all
+                    </button>
+                    <button
+                      className="px-2 py-1 border rounded text-[11px] bg-gray-50 hover:bg-gray-100"
+                      onClick={handleResetToDefaults}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  {gridPrefs.availableColumns.map((col) => (
+                    <label key={col.name} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={!!gridPrefs.columns?.visible.includes(col.name)}
+                        onChange={() => toggleColumnVisibility(col.name)}
+                      />
+                      <span className="font-mono text-[11px]">{col.name}</span>
+                      <span className="text-gray-500 text-[11px]">({col.label || col.name})</span>
+                    </label>
+                  ))}
+                  {gridPrefs.availableColumns.length === 0 && (
+                    <div className="text-[11px] text-gray-500">No columns metadata.</div>
+                  )}
+                </div>
               </div>
-              <div className="space-y-1">
-                {layout.available_columns.map((col) => (
-                  <label key={col.name} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.includes(col.name)}
-                      onChange={() => toggleColumnVisibility(col.name)}
-                    />
-                    <span className="font-mono text-[11px]">{col.name}</span>
-                    <span className="text-gray-500 text-[11px]">({col.label || col.name})</span>
+
+              {/* Layout & Theme section */}
+              <div className="border-t pt-3 mt-2 space-y-2">
+                <div className="font-semibold text-[11px] uppercase tracking-wide text-gray-600">
+                  Layout & theme
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Density</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px] bg-white"
+                      value={gridPrefs.theme.density}
+                      onChange={(e) => gridPrefs.setTheme({ density: e.target.value as any })}
+                    >
+                      <option value="compact">Compact</option>
+                      <option value="normal">Normal</option>
+                      <option value="comfortable">Comfortable</option>
+                    </select>
                   </label>
-                ))}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Font size</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px] bg-white"
+                      value={gridPrefs.theme.fontSize}
+                      onChange={(e) => gridPrefs.setTheme({ fontSize: e.target.value as any })}
+                    >
+                      <option value="small">Small</option>
+                      <option value="medium">Medium</option>
+                      <option value="large">Large</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Color scheme</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px] bg-white"
+                      value={gridPrefs.theme.colorScheme}
+                      onChange={(e) => gridPrefs.setTheme({ colorScheme: e.target.value as any })}
+                    >
+                      <option value="default">Default</option>
+                      <option value="blue">Blue</option>
+                      <option value="dark">Dark</option>
+                      <option value="highContrast">High contrast</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Toolbar layout</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px] bg-white"
+                      value={gridPrefs.theme.buttonLayout}
+                      onChange={(e) => gridPrefs.setTheme({ buttonLayout: e.target.value as any })}
+                    >
+                      <option value="left">Buttons left</option>
+                      <option value="right">Buttons right</option>
+                      <option value="split">Title left, buttons right</option>
+                    </select>
+                  </label>
+                </div>
               </div>
             </div>
             <div className="px-4 py-2 border-t flex justify-end gap-2 text-xs">

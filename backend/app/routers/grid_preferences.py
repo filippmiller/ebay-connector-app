@@ -156,6 +156,31 @@ async def get_grid_preferences(
     )
 
 
+@router.delete("/preferences", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_grid_preferences(
+    grid_key: str = Query(..., description="Unique grid key (e.g. transactions, orders, offers)"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete a user's preferences for a grid, reverting to GRID_DEFAULTS on next fetch."""
+
+    allowed_cols = _allowed_columns_for_grid(grid_key)
+    if not allowed_cols:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown grid_key")
+
+    layout: Optional[UserGridLayout] = (
+        db.query(UserGridLayout)
+        .filter(UserGridLayout.user_id == current_user.id, UserGridLayout.grid_key == grid_key)
+        .first()
+    )
+    if not layout:
+        return
+
+    db.delete(layout)
+    db.commit()
+    logger.info("grid_preferences.delete user_id=%s grid_key=%s", current_user.id, grid_key)
+
+
 @router.post("/preferences", response_model=GridPreferencesResponse)
 async def upsert_grid_preferences(
     payload: GridPreferencesUpdate,

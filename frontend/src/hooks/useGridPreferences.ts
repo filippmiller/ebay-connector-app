@@ -45,8 +45,12 @@ interface UseGridPreferencesResult {
   theme: GridThemeConfig;
   setColumns(partial: Partial<GridColumnsConfig>): void;
   setTheme(partial: Partial<GridThemeConfig>): void;
+  /** Persist the current columns + theme (or an override) to the backend. */
   save(columnsOverride?: GridColumnsConfig): Promise<void>;
-  resetThemeToDefaults(): void;
+  /** Reload preferences from the backend, discarding local-only changes. */
+  reload(): Promise<void>;
+  /** Delete preferences on the server and reload (returns to GRID_DEFAULTS + default theme). */
+  clearServerPreferences(): Promise<void>;
 }
 
 const DEFAULT_THEME: GridThemeConfig = {
@@ -64,40 +68,31 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
   const [columns, setColumnsState] = useState<GridColumnsConfig | null>(null);
   const [theme, setThemeState] = useState<GridThemeConfig>(DEFAULT_THEME);
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchPrefs = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const resp = await api.get<GridPreferencesResponse>('/api/grid/preferences', {
-          params: { grid_key: gridKey },
-        });
-        if (!isMounted) return;
-        setAvailableColumns(resp.data.available_columns || []);
-        setColumnsState(resp.data.columns || null);
-        setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
-      } catch (e: any) {
-        if (!isMounted) return;
-        console.error('Failed to load grid preferences', e);
-        setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
-        // On error, fall back to defaults but keep going so the grid still renders.
-        setAvailableColumns([]);
-        setColumnsState(null);
-        setThemeState(DEFAULT_THEME);
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void fetchPrefs();
-
-    return () => {
-      isMounted = false;
-    };
+  const fetchPrefs = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await api.get<GridPreferencesResponse>('/api/grid/preferences', {
+        params: { grid_key: gridKey },
+      });
+      setAvailableColumns(resp.data.available_columns || []);
+      setColumnsState(resp.data.columns || null);
+      setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
+    } catch (e: any) {
+      console.error('Failed to load grid preferences', e);
+      setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
+      // On error, fall back to defaults but keep going so the grid still renders.
+      setAvailableColumns([]);
+      setColumnsState(null);
+      setThemeState(DEFAULT_THEME);
+    } finally {
+      setLoading(false);
+    }
   }, [gridKey]);
+
+  useEffect(() => {
+    void fetchPrefs();
+  }, [fetchPrefs]);
 
   const setColumns = useCallback((partial: Partial<GridColumnsConfig>) => {
     setColumnsState((prev) => {
@@ -132,9 +127,18 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     [columns, gridKey, theme],
   );
 
-  const resetThemeToDefaults = useCallback(() => {
-    setThemeState(DEFAULT_THEME);
-  }, []);
+  const reload = useCallback(async (): Promise<void> => {
+    await fetchPrefs();
+  }, [fetchPrefs]);
+
+  const clearServerPreferences = useCallback(async (): Promise<void> => {
+    try {
+      await api.delete('/api/grid/preferences', { params: { grid_key: gridKey } });
+    } catch (e) {
+      console.error('Failed to clear grid preferences', e);
+    }
+    await fetchPrefs();
+  }, [fetchPrefs, gridKey]);
 
   return {
     loading,
@@ -145,6 +149,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     setColumns,
     setTheme,
     save,
-    resetThemeToDefaults,
+    reload,
+    clearServerPreferences,
   };
 }
