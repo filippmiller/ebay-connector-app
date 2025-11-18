@@ -10,7 +10,6 @@ import {
   TaskDetail,
   TaskListItem,
   TaskCreatePayload,
-  TaskUpdatePayload,
   TaskSnoozePayload,
   getTasks,
   getTask,
@@ -251,21 +250,21 @@ const TasksPage: React.FC = () => {
             <div className="flex items-center gap-1 text-xs">
               <span className="font-semibold text-gray-600 mr-1">Type:</span>
               <Button
-                size="xs"
+                size="sm"
                 variant={typeFilter === 'all' ? 'default' : 'outline'}
                 onClick={() => setTypeFilter('all')}
               >
                 All
               </Button>
               <Button
-                size="xs"
+                size="sm"
                 variant={typeFilter === 'task' ? 'default' : 'outline'}
                 onClick={() => setTypeFilter('task')}
               >
                 Tasks
               </Button>
               <Button
-                size="xs"
+                size="sm"
                 variant={typeFilter === 'reminder' ? 'default' : 'outline'}
                 onClick={() => setTypeFilter('reminder')}
               >
@@ -276,14 +275,14 @@ const TasksPage: React.FC = () => {
             <div className="flex items-center gap-1 text-xs">
               <span className="font-semibold text-gray-600 mr-1">Role:</span>
               <Button
-                size="xs"
+                size="sm"
                 variant={roleFilter === 'assigned_to_me' ? 'default' : 'outline'}
                 onClick={() => setRoleFilter('assigned_to_me')}
               >
                 Assigned to me
               </Button>
               <Button
-                size="xs"
+                size="sm"
                 variant={roleFilter === 'created_by_me' ? 'default' : 'outline'}
                 onClick={() => setRoleFilter('created_by_me')}
               >
@@ -291,7 +290,7 @@ const TasksPage: React.FC = () => {
               </Button>
               {isAdmin && (
                 <Button
-                  size="xs"
+                  size="sm"
                   variant={roleFilter === 'all' ? 'default' : 'outline'}
                   onClick={() => setRoleFilter('all')}
                 >
@@ -337,14 +336,14 @@ const TasksPage: React.FC = () => {
 
             <div className="flex items-center gap-1 ml-auto text-xs">
               <Button
-                size="xs"
+                size="sm"
                 variant={viewMode === 'list' ? 'default' : 'outline'}
                 onClick={() => setViewMode('list')}
               >
                 <LayoutList className="h-3 w-3 mr-1" /> List
               </Button>
               <Button
-                size="xs"
+                size="sm"
                 variant={viewMode === 'board' ? 'default' : 'outline'}
                 onClick={() => setViewMode('board')}
               >
@@ -470,7 +469,7 @@ const TasksPage: React.FC = () => {
                   </span>
                   <div className="flex items-center gap-1">
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       disabled={page <= 1}
                       onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -478,7 +477,7 @@ const TasksPage: React.FC = () => {
                       Prev
                     </Button>
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       disabled={page >= totalPages}
                       onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
@@ -542,8 +541,8 @@ const TasksPage: React.FC = () => {
                       {selectedTask.type === 'task' && (
                         <>
                           {(selectedTask.status === 'new' || selectedTask.status === 'snoozed') && (
-                            <Button
-                              size="xs"
+                          <Button
+                              size="sm"
                               variant="outline"
                               disabled={updatingStatus}
                               onClick={() => handleStatusChange(selectedTask.id, 'in_progress')}
@@ -553,7 +552,7 @@ const TasksPage: React.FC = () => {
                           )}
                           {selectedTask.status !== 'done' && selectedTask.status !== 'cancelled' && (
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               disabled={updatingStatus}
                               onClick={() => handleStatusChange(selectedTask.id, 'done')}
@@ -563,7 +562,7 @@ const TasksPage: React.FC = () => {
                           )}
                           {selectedTask.status !== 'done' && selectedTask.status !== 'cancelled' && (
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               disabled={updatingStatus}
                               onClick={() => handleSnooze(selectedTask.id, { preset: '1h' })}
@@ -573,7 +572,7 @@ const TasksPage: React.FC = () => {
                           )}
                           {selectedTask.status !== 'cancelled' && (
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               disabled={updatingStatus}
                               onClick={() => handleStatusChange(selectedTask.id, 'cancelled')}
@@ -587,7 +586,7 @@ const TasksPage: React.FC = () => {
                         <>
                           {selectedTask.status !== 'done' && selectedTask.status !== 'dismissed' && (
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               disabled={updatingStatus}
                               onClick={() => handleStatusChange(selectedTask.id, 'done')}
@@ -597,7 +596,7 @@ const TasksPage: React.FC = () => {
                           )}
                           {selectedTask.status !== 'done' && selectedTask.status !== 'dismissed' && (
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               disabled={updatingStatus}
                               onClick={() => handleSnooze(selectedTask.id, { preset: '1h' })}
@@ -607,7 +606,7 @@ const TasksPage: React.FC = () => {
                           )}
                           {selectedTask.status !== 'dismissed' && (
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               disabled={updatingStatus}
                               onClick={() => handleStatusChange(selectedTask.id, 'dismissed')}
@@ -657,7 +656,7 @@ const TasksPage: React.FC = () => {
                           onChange={(e) => setNewComment(e.target.value)}
                         />
                         <div className="flex justify-end">
-                          <Button size="xs" variant="outline" disabled={!newComment.trim()} onClick={handleAddComment}>
+                          <Button size="sm" variant="outline" disabled={!newComment.trim()} onClick={handleAddComment}>
                             Add comment
                           </Button>
                         </div>
@@ -682,14 +681,14 @@ const TasksPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="font-semibold text-gray-700">Type</span>
               <Button
-                size="xs"
+                size="sm"
                 variant={createPayload.type === 'task' ? 'default' : 'outline'}
                 onClick={() => setCreatePayload((p) => ({ ...p, type: 'task' }))}
               >
                 Task
               </Button>
               <Button
-                size="xs"
+                size="sm"
                 variant={createPayload.type === 'reminder' ? 'default' : 'outline'}
                 onClick={() => setCreatePayload((p) => ({ ...p, type: 'reminder' }))}
               >

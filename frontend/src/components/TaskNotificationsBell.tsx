@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, Check, Clock, MessageCircle, Play, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   TaskNotificationItem,
   getUnreadTaskNotifications,
@@ -272,7 +271,7 @@ export const TaskNotificationsBell: React.FC = () => {
                     {!isReminder(n) && (
                       <>
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="outline"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -282,7 +281,7 @@ export const TaskNotificationsBell: React.FC = () => {
                           <Play className="h-3 w-3 mr-1" /> Start
                         </Button>
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="outline"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -296,7 +295,7 @@ export const TaskNotificationsBell: React.FC = () => {
                     {isReminder(n) && (
                       <>
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="outline"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -306,7 +305,7 @@ export const TaskNotificationsBell: React.FC = () => {
                           <Check className="h-3 w-3 mr-1" /> Done
                         </Button>
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="outline"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -316,7 +315,7 @@ export const TaskNotificationsBell: React.FC = () => {
                           <Clock className="h-3 w-3 mr-1" /> 15m
                         </Button>
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="outline"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -328,7 +327,7 @@ export const TaskNotificationsBell: React.FC = () => {
                       </>
                     )}
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="ghost"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -383,7 +382,7 @@ export const TaskNotificationsBell: React.FC = () => {
             </div>
             <div className="flex items-center justify-end gap-1 mt-1">
               <Button
-                size="xs"
+                size="sm"
                 variant="outline"
                 onClick={() => {
                   void handleOpenTask(toast);
@@ -395,7 +394,7 @@ export const TaskNotificationsBell: React.FC = () => {
               {!isReminder(toast) && (
                 <>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => {
                       void handleQuickStatusChange(toast, 'in_progress');
@@ -405,7 +404,7 @@ export const TaskNotificationsBell: React.FC = () => {
                     <Play className="h-3 w-3 mr-1" /> Start
                   </Button>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => {
                       void handleQuickStatusChange(toast, 'done');
@@ -419,7 +418,7 @@ export const TaskNotificationsBell: React.FC = () => {
               {isReminder(toast) && (
                 <>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => {
                       void handleQuickStatusChange(toast, 'done');
@@ -429,7 +428,7 @@ export const TaskNotificationsBell: React.FC = () => {
                     <Check className="h-3 w-3 mr-1" /> Done
                   </Button>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => {
                       void handleSnoozeQuick(toast, '15m');
@@ -439,7 +438,7 @@ export const TaskNotificationsBell: React.FC = () => {
                     <Clock className="h-3 w-3 mr-1" /> 15m
                   </Button>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => {
                       void handleSnoozeQuick(toast, '1h');
@@ -449,7 +448,7 @@ export const TaskNotificationsBell: React.FC = () => {
                     <Clock className="h-3 w-3 mr-1" /> 1h
                   </Button>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => {
                       void handleSnoozeQuick(toast, 'tomorrow');
