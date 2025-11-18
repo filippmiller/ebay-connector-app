@@ -1,266 +1,198 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc
 from typing import Optional, List
 from datetime import datetime
-import uuid
 
 from ..models_sqlalchemy import get_db
-from ..models_sqlalchemy.models import Purchase, PurchaseLineItem, PaymentStatus, FulfillmentStatus, SyncLog
-from ..services.auth import get_current_user, admin_required
+from ..models_sqlalchemy.models import EbayBuyer, EbayStatusBuyer, EbayBuyerLog, EbayAccount
+from ..services.auth import get_current_user
 from ..models.user import User
 
 router = APIRouter(prefix="/api/buying", tags=["buying"])
 
 
-def sync_buying_purchases(job_id: str, user_id: str, db: Session):
-    """Background job to sync purchases from eBay API"""
-    import time
-    from ..utils.logger import logger
-    
-    sync_log = db.query(SyncLog).filter(SyncLog.job_id == job_id).first()
-    if not sync_log:
-        sync_log = SyncLog(
-            job_id=job_id,
-            user_id=user_id,
-            endpoint="buying",
-            status="running",
-            sync_started_at=datetime.utcnow()
-        )
-        db.add(sync_log)
-        db.commit()
-    
-    start_time = time.time()
-    
-    try:
-        logger.info(f"[Job {job_id}] Starting BUYING purchases sync for user {user_id}")
-        time.sleep(2)
-        
-        pages_fetched = 1
-        records_stored = 0
-        
-        duration_ms = int((time.time() - start_time) * 1000)
-        sync_log.status = "success"
-        sync_log.pages_fetched = pages_fetched
-        sync_log.records_fetched = records_stored
-        sync_log.records_stored = records_stored
-        sync_log.duration_ms = duration_ms
-        sync_log.duration = duration_ms / 1000.0
-        sync_log.sync_completed_at = datetime.utcnow()
-        db.commit()
-        
-        logger.info(f"[Job {job_id}] BUYING sync completed: {records_stored} stored, {duration_ms}ms")
-        
-    except Exception as e:
-        logger.error(f"[Job {job_id}] BUYING sync failed: {e}")
-        duration_ms = int((time.time() - start_time) * 1000)
-        sync_log.status = "error"
-        sync_log.error_text = str(e)
-        sync_log.error_message = str(e)
-        sync_log.duration_ms = duration_ms
-        sync_log.sync_completed_at = datetime.utcnow()
-        db.commit()
-
-
-@router.post("/admin/sync")
-async def sync_purchases(
-    background_tasks: BackgroundTasks,
-    current_user: User = Depends(admin_required),
-    db: Session = Depends(get_db)
+@router.get("/statuses")
+async def list_statuses(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Admin-only: Trigger background sync of purchases from eBay"""
-    job_id = str(uuid.uuid4())
-    
-    sync_log = SyncLog(
-        job_id=job_id,
-        user_id=current_user.id,
-        endpoint="buying",
-        status="queued",
-        sync_started_at=datetime.utcnow()
+    """Return all BUYING status dictionary entries ordered by sort_order.
+
+    The frontend uses this to populate the status dropdown (id, label, colors).
+    """
+    statuses: List[EbayStatusBuyer] = (
+        db.query(EbayStatusBuyer)
+        .filter(EbayStatusBuyer.is_active == True)  # noqa: E712
+        .order_by(EbayStatusBuyer.sort_order.asc(), EbayStatusBuyer.id.asc())
+        .all()
     )
-    db.add(sync_log)
-    db.commit()
-    
-    background_tasks.add_task(sync_buying_purchases, job_id, current_user.id, db)
-    
-    return {
-        "job_id": job_id,
-        "status": "queued",
-        "message": "Buying purchases sync queued successfully"
-    }
+
+    return [
+        {
+            "id": s.id,
+            "code": s.code,
+            "label": s.label,
+            "sort_order": s.sort_order,
+            "color_hex": s.color_hex,
+            "text_color_hex": s.text_color_hex,
+        }
+        for s in statuses
+    ]
 
 
-@router.get("/admin/sync/jobs/{job_id}")
-async def get_buying_sync_job_status(
-    job_id: str,
-    current_user: User = Depends(admin_required),
-    db: Session = Depends(get_db)
-):
-    """Get status of a buying sync job"""
-    sync_log = db.query(SyncLog).filter(
-        SyncLog.job_id == job_id,
-        SyncLog.user_id == current_user.id
-    ).first()
-    
-    if not sync_log:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    return {
-        "job_id": sync_log.job_id,
-        "status": sync_log.status,
-        "endpoint": sync_log.endpoint,
-        "pages_fetched": sync_log.pages_fetched or 0,
-        "records_fetched": sync_log.records_fetched or 0,
-        "records_stored": sync_log.records_stored or 0,
-        "duration_ms": sync_log.duration_ms or 0,
-        "error_text": sync_log.error_text,
-        "started_at": sync_log.sync_started_at.isoformat() if sync_log.sync_started_at else None,
-        "completed_at": sync_log.sync_completed_at.isoformat() if sync_log.sync_completed_at else None
-    }
-
-
-@router.get("")
-async def get_purchases(
-    buyer: Optional[str] = Query(None),
-    seller: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    from_date: Optional[str] = Query(None, alias="from"),
-    to_date: Optional[str] = Query(None, alias="to"),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    sort: str = Query("creation_date", regex="^(creation_date|total_value|buyer_username|seller_username)$"),
-    dir: str = Query("desc", regex="^(asc|desc)$"),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Get purchases with filtering, pagination, and sorting.
-    Server-side pagination for performance.
-    """
-    query = db.query(Purchase).filter(Purchase.user_id == current_user.id)
-    
-    # Apply filters
-    if buyer:
-        query = query.filter(Purchase.buyer_username.ilike(f"%{buyer}%"))
-    if seller:
-        query = query.filter(Purchase.seller_username.ilike(f"%{seller}%"))
-    if status:
-        try:
-            payment_status = PaymentStatus[status.upper()]
-            query = query.filter(Purchase.payment_status == payment_status)
-        except KeyError:
-            pass
-    if from_date:
-        try:
-            from_dt = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
-            query = query.filter(Purchase.creation_date >= from_dt)
-        except:
-            pass
-    if to_date:
-        try:
-            to_dt = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
-            query = query.filter(Purchase.creation_date <= to_dt)
-        except:
-            pass
-    
-    # Get total count before pagination
-    total_count = query.count()
-    
-    # Apply sorting
-    order_col = getattr(Purchase, sort)
-    if dir == "desc":
-        query = query.order_by(desc(order_col))
-    else:
-        query = query.order_by(asc(order_col))
-    
-    # Apply pagination
-    purchases = query.offset(offset).limit(limit).all()
-    
-    # Convert to dict
-    results = []
-    for purchase in purchases:
-        line_items_count = db.query(PurchaseLineItem).filter(
-            PurchaseLineItem.purchase_id == purchase.purchase_id
-        ).count()
-        
-        results.append({
-            "purchase_id": purchase.purchase_id,
-            "buyer_username": purchase.buyer_username,
-            "seller_username": purchase.seller_username,
-            "total_value": float(purchase.total_value) if purchase.total_value else 0,
-            "total_currency": purchase.total_currency,
-            "payment_status": purchase.payment_status.value if purchase.payment_status else "UNKNOWN",
-            "fulfillment_status": purchase.fulfillment_status.value if purchase.fulfillment_status else "UNKNOWN",
-            "creation_date": purchase.creation_date.isoformat() if purchase.creation_date else None,
-            "tracking_number": purchase.tracking_number,
-            "line_items_count": line_items_count,
-            "ship_to_name": purchase.ship_to_name,
-            "ship_to_city": purchase.ship_to_city,
-            "ship_to_state": purchase.ship_to_state,
-        })
-    
-    return {
-        "purchases": results,
-        "total": total_count,
-        "limit": limit,
-        "offset": offset,
-        "has_more": (offset + limit) < total_count
-    }
-
-
-@router.get("/{purchase_id}")
+@router.get("/{buyer_id}")
 async def get_purchase_detail(
-    purchase_id: str,
-    include: Optional[str] = Query(None),
+    buyer_id: int,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
+    """Return detailed information for a single ebay_buyer row.
+
+    Includes basic item/seller/buyer fields plus current status + comment and a
+    short recent history from tbl_ebay_buyer_log.
     """
-    Get detailed purchase information.
-    Query param 'include=lineItems' to include line items.
-    """
-    purchase = db.query(Purchase).filter(
-        Purchase.purchase_id == purchase_id,
-        Purchase.user_id == current_user.id
-    ).first()
-    
-    if not purchase:
+    buyer: Optional[EbayBuyer] = (
+        db.query(EbayBuyer)
+        .join(EbayAccount, EbayBuyer.ebay_account_id == EbayAccount.id)
+        .filter(
+            EbayBuyer.id == buyer_id,
+            EbayAccount.org_id == current_user.id,
+        )
+        .one_or_none()
+    )
+    if not buyer:
         raise HTTPException(status_code=404, detail="Purchase not found")
-    
-    result = {
-        "purchase_id": purchase.purchase_id,
-        "creation_date": purchase.creation_date.isoformat() if purchase.creation_date else None,
-        "last_modified_at": purchase.last_modified_at.isoformat() if purchase.last_modified_at else None,
-        "buyer_username": purchase.buyer_username,
-        "seller_username": purchase.seller_username,
-        "total_value": float(purchase.total_value) if purchase.total_value else 0,
-        "total_currency": purchase.total_currency,
-        "payment_status": purchase.payment_status.value if purchase.payment_status else "UNKNOWN",
-        "fulfillment_status": purchase.fulfillment_status.value if purchase.fulfillment_status else "UNKNOWN",
-        "tracking_number": purchase.tracking_number,
-        "ship_to_name": purchase.ship_to_name,
-        "ship_to_city": purchase.ship_to_city,
-        "ship_to_state": purchase.ship_to_state,
-        "ship_to_postal": purchase.ship_to_postal,
-        "ship_to_country": purchase.ship_to_country,
+
+    status: Optional[EbayStatusBuyer] = None
+    if buyer.item_status_id:
+        status = db.query(EbayStatusBuyer).filter(EbayStatusBuyer.id == buyer.item_status_id).one_or_none()
+
+    # Recent history (last 10 changes)
+    history_rows: List[EbayBuyerLog] = (
+        db.query(EbayBuyerLog)
+        .filter(EbayBuyerLog.ebay_buyer_id == buyer.id)
+        .order_by(EbayBuyerLog.changed_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    history = [
+        {
+            "id": h.id,
+            "change_type": h.change_type,
+            "old_status_id": h.old_status_id,
+            "new_status_id": h.new_status_id,
+            "old_comment": h.old_comment,
+            "new_comment": h.new_comment,
+            "changed_by_user_id": h.changed_by_user_id,
+            "changed_by_username": h.changed_by_username,
+            "changed_at": h.changed_at.isoformat() if h.changed_at else None,
+        }
+        for h in history_rows
+    ]
+
+    return {
+        "id": buyer.id,
+        "ebay_account_id": buyer.ebay_account_id,
+        "item_id": buyer.item_id,
+        "transaction_id": buyer.transaction_id,
+        "order_line_item_id": buyer.order_line_item_id,
+        "title": buyer.title,
+        "tracking_number": buyer.tracking_number,
+        "storage": buyer.storage,
+        "quantity_purchased": buyer.quantity_purchased,
+        "buyer_id": buyer.buyer_id,
+        "seller_id": buyer.seller_id,
+        "seller_location": buyer.seller_location,
+        "condition_display_name": buyer.condition_display_name,
+        "shipping_carrier": buyer.shipping_carrier,
+        "amount_paid": float(buyer.total_transaction_price or buyer.current_price or 0) if (buyer.total_transaction_price or buyer.current_price) is not None else None,
+        "paid_time": buyer.paid_time.isoformat() if buyer.paid_time else None,
+        "item_status_id": buyer.item_status_id,
+        "item_status_label": status.label if status else None,
+        "comment": buyer.comment,
+        "history": history,
     }
-    
-    # Include line items if requested
-    if include and "lineItems" in include:
-        line_items = db.query(PurchaseLineItem).filter(
-            PurchaseLineItem.purchase_id == purchase_id
-        ).all()
-        
-        result["line_items"] = [
-            {
-                "line_item_id": item.line_item_id,
-                "sku": item.sku,
-                "title": item.title,
-                "quantity": item.quantity,
-                "total_value": float(item.total_value) if item.total_value else 0,
-                "currency": item.currency,
-            }
-            for item in line_items
-        ]
-    
-    return result
+
+
+@router.patch("/{buyer_id}/status")
+async def update_status_and_comment(
+    buyer_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update item_status_id and/or comment for a purchase and log the change.
+
+    Body:
+        { "status_id": int | null, "comment": str | null }
+    """
+    status_id = payload.get("status_id") if "status_id" in payload else None
+    comment = payload.get("comment") if "comment" in payload else None
+
+    if status_id is None and comment is None:
+        return {"updated": False}
+
+    buyer: Optional[EbayBuyer] = (
+        db.query(EbayBuyer)
+        .join(EbayAccount, EbayBuyer.ebay_account_id == EbayAccount.id)
+        .filter(
+            EbayBuyer.id == buyer_id,
+            EbayAccount.org_id == current_user.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if not buyer:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    old_status_id = buyer.item_status_id
+    old_comment = buyer.comment
+
+    changed_status = False
+    changed_comment = False
+
+    now = datetime.utcnow()
+
+    if "status_id" in payload and status_id != buyer.item_status_id:
+        buyer.item_status_id = status_id
+        buyer.item_status_updated_at = now
+        buyer.item_status_updated_by = current_user.username
+        changed_status = True
+
+    if "comment" in payload and comment != buyer.comment:
+        buyer.comment = comment
+        buyer.comment_updated_at = now
+        buyer.comment_updated_by = current_user.username
+        changed_comment = True
+
+    if not changed_status and not changed_comment:
+        return {"updated": False}
+
+    buyer.record_updated_at = now
+    buyer.record_updated_by = current_user.username
+
+    change_type = "status+comment" if changed_status and changed_comment else ("status" if changed_status else "comment")
+
+    log_row = EbayBuyerLog(
+        ebay_buyer_id=buyer.id,
+        change_type=change_type,
+        old_status_id=old_status_id,
+        new_status_id=buyer.item_status_id,
+        old_comment=old_comment,
+        new_comment=buyer.comment,
+        changed_by_user_id=current_user.id,
+        changed_by_username=current_user.username,
+        changed_at=now,
+    )
+    db.add(log_row)
+    db.commit()
+    db.refresh(buyer)
+
+    # Return the updated minimal payload so the grid/detail can refresh.
+    return {
+        "id": buyer.id,
+        "item_status_id": buyer.item_status_id,
+        "comment": buyer.comment,
+        "change_type": change_type,
+    }

@@ -25,6 +25,44 @@ from app.routers.grid_layouts import _allowed_columns_for_grid
 router = APIRouter(prefix="/api/grids", tags=["grids_data"])
 
 
+@router.get("/buying/rows")
+async def get_buying_rows(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    sort_by: Optional[str] = Query("paid_time"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Specialized endpoint for the BUYING grid rows.
+
+    Thin wrapper around :func:`_get_buying_data` that adapts pagination to the
+    explicit ``page`` / ``page_size`` contract expected by the new BUYING tab.
+    """
+    db_sqla = next(get_db_sqla())
+    try:
+        from app.routers.grid_layouts import _allowed_columns_for_grid
+
+        selected_cols = _allowed_columns_for_grid("buying")
+        offset = (page - 1) * page_size
+        data = _get_buying_data(
+            db_sqla,
+            current_user,
+            selected_cols,
+            page_size,
+            offset,
+            sort_by,
+            sort_dir,
+        )
+        return {
+            "rows": data.get("rows", []),
+            "total": data.get("total", 0),
+            "page": page,
+            "page_size": page_size,
+        }
+    finally:
+        db_sqla.close()
+
+
 @router.get("/{grid_key}/data")
 async def get_grid_data(
     grid_key: str,
@@ -289,48 +327,81 @@ def _get_buying_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    """Buying grid backed by purchases (logical view of tbl_ebay_buyer).
+    """Buying grid backed by ebay_buyer joined to ebay_status_buyer.
 
-    For now we expose a flat row per purchase, matching the columns returned by
-    /api/buying, and filter by user_id.
+    Exposes one row per ebay_buyer record (per account) filtered by the current
+    org/user's eBay accounts. This is the backend for the BUYING tab grid.
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    query = db.query(Purchase).filter(Purchase.user_id == current_user.id)
+    from app.models_sqlalchemy.models import EbayBuyer, EbayStatusBuyer, EbayAccount
+
+    # Scope rows to ebay_accounts that belong to the current org/user.
+    query = (
+        db.query(EbayBuyer, EbayStatusBuyer)
+        .join(EbayAccount, EbayBuyer.ebay_account_id == EbayAccount.id)
+        .outerjoin(EbayStatusBuyer, EbayBuyer.item_status_id == EbayStatusBuyer.id)
+        .filter(EbayAccount.org_id == current_user.id)
+    )
 
     total = query.count()
 
+    # Sorting: allow a small, safe subset of real columns.
     allowed_sort_cols = {
-        "creation_date",
-        "buyer_username",
-        "seller_username",
-        "total_value",
-        "payment_status",
-        "fulfillment_status",
+        "paid_time": EbayBuyer.paid_time,
+        "record_created_at": EbayBuyer.record_created_at,
+        "buyer_id": EbayBuyer.buyer_id,
+        "seller_id": EbayBuyer.seller_id,
+        "profit": EbayBuyer.profit,
     }
-    if sort_column in allowed_sort_cols and hasattr(Purchase, sort_column):
-        sort_attr = getattr(Purchase, sort_column)
-        if sort_dir == "desc":
-            query = query.order_by(desc(sort_attr))
-        else:
-            query = query.order_by(asc(sort_attr))
+    sort_attr = allowed_sort_cols.get(sort_column or "")
+    if sort_attr is None:
+        sort_attr = EbayBuyer.paid_time
+    if sort_dir == "desc":
+        query = query.order_by(desc(sort_attr))
+    else:
+        query = query.order_by(asc(sort_attr))
 
-    rows_db: List[Purchase] = query.offset(offset).limit(limit).all()
+    rows_db: List[tuple] = query.offset(offset).limit(limit).all()
 
-    def _serialize(p: Purchase) -> Dict[str, Any]:
+    def _serialize(buyer: EbayBuyer, status: Optional[EbayStatusBuyer]) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
+
+        # Derived fields for the grid
+        days_since_paid: Optional[int] = None
+        if buyer.paid_time:
+            delta = dt_type.utcnow().replace(tzinfo=None) - buyer.paid_time.replace(tzinfo=None)
+            days_since_paid = max(int(delta.days), 0)
+
+        amount_paid = buyer.total_transaction_price or buyer.current_price
+
+        base_values: Dict[str, Any] = {
+            "id": buyer.id,
+            "tracking_number": buyer.tracking_number,
+            "refund_flag": buyer.refund_flag,
+            "storage": buyer.storage,
+            "profit": float(buyer.profit) if isinstance(buyer.profit, Decimal) else buyer.profit,
+            "buyer_id": buyer.buyer_id,
+            "seller_id": buyer.seller_id,
+            "paid_time": buyer.paid_time,
+            "amount_paid": float(amount_paid) if isinstance(amount_paid, Decimal) else amount_paid,
+            "days_since_paid": days_since_paid,
+            "status_label": status.label if status else None,
+            "record_created_at": buyer.record_created_at,
+            "title": buyer.title,
+            "comment": buyer.comment,
+        }
+
         for col in selected_cols:
-            value = getattr(p, col, None)
+            value = base_values.get(col)
             if isinstance(value, dt_type):
                 row[col] = value.isoformat()
-            elif isinstance(value, Decimal):
-                row[col] = float(value)
             else:
                 row[col] = value
         return row
 
-    rows = [_serialize(p) for p in rows_db]
+    rows = [_serialize(b, s) for (b, s) in rows_db]
 
     return {
         "rows": rows,

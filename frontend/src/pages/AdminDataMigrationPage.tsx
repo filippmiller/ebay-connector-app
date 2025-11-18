@@ -11,7 +11,7 @@ type MainTab = 'mssql-database' | 'temp';
 type DetailTab = 'columns' | 'preview';
 
 interface MssqlConnectionConfig {
-  host: string;
+  host: string; // kept for type compatibility, but backend will use env defaults when blank
   port: number;
   database: string;
   username: string;
@@ -92,7 +92,7 @@ const AdminDataMigrationPage: React.FC = () => {
 
 const MssqlDatabaseTab: React.FC = () => {
   const [config, setConfig] = useState<MssqlConnectionConfig>({
-    host: '',
+    host: '', // credentials are provided by the backend via environment variables
     port: 1433,
     database: '',
     username: '',
@@ -296,32 +296,12 @@ const MssqlDatabaseTab: React.FC = () => {
         <CardHeader>
           <CardTitle>Database Connection</CardTitle>
           <CardDescription>
-            Connect to an external MSSQL database. Credentials are used only for this session and are never stored in
-            Supabase.
+            Connect to the legacy MSSQL database. Host, username, and password are already configured on the server (Railway
+            environment variables); you only need to specify which database to explore.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-gray-700">Host / IP</label>
-              <input
-                type="text"
-                className="w-full border rounded px-2 py-1 text-sm"
-                value={config.host}
-                onChange={(e) => handleConfigChange('host', e.target.value)}
-                placeholder="mssql.example.internal"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-gray-700">Port</label>
-              <input
-                type="number"
-                className="w-full border rounded px-2 py-1 text-sm"
-                value={config.port}
-                onChange={(e) => handleConfigChange('port', Number(e.target.value) || 1433)}
-                placeholder="1433"
-              />
-            </div>
             <div className="space-y-1">
               <label className="block text-xs font-medium text-gray-700">Database</label>
               <input
@@ -331,38 +311,6 @@ const MssqlDatabaseTab: React.FC = () => {
                 onChange={(e) => handleConfigChange('database', e.target.value)}
                 placeholder="DB_A28F26_parts"
               />
-            </div>
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-gray-700">Username</label>
-              <input
-                type="text"
-                className="w-full border rounded px-2 py-1 text-sm"
-                value={config.username}
-                onChange={(e) => handleConfigChange('username', e.target.value)}
-                placeholder="dbadmin"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-gray-700">Password</label>
-              <input
-                type="password"
-                className="w-full border rounded px-2 py-1 text-sm"
-                value={config.password}
-                onChange={(e) => handleConfigChange('password', e.target.value)}
-                placeholder="••••••••"
-              />
-            </div>
-            <div className="flex items-center gap-2 mt-6">
-              <input
-                id="encrypt"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={config.encrypt}
-                onChange={(e) => handleConfigChange('encrypt', e.target.checked)}
-              />
-              <label htmlFor="encrypt" className="text-xs text-gray-700">
-                Use SSL / Encrypt
-              </label>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -689,7 +637,7 @@ const PreviewView: React.FC<PreviewViewProps> = ({
 const DualDbMigrationStudioShell: React.FC = () => {
   // Reuse MSSQL connection config from the legacy tab shape, but keep it local to this component.
   const [config, setConfig] = useState<MssqlConnectionConfig>({
-    host: '',
+    host: '', // credentials are provided by the backend via environment variables
     port: 1433,
     database: '',
     username: '',
@@ -1273,32 +1221,12 @@ const DualDbMigrationStudioShell: React.FC = () => {
         <CardHeader>
           <CardTitle>Database Connection</CardTitle>
           <CardDescription>
-            Connect to an external MSSQL database. Credentials are used only for this session and are never stored in
-            Supabase.
+            Connect to the legacy MSSQL database for migration. Host, username, and password are already configured on the
+            server (Railway environment variables); you only need to specify which database to use.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-4 mb-4">
-            <div className="space-y-1 w-full sm:w-auto sm:min-w-[220px]">
-              <Label className="block text-xs font-medium text-gray-700">Host / IP</Label>
-              <Input
-                type="text"
-                value={config.host}
-                onChange={(e) => handleConfigChange('host', e.target.value)}
-                placeholder="mssql.example.internal"
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1 w-full sm:w-24">
-              <Label className="block text-xs font-medium text-gray-700">Port</Label>
-              <Input
-                type="number"
-                value={config.port}
-                onChange={(e) => handleConfigChange('port', Number(e.target.value) || 1433)}
-                placeholder="1433"
-                className="h-8 text-sm"
-              />
-            </div>
             <div className="space-y-1 w-full sm:w-56">
               <Label className="block text-xs font-medium text-gray-700">Database</Label>
               <Input
@@ -1308,38 +1236,6 @@ const DualDbMigrationStudioShell: React.FC = () => {
                 placeholder="DB_A28F26_parts"
                 className="h-8 text-sm"
               />
-            </div>
-            <div className="space-y-1 w-full sm:w-44">
-              <Label className="block text-xs font-medium text-gray-700">Username</Label>
-              <Input
-                type="text"
-                value={config.username}
-                onChange={(e) => handleConfigChange('username', e.target.value)}
-                placeholder="dbadmin"
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1 w-full sm:w-44">
-              <Label className="block text-xs font-medium text-gray-700">Password</Label>
-              <Input
-                type="password"
-                value={config.password}
-                onChange={(e) => handleConfigChange('password', e.target.value)}
-                placeholder="••••••••"
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <input
-                id="studio-encrypt"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={config.encrypt}
-                onChange={(e) => handleConfigChange('encrypt', e.target.checked)}
-              />
-              <Label htmlFor="studio-encrypt" className="text-xs text-gray-700">
-                Use SSL / Encrypt
-              </Label>
             </div>
           </div>
           <div className="flex items-center gap-3">

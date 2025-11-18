@@ -139,21 +139,22 @@ FINANCES_FEES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="raw_payload", label="Raw payload", type="string", width_default=400),
 ]
 
-# Buying grid: logical view over purchases (derived from tbl_ebay_buyer).
+# Buying grid: logical view over ebay_buyer (legacy tbl_ebay_buyer equivalent).
 BUYING_COLUMNS_META: List[ColumnMeta] = [
-  ColumnMeta(name="creation_date", label="Created at", type="datetime", width_default=180),
-  ColumnMeta(name="purchase_id", label="Purchase ID", type="string", width_default=220),
-  ColumnMeta(name="buyer_username", label="Buyer", type="string", width_default=180),
-  ColumnMeta(name="seller_username", label="Seller", type="string", width_default=180),
-  ColumnMeta(name="total_value", label="Total value", type="money", width_default=140),
-  ColumnMeta(name="total_currency", label="Currency", type="string", width_default=80),
-  ColumnMeta(name="payment_status", label="Payment status", type="string", width_default=140),
-  ColumnMeta(name="fulfillment_status", label="Fulfillment status", type="string", width_default=160),
+  ColumnMeta(name="id", label="ID", type="number", width_default=80),
   ColumnMeta(name="tracking_number", label="Tracking #", type="string", width_default=180),
-  ColumnMeta(name="line_items_count", label="# line items", type="number", width_default=120),
-  ColumnMeta(name="ship_to_name", label="Ship to name", type="string", width_default=200),
-  ColumnMeta(name="ship_to_city", label="Ship to city", type="string", width_default=160),
-  ColumnMeta(name="ship_to_state", label="Ship to state", type="string", width_default=120),
+  ColumnMeta(name="refund_flag", label="Refund", type="boolean", width_default=80),
+  ColumnMeta(name="storage", label="Storage", type="string", width_default=120),
+  ColumnMeta(name="profit", label="Profit", type="money", width_default=120),
+  ColumnMeta(name="buyer_id", label="Buyer (eBay)", type="string", width_default=160),
+  ColumnMeta(name="seller_id", label="Seller ID", type="string", width_default=160),
+  ColumnMeta(name="paid_time", label="Paid time", type="datetime", width_default=180),
+  ColumnMeta(name="amount_paid", label="Amount paid", type="money", width_default=140),
+  ColumnMeta(name="days_since_paid", label="Days", type="number", width_default=80),
+  ColumnMeta(name="status_label", label="Status", type="string", width_default=160),
+  ColumnMeta(name="record_created_at", label="Rec created", type="datetime", width_default=180),
+  ColumnMeta(name="title", label="Title", type="string", width_default=260),
+  ColumnMeta(name="comment", label="Comment", type="string", width_default=260),
 ]
 
 
@@ -273,16 +274,22 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
     },
     "buying": {
         "visible_columns": [
-            "creation_date",
-            "purchase_id",
-            "buyer_username",
-            "seller_username",
-            "total_value",
-            "total_currency",
-            "payment_status",
-            "fulfillment_status",
+            "id",
+            "tracking_number",
+            "refund_flag",
+            "storage",
+            "profit",
+            "buyer_id",
+            "seller_id",
+            "paid_time",
+            "amount_paid",
+            "days_since_paid",
+            "status_label",
+            "record_created_at",
+            "title",
+            "comment",
         ],
-        "sort": {"column": "creation_date", "direction": "desc"},
+        "sort": {"column": "paid_time", "direction": "desc"},
     },
 }
 

@@ -3367,6 +3367,204 @@ class EbayService:
         finally:
             event_logger.close()
 
+    async def get_purchases(
+        self,
+        access_token: str,
+        since: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch BUYING-side purchases for the authenticated account.
+
+        This is a thin wrapper around the Trading API ``GetMyeBayBuying`` call.
+        It intentionally returns a *normalized* list of dicts that map closely to
+        the ``ebay_buyer`` columns so that workers can upsert into Postgres
+        without needing to know the raw XML structure.
+
+        NOTE: The Trading schema is quite large; this helper focuses on the
+        fields we need for the BUYING grid and leaves the rest in comments/raw
+        payloads for future enrichment.
+        """
+        import xml.etree.ElementTree as ET  # local import to avoid global cost
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        # For now we rely on eBay's default time window for GetMyeBayBuying.
+        # The ``since`` parameter is reserved so we can switch to an explicit
+        # date-based filter later without changing the worker signature.
+        target_env = settings.EBAY_ENVIRONMENT or "sandbox"
+        api_url = (
+            "https://api.sandbox.ebay.com/ws/api.dll"
+            if target_env == "sandbox"
+            else "https://api.ebay.com/ws/api.dll"
+        )
+
+        entries_per_page = 200
+        page_number = 1
+
+        purchases: List[Dict[str, Any]] = []
+        has_more = True
+
+        while has_more:
+            xml_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBayBuyingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>{access_token}</eBayAuthToken>
+  </RequesterCredentials>
+  <DetailLevel>ReturnAll</DetailLevel>
+  <Pagination>
+    <EntriesPerPage>{entries_per_page}</EntriesPerPage>
+    <PageNumber>{page_number}</PageNumber>
+  </Pagination>
+  <WarningLevel>High</WarningLevel>
+</GetMyeBayBuyingRequest>"""
+
+            headers = {
+                "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
+                "X-EBAY-API-CALL-NAME": "GetMyeBayBuying",
+                "X-EBAY-API-SITEID": "0",
+                "Content-Type": "text/xml",
+            }
+
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(api_url, content=xml_request, headers=headers)
+            except httpx.RequestError as e:
+                msg = f"HTTP error calling GetMyeBayBuying: {e}"
+                logger.error(msg)
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=msg,
+                )
+
+            if response.status_code != 200:
+                msg = f"GetMyeBayBuying failed: HTTP {response.status_code} - {response.text[:1000]}"
+                logger.error(msg)
+                raise HTTPException(status_code=response.status_code, detail=msg)
+
+            raw_xml = response.text or ""
+            try:
+                root = ET.fromstring(raw_xml)
+            except ET.ParseError as e:
+                logger.error(f"Failed to parse GetMyeBayBuying XML: {e}")
+                break
+
+            ns = {"ebay": "urn:ebay:apis:eBLBaseComponents"}
+
+            # The Trading response groups purchases under a number of lists; for
+            # now we look under any ItemArray elements we can find.
+            item_elems: List[ET.Element] = []
+            for path in [
+                ".//ebay:BidList/ebay:ItemArray/ebay:Item",
+                ".//ebay:WonList/ebay:ItemArray/ebay:Item",
+                ".//ebay:PurchaseHistory/ebay:ItemArray/ebay:Item",
+            ]:
+                parent = root.findall(path, ns)
+                if parent:
+                    item_elems.extend(parent)
+
+            # Fallback: any Item under any ItemArray
+            if not item_elems:
+                generic_parent = root.findall(".//ebay:ItemArray/ebay:Item", ns)
+                item_elems.extend(generic_parent)
+
+            fetched_this_page = 0
+
+            for item in item_elems:
+                def _text(elem: Optional[ET.Element]) -> Optional[str]:
+                    return elem.text if elem is not None and elem.text is not None else None
+
+                item_id = _text(item.find("ebay:ItemID", ns))
+                title = _text(item.find("ebay:Title", ns))
+
+                seller_elem = item.find("ebay:Seller", ns)
+                seller_id = _text(seller_elem.find("ebay:UserID", ns)) if seller_elem is not None else None
+                seller_email = _text(seller_elem.find("ebay:Email", ns)) if seller_elem is not None else None
+
+                quantity_purchased = None
+                qty_elem = item.find("ebay:QuantityPurchased", ns)
+                if qty_elem is None:
+                    qty_elem = item.find("ebay:Quantity", ns)
+                if qty_elem is not None and qty_elem.text is not None:
+                    try:
+                        quantity_purchased = int(qty_elem.text)
+                    except ValueError:
+                        quantity_purchased = None
+
+                # Prices
+                current_price = None
+                total_transaction_price = None
+                price_elem = item.find("ebay:ConvertedCurrentPrice", ns) or item.find("ebay:CurrentPrice", ns)
+                if price_elem is not None and price_elem.text is not None:
+                    try:
+                        current_price = float(price_elem.text)
+                    except ValueError:
+                        current_price = None
+
+                total_elem = item.find("ebay:TotalTransactionPrice", ns)
+                if total_elem is not None and total_elem.text is not None:
+                    try:
+                        total_transaction_price = float(total_elem.text)
+                    except ValueError:
+                        total_transaction_price = None
+
+                # Shipping / tracking
+                shipping_carrier = None
+                tracking_number = None
+                shipment = item.find("ebay:Shipment", ns)
+                if shipment is not None:
+                    shipping_carrier = _text(shipment.find("ebay:ShippingCarrierUsed", ns))
+                    tracking_number = _text(shipment.find("ebay:ShipmentTrackingNumber", ns))
+
+                paid_time = None
+                paid_elem = item.find("ebay:PaidTime", ns)
+                if paid_elem is not None and paid_elem.text:
+                    try:
+                        paid_time = datetime.fromisoformat(paid_elem.text.replace("Z", "+00:00"))
+                    except Exception:
+                        paid_time = None
+
+                # Compose minimal DTO compatible with EbayBuyer
+                purchases.append(
+                    {
+                        "item_id": item_id,
+                        "title": title,
+                        "transaction_id": None,
+                        "order_line_item_id": None,
+                        "shipping_carrier": shipping_carrier,
+                        "tracking_number": tracking_number,
+                        "seller_id": seller_id,
+                        "seller_email": seller_email,
+                        "quantity_purchased": quantity_purchased,
+                        "current_price": current_price,
+                        "total_transaction_price": total_transaction_price,
+                        "paid_time": paid_time,
+                    }
+                )
+                fetched_this_page += 1
+
+            # Basic pagination handling: look for TotalNumberOfPages when present.
+            total_pages = 1
+            total_pages_elem = root.find(
+                ".//ebay:PaginationResult/ebay:TotalNumberOfPages",
+                ns,
+            )
+            if total_pages_elem is not None and total_pages_elem.text:
+                try:
+                    total_pages = int(total_pages_elem.text)
+                except ValueError:
+                    total_pages = 1
+
+            has_more = page_number < total_pages and fetched_this_page > 0
+            page_number += 1
+
+            if not has_more:
+                break
+
+        return purchases
+
     async def sync_active_inventory_report(
         self,
         user_id: str,

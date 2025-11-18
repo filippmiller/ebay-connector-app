@@ -866,6 +866,143 @@ class EbayHealthEvent(Base):
     )
 
 
+class EbayStatusBuyer(Base):
+    """Dictionary of internal BUYING statuses (legacy tbl_ebay_buyer Status dictionary).
+
+    Backed by public.ebay_status_buyer. Rows are referenced by ebay_buyer.item_status_id.
+    """
+
+    __tablename__ = "ebay_status_buyer"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(Text, nullable=False, unique=True)
+    label = Column(Text, nullable=False)
+    sort_order = Column(Integer, nullable=False)
+    color_hex = Column(Text, nullable=True)
+    text_color_hex = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default="true")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class EbayBuyer(Base):
+    """Legacy tbl_ebay_buyer equivalent backed by Supabase/Postgres.
+
+    Stores per-account purchase line-items where our connected account is the buyer.
+    """
+
+    __tablename__ = "ebay_buyer"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Multi-account context
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    # Core eBay identifiers
+    item_id = Column(Text, nullable=True, index=True)
+    transaction_id = Column(Text, nullable=True, index=True)
+    order_line_item_id = Column(Text, nullable=True, index=True)
+
+    title = Column(Text, nullable=True)
+    shipping_carrier = Column(Text, nullable=True)
+    tracking_number = Column(Text, nullable=True, index=True)
+    buyer_checkout_message = Column(Text, nullable=True)
+    condition_display_name = Column(Text, nullable=True)
+
+    seller_email = Column(Text, nullable=True)
+    seller_id = Column(Text, nullable=True, index=True)
+    seller_site = Column(Text, nullable=True)
+    seller_location = Column(Text, nullable=True)
+
+    quantity_purchased = Column(Integer, nullable=True)
+    current_price = Column(Numeric(18, 2), nullable=True)
+    shipping_service_cost = Column(Numeric(18, 2), nullable=True)
+    total_price = Column(Numeric(18, 2), nullable=True)
+    total_transaction_price = Column(Numeric(18, 2), nullable=True)
+
+    payment_hold_status = Column(Text, nullable=True)
+    buyer_paid_status = Column(Text, nullable=True)
+    paid_time = Column(DateTime(timezone=True), nullable=True, index=True)
+    shipped_time = Column(DateTime(timezone=True), nullable=True)
+    platform = Column(Text, nullable=True)
+
+    buyer_id = Column(Text, nullable=True, index=True)  # eBay buyer username
+    item_url = Column(Text, nullable=True)
+    gallery_url = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+
+    private_notes = Column(Text, nullable=True)
+    my_comment = Column(Text, nullable=True)  # internal note
+    storage = Column(Text, nullable=True)  # warehouse location
+
+    model_id = Column(Integer, nullable=True, index=True)
+
+    # Warehouse-driven item status & comment
+    item_status_id = Column(Integer, ForeignKey('ebay_status_buyer.id', ondelete='SET NULL'), nullable=True, index=True)
+    item_status_updated_at = Column(DateTime(timezone=True), nullable=True)
+    item_status_updated_by = Column(Text, nullable=True)
+
+    comment = Column(Text, nullable=True)
+    comment_updated_at = Column(DateTime(timezone=True), nullable=True)
+    comment_updated_by = Column(Text, nullable=True)
+
+    # Record audit fields
+    record_created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    record_created_by = Column(Text, nullable=True)
+    record_updated_at = Column(DateTime(timezone=True), nullable=True)
+    record_updated_by = Column(Text, nullable=True)
+
+    refund_flag = Column(Boolean, nullable=True)
+    refund_amount = Column(Numeric(18, 2), nullable=True)
+    profit = Column(Numeric(18, 2), nullable=True)
+    profit_updated_at = Column(DateTime(timezone=True), nullable=True)
+    profit_updated_by = Column(Text, nullable=True)
+
+    account = relationship("EbayAccount")
+    status = relationship("EbayStatusBuyer")
+
+    __table_args__ = (
+        # Prevent duplicate purchase rows per account; used for upserts.
+        Index(
+            'uq_ebay_buyer_account_item_txn',
+            'ebay_account_id',
+            'item_id',
+            'transaction_id',
+            'order_line_item_id',
+            unique=True,
+        ),
+        Index('idx_ebay_buyer_tracking', 'tracking_number'),
+    )
+
+
+class EbayBuyerLog(Base):
+    """Change log for status/comment edits on ebay_buyer.
+
+    Kept under the legacy table name tbl_ebay_buyer_log for easier mapping.
+    """
+
+    __tablename__ = "tbl_ebay_buyer_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ebay_buyer_id = Column(Integer, ForeignKey('ebay_buyer.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    change_type = Column(Text, nullable=False)  # 'status', 'comment', 'status+comment'
+    old_status_id = Column(Integer, ForeignKey('ebay_status_buyer.id', ondelete='SET NULL'), nullable=True)
+    new_status_id = Column(Integer, ForeignKey('ebay_status_buyer.id', ondelete='SET NULL'), nullable=True)
+    old_comment = Column(Text, nullable=True)
+    new_comment = Column(Text, nullable=True)
+
+    changed_by_user_id = Column(String(36), nullable=True)
+    changed_by_username = Column(Text, nullable=True)
+    changed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    meta = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index('idx_ebay_buyer_log_buyer_changed_at', 'ebay_buyer_id', 'changed_at'),
+    )
+
+
 class Message(Base):
     __tablename__ = "ebay_messages"
     

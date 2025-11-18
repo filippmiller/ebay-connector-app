@@ -38,6 +38,8 @@ interface DataGridPageProps {
   title?: string;
   /** Additional query params to pass to the backend /data endpoint (e.g. filters). */
   extraParams?: Record<string, any>;
+  /** Optional row click handler (e.g. for detail panels). */
+  onRowClick?: (row: Record<string, any>) => void;
 }
 
 interface ColumnState {
@@ -46,7 +48,7 @@ interface ColumnState {
   width: number;
 }
 
-export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extraParams }) => {
+export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extraParams, onRowClick }) => {
   const [columns, setColumns] = useState<ColumnState[]>([]);
   const [rows, setRows] = useState<Record<string, any>[]>([]);
   const [limit, setLimit] = useState(50);
@@ -400,7 +402,12 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                 rows.map((row, idx) => (
                   <tr
                     key={idx}
-                    className="border-t odd:bg-white even:bg-gray-50 hover:bg-indigo-50 transition-colors"
+                    className="border-t odd:bg-white even:bg-gray-50 hover:bg-indigo-50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      if (onRowClick) {
+                        onRowClick(row);
+                      }
+                    }}
                   >
                     {columns.map((col) => {
                       const raw = row[col.name];

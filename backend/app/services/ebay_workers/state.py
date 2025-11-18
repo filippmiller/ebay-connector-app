@@ -21,6 +21,8 @@ API_FAMILIES = [
     "active_inventory",
     "cases",
     "finances",
+    # Buyer/purchases sync (legacy tbl_ebay_buyer equivalent)
+    "buyer",
 ]
 
 

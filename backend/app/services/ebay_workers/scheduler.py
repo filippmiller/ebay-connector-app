@@ -16,6 +16,7 @@ from .transactions_worker import run_transactions_worker_for_account
 from .offers_worker import run_offers_worker_for_account
 from .messages_worker import run_messages_worker_for_account
 from .active_inventory_worker import run_active_inventory_worker_for_account
+from .purchases_worker import run_purchases_worker_for_account
 
 
 API_FAMILIES = [
@@ -24,6 +25,8 @@ API_FAMILIES = [
     "offers",
     "messages",
     "active_inventory",
+    # Buyer/purchases (legacy tbl_ebay_buyer equivalent)
+    "buyer",
 ]
 def _get_db() -> Session:
     return SessionLocal()
@@ -117,6 +120,18 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
         )
         if state_active_inv and state_active_inv.enabled:
             await run_active_inventory_worker_for_account(ebay_account_id)
+
+        # Buyer/purchases worker
+        state_buyer: EbaySyncState | None = (
+            db.query(EbaySyncState)
+            .filter(
+                EbaySyncState.ebay_account_id == ebay_account_id,
+                EbaySyncState.api_family == "buyer",
+            )
+            .first()
+        )
+        if state_buyer and state_buyer.enabled:
+            await run_purchases_worker_for_account(ebay_account_id)
 
     finally:
         db.close()

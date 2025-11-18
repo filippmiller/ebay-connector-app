@@ -17,14 +17,39 @@ class MssqlConnectionConfig(BaseModel):
     """Connection configuration for a temporary MSSQL session.
 
     This is used only in admin-only endpoints and never persisted.
+
+    Host / username / password can be omitted by the client; in that case we fall
+    back to Railway/host environment variables (mssql_url, mssql_username,
+    mssql_password or their uppercase variants). This allows wiring credentials
+    on the server side while keeping the UI credential-free.
     """
 
-    host: str
+    host: str | None = None
     port: int = 1433
     database: str
-    username: str
-    password: str = Field(repr=False)
+    username: str | None = None
+    password: str | None = Field(default=None, repr=False)
     encrypt: bool = True
+
+
+def _resolve_host_user_password(config: MssqlConnectionConfig) -> tuple[str, str, str]:
+    """Fill in host/username/password from env if they are missing/blank."""
+
+    env_host = os.getenv("mssql_url") or os.getenv("MSSQL_URL")
+    env_user = os.getenv("mssql_username") or os.getenv("MSSQL_USERNAME")
+    env_pass = os.getenv("mssql_password") or os.getenv("MSSQL_PASSWORD")
+
+    host = (config.host or "").strip() or env_host
+    username = (config.username or "").strip() or env_user
+    password = (config.password or "").strip() or env_pass
+
+    if not host or not username or not password:
+        raise RuntimeError(
+            "MSSQL connection is not fully configured: host/username/password are missing. "
+            "Configure mssql_url, mssql_username, and mssql_password in your environment.",
+        )
+
+    return host, username, password
 
 
 def _build_url(config: MssqlConnectionConfig) -> URL:
@@ -39,8 +64,7 @@ def _build_url(config: MssqlConnectionConfig) -> URL:
     accordingly (e.g. ``use_tls=1`` if supported).
     """
 
-    username = config.username
-    password = config.password
+    host, username, password = _resolve_host_user_password(config)
 
     # Base query params; charset=utf8 is recommended for SQL Server.
     query: Dict[str, Any] = {
@@ -51,7 +75,7 @@ def _build_url(config: MssqlConnectionConfig) -> URL:
         drivername="mssql+pytds",
         username=username,
         password=password,
-        host=config.host,
+        host=host,
         port=config.port,
         database=config.database,
         query=query,
