@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import api from '@/lib/apiClient';
-import { useGridPreferences, type GridThemeConfig, type GridColumnsConfig } from '@/hooks/useGridPreferences';
+import { useGridPreferences } from '@/hooks/useGridPreferences';
 
 export interface GridColumnMeta {
   name: string;
