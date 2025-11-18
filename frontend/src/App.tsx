@@ -29,6 +29,7 @@ import AdminPage from './pages/AdminPage';
 import AdminDataMigrationPage from './pages/AdminDataMigrationPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
+import TasksPage from './pages/TasksPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -192,6 +193,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <InventoryPageV3 />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tasks"
+            element={
+              <ProtectedRoute>
+                <TasksPage />
               </ProtectedRoute>
             }
           />

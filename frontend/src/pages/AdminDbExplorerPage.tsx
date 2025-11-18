@@ -97,6 +97,8 @@ const AdminDbExplorerPage: React.FC = () => {
   const [schema, setSchema] = useState<TableSchemaResponse | null>(null);
   const [rows, setRows] = useState<RowsResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'structure' | 'data'>('structure');
+  const [dataSortColumn, setDataSortColumn] = useState<string | null>(null);
+  const [dataSortDirection, setDataSortDirection] = useState<'asc' | 'desc'>('desc');
   const [rowsLimit, setRowsLimit] = useState(50);
   const [rowsOffset, setRowsOffset] = useState(0);
   const [loadingTables, setLoadingTables] = useState(false);
@@ -270,6 +272,17 @@ const AdminDbExplorerPage: React.FC = () => {
     }
   };
 
+  const handleDataHeaderClick = (column: string) => {
+    setDataSortColumn((prevCol) => {
+      if (prevCol === column) {
+        setDataSortDirection((prevDir) => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevCol;
+      }
+      setDataSortDirection('asc');
+      return column;
+    });
+  };
+
   const handleChangeLimit = (newLimit: number) => {
     setRowsLimit(newLimit);
     setRowsOffset(0);
@@ -378,8 +391,29 @@ const AdminDbExplorerPage: React.FC = () => {
       rows.rows.reduce<Set<string>>((acc, row) => {
         Object.keys(row).forEach((k) => acc.add(k));
         return acc;
-      }, new Set())
+      }, new Set<string>())
     );
+
+    // Apply client-side sorting on the currently loaded page of rows (both Supabase and MSSQL).
+    let sortedRows = rows.rows;
+    if (dataSortColumn) {
+      sortedRows = [...rows.rows].sort((a, b) => {
+        const av = a[dataSortColumn as keyof typeof a];
+        const bv = b[dataSortColumn as keyof typeof b];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === 'number' && typeof bv === 'number') {
+          const cmpNum = av - bv;
+          return dataSortDirection === 'asc' ? cmpNum : -cmpNum;
+        }
+        const as = String(av);
+        const bs = String(bv);
+        if (as === bs) return 0;
+        const cmpStr = as > bs ? 1 : -1;
+        return dataSortDirection === 'asc' ? cmpStr : -cmpStr;
+      });
+    }
 
     return (
       <div className="space-y-2">
@@ -407,14 +441,19 @@ const AdminDbExplorerPage: React.FC = () => {
             <thead className="bg-gray-100">
               <tr>
                 {columns.map((col) => (
-                  <th key={col} className="px-2 py-1 border text-left font-mono text-[11px]">
+                  <th
+                    key={col}
+                    className="px-2 py-1 border text-left font-mono text-[11px] cursor-pointer select-none"
+                    onClick={() => handleDataHeaderClick(col)}
+                  >
                     {col}
+                    {dataSortColumn === col && (dataSortDirection === 'asc' ? ' ▲' : ' ▼')}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.rows.map((row, idx) => (
+              {sortedRows.map((row, idx) => (
                 <tr key={idx} className="border-t">
                   {columns.map((col) => (
                     <td

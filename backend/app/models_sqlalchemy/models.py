@@ -1080,3 +1080,86 @@ class EbayScopeDefinition(Base):
         Index('idx_ebay_scope_definitions_scope', 'scope', unique=True),
         Index('idx_ebay_scope_definitions_grant_type', 'grant_type'),
     )
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    type = Column(String(20), nullable=False)  # 'task' or 'reminder'
+
+    title = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+
+    creator_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    assignee_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+
+    status = Column(String(32), nullable=False)
+    priority = Column(String(20), nullable=False, default="normal")  # low, normal, high
+
+    due_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    snooze_until = Column(DateTime(timezone=True), nullable=True)
+
+    is_popup = Column(Boolean, nullable=False, server_default="true")
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    creator = relationship("User", foreign_keys=[creator_id])
+    assignee = relationship("User", foreign_keys=[assignee_id])
+
+    comments = relationship(
+        "TaskComment",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="TaskComment.created_at",
+    )
+    notifications = relationship(
+        "TaskNotification",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_tasks_assignee_status", "assignee_id", "status"),
+        Index("idx_tasks_creator_status", "creator_id", "status"),
+        Index("idx_tasks_type_status", "type", "status"),
+        Index("idx_tasks_due_at", "due_at"),
+    )
+
+
+class TaskComment(Base):
+    __tablename__ = "task_comments"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+
+    body = Column(Text, nullable=False)
+    kind = Column(String(50), nullable=False, default="comment")  # comment, status_change, snooze, system
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="comments")
+
+
+class TaskNotification(Base):
+    __tablename__ = "task_notifications"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+
+    kind = Column(String(50), nullable=False)  # task_assigned, task_status_changed, task_comment_added, reminder_fired
+    status = Column(String(20), nullable=False, default="unread")  # unread, read, dismissed
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    dismissed_at = Column(DateTime(timezone=True), nullable=True)
+
+    task = relationship("Task", back_populates="notifications")
+
+    __table_args__ = (
+        Index("idx_task_notifications_user_status_created", "user_id", "status", "created_at"),
+    )

@@ -5,7 +5,7 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers, admin_db, grid_layouts, orders_api, grids_data, admin_mssql, ai_messages, timesheets, grid_preferences, admin_migration
+from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers, admin_db, grid_layouts, orders_api, grids_data, admin_mssql, ai_messages, timesheets, grid_preferences, admin_migration, tasks
 from app.utils.logger import logger
 import os
 import asyncio
@@ -85,6 +85,7 @@ app.include_router(grids_data.router)
 app.include_router(offers_v2.router)
 app.include_router(inventory_v2.router)
 app.include_router(grid_preferences.router)
+app.include_router(tasks.router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -167,6 +168,7 @@ async def startup_event():
                 run_token_refresh_worker_loop,
                 run_health_check_worker_loop,
                 run_ebay_workers_loop,
+                run_tasks_reminder_worker_loop,
             )
             
             asyncio.create_task(run_token_refresh_worker_loop())
@@ -180,6 +182,10 @@ async def startup_event():
             # finances, active inventory) for all active accounts.
             asyncio.create_task(run_ebay_workers_loop())
             logger.info("✅ eBay workers loop started (runs every 5 minutes)")
+
+            # Tasks & reminders worker – fires due reminders and snoozed reminders.
+            asyncio.create_task(run_tasks_reminder_worker_loop())
+            logger.info("✅ Tasks & reminders worker started (runs every 60 seconds)")
             
         except Exception as e:
             logger.error(f"⚠️  Failed to start background workers: {e}")

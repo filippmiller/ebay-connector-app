@@ -3,6 +3,7 @@ import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BUILD_NUMBER, BUILD_TIMESTAMP, BUILD_BRANCH, BUILD_COMMIT } from '@/config/build';
 import { useAuth } from '@/contexts/AuthContext';
+import TaskNotificationsBell from '@/components/TaskNotificationsBell';
 
 interface HeaderTab {
   name: string;
@@ -24,6 +25,7 @@ const TABS: HeaderTab[] = [
   { name: 'CASES/DISPUTES', path: '/cases' },
   { name: 'MESSAGES', path: '/messages' },
   { name: 'OFFERS', path: '/offers' },
+  { name: 'TASKS', path: '/tasks' },
   { name: 'ADMIN', path: '/admin', adminOnly: true }
 ];
 
@@ -73,6 +75,7 @@ export default function FixedHeader() {
         </div>
 
         <div className="flex items-center gap-3">
+          <TaskNotificationsBell />
           <span className="text-xs font-mono text-gray-500">Build #{BUILD_NUMBER} • {BUILD_BRANCH}@{BUILD_COMMIT} • {formatBuildTime(BUILD_TIMESTAMP)}</span>
           <span className="text-xs text-gray-600">{user?.email}</span>
           <Button
