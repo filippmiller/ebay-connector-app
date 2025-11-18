@@ -116,7 +116,6 @@ def upgrade() -> None:
             sa.Column("legacy_comment", sa.Text(), nullable=True, comment="Optional mapping hook for legacy Comment column"),
             sa.Column("legacy_my_comment", sa.Text(), nullable=True, comment="Optional mapping hook for legacy MyComment column"),
             sa.Column("legacy_storage", sa.Text(), nullable=True, comment="Optional mapping hook for legacy Storage column"),
-            sa.Comment("Legacy tbl_ebay_buyer equivalent"),
         )
 
         # Core indexes, including de-duplication key for upserts

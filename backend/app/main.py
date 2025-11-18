@@ -86,7 +86,6 @@ app.include_router(grids_data.router)
 app.include_router(offers_v2.router)
 app.include_router(inventory_v2.router)
 app.include_router(grid_preferences.router)
-app.include_router(tasks.router)
 
 @app.on_event("startup")
 async def startup_event():

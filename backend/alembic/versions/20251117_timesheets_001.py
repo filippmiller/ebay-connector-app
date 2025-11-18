@@ -27,25 +27,18 @@ def upgrade() -> None:
     inspector = inspect(conn)
 
     # 1) Ensure helper function for record_updated is present
+    # Use CREATE OR REPLACE (idempotent enough for our purposes) to avoid nested
+    # DO/$$ blocks which can cause syntax issues on some PostgreSQL versions.
     op.execute(
         text(
             """
-            DO $$
+            CREATE OR REPLACE FUNCTION public.set_record_updated_timestamp()
+            RETURNS trigger AS $$
             BEGIN
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM pg_proc
-                    WHERE proname = 'set_record_updated_timestamp'
-                ) THEN
-                    CREATE OR REPLACE FUNCTION public.set_record_updated_timestamp()
-                    RETURNS trigger AS $$
-                    BEGIN
-                        NEW.record_updated := now();
-                        RETURN NEW;
-                    END;
-                    $$ LANGUAGE plpgsql;
-                END IF;
-            END$$;
+                NEW.record_updated := now();
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
             """
         )
     )
