@@ -500,12 +500,12 @@ class SqItem(Base):
     storage_alias = None
 
     warehouse = None
- 
-     # Legacy SKU_catalog already has its own indexes at the database level.
-     # Declaring ORM Index objects with lower-case logical names (e.g. 'sku')
-     # caused ConstraintColumnNotFoundError when loading models. We omit
-     # __table_args__ here to avoid that; performance stays acceptable.
-     __table_args__ = ()
+
+    # Legacy SKU_catalog already has its own indexes at the database level.
+    # Declaring ORM Index objects with lower-case logical names (e.g. 'sku')
+    # caused ConstraintColumnNotFoundError when loading models. We omit
+    # __table_args__ here to avoid that; performance stays acceptable.
+    __table_args__ = ()
 
 
 class Return(Base):
