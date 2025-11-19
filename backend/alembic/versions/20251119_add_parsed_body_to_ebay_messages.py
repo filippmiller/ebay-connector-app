@@ -1,6 +1,6 @@
 """Add parsed_body JSONB column to ebay_messages
 
-Revision ID: ebay_messages_parsed_body_20251119
+Revision ID: ebay_msg_parsed_20251119
 Revises: tasks_and_notifications_20251118
 Create Date: 2025-11-19
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision: str = "ebay_messages_parsed_body_20251119"
+revision: str = "ebay_msg_parsed_20251119"
 down_revision: Union[str, Sequence[str], None] = "tasks_and_notifications_20251118"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
