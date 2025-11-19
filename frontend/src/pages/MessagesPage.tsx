@@ -468,7 +468,7 @@ export const MessagesPage = () => {
         </div>
 
         {/* Right side: top list + bottom detail */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-h-0">
           {/* Toolbar with search + Gmail-like buckets */}
           <div className="border-b bg-white">
             <div className="p-4 flex items-center gap-3">
@@ -511,8 +511,8 @@ export const MessagesPage = () => {
             </div>
           </div>
 
-          {/* Top panel - message list */}
-          <div className="flex-1 border-b bg-white">
+          {/* Top panel - message list (60% of available height) */}
+          <div className="basis-3/5 border-b bg-white min-h-0">
             <ScrollArea className="h-full">
               {loading ? (
                 <div className="p-4 text-center text-gray-500">Loading...</div>
@@ -592,8 +592,8 @@ export const MessagesPage = () => {
             </ScrollArea>
           </div>
 
-          {/* Bottom panel - message detail & reply */}
-          <div className="flex-[0.9] min-h-[40%] flex flex-col bg-white">
+          {/* Bottom panel - message detail & reply (40% of available height) */}
+          <div className="basis-2/5 flex flex-col bg-white min-h-0">
             {selectedMessage ? (
               <>
                 <div className="border-b p-4 md:p-6">
@@ -747,12 +747,8 @@ export const MessagesPage = () => {
                 </ScrollArea>
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-400">
-                <div className="text-center">
-                  <Mail className="h-16 w-16 mx-auto mb-4 opacity-20" />
-                  <p>Select a message above to read</p>
-                </div>
-              </div>
+              // Keep the bottom container visually empty until a message is selected.
+              <div className="flex-1" />
             )}
           </div>
         </div>
