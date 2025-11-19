@@ -28,7 +28,11 @@ class MessageResponse(BaseModel):
     is_flagged: bool
     is_archived: bool
     direction: str
-    message_date: datetime
+    # NOTE: Stored values in ebay_messages.message_date may be DATE or TEXT in
+    # some environments. The frontend treats this as a string and parses it via
+    # new Date(message_date), so we expose it as str here to avoid strict
+    # datetime parsing errors from Pydantic when legacy rows are loaded.
+    message_date: str
     order_id: Optional[str]
     listing_id: Optional[str]
     bucket: Optional[str] = None
