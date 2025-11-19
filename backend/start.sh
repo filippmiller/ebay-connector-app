@@ -108,6 +108,12 @@ if ! ensure_python_package "psycopg2" "psycopg2-binary==2.9.11"; then
   exit 1
 fi
 
+# Ensure python-jose (import name: jose) for JWT/auth
+if ! ensure_python_package "jose" "python-jose==3.5.0"; then
+  echo "[entry] FATAL: python-jose is required for JWT authentication" >&2
+  exit 1
+fi
+
 if ! ensure_python_package "fastapi" "fastapi[standard]==0.119.0"; then
   echo "[entry] FATAL: fastapi is required to start the API server" >&2
   exit 1
@@ -168,12 +174,23 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   echo "[entry] alembic current before:"
   run_alembic current -v || echo "[entry] No current revision found"
   echo "[entry] alembic heads:"
-  run_alembic heads || echo "[entry] No heads found"
-  echo "[entry] Running migrations with retry logic..."
-
-  run_migrations_with_retry || {
-    echo "[entry] WARNING: Migrations failed after retries, continuing anyway..."
-  }
+  # Capture heads output to detect multiple-head situation
+  HEADS_OUTPUT="$(run_alembic heads || true)"
+  if printf '%s
+' "${HEADS_OUTPUT}" | grep -q "(head)" && \
+     [ "$(printf '%s
+' "${HEADS_OUTPUT}" | grep -c "(head)")" -gt 1 ]; then
+    echo "[entry] WARNING: Multiple Alembic heads detected; skipping automatic migrations."
+    printf '%s
+' "${HEADS_OUTPUT}"
+  else
+    printf '%s
+' "${HEADS_OUTPUT}"
+    echo "[entry] Running migrations with retry logic..."
+    run_migrations_with_retry || {
+      echo "[entry] WARNING: Migrations failed after retries, continuing anyway..."
+    }
+  fi
 fi
 
 # 2) Start the application (exec so the process stays attached to container lifecycle).
