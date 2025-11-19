@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PYTHONUNBUFFERED=1   # мгновенная запись логов в STDOUT
+# Prefer the app virtualenv Python if present so Alembic/uvicorn imports work
+PYTHON_BIN="${PYTHON_BIN:-/app/.venv/bin/python}"
+
+export PYTHONUNBUFFERED=1
 echo "[entry] Starting backend service..."
 echo "[entry] PORT=${PORT:-8000}"
 echo "[entry] Database configured: ${DATABASE_URL:+yes}"
@@ -63,7 +66,7 @@ if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
     while [ $attempt -le $max_attempts ]; do
       echo "[entry] Migration attempt $attempt/$max_attempts..."
       
-      if python -m alembic upgrade heads; then
+      if "${PYTHON_BIN}" -m alembic upgrade heads; then
         echo "[entry] ✅ Migrations completed successfully!"
         return 0
       else
@@ -83,9 +86,9 @@ if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
   }
   
   echo "[entry] alembic current before:"
-  python -m alembic current || echo "[entry] No current revision found"
+  "${PYTHON_BIN}" -m alembic current || echo "[entry] No current revision found"
   echo "[entry] alembic heads:"
-  python -m alembic heads || echo "[entry] No heads found"
+  "${PYTHON_BIN}" -m alembic heads || echo "[entry] No heads found"
   echo "[entry] Running migrations with retry logic..."
   
   run_migrations_with_retry || {
@@ -95,7 +98,7 @@ fi
 
 # 2) Запуск приложения (exec — чтобы процесс не завершился после скрипта)
 echo "[entry] Starting uvicorn server..."
-exec python -m uvicorn app.main:app \
+exec "${PYTHON_BIN}" -m uvicorn app.main:app \
   --host 0.0.0.0 --port "${PORT:-8000}" \
   --log-level debug --proxy-headers --forwarded-allow-ips="*"
 
