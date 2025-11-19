@@ -86,10 +86,19 @@ ensure_python_package() {
   fi
 }
 
-# Ensure critical Python modules (alembic + uvicorn) are present
-if ! ensure_python_package "alembic" "alembic==1.17.0"; then
-  # We can technically start without migrations, but this indicates a deeper env issue
-  echo "[entry] WARNING: alembic not properly installed; migrations may fail" >&2
+# Ensure critical Python modules (FastAPI + uvicorn) are present
+# Force-install Alembic to ensure `python -m alembic` works even if a system
+# package without __main__ is present.
+echo "[entry] Ensuring Alembic is installed via pip (alembic==1.17.0)..."
+if ! "$PYTHON_BIN" -m pip install --no-cache-dir "alembic==1.17.0"; then
+  echo "[entry] WARNING: pip install for alembic failed; migrations may fail" >&2
+else
+  echo "[entry] Alembic pip install completed"
+fi
+
+if ! ensure_python_package "fastapi" "fastapi[standard]==0.119.0"; then
+  echo "[entry] FATAL: fastapi is required to start the API server" >&2
+  exit 1
 fi
 
 if ! ensure_python_package "uvicorn" "uvicorn==0.32.0"; then
