@@ -379,120 +379,127 @@ class SqItem(Base):
     __tablename__ = "SKU_catalog"
 
     # Core identifiers / mapping to legacy MSSQL
-    id = Column(BigInteger, primary_key=True, autoincrement=True)  # [ID]
-    part_id = Column(BigInteger, nullable=True)  # [Part_ID]
-    sku = Column(String(100), nullable=True)  # [SKU]
-    sku2 = Column(String(100), nullable=True)  # [SKU2]
-    model_id = Column(BigInteger, nullable=True)  # [Model_ID]
-    model = Column(Text, nullable=True)  # Convenience display field for model name/code
-    part = Column(Text, nullable=True)  # [Part]
+    # Primary key is stored in legacy column name "ID" on the SKU_catalog table.
+    id = Column("ID", BigInteger, primary_key=True, autoincrement=True)  # [ID]
+    part_id = Column("Part_ID", BigInteger, nullable=True)  # [Part_ID]
+    sku = Column("SKU", Numeric(18, 0), nullable=True)  # [SKU]
+    sku2 = Column("SKU2", Text, nullable=True)  # [SKU2]
+    model_id = Column("Model_ID", BigInteger, nullable=True)  # [Model_ID]
+    # Legacy table does not expose a textual model field; we keep a synthetic
+    # attribute so downstream code can access `item.model`, but it is not
+    # backed by a real column on SKU_catalog.
+    model = None  # Convenience display field for model name/code (no backing column)
+    part = Column("Part", Text, nullable=True)  # [Part]
 
     # Pricing
-    price = Column(Numeric(12, 2), nullable=True)  # [Price]
-    previous_price = Column(Numeric(12, 2), nullable=True)  # [PreviousPrice]
-    brutto = Column(Numeric(12, 2), nullable=True)  # [Brutto]
-    price_updated = Column(DateTime(timezone=True), nullable=True)  # [Price_updated]
+    price = Column("Price", Numeric(12, 2), nullable=True)  # [Price]
+    previous_price = Column("PreviousPrice", Numeric(12, 2), nullable=True)  # [PreviousPrice]
+    brutto = Column("Brutto", Numeric(12, 2), nullable=True)  # [Brutto]
+    price_updated = Column("Price_updated", DateTime(timezone=True), nullable=True)  # [Price_updated]
 
     # Market & category
-    market = Column(Text, nullable=True)  # [Market]
-    use_ebay_id = Column(Boolean, nullable=True)  # [UseEbayID]
-    category = Column(Text, nullable=True)  # [Category] – internal category string
-    description = Column(Text, nullable=True)  # [Description]
+    market = Column("Market", Text, nullable=True)  # [Market]
+    use_ebay_id = Column("UseEbayID", Text, nullable=True)  # [UseEbayID]
+    category = Column("Category", Numeric, nullable=True)  # [Category]
+    description = Column("Description", Text, nullable=True)  # [Description]
 
     # Shipping
-    shipping_type = Column(Text, nullable=True)  # [ShippingType]
-    shipping_group = Column(Text, nullable=True)  # [ShippingGroup]
-    shipping_group_previous = Column(Text, nullable=True)  # [ShippingGroupPrevious]
-    shipping_group_change_state = Column(Text, nullable=True)  # [ShippingGroupChangeState]
-    shipping_group_change_state_updated = Column(DateTime(timezone=True), nullable=True)  # [ShippingGroupChangeState_updated]
-    shipping_group_change_state_updated_by = Column(Text, nullable=True)  # [ShippingGroupChangeState_updated_by]
+    shipping_type = Column("ShippingType", Text, nullable=True)  # [ShippingType]
+    shipping_group = Column("ShippingGroup", Integer, nullable=True)  # [ShippingGroup]
+    shipping_group_previous = Column("ShippingGroupPrevious", Numeric, nullable=True)  # [ShippingGroupPrevious]
+    shipping_group_change_state = Column("ShippingGroupChangeState", Integer, nullable=True)  # [ShippingGroupChangeState]
+    shipping_group_change_state_updated = Column("ShippingGroupChangeState_updated", DateTime(timezone=True), nullable=True)  # [ShippingGroupChangeState_updated]
+    shipping_group_change_state_updated_by = Column("ShippingGroupChangeState_updated_by", Text, nullable=True)  # [ShippingGroupChangeState_updated_by]
 
     # Condition
-    condition_id = Column(Integer, nullable=True)  # [ConditionID] → item_conditions.id
-    manual_condition_value_flag = Column(Boolean, nullable=True)  # [ManualConditionValueFlag]
+    condition_id = Column("ConditionID", Integer, nullable=True)  # [ConditionID] → item_conditions.id
+    manual_condition_value_flag = Column("ManualConditionValueFlag", Boolean, nullable=True)  # [ManualConditionValueFlag]
 
     # Images
-    pic_url1 = Column(Text, nullable=True)  # [PicURL1]
-    pic_url2 = Column(Text, nullable=True)
-    pic_url3 = Column(Text, nullable=True)
-    pic_url4 = Column(Text, nullable=True)
-    pic_url5 = Column(Text, nullable=True)
-    pic_url6 = Column(Text, nullable=True)
-    pic_url7 = Column(Text, nullable=True)
-    pic_url8 = Column(Text, nullable=True)
-    pic_url9 = Column(Text, nullable=True)
-    pic_url10 = Column(Text, nullable=True)
-    pic_url11 = Column(Text, nullable=True)
-    pic_url12 = Column(Text, nullable=True)
+    pic_url1 = Column("PicURL1", Text, nullable=True)  # [PicURL1]
+    pic_url2 = Column("PicURL2", Text, nullable=True)
+    pic_url3 = Column("PicURL3", Text, nullable=True)
+    pic_url4 = Column("PicURL4", Text, nullable=True)
+    pic_url5 = Column("PicURL5", Text, nullable=True)
+    pic_url6 = Column("PicURL6", Text, nullable=True)
+    pic_url7 = Column("PicURL7", Text, nullable=True)
+    pic_url8 = Column("PicURL8", Text, nullable=True)
+    pic_url9 = Column("PicURL9", Text, nullable=True)
+    pic_url10 = Column("PicURL10", Text, nullable=True)
+    pic_url11 = Column("PicURL11", Text, nullable=True)
+    pic_url12 = Column("PicURL12", Text, nullable=True)
 
     # Physical properties
-    weight = Column(Numeric(12, 3), nullable=True)  # [Weight]
-    weight_major = Column(Numeric(12, 3), nullable=True)  # [WeightMajor]
-    weight_minor = Column(Numeric(12, 3), nullable=True)  # [WeightMinor]
-    package_depth = Column(Numeric(12, 2), nullable=True)  # [PackageDepth]
-    package_length = Column(Numeric(12, 2), nullable=True)  # [PackageLength]
-    package_width = Column(Numeric(12, 2), nullable=True)  # [PackageWidth]
-    size = Column(Text, nullable=True)  # [Size]
-    unit = Column(Text, nullable=True)  # [Unit]
+    weight = Column("Weight", Numeric(12, 3), nullable=True)  # [Weight]
+    weight_major = Column("WeightMajor", Numeric(12, 3), nullable=True)  # [WeightMajor]
+    weight_minor = Column("WeightMinor", Numeric(12, 3), nullable=True)  # [WeightMinor]
+    package_depth = Column("PackageDepth", Numeric(12, 2), nullable=True)  # [PackageDepth]
+    package_length = Column("PackageLength", Numeric(12, 2), nullable=True)  # [PackageLength]
+    package_width = Column("PackageWidth", Numeric(12, 2), nullable=True)  # [PackageWidth]
+    size = Column("Size", Numeric, nullable=True)  # [Size]
+    unit = Column("Unit", Text, nullable=True)  # [Unit]
 
     # Identification codes
-    part_number = Column(Text, nullable=True)  # [Part_Number]
-    mpn = Column(Text, nullable=True)  # [MPN]
-    upc = Column(Text, nullable=True)  # [UPC]
-    color_flag = Column(Boolean, nullable=True)  # [ColorFlag]
-    color_value = Column(Text, nullable=True)  # [ColorValue]
-    epid_flag = Column(Boolean, nullable=True)  # [EPIDFlag]
-    epid_value = Column(Text, nullable=True)  # [EPIDValue]
+    part_number = Column("Part_Number", Text, nullable=True)  # [Part_Number]
+    mpn = Column("MPN", Text, nullable=True)  # [MPN]
+    upc = Column("UPC", Text, nullable=True)  # [UPC]
+    color_flag = Column("ColorFlag", Boolean, nullable=True)  # [ColorFlag]
+    color_value = Column("ColorValue", Text, nullable=True)  # [ColorValue]
+    epid_flag = Column("EPIDFlag", Boolean, nullable=True)  # [EPIDFlag]
+    epid_value = Column("EPIDValue", Text, nullable=True)  # [EPIDValue]
 
     # Grades & packaging
-    item_grade_id = Column(Integer, nullable=True)  # [ItemGradeID]
-    basic_package_id = Column(Integer, nullable=True)  # [BasicPackageID]
+    item_grade_id = Column("ItemGradeID", Numeric, nullable=True)  # [ItemGradeID]
+    basic_package_id = Column("BasicPackageID", Numeric, nullable=True)  # [BasicPackageID]
 
     # Alert & status
-    alert_flag = Column(Boolean, nullable=True)  # [AlertFlag]
-    alert_message = Column(Text, nullable=True)  # [AlertMessage]
-    record_status = Column(Text, nullable=True)  # [RecordStatus]
-    record_status_flag = Column(Boolean, nullable=True)  # [RecordStatusFlag]
-    checked_status = Column(Text, nullable=True)  # [CheckedStatus]
-    checked = Column(Boolean, nullable=True)  # [Checked]
-    checked_by = Column(Text, nullable=True)  # [CheckedBy]
-    one_time_auction = Column(Boolean, nullable=True)  # [OneTimeAuction]
+    alert_flag = Column("AlertFlag", Boolean, nullable=True)  # [AlertFlag]
+    alert_message = Column("AlertMessage", Text, nullable=True)  # [AlertMessage]
+    record_status = Column("RecordStatus", Numeric, nullable=True)  # [RecordStatus]
+    record_status_flag = Column("RecordStatusFlag", Boolean, nullable=True)  # [RecordStatusFlag]
+    checked_status = Column("CheckedStatus", Boolean, nullable=True)  # [CheckedStatus]
+    checked = Column("Checked", DateTime(timezone=True), nullable=True)  # [Checked]
+    checked_by = Column("CheckedBy", Text, nullable=True)  # [CheckedBy]
+    one_time_auction = Column("OneTimeAuction", Boolean, nullable=True)  # [OneTimeAuction]
 
     # Audit fields
-    record_created_by = Column(Text, nullable=True)  # [record_created_by]
-    record_created = Column(DateTime(timezone=True), nullable=True)  # [record_created]
-    record_updated_by = Column(Text, nullable=True)  # [record_updated_by]
-    record_updated = Column(DateTime(timezone=True), nullable=True)  # [record_updated]
-    oc_export_date = Column(DateTime(timezone=True), nullable=True)  # [oc_export_date]
-    oc_market_export_date = Column(DateTime(timezone=True), nullable=True)  # [oc_market_export_date]
+    record_created_by = Column("record_created_by", Text, nullable=True)  # [record_created_by]
+    record_created = Column("record_created", DateTime(timezone=True), nullable=True)  # [record_created]
+    record_updated_by = Column("record_updated_by", Text, nullable=True)  # [record_updated_by]
+    record_updated = Column("record_updated", DateTime(timezone=True), nullable=True)  # [record_updated]
+    oc_export_date = Column("oc_export_date", DateTime(timezone=True), nullable=True)  # [oc_export_date]
+    oc_market_export_date = Column("oc_market_export_date", DateTime(timezone=True), nullable=True)  # [oc_market_export_date]
 
     # Templates & listing metadata
-    custom_template_flag = Column(Boolean, nullable=True)  # [CustomTemplateFlag]
-    custom_template_description = Column(Text, nullable=True)  # [CustomTemplateDescription]
-    condition_description = Column(Text, nullable=True)  # [ConditionDescription]
-    domestic_only_flag = Column(Boolean, nullable=True)  # [DomesticOnlyFlag]
-    external_category_flag = Column(Boolean, nullable=True)  # [ExternalCategoryFlag]
-    external_category_id = Column(Text, nullable=True)  # [ExternalCategoryID]
-    external_category_name = Column(Text, nullable=True)  # [ExternalCategoryName]
-    listing_type = Column(Text, nullable=True)  # [ListingType]
-    listing_duration = Column(Text, nullable=True)  # [ListingDuration]
-    listing_duration_in_days = Column(Integer, nullable=True)  # [ListingDurationInDays]
-    use_standard_template_for_external_category_flag = Column(Boolean, nullable=True)  # [UseStandardTemplateForExternalCategoryFlag]
-    use_ebay_motors_site_flag = Column(Boolean, nullable=True)  # [UseEbayMotorsSiteFlag]
-    site_id = Column(Text, nullable=True)  # [SiteID] – e.g. EBAY-US
+    custom_template_flag = Column("CustomTemplateFlag", Boolean, nullable=True)  # [CustomTemplateFlag]
+    custom_template_description = Column("CustomTemplateDescription", Text, nullable=True)  # [CustomTemplateDescription]
+    condition_description = Column("ConditionDescription", Text, nullable=True)  # [ConditionDescription]
+    domestic_only_flag = Column("DomesticOnlyFlag", Boolean, nullable=True)  # [DomesticOnlyFlag]
+    external_category_flag = Column("ExternalCategoryFlag", Boolean, nullable=True)  # [ExternalCategoryFlag]
+    external_category_id = Column("ExternalCategoryID", Numeric, nullable=True)  # [ExternalCategoryID]
+    external_category_name = Column("ExternalCategoryName", Text, nullable=True)  # [ExternalCategoryName]
+    listing_type = Column("ListingType", Text, nullable=True)  # [ListingType]
+    listing_duration = Column("ListingDuration", Text, nullable=True)  # [ListingDuration]
+    listing_duration_in_days = Column("ListingDurationInDays", Numeric, nullable=True)  # [ListingDurationInDays]
+    use_standard_template_for_external_category_flag = Column("UseStandardTemplateForExternalCategoryFlag", Boolean, nullable=True)  # [UseStandardTemplateForExternalCategoryFlag]
+    use_ebay_motors_site_flag = Column("UseEbayMotorsSiteFlag", Boolean, nullable=True)  # [UseEbayMotorsSiteFlag]
+    site_id = Column("SiteID", Numeric, nullable=True)  # [SiteID] – e.g. EBAY-US
 
     # Clone SKU metadata
-    clone_sku_flag = Column(Boolean, nullable=True)  # [CloneSKUFlag]
-    clone_sku_updated = Column(DateTime(timezone=True), nullable=True)  # [CloneSKU_updated]
-    clone_sku_updated_by = Column(Text, nullable=True)  # [CloneSKU_updated_by]
+    clone_sku_flag = Column("CloneSKUFlag", Boolean, nullable=True)  # [CloneSKUFlag]
+    clone_sku_updated = Column("CloneSKU_updated", DateTime(timezone=True), nullable=True)  # [CloneSKU_updated]
+    clone_sku_updated_by = Column("CloneSKU_updated_by", Text, nullable=True)  # [CloneSKU_updated_by]
 
-    # New fields for the modern app (not present in legacy table)
-    title = Column(Text, nullable=True)
-    brand = Column(String(100), nullable=True)
-    warehouse_id = Column(Integer, ForeignKey('warehouses.id'), nullable=True)
-    storage_alias = Column(String(100), nullable=True)
+    # Synthetic fields for the modern app that are not present in legacy
+    # SKU_catalog schema. They are kept as plain attributes so Pydantic
+    # models and business logic can still access them but they do not
+    # generate invalid SQL against the legacy table.
+    title = None
+    brand = None
+    warehouse_id = None
+    storage_alias = None
 
-    warehouse = relationship("Warehouse")
+    warehouse = None
 
     __table_args__ = (
         Index('idx_sq_items_sku', 'sku'),
