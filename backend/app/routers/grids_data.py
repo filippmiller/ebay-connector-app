@@ -21,7 +21,6 @@ from app.models_sqlalchemy.models import (
     AccountingCashExpense,
     AccountingTransaction as AccountingTxn,
     SqItem,
-    ItemCondition,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -491,40 +490,27 @@ def _get_sku_catalog_data(
 ) -> Dict[str, Any]:
     """SKU catalog grid backed by the SQ catalog table (sq_items).
 
-    Exposes a thin, stable logical view used by the LISTING tab and the SKU
-    tab. Logical columns are:
-
-    - id
-    - sku_code (mapped from SqItem.sku)
-    - model
-    - category
-    - condition (friendly label from item_conditions.label)
-    - part_number
-    - price
-    - title
-    - description
-    - brand
-    - image_url (first picture URL, pic_url1)
-    - rec_created (mapped from record_created)
-    - rec_updated (mapped from record_updated)
+    Exposes a logical view used by the LISTING tab and the SKU tab. Columns are
+    direct projections of the underlying sq_items table so that all real
+    database fields can be inspected from the UI.
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    # Left join item_conditions to resolve human-readable condition label.
-    query = db.query(SqItem, ItemCondition).outerjoin(
-        ItemCondition, SqItem.condition_id == ItemCondition.id
-    )
+    query = db.query(SqItem)
 
     total = query.count()
 
-    # Allow sorting on a small, safe subset of real columns using SqItem fields.
+    # Allow sorting on a subset of real columns using SqItem fields.
     allowed_sort_cols = {
         "id": SqItem.id,
         "sku_code": SqItem.sku,
+        "sku": SqItem.sku,
         "model": SqItem.model,
         "category": SqItem.category,
         "price": SqItem.price,
+        "record_created": SqItem.record_created,
+        "record_updated": SqItem.record_updated,
         "rec_created": SqItem.record_created,
         "rec_updated": SqItem.record_updated,
     }
@@ -536,29 +522,70 @@ def _get_sku_catalog_data(
     else:
         query = query.order_by(asc(sort_attr))
 
-    rows_db: List[tuple] = query.offset(offset).limit(limit).all()
+    rows_db: List[SqItem] = query.offset(offset).limit(limit).all()
 
-    def _serialize(item: SqItem, cond: Optional[ItemCondition]) -> Dict[str, Any]:
-        row: Dict[str, Any] = {}
-        condition_label = cond.label if cond else None
+    def _serialize(item: SqItem) -> Dict[str, Any]:
+        """Serialize a SqItem row into the logical sku_catalog columns.
 
+        We expose a wide set of fields so that the grid can show as much of the
+        actual SKU_catalog / SQ catalog data as needed. Any column not present
+        in `selected_cols` is ignored at runtime.
+        """
         base_values: Dict[str, Any] = {
+            # Core identifiers
             "id": item.id,
-            # Logical sku_code expected by the grid/UI, backed by SqItem.sku
             "sku_code": item.sku,
+            "sku": item.sku,
+            "sku2": item.sku2,
+            "model_id": item.model_id,
             "model": item.model,
-            "category": item.category,
-            "condition": condition_label,
-            "part_number": item.part_number,
+            "part": item.part,
+            # Pricing
             "price": item.price,
-            "title": item.title or item.part,
+            "previous_price": item.previous_price,
+            "brutto": item.brutto,
+            # Market & category
+            "market": item.market,
+            "use_ebay_id": item.use_ebay_id,
+            "category": item.category,
             "description": item.description,
-            "brand": item.brand,
-            # Use first picture URL as an image_url surrogate for now.
+            # Shipping
+            "shipping_type": item.shipping_type,
+            "shipping_group": item.shipping_group,
+            "shipping_group_previous": item.shipping_group_previous,
+            # Condition
+            "condition_id": item.condition_id,
+            "condition_description": item.condition_description,
+            # Identification
+            "part_number": item.part_number,
+            "mpn": item.mpn,
+            "upc": item.upc,
+            # Alerts & status
+            "alert_flag": item.alert_flag,
+            "alert_message": item.alert_message,
+            "record_status": item.record_status,
+            "record_status_flag": item.record_status_flag,
+            "checked_status": item.checked_status,
+            "checked": item.checked,
+            "checked_by": item.checked_by,
+            # Images (first picture exposed via image_url as well)
+            "pic_url1": item.pic_url1,
+            "pic_url2": item.pic_url2,
+            "pic_url3": item.pic_url3,
             "image_url": item.pic_url1,
-            "rec_created": item.record_created,
-            "rec_updated": item.record_updated,
+            # New app-specific fields
+            "title": item.title,
+            "brand": item.brand,
+            "warehouse_id": item.warehouse_id,
+            "storage_alias": item.storage_alias,
+            # Audit
+            "record_created_by": item.record_created_by,
+            "record_created": item.record_created,
+            "record_updated_by": item.record_updated_by,
+            "record_updated": item.record_updated,
         }
+
+        row: Dict[str, Any] = {}
         for col in selected_cols:
             value = base_values.get(col)
             if isinstance(value, dt_type):
@@ -569,7 +596,7 @@ def _get_sku_catalog_data(
                 row[col] = value
         return row
 
-    rows = [_serialize(item, cond) for (item, cond) in rows_db]
+    rows = [_serialize(item) for item in rows_db]
 
     return {
         "rows": rows,
