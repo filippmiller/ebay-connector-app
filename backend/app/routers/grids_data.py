@@ -887,27 +887,39 @@ def _get_cases_data(
         if not isinstance(payload, dict):
             payload = {}
 
+        # Buyer username – tolerate various shapes for the "buyer" field.
+        buyer_field = payload.get("buyer") if isinstance(payload, dict) else None
+        if isinstance(buyer_field, dict):
+            buyer_obj = buyer_field
+        else:
+            buyer_obj = {}
+
         buyer_username = (
             payload.get("buyerUsername")
-            or (payload.get("buyer") or {}).get("username")
-            or (payload.get("buyer") or {}).get("userId")
+            or buyer_obj.get("username")
+            or buyer_obj.get("userId")
         )
 
         amount = None
         currency = None
         try:
-            mt_list = payload.get("monetaryTransactions") or []
-            if mt_list:
-                total_price = (mt_list[0] or {}).get("totalPrice") or {}
-                amount = total_price.get("value")
-                currency = total_price.get("currency")
+            mt_list = payload.get("monetaryTransactions") if isinstance(payload, dict) else None
+            if isinstance(mt_list, list) and mt_list:
+                first_txn = mt_list[0] or {}
+                if isinstance(first_txn, dict):
+                    total_price = first_txn.get("totalPrice") or {}
+                    if isinstance(total_price, dict):
+                        amount = total_price.get("value")
+                        currency = total_price.get("currency")
         except Exception:
+            # If the payload shape is unexpected, just leave amount/currency as None.
             pass
 
-        if amount is None:
+        if amount is None and isinstance(payload, dict):
             claim = payload.get("claimAmount") or payload.get("disputeAmount") or {}
-            amount = claim.get("value")
-            currency = currency or claim.get("currency")
+            if isinstance(claim, dict):
+                amount = claim.get("value")
+                currency = currency or claim.get("currency")
 
         def _normalize_dt(value: Any) -> Optional[str]:
             if not value:
