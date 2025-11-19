@@ -834,7 +834,6 @@ export const MessagesPage = () => {
                               : []),
                           ].map((entry, idx) => {
                             const dir = entry.direction || 'system';
-                            const isBuyer = dir === 'inbound';
                             const isSeller = dir === 'outbound';
                             const isSystem = dir === 'system';
 
