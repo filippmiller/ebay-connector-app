@@ -20,6 +20,8 @@ from app.models_sqlalchemy.models import (
     AccountingBankStatement,
     AccountingCashExpense,
     AccountingTransaction as AccountingTxn,
+    SqItem,
+    ItemCondition,
     SKU,
 )
 from app.services.auth import get_current_user
@@ -488,51 +490,56 @@ def _get_sku_catalog_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    """SKU catalog grid backed by sku table.
+    """SKU catalog grid backed by sq_items table.
 
-    Simple read-only listing used by LISTING tab (and future SKU tab).
+    Simple read-only listing used by LISTING tab (and SKU tab), exposing a
+    logical view over the richer SQ catalog data.
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    query = db.query(SKU)
+    # Join to item_conditions to expose human-readable condition labels when
+    # available, but keep the query cheap (simple left join, no extra filters).
+    query = db.query(SqItem, ItemCondition).outerjoin(
+        ItemCondition, SqItem.condition_id == ItemCondition.id
+    )
 
     total = query.count()
 
     # Allow sorting on a small, safe subset of real columns.
     allowed_sort_cols = {
-        "id": SKU.id,
-        "sku_code": SKU.sku_code,
-        "model": SKU.model,
-        "category": SKU.category,
-        "price": SKU.price,
-        "rec_updated": SKU.rec_updated,
+        "id": SqItem.id,
+        "sku_code": SqItem.sku,
+        "model": SqItem.model,
+        "category": SqItem.category,
+        "price": SqItem.price,
+        "rec_updated": SqItem.record_updated,
     }
     sort_attr = allowed_sort_cols.get(sort_column or "rec_updated")
     if sort_attr is None:
-        sort_attr = SKU.rec_updated
+        sort_attr = SqItem.record_updated
     if sort_dir == "desc":
         query = query.order_by(desc(sort_attr))
     else:
         query = query.order_by(asc(sort_attr))
 
-    rows_db: List[SKU] = query.offset(offset).limit(limit).all()
+    rows_db: List[tuple] = query.offset(offset).limit(limit).all()
 
-    def _serialize(s: SKU) -> Dict[str, Any]:
+    def _serialize(item: SqItem, cond: Optional[ItemCondition]) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         base_values: Dict[str, Any] = {
-            "id": s.id,
-            "sku_code": s.sku_code,
-            "model": s.model,
-            "category": s.category,
-            "condition": s.condition.value if isinstance(getattr(s, "condition", None), enum.Enum) else getattr(s, "condition", None),
-            "part_number": s.part_number,
-            "price": s.price,
-            "title": s.title,
-            "description": s.description,
-            "brand": s.brand,
-            "rec_created": s.rec_created,
-            "rec_updated": s.rec_updated,
+            "id": item.id,
+            "sku_code": item.sku,
+            "model": item.model,
+            "category": item.category,
+            "condition": cond.label if cond else None,
+            "part_number": item.part_number,
+            "price": item.price,
+            "title": item.title,
+            "description": item.description,
+            "brand": item.brand,
+            "rec_created": item.record_created,
+            "rec_updated": item.record_updated,
         }
         for col in selected_cols:
             value = base_values.get(col)
@@ -544,7 +551,7 @@ def _get_sku_catalog_data(
                 row[col] = value
         return row
 
-    rows = [_serialize(s) for s in rows_db]
+    rows = [_serialize(item, cond) for (item, cond) in rows_db]
 
     return {
         "rows": rows,
