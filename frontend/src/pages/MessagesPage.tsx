@@ -86,6 +86,54 @@ export const MessagesPage = () => {
   const [draftLoading, setDraftLoading] = useState(false);
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [selectedCustomFolder, setSelectedCustomFolder] = useState<string | null>(null);
+  // Map of message.id -> custom folder name (e.g. "old"). Stored locally for now.
+  const [messageFolders, setMessageFolders] = useState<Record<string, string>>({});
+  const [draggedMessageId, setDraggedMessageId] = useState<string | null>(null);
+  const [showSource, setShowSource] = useState(false);
+
+  // Load persisted custom folders and message-folder assignments from localStorage once.
+  useEffect(() => {
+    try {
+      const storedFoldersRaw = localStorage.getItem('messages.customFolders');
+      if (storedFoldersRaw) {
+        const parsed = JSON.parse(storedFoldersRaw);
+        if (Array.isArray(parsed)) {
+          setCustomFolders(parsed);
+        }
+      }
+      const storedMapRaw = localStorage.getItem('messages.messageFolders');
+      if (storedMapRaw) {
+        const parsedMap = JSON.parse(storedMapRaw);
+        if (parsedMap && typeof parsedMap === 'object') {
+          setMessageFolders(parsedMap as Record<string, string>);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load messages preferences from localStorage', e);
+    }
+  }, []);
+
+  // Persist custom folders / assignments whenever they change.
+  useEffect(() => {
+    try {
+      localStorage.setItem('messages.customFolders', JSON.stringify(customFolders));
+    } catch (e) {
+      console.error('Failed to persist custom folders', e);
+    }
+  }, [customFolders]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('messages.messageFolders', JSON.stringify(messageFolders));
+    } catch (e) {
+      console.error('Failed to persist message folders', e);
+    }
+  }, [messageFolders]);
+
+  // Whenever the selected message changes, reset source view.
+  useEffect(() => {
+    setShowSource(false);
+  }, [selectedMessage]);
 
   useEffect(() => {
     loadMessages();
@@ -96,11 +144,17 @@ export const MessagesPage = () => {
     try {
       setLoading(true);
 
+      const searching = searchQuery.trim().length > 0;
+
       // Map UI bucket to API bucket. "primary" reuses "all" data but we compute buckets/counts on the client.
       const apiBucket: 'all' | 'offers' | 'cases' | 'ebay' =
         selectedBucket === 'primary' ? 'all' : selectedBucket;
 
-      const data: MessagesListResponse = await getMessages(selectedFolder, false, searchQuery, apiBucket);
+      // For now, search always hits the inbox view on the backend, but we keep all
+      // custom-folder filtering on the client so that results span custom folders.
+      const folderForApi = searching ? 'inbox' : selectedFolder;
+
+      const data: MessagesListResponse = await getMessages(folderForApi, false, searchQuery, apiBucket);
       const rawItems: Message[] = Array.isArray(data.items) ? (data.items as Message[]) : [];
 
       const itemsWithBuckets = rawItems.map((m) => ({ ...m, bucket: classifyBucket(m) }));
@@ -120,10 +174,25 @@ export const MessagesPage = () => {
         else counts.primary += 1;
       }
 
+      // Apply custom folder + bucket filters in-memory.
+      let working = itemsWithBuckets;
+
+      if (!searching) {
+        // When viewing Inbox, hide any messages that have been moved into a custom folder.
+        if (!selectedCustomFolder && selectedFolder === 'inbox') {
+          working = working.filter((m) => !messageFolders[m.id]);
+        }
+
+        // When a custom folder is selected, show only messages assigned to it.
+        if (selectedCustomFolder) {
+          working = working.filter((m) => messageFolders[m.id] === selectedCustomFolder);
+        }
+      }
+
       const filteredItems =
         selectedBucket === 'primary'
-          ? itemsWithBuckets.filter((m) => m.bucket === 'other')
-          : itemsWithBuckets.filter((m) => m.bucket === apiBucket || apiBucket === 'all');
+          ? working.filter((m) => m.bucket === 'other')
+          : working.filter((m) => m.bucket === apiBucket || apiBucket === 'all');
 
       setMessages(filteredItems);
       setBucketCounts(counts);
@@ -148,24 +217,48 @@ export const MessagesPage = () => {
   const handleMessageClick = async (message: Message) => {
     setSelectedMessage(message);
     setReplyText('');
+
+    // Optimistically mark as read without reloading the whole list so the detail
+    // panel stays open and the row styling updates immediately.
     if (!message.is_read && message.direction === 'INCOMING') {
-      await updateMessage(message.id, { is_read: true });
-      loadMessages();
-      loadStats();
+      setMessages((prev) =>
+        prev.map((m) => (m.id === message.id ? { ...m, is_read: true } : m)),
+      );
+      setSelectedMessage((prev) => (prev && prev.id === message.id ? { ...prev, is_read: true } : prev));
+      try {
+        await updateMessage(message.id, { is_read: true });
+        loadStats();
+      } catch (e) {
+        console.error('Failed to mark message as read', e);
+      }
     }
   };
 
   const handleToggleFlagged = async (message: Message, e: React.MouseEvent) => {
     e.stopPropagation();
-    await updateMessage(message.id, { is_flagged: !message.is_flagged });
-    loadMessages();
-    loadStats();
+    const nextFlag = !message.is_flagged;
+    setMessages((prev) =>
+      prev.map((m) => (m.id === message.id ? { ...m, is_flagged: nextFlag } : m)),
+    );
+    setSelectedMessage((prev) => (prev && prev.id === message.id ? { ...prev, is_flagged: nextFlag } : prev));
+    try {
+      await updateMessage(message.id, { is_flagged: nextFlag });
+      loadStats();
+    } catch (err) {
+      console.error('Failed to toggle flag', err);
+    }
   };
 
   const handleArchive = async (message: Message) => {
-    await updateMessage(message.id, { is_archived: true });
-    setSelectedMessage(null);
-    loadMessages();
+    // Remove from current view and clear selection; archived messages can still
+    // be viewed from the Archived folder.
+    setMessages((prev) => prev.filter((m) => m.id !== message.id));
+    setSelectedMessage((prev) => (prev && prev.id === message.id ? null : prev));
+    try {
+      await updateMessage(message.id, { is_archived: true });
+    } catch (err) {
+      console.error('Failed to archive message', err);
+    }
   };
 
   const handleDelete = async (message: Message) => {
@@ -201,6 +294,37 @@ export const MessagesPage = () => {
     setSelectedCustomFolder(trimmed);
   };
 
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, messageId: string) => {
+    setDraggedMessageId(messageId);
+    try {
+      e.dataTransfer.setData('text/plain', messageId);
+      e.dataTransfer.effectAllowed = 'move';
+    } catch {
+      // Ignore browsers that restrict dataTransfer in some contexts.
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedMessageId(null);
+  };
+
+  const handleDropOnCustomFolder = (e: React.DragEvent<HTMLButtonElement>, folderName: string) => {
+    e.preventDefault();
+    let id = draggedMessageId;
+    if (!id) {
+      try {
+        id = e.dataTransfer.getData('text/plain') || null;
+      } catch {
+        id = null;
+      }
+    }
+    if (!id) return;
+
+    setMessageFolders((prev) => ({ ...prev, [id as string]: folderName }));
+    setSelectedCustomFolder(folderName);
+    setDraggedMessageId(null);
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -231,10 +355,22 @@ export const MessagesPage = () => {
     }
   };
 
+  const plainBody = useMemo(() => {
+    if (!selectedMessage?.body) return '';
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(selectedMessage.body, 'text/html');
+      const text = doc.body.textContent || '';
+      return text.trim() || selectedMessage.body;
+    } catch {
+      return selectedMessage.body;
+    }
+  }, [selectedMessage]);
+
   return (
     <div className="h-screen flex flex-col bg-white">
       <FixedHeader />
-      <div className="pt-12 flex flex-1 overflow-hidden">
+      <div className="pt-12 flex flex-1 overflow-x-hidden overflow-y-auto">
         {/* Left Sidebar - Folders */}
         <div className="w-64 border-r bg-gray-50 p-4 flex flex-col">
           <div className="space-y-1">
@@ -320,6 +456,8 @@ export const MessagesPage = () => {
                   variant={selectedCustomFolder === name ? 'secondary' : 'ghost'}
                   className="w-full justify-start"
                   onClick={() => setSelectedCustomFolder(name)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => handleDropOnCustomFolder(e, name)}
                 >
                   <Folder className="mr-2 h-4 w-4" />
                   {name}
@@ -385,6 +523,9 @@ export const MessagesPage = () => {
                   {visibleMessages.map((message) => (
                     <div
                       key={message.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, message.id)}
+                      onDragEnd={handleDragEnd}
                       className={`px-4 py-3 cursor-pointer hover:bg-gray-50 text-sm flex items-start justify-between gap-3 ${
                         selectedMessage?.id === message.id ? 'bg-blue-50' : ''
                       } ${
@@ -497,6 +638,13 @@ export const MessagesPage = () => {
                       </div>
                       <div className="flex flex-wrap gap-2 justify-end">
                         <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowSource((prev) => !prev)}
+                        >
+                          {showSource ? 'Hide source' : 'Show source'}
+                        </Button>
+                        <Button
                           variant="default"
                           size="sm"
                           onClick={() => {
@@ -535,8 +683,16 @@ export const MessagesPage = () => {
                 </div>
 
                 <ScrollArea className="flex-1 p-4 md:p-6">
-                  <div className="whitespace-pre-wrap text-gray-800 text-sm">
-                    {selectedMessage.body}
+                  <div className="text-gray-800 text-sm">
+                    {showSource ? (
+                      <pre className="whitespace-pre-wrap font-mono text-xs bg-gray-50 p-3 rounded border border-gray-200 overflow-x-auto">
+                        {selectedMessage.body}
+                      </pre>
+                    ) : (
+                      <div className="whitespace-pre-wrap">
+                        {plainBody}
+                      </div>
+                    )}
                   </div>
 
                   {(selectedMessage.order_id || selectedMessage.listing_id) && (
