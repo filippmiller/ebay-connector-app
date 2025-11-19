@@ -1,0 +1,17 @@
+# Backend runtime dependencies mirrored from backend/pyproject.toml
+fastapi[standard]==0.119.0
+psycopg[binary]==3.2.10
+python-jose==3.5.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.20
+pydantic-settings==2.11.0
+httpx==0.28.1
+python-dotenv==1.1.1
+argon2-cffi==25.1.0
+SQLAlchemy==2.0.44
+psycopg2-binary==2.9.11
+alembic==1.17.0
+uvicorn==0.32.0
+python-dateutil==2.9.0.post0
+sqlalchemy-pytds==1.0.2
+beautifulsoup4==4.12.3
