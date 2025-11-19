@@ -1,8 +1,18 @@
 #!/bin/bash
 set -e
 
-# Prefer the app virtualenv Python if present so Alembic/uvicorn imports work
-PYTHON_BIN="${PYTHON_BIN:-/app/.venv/bin/python}"
+# Resolve Python binary similarly to start.sh
+if [ -z "${PYTHON_BIN:-}" ]; then
+  if [ -x "/app/.venv/bin/python" ]; then
+    PYTHON_BIN="/app/.venv/bin/python"
+  elif [ -x "/app/backend/.venv/bin/python" ]; then
+    PYTHON_BIN="/app/backend/.venv/bin/python"
+  else
+    PYTHON_BIN="$(command -v python3 || command -v python)"
+  fi
+fi
+
+echo "[entry] Using PYTHON_BIN=${PYTHON_BIN}"
 
 echo "🚀 Starting eBay Connector Backend..."
 
