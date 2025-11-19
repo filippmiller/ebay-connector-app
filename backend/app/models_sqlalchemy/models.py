@@ -364,19 +364,19 @@ class Inventory(Base):
 
 
 class SqItem(Base):
-    """SQ catalog item mapped to the canonical `sku_catalog` table.
+    """SQ catalog item mapped to the canonical `SKU_catalog` table.
 
-    NOTE: The physical table name in the database is `sku_catalog`.
-    This used to point at a table called `sq_items`, but the runtime
-    errors in production (UndefinedTable: relation "sq_items") show
-    that only `sku_catalog` exists there. By mapping the ORM model to
-    `sku_catalog`, all existing code that relies on :class:`SqItem`
-    (SKU grid, LISTING flows, SQ catalog APIs) now reads from and
-    writes to the single canonical SKU catalog table without further
-    changes.
+    NOTE: In the Railway/Supabase environment the physical table name
+    is mixed-case `"SKU_catalog"` (created with quotes). Postgres
+    treats this as case-sensitive, so the ORM must use the exact
+    quoted name. By mapping :class:`SqItem` to `SKU_catalog`, all
+    existing SKU grid and LISTING code will hit that table instead of
+    the old, non-existent `sq_items` table.
     """
 
-    __tablename__ = "sku_catalog"
+    # Mixed-case name ensures SQLAlchemy emits it as a quoted identifier
+    # so that Postgres resolves it to the correct relation.
+    __tablename__ = "SKU_catalog"
 
     # Core identifiers / mapping to legacy MSSQL
     id = Column(BigInteger, primary_key=True, autoincrement=True)  # [ID]
