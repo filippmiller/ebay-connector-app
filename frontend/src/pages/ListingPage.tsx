@@ -47,7 +47,9 @@ export default function ListingPage() {
     const model = (row.model || null) as string | null;
     const category = (row.category || null) as string | null;
     const price = typeof row.price === 'number' ? row.price : Number(row.price || 0) || 0;
-    const condition = (row.condition || null) as string | null;
+    // The SKU grid exposes condition as either `condition_description` (human label)
+    // or `condition_id`. Prefer the label if present.
+    const condition = (row.condition_description || row.condition || null) as string | null;
     const title = (row.title || null) as string | null;
 
     // Duplicate strategy: if SKU already exists in draft, increment quantity.

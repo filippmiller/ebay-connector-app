@@ -364,9 +364,19 @@ class Inventory(Base):
 
 
 class SqItem(Base):
-    """SQ catalog item (replacement for legacy tbl_parts_detail rows)."""
+    """SQ catalog item mapped to the canonical `sku_catalog` table.
 
-    __tablename__ = "sq_items"
+    NOTE: The physical table name in the database is `sku_catalog`.
+    This used to point at a table called `sq_items`, but the runtime
+    errors in production (UndefinedTable: relation "sq_items") show
+    that only `sku_catalog` exists there. By mapping the ORM model to
+    `sku_catalog`, all existing code that relies on :class:`SqItem`
+    (SKU grid, LISTING flows, SQ catalog APIs) now reads from and
+    writes to the single canonical SKU catalog table without further
+    changes.
+    """
+
+    __tablename__ = "sku_catalog"
 
     # Core identifiers / mapping to legacy MSSQL
     id = Column(BigInteger, primary_key=True, autoincrement=True)  # [ID]
