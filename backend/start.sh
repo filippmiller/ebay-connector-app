@@ -102,6 +102,12 @@ if ! ensure_python_package "pydantic_settings" "pydantic-settings==2.11.0"; then
   exit 1
 fi
 
+# Ensure PostgreSQL driver (psycopg2 via psycopg2-binary) is available for SQLAlchemy
+if ! ensure_python_package "psycopg2" "psycopg2-binary==2.9.11"; then
+  echo "[entry] FATAL: psycopg2 is required for PostgreSQL connections" >&2
+  exit 1
+fi
+
 if ! ensure_python_package "fastapi" "fastapi[standard]==0.119.0"; then
   echo "[entry] FATAL: fastapi is required to start the API server" >&2
   exit 1
@@ -116,46 +122,6 @@ export PYTHONUNBUFFERED=1
 echo "[entry] Starting backend service..."
 echo "[entry] PORT=${PORT:-8000}"
 echo "[entry] Database configured: ${DATABASE_URL:+yes}"
-
-# 0) Ensure Microsoft ODBC Driver 18 for SQL Server (msodbcsql18) is installed.
-#    This is idempotent and safe to run on each container start.
-SCRIPT_CANDIDATES=(
-  "${ROOT_DIR}/scripts/install_msodbc18.sh"
-  "/app/scripts/install_msodbc18.sh"
-  "/scripts/install_msodbc18.sh"
-)
-if [ "${INSTALL_MSODBC18:-1}" = "1" ]; then
-  # Resolve actual script path
-  MSODBC_SCRIPT=""
-  for candidate in "${SCRIPT_CANDIDATES[@]}"; do
-    if [ -f "${candidate}" ]; then
-      MSODBC_SCRIPT="${candidate}"
-      break
-    fi
-  done
-
-  if [ -z "${MSODBC_SCRIPT}" ]; then
-    echo "[entry] WARNING: install_msodbc18.sh not found in expected locations: ${SCRIPT_CANDIDATES[*]}" >&2
-  else
-    echo "[entry] Using msodbc install script: ${MSODBC_SCRIPT}"
-  fi
-
-  echo "[entry] Checking for ODBC Driver 18 for SQL Server..."
-  if command -v odbcinst >/dev/null 2>&1 && odbcinst -q -d | grep -q "ODBC Driver 18 for SQL Server"; then
-    echo "[entry] ODBC Driver 18 for SQL Server already installed."
-  else
-    if [ -n "${MSODBC_SCRIPT}" ]; then
-      echo "[entry] Installing Microsoft ODBC Driver 18 for SQL Server (msodbcsql18)..."
-      if bash "${MSODBC_SCRIPT}"; then
-        echo "[entry] msodbcsql18 install script completed successfully."
-      else
-        echo "[entry] WARNING: msodbcsql18 install script failed; MSSQL connections may not work." >&2
-      fi
-    else
-      echo "[entry] WARNING: msodbcsql18 install script is missing; MSSQL connections will not work." >&2
-    fi
-  fi
-fi
 
 # 1) Alembic migrations (can be disabled with RUN_MIGRATIONS=0 in Railway Variables).
 if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
