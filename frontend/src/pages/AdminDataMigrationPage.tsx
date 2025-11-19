@@ -1561,7 +1561,7 @@ const DualDbMigrationStudioShell: React.FC = () => {
           ) : latestColumns.length === 0 || latestRows.length === 0 ? (
             <div className="text-sm text-gray-500">No rows found.</div>
           ) : (
-            <div className="border rounded max-h-[70vh] overflow-auto">
+            <div className="border rounded max-h-[70vh] overflow-x-auto overflow-y-auto">
               <table className="min-w-full text-[11px] table-fixed">
                 <thead className="bg-gray-100">
                   <tr>
@@ -1576,8 +1576,8 @@ const DualDbMigrationStudioShell: React.FC = () => {
                   {latestRows.map((row, idx) => (
                     <tr key={idx} className="border-t">
                       {latestColumns.map((col, colIdx) => (
-                        <td key={col} className="px-2 py-1 border whitespace-nowrap align-top">
-                          <div className="inline-block whitespace-pre select-text">
+                        <td key={col} className="px-2 py-1 border align-top max-w-xs">
+                          <div className="whitespace-pre-wrap break-all max-h-40 overflow-auto select-text">
                             {row[colIdx] === null || row[colIdx] === undefined
                               ? ''
                               : typeof row[colIdx] === 'object'
