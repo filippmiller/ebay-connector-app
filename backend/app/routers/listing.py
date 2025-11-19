@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models_sqlalchemy import get_db
-from app.models_sqlalchemy.models import Inventory, InventoryStatus, SKU
+from app.models_sqlalchemy.models import Inventory, InventoryStatus, SqItem
 from app.services.auth import get_current_user
 from app.models.user import User
 from app.utils.logger import logger
@@ -22,7 +22,7 @@ ALLOWED_LISTING_STATUS_MAP: Dict[str, InventoryStatus] = {
 
 
 class DraftListingItemPayload(BaseModel):
-    sku_code: str = Field(..., description="SKU.sku_code from the SKU table")
+    sku_code: str = Field(..., description="SqItem.sku from the SQ catalog (sq_items) table")
     price: Optional[float] = Field(None)
     quantity: int = Field(1, ge=1)
     condition: Optional[str] = None
@@ -91,18 +91,18 @@ async def commit_listing_items(
     """Commit draft listing items into the inventory table.
 
     This endpoint is used by the LISTING UI: it accepts a batch of draft rows
-    keyed by SKU.sku_code and creates corresponding Inventory rows in Supabase
-    using the canonical SKU table.
+    keyed by SQ catalog SKU (SqItem.sku) and creates corresponding Inventory
+    rows in Supabase using the `sq_items` (SQ catalog) table.
     """
     # Normalize global default status -> InventoryStatus (also validates value)
     _ = ALLOWED_LISTING_STATUS_MAP[payload.default_status]
 
-    # Fetch all referenced SKUs in one query using sku_code.
+    # Fetch all referenced SQ catalog rows in one query using sku (logical sku_code).
     sku_codes = {item.sku_code for item in payload.items}
-    sku_rows = db.query(SKU).filter(SKU.sku_code.in_(sku_codes)).all()
-    sku_by_code: Dict[str, SKU] = {s.sku_code: s for s in sku_rows}
+    sq_rows = db.query(SqItem).filter(SqItem.sku.in_(sku_codes)).all()
+    sq_by_code: Dict[str, SqItem] = {s.sku: s for s in sq_rows if s.sku}
 
-    missing = [code for code in sku_codes if code not in sku_by_code]
+    missing = [code for code in sku_codes if code not in sq_by_code]
     if missing:
         raise HTTPException(status_code=400, detail={"error": "unknown_sku_codes", "codes": missing})
 
@@ -110,7 +110,7 @@ async def commit_listing_items(
 
     try:
         for item in payload.items:
-            sku = sku_by_code[item.sku_code]
+            sq = sq_by_code[item.sku_code]
 
             # Resolve storage: per-row overrides global
             storage_value: Optional[str] = item.storage or payload.storage
@@ -124,16 +124,18 @@ async def commit_listing_items(
             status_key = (item.status or payload.default_status)
             status_enum = ALLOWED_LISTING_STATUS_MAP[status_key]
 
-            # Map SKU row → inventory logical fields.
+            # Map SQ catalog row  inventory logical fields.
+            # Note: Inventory.sku_id points to the simplified SKU table and is
+            # left NULL here because we are sourcing from sq_items instead.
             inv = Inventory(
-                sku_id=sku.id,
-                sku_code=sku.sku_code,
-                model=sku.model,
-                category=sku.category,
-                condition=sku.condition,
-                part_number=sku.part_number,
-                title=item.title or sku.title,
-                price_value=item.price if item.price is not None else sku.price,
+                sku_id=None,
+                sku_code=sq.sku,
+                model=sq.model,
+                category=sq.category,
+                condition=None,
+                part_number=sq.part_number,
+                title=item.title or sq.title or sq.part,
+                price_value=item.price if item.price is not None else (float(sq.price) if sq.price is not None else None),
                 price_currency=None,
                 status=status_enum,
                 photo_count=0,
@@ -150,7 +152,7 @@ async def commit_listing_items(
             created_items.append(
                 ListingCommitItemResponse(
                     inventory_id=inv.id,
-                    sku_code=sku.sku_code,
+                    sku_code=sq.sku,
                     storage=inv.storage,
                     status=inv.status.value if inv.status else "",
                 )

@@ -20,7 +20,8 @@ from app.models_sqlalchemy.models import (
     AccountingBankStatement,
     AccountingCashExpense,
     AccountingTransaction as AccountingTxn,
-    SKU,
+    SqItem,
+    ItemCondition,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -488,54 +489,75 @@ def _get_sku_catalog_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    """SKU catalog grid backed by the SKU table.
+    """SKU catalog grid backed by the SQ catalog table (sq_items).
 
-    Simple read-only listing used by LISTING tab and the SKU tab, exposing a
-    thin view over the canonical SKU rows stored in Supabase.
+    Exposes a thin, stable logical view used by the LISTING tab and the SKU
+    tab. Logical columns are:
+
+    - id
+    - sku_code (mapped from SqItem.sku)
+    - model
+    - category
+    - condition (friendly label from item_conditions.label)
+    - part_number
+    - price
+    - title
+    - description
+    - brand
+    - image_url (first picture URL, pic_url1)
+    - rec_created (mapped from record_created)
+    - rec_updated (mapped from record_updated)
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    query = db.query(SKU)
+    # Left join item_conditions to resolve human-readable condition label.
+    query = db.query(SqItem, ItemCondition).outerjoin(
+        ItemCondition, SqItem.condition_id == ItemCondition.id
+    )
 
     total = query.count()
 
-    # Allow sorting on a small, safe subset of real columns.
+    # Allow sorting on a small, safe subset of real columns using SqItem fields.
     allowed_sort_cols = {
-        "id": SKU.id,
-        "sku_code": SKU.sku_code,
-        "model": SKU.model,
-        "category": SKU.category,
-        "price": SKU.price,
-        "rec_created": SKU.rec_created,
-        "rec_updated": SKU.rec_updated,
+        "id": SqItem.id,
+        "sku_code": SqItem.sku,
+        "model": SqItem.model,
+        "category": SqItem.category,
+        "price": SqItem.price,
+        "rec_created": SqItem.record_created,
+        "rec_updated": SqItem.record_updated,
     }
     sort_attr = allowed_sort_cols.get(sort_column or "rec_updated")
     if sort_attr is None:
-        sort_attr = SKU.rec_updated
+        sort_attr = SqItem.record_updated
     if sort_dir == "desc":
         query = query.order_by(desc(sort_attr))
     else:
         query = query.order_by(asc(sort_attr))
 
-    rows_db: List[SKU] = query.offset(offset).limit(limit).all()
+    rows_db: List[tuple] = query.offset(offset).limit(limit).all()
 
-    def _serialize(item: SKU) -> Dict[str, Any]:
+    def _serialize(item: SqItem, cond: Optional[ItemCondition]) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
+        condition_label = cond.label if cond else None
+
         base_values: Dict[str, Any] = {
             "id": item.id,
-            "sku_code": item.sku_code,
+            # Logical sku_code expected by the grid/UI, backed by SqItem.sku
+            "sku_code": item.sku,
             "model": item.model,
             "category": item.category,
-            "condition": item.condition.value if item.condition else None,
+            "condition": condition_label,
             "part_number": item.part_number,
             "price": item.price,
-            "title": item.title,
+            "title": item.title or item.part,
             "description": item.description,
             "brand": item.brand,
-            "image_url": item.image_url,
-            "rec_created": item.rec_created,
-            "rec_updated": item.rec_updated,
+            # Use first picture URL as an image_url surrogate for now.
+            "image_url": item.pic_url1,
+            "rec_created": item.record_created,
+            "rec_updated": item.record_updated,
         }
         for col in selected_cols:
             value = base_values.get(col)
@@ -547,7 +569,7 @@ def _get_sku_catalog_data(
                 row[col] = value
         return row
 
-    rows = [_serialize(item) for item in rows_db]
+    rows = [_serialize(item, cond) for (item, cond) in rows_db]
 
     return {
         "rows": rows,
