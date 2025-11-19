@@ -507,6 +507,7 @@ def _get_sku_catalog_data(
         "model": SKU.model,
         "category": SKU.category,
         "price": SKU.price,
+        "rec_created": SKU.rec_created,
         "rec_updated": SKU.rec_updated,
     }
     sort_attr = allowed_sort_cols.get(sort_column or "rec_updated")
@@ -532,6 +533,7 @@ def _get_sku_catalog_data(
             "title": item.title,
             "description": item.description,
             "brand": item.brand,
+            "image_url": item.image_url,
             "rec_created": item.rec_created,
             "rec_updated": item.rec_updated,
         }

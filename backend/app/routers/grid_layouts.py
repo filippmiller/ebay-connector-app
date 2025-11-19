@@ -85,7 +85,8 @@ OFFERS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="expires_at", label="Expires at", type="datetime", width_default=180),
 ]
 
-# SKU catalog grid: logical view over sku table used by LISTING tab (and future SKU tab).
+# SKU catalog grid: 1:1 logical view over the public.sku table.
+# Used by the LISTING tab and the main SKU tab.
 SKU_CATALOG_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=60),
   ColumnMeta(name="sku_code", label="SKU", type="string", width_default=160),
@@ -95,7 +96,10 @@ SKU_CATALOG_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="part_number", label="Part #", type="string", width_default=140),
   ColumnMeta(name="price", label="Price", type="money", width_default=120),
   ColumnMeta(name="title", label="Title", type="string", width_default=260),
+  ColumnMeta(name="description", label="Description", type="string", width_default=260),
   ColumnMeta(name="brand", label="Brand", type="string", width_default=140),
+  ColumnMeta(name="image_url", label="Image URL", type="string", width_default=260),
+  ColumnMeta(name="rec_created", label="Created", type="datetime", width_default=180),
   ColumnMeta(name="rec_updated", label="Updated", type="datetime", width_default=180),
 ]
 
@@ -277,6 +281,11 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "part_number",
             "price",
             "title",
+            "description",
+            "brand",
+            "image_url",
+            "rec_created",
+            "rec_updated",
         ],
         "sort": {"column": "rec_updated", "direction": "desc"},
     },
