@@ -2696,21 +2696,9 @@ class EbayService:
 
             await asyncio.sleep(0.2)
 
-            def _issue_type(case: Dict[str, Any]) -> Optional[str]:
-                raw = (case.get("caseType") or case.get("case_type") or "").upper()
-                if "NOT_RECEIVED" in raw:
-                    return "INR"
-                if "NOT_AS_DESCRIBED" in raw or "SNAD" in raw:
-                    return "SNAD"
-                return None
-
             stored = 0
             for c in cases:
-                issue = _issue_type(c)
-                if not issue:
-                    # Skip non-INR/SNAD cases
-                    continue
-
+                # Check for cancellation during storage loop
                 if is_cancelled(event_logger.run_id):
                     logger.info(f"Cases sync cancelled for run_id {event_logger.run_id} (during storage)")
                     event_logger.log_warning("Sync operation cancelled by user")
@@ -2730,6 +2718,7 @@ class EbayService:
                         "run_id": event_logger.run_id,
                     }
 
+                # Store all Post-Order cases (no filtering by issue type)
                 if ebay_db.upsert_case(  # type: ignore[attr-defined]
                     user_id,
                     c,
