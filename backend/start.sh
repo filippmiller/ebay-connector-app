@@ -2,8 +2,8 @@
 # Backend startup script for Railway
 # Notes:
 # - Pure LF line endings so bash inside the container does not see stray CR characters
-# - No "pipefail" (not supported in some busybox/dash shells) — we only use POSIX-safe options
-set -eu
+# - Use bash-safe strict mode with pipefail now that we ensure bash is used
+set -Eeuo pipefail
 
 # Resolve ROOT_DIR based on this script's location.
 # In the container this should typically resolve to /app/backend.
