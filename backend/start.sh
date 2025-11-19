@@ -63,7 +63,7 @@ if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
     while [ $attempt -le $max_attempts ]; do
       echo "[entry] Migration attempt $attempt/$max_attempts..."
       
-      if poetry run alembic upgrade heads; then
+      if python -m alembic upgrade heads; then
         echo "[entry] ✅ Migrations completed successfully!"
         return 0
       else
@@ -83,9 +83,9 @@ if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
   }
   
   echo "[entry] alembic current before:"
-  poetry run alembic current || echo "[entry] No current revision found"
+  python -m alembic current || echo "[entry] No current revision found"
   echo "[entry] alembic heads:"
-  poetry run alembic heads || echo "[entry] No heads found"
+  python -m alembic heads || echo "[entry] No heads found"
   echo "[entry] Running migrations with retry logic..."
   
   run_migrations_with_retry || {
@@ -95,7 +95,7 @@ fi
 
 # 2) Запуск приложения (exec — чтобы процесс не завершился после скрипта)
 echo "[entry] Starting uvicorn server..."
-exec poetry run uvicorn app.main:app \
+exec python -m uvicorn app.main:app \
   --host 0.0.0.0 --port "${PORT:-8000}" \
   --log-level debug --proxy-headers --forwarded-allow-ips="*"
 
