@@ -100,7 +100,7 @@ fi
 # 1) Alembic migrations (can be disabled with RUN_MIGRATIONS=0 in Railway Variables).
 if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   echo "[entry] Checking Alembic state..."
-  cd /app/backend
+  cd /app
 
   # Retry function for migrations with exponential backoff
   run_migrations_with_retry() {
