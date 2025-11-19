@@ -922,8 +922,13 @@ class EbayService:
             event_logger.log_info(f"=== WHO WE ARE ===")
             event_logger.log_info(f"Connected as: {username} (eBay UserID: {effective_ebay_user_id})")
             event_logger.log_info(f"Environment: {settings.EBAY_ENVIRONMENT}")
-            event_logger.log_info(f"API Configuration: Fulfillment API v1, max batch size: {limit} orders per request")
-            event_logger.log_info(f"Date window: {since_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}..{until_date.strftime('%Y-%m-%dT%H:%M:%S.000Z')}")
+            event_logger.log_info(
+                f"API Configuration: Fulfillment API v1, max batch size: {limit} orders per request"
+            )
+            event_logger.log_info(
+                f"Date window: {start_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z')}.."
+                f"{end_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
+            )
             event_logger.log_info(f"Safety limit: max {max_pages} pages")
             logger.info(f"Starting full order sync for user {user_id} ({username}) with limit={limit}")
             
