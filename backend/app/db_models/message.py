@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, DateTime, Text, Boolean, ForeignKey
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import JSONB
 from app.database import Base
 import uuid
 
@@ -38,5 +39,6 @@ class Message(Base):
     read_date = Column(DateTime(timezone=True))
     
     raw_data = Column(Text)
+    parsed_body = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

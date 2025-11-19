@@ -4316,6 +4316,7 @@ class EbayService:
         from app.services.ebay_database import ebay_db
         from app.models_sqlalchemy import SessionLocal
         from app.models_sqlalchemy.models import Message as SqlMessage
+        from app.ebay.message_body_parser import parse_ebay_message_body
         import time
 
         event_logger = SyncEventLogger(user_id, "messages", run_id=run_id)
@@ -4628,6 +4629,20 @@ class EbayService:
                                 except Exception:
                                     pass
 
+                            body_html = msg.get("text", "") or ""
+                            parsed_body = None
+                            try:
+                                if body_html:
+                                    parsed_body = parse_ebay_message_body(
+                                        body_html,
+                                        our_account_username=ebay_user_id or "seller",
+                                    )
+                            except Exception as parse_err:
+                                # Parsing errors should never break ingestion; log and continue.
+                                logger.warning(
+                                    f"Failed to parse eBay message body for {message_id}: {parse_err}"
+                                )
+
                             db_message = SqlMessage(
                                 ebay_account_id=ebay_account_id,
                                 user_id=user_id,
@@ -4636,7 +4651,7 @@ class EbayService:
                                 sender_username=sender,
                                 recipient_username=recipient,
                                 subject=msg.get("subject", ""),
-                                body=msg.get("text", ""),
+                                body=body_html,
                                 message_type="MEMBER_MESSAGE",
                                 is_read=msg.get("read", False),
                                 is_flagged=msg.get("flagged", False),
@@ -4646,6 +4661,7 @@ class EbayService:
                                 order_id=None,
                                 listing_id=msg.get("itemid"),
                                 raw_data=str(msg),
+                                parsed_body=parsed_body,
                             )
                             db_session.add(db_message)
                             total_stored += 1

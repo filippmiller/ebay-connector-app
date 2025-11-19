@@ -36,6 +36,7 @@ class MessageResponse(BaseModel):
     order_id: Optional[str]
     listing_id: Optional[str]
     bucket: Optional[str] = None
+    parsed_body: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
@@ -163,6 +164,7 @@ async def get_messages(
                 order_id=m.order_id,
                 listing_id=m.listing_id,
                 bucket=b,
+                parsed_body=getattr(m, "parsed_body", None),
             )
         )
 

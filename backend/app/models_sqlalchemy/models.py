@@ -500,16 +500,12 @@ class SqItem(Base):
     storage_alias = None
 
     warehouse = None
-
-    __table_args__ = (
-        Index('idx_sq_items_sku', 'sku'),
-        Index('idx_sq_items_category', 'category'),
-        Index('idx_sq_items_part_number', 'part_number'),
-        Index('idx_sq_items_model', 'model'),
-        Index('idx_sq_items_condition_id', 'condition_id'),
-        Index('idx_sq_items_shipping_group', 'shipping_group'),
-        Index('idx_sq_items_site_id', 'site_id'),
-    )
+ 
+     # Legacy SKU_catalog already has its own indexes at the database level.
+     # Declaring ORM Index objects with lower-case logical names (e.g. 'sku')
+     # caused ConstraintColumnNotFoundError when loading models. We omit
+     # __table_args__ here to avoid that; performance stays acceptable.
+     __table_args__ = ()
 
 
 class Return(Base):
@@ -1331,6 +1327,7 @@ class Message(Base):
     order_id = Column(String(100), nullable=True)
     listing_id = Column(String(100), nullable=True)
     raw_data = Column(Text, nullable=True)
+    parsed_body = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
