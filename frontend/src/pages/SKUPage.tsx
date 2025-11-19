@@ -432,10 +432,10 @@ export default function SKUPage() {
                   </div>
                 )}
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="xs" onClick={() => cycleImage(-1)} disabled={!firstImageUrl}>
+                  <Button variant="outline" size="sm" onClick={() => cycleImage(-1)} disabled={!firstImageUrl}>
                     ◀
                   </Button>
-                  <Button variant="outline" size="xs" onClick={() => cycleImage(1)} disabled={!firstImageUrl}>
+                  <Button variant="outline" size="sm" onClick={() => cycleImage(1)} disabled={!firstImageUrl}>
                     ▶
                   </Button>
                 </div>
