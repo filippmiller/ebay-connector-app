@@ -93,7 +93,13 @@ echo "[entry] Ensuring Alembic is installed via pip (alembic==1.17.0)..."
 if ! "$PYTHON_BIN" -m pip install --no-cache-dir "alembic==1.17.0"; then
   echo "[entry] WARNING: pip install for alembic failed; migrations may fail" >&2
 else
-  echo "[entry] Alembic pip install completed"
+echo "[entry] Alembic pip install completed"
+fi
+
+# Ensure pydantic-settings (import name: pydantic_settings) is available for config and Alembic env
+if ! ensure_python_package "pydantic_settings" "pydantic-settings==2.11.0"; then
+  echo "[entry] FATAL: pydantic_settings is required for application config" >&2
+  exit 1
 fi
 
 if ! ensure_python_package "fastapi" "fastapi[standard]==0.119.0"; then
