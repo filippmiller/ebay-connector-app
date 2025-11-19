@@ -14,6 +14,15 @@ ROOT_DIR="$SCRIPT_DIR"
 echo "[entry] Backend SCRIPT_PATH=${SCRIPT_PATH}"
 echo "[entry] Backend ROOT_DIR resolved to: ${ROOT_DIR}"
 
+# Detect Alembic CLI if available
+ALEMBIC_BIN=""
+if command -v alembic >/dev/null 2>&1; then
+  ALEMBIC_BIN="$(command -v alembic)"
+  echo "[entry] Found Alembic CLI at: ${ALEMBIC_BIN}"
+else
+  echo "[entry] Alembic CLI not found on PATH; will try python -m alembic"
+fi
+
 # Resolve Python binary:
 # 1) Respect $PYTHON_BIN if already set.
 # 2) Prefer project virtualenvs if they exist.
@@ -40,17 +49,25 @@ fi
 
 echo "[entry] Using PYTHON_BIN=${PYTHON_BIN}"
 
-# Log which Python is actually running and whether core modules are available.
+# Log which Python is actually running
 "$PYTHON_BIN" - << 'EOF'
-import sys, importlib
+import sys
 print("[entry] Python executable:", sys.executable)
-for mod in ("alembic", "uvicorn"):
-    try:
-        importlib.import_module(mod)
-        print(f"[entry] Python module available: {mod}")
-    except Exception as e:
-        print(f"[entry] WARNING: Python module missing: {mod} -> {e}")
 EOF
+
+# Verify critical Python modules (alembic + uvicorn) are importable
+if "$PYTHON_BIN" -c "import alembic" 2>/dev/null; then
+  echo "[entry] Python module 'alembic' import OK"
+else
+  echo "[entry] WARNING: Python module 'alembic' is not importable; relying on Alembic CLI if available" >&2
+fi
+
+if "$PYTHON_BIN" -c "import uvicorn" 2>/dev/null; then
+  echo "[entry] Python module 'uvicorn' import OK"
+else
+  echo "[entry] FATAL: Python module 'uvicorn' is not installed or import failed" >&2
+  exit 1
+fi
 
 export PYTHONUNBUFFERED=1
 echo "[entry] Starting backend service..."
@@ -102,6 +119,15 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   echo "[entry] Checking Alembic state..."
   cd /app
 
+  # Helper to run Alembic either via CLI or python -m
+  run_alembic() {
+    if [ -n "$ALEMBIC_BIN" ]; then
+      "$ALEMBIC_BIN" "$@"
+    else
+      "$PYTHON_BIN" -m alembic "$@"
+    fi
+  }
+
   # Retry function for migrations with exponential backoff
   run_migrations_with_retry() {
     max_attempts=3
@@ -111,7 +137,7 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
     while [ "$attempt" -le "$max_attempts" ]; do
       echo "[entry] Migration attempt $attempt/$max_attempts..."
 
-      if "$PYTHON_BIN" -m alembic upgrade heads; then
+      if run_alembic upgrade head; then
         echo "[entry] Migrations completed successfully!"
         return 0
       else
@@ -131,9 +157,9 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   }
 
   echo "[entry] alembic current before:"
-  "$PYTHON_BIN" -m alembic current || echo "[entry] No current revision found"
+  run_alembic current -v || echo "[entry] No current revision found"
   echo "[entry] alembic heads:"
-  "$PYTHON_BIN" -m alembic heads || echo "[entry] No heads found"
+  run_alembic heads || echo "[entry] No heads found"
   echo "[entry] Running migrations with retry logic..."
 
   run_migrations_with_retry || {
