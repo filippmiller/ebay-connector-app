@@ -19,10 +19,9 @@ argon2-cffi = "^25.1.0"
 sqlalchemy = "^2.0.44"
 psycopg2-binary = "^2.9.11"
 alembic = "^1.17.0"
-python-dateutil = "^2.9.0.post0"\r
-sqlalchemy-pytds = "^1.0.2"\r
-beautifulsoup4 = "^4.12.3"\r
-\r\n26|[build-system]\r\n
+python-dateutil = "^2.9.0.post0"
+sqlalchemy-pytds = "^1.0.2"
+beautifulsoup4 = "^4.12.3"
 
 [build-system]
 requires = ["poetry-core"]
