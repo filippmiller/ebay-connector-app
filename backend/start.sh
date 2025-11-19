@@ -55,17 +55,45 @@ import sys
 print("[entry] Python executable:", sys.executable)
 EOF
 
-# Verify critical Python modules (alembic + uvicorn) are importable
-if "$PYTHON_BIN" -c "import alembic" 2>/dev/null; then
-  echo "[entry] Python module 'alembic' import OK"
-else
-  echo "[entry] WARNING: Python module 'alembic' is not importable; relying on Alembic CLI if available" >&2
+# Ensure pip is available
+if ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+  echo "[entry] FATAL: pip is not available for PYTHON_BIN=${PYTHON_BIN}" >&2
+  exit 1
 fi
 
-if "$PYTHON_BIN" -c "import uvicorn" 2>/dev/null; then
-  echo "[entry] Python module 'uvicorn' import OK"
-else
-  echo "[entry] FATAL: Python module 'uvicorn' is not installed or import failed" >&2
+# Helper to ensure a Python package is importable; installs via pip if missing
+ensure_python_package() {
+  local module_name="$1"
+  local pip_spec="$2"
+
+  if "$PYTHON_BIN" -c "import ${module_name}" 2>/dev/null; then
+    echo "[entry] Python module '${module_name}' import OK"
+    return 0
+  fi
+
+  echo "[entry] Python module '${module_name}' missing; installing via pip (${pip_spec})..."
+  if ! "$PYTHON_BIN" -m pip install --no-cache-dir "${pip_spec}"; then
+    echo "[entry] FATAL: pip install failed for ${pip_spec}" >&2
+    return 1
+  fi
+
+  if "$PYTHON_BIN" -c "import ${module_name}" 2>/dev/null; then
+    echo "[entry] Python module '${module_name}' import OK after pip install"
+    return 0
+  else
+    echo "[entry] FATAL: Python module '${module_name}' still not importable after pip install" >&2
+    return 1
+  fi
+}
+
+# Ensure critical Python modules (alembic + uvicorn) are present
+if ! ensure_python_package "alembic" "alembic==1.17.0"; then
+  # We can technically start without migrations, but this indicates a deeper env issue
+  echo "[entry] WARNING: alembic not properly installed; migrations may fail" >&2
+fi
+
+if ! ensure_python_package "uvicorn" "uvicorn==0.32.0"; then
+  echo "[entry] FATAL: uvicorn is required to start the API server" >&2
   exit 1
 fi
 
