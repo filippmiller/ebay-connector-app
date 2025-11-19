@@ -6,6 +6,13 @@ from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import URL, create_engine, Engine
+from sqlalchemy.dialects import registry as _sa_dialect_registry
+
+# Ensure the `mssql+pytds` dialect is registered even if entry points are not
+# discovered correctly in the deployment environment. This maps the
+# "mssql.pytds" name used in the SQLAlchemy URL to the dialect implementation
+# provided by the `sqlalchemy-pytds` package.
+_sa_dialect_registry.register("mssql.pytds", "sqlalchemy_pytds", "MSDialect_pytds")
 
 # NOTE: We intentionally avoid any ODBC-based drivers (pyodbc/msodbcsql).
 # The MSSQL client uses the pure-Python `sqlalchemy-pytds` dialect

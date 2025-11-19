@@ -150,9 +150,9 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
     delay=2
 
     while [ "$attempt" -le "$max_attempts" ]; do
-      echo "[entry] Migration attempt $attempt/$max_attempts..."
+      echo "[entry] Migration attempt $attempt/$max_attempts (upgrade heads)..."
 
-      if run_alembic upgrade head; then
+      if run_alembic upgrade heads; then
         echo "[entry] Migrations completed successfully!"
         return 0
       else
@@ -174,23 +174,11 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   echo "[entry] alembic current before:"
   run_alembic current -v || echo "[entry] No current revision found"
   echo "[entry] alembic heads:"
-  # Capture heads output to detect multiple-head situation
-  HEADS_OUTPUT="$(run_alembic heads || true)"
-  if printf '%s
-' "${HEADS_OUTPUT}" | grep -q "(head)" && \
-     [ "$(printf '%s
-' "${HEADS_OUTPUT}" | grep -c "(head)")" -gt 1 ]; then
-    echo "[entry] WARNING: Multiple Alembic heads detected; skipping automatic migrations."
-    printf '%s
-' "${HEADS_OUTPUT}"
-  else
-    printf '%s
-' "${HEADS_OUTPUT}"
-    echo "[entry] Running migrations with retry logic..."
-    run_migrations_with_retry || {
-      echo "[entry] WARNING: Migrations failed after retries, continuing anyway..."
-    }
-  fi
+  run_alembic heads || echo "[entry] Unable to list Alembic heads"
+  echo "[entry] Running migrations with retry logic (upgrade heads)..."
+  run_migrations_with_retry || {
+    echo "[entry] WARNING: Migrations failed after retries, continuing anyway..."
+  }
 fi
 
 # 2) Start the application (exec so the process stays attached to container lifecycle).

@@ -8,6 +8,46 @@ import { ScrollArea } from '../components/ui/scroll-area';
 import FixedHeader from '@/components/FixedHeader';
 import apiClient from '../api/client';
 
+interface ParsedBodyMessageEntry {
+  author?: string | null;
+  direction?: 'inbound' | 'outbound' | 'system' | string;
+  role?: 'buyer' | 'seller' | 'system' | 'other' | string;
+  text?: string;
+  timestamp?: string | null;
+}
+
+interface ParsedBodyOrder {
+  title?: string;
+  itemUrl?: string;
+  imageUrl?: string;
+  status?: string;
+  itemId?: string;
+  transactionId?: string;
+  orderNumber?: string;
+  viewOrderUrl?: string;
+}
+
+interface ParsedBodyMeta {
+  emailReferenceId?: string;
+  [key: string]: any;
+}
+
+interface ParsedBodyBuyer {
+  username?: string;
+  feedbackScore?: number | null;
+  profileUrl?: string | null;
+  feedbackUrl?: string | null;
+}
+
+interface ParsedBody {
+  buyer?: ParsedBodyBuyer;
+  currentMessage?: ParsedBodyMessageEntry | null;
+  history?: ParsedBodyMessageEntry[];
+  order?: ParsedBodyOrder;
+  meta?: ParsedBodyMeta;
+  [key: string]: any;
+}
+
 interface Message {
   id: string;
   message_id: string;
@@ -24,6 +64,7 @@ interface Message {
   message_date: string;
   order_id: string | null;
   listing_id: string | null;
+  parsed_body?: ParsedBody | null;
   bucket?: 'offers' | 'cases' | 'ebay' | 'other';
 }
 
@@ -367,6 +408,27 @@ export const MessagesPage = () => {
     }
   }, [selectedMessage]);
 
+  const getMessageSnippet = (message: Message): string => {
+    const parsedText = message.parsed_body?.currentMessage?.text;
+    const source = parsedText && parsedText.trim().length > 0 ? parsedText : message.body || '';
+    return source.replace(/\s+/g, ' ').trim();
+  };
+
+  const renderTextWithLineBreaks = (text?: string) => {
+    if (!text) return null;
+    const lines = text.split('\n');
+    return (
+      <>
+        {lines.map((line, idx) => (
+          <span key={idx}>
+            {line}
+            {idx < lines.length - 1 && <br />}
+          </span>
+        ))}
+      </>
+    );
+  };
+
   return (
     <div className="h-screen flex flex-col bg-white">
       <FixedHeader />
@@ -570,7 +632,7 @@ export const MessagesPage = () => {
                             {message.subject || '(No subject)'}
                           </div>
                           <div className="truncate text-xs text-gray-500">
-                            {message.body}
+                            {getMessageSnippet(message)}
                           </div>
                         </div>
                       </div>
@@ -683,16 +745,140 @@ export const MessagesPage = () => {
                 </div>
 
                 <ScrollArea className="flex-1 p-4 md:p-6">
-                  <div className="text-gray-800 text-sm">
-                    {showSource ? (
-                      <pre className="whitespace-pre-wrap font-mono text-xs bg-gray-50 p-3 rounded border border-gray-200 overflow-x-auto">
-                        {selectedMessage.body}
-                      </pre>
-                    ) : (
-                      <div className="whitespace-pre-wrap">
-                        {plainBody}
+                  <div className="space-y-4 text-gray-800 text-sm">
+                    {/* Order / item card from parsed_body.order, if available */}
+                    {selectedMessage.parsed_body?.order && (
+                      <div className="flex gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        {selectedMessage.parsed_body.order.imageUrl && (
+                          <div className="flex-shrink-0">
+                            <img
+                              src={selectedMessage.parsed_body.order.imageUrl}
+                              alt={selectedMessage.parsed_body.order.title || 'Item image'}
+                              className="w-16 h-16 object-cover rounded"
+                            />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          {selectedMessage.parsed_body.order.title && (
+                            <div className="font-semibold text-sm mb-1 truncate">
+                              {selectedMessage.parsed_body.order.itemUrl ? (
+                                <a
+                                  href={selectedMessage.parsed_body.order.itemUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-blue-600 hover:underline"
+                                >
+                                  {selectedMessage.parsed_body.order.title}
+                                </a>
+                              ) : (
+                                selectedMessage.parsed_body.order.title
+                              )}
+                            </div>
+                          )}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-700">
+                            {selectedMessage.parsed_body.order.orderNumber && (
+                              <div>
+                                <span className="font-medium">Order #:</span>{' '}
+                                {selectedMessage.parsed_body.order.orderNumber}
+                              </div>
+                            )}
+                            {selectedMessage.parsed_body.order.itemId && (
+                              <div>
+                                <span className="font-medium">Item ID:</span>{' '}
+                                {selectedMessage.parsed_body.order.itemId}
+                              </div>
+                            )}
+                            {selectedMessage.parsed_body.order.transactionId && (
+                              <div>
+                                <span className="font-medium">Transaction ID:</span>{' '}
+                                {selectedMessage.parsed_body.order.transactionId}
+                              </div>
+                            )}
+                            {selectedMessage.parsed_body.order.status && (
+                              <div>
+                                <span className="font-medium">Status:</span>{' '}
+                                {selectedMessage.parsed_body.order.status}
+                              </div>
+                            )}
+                          </div>
+
+                          {selectedMessage.parsed_body.order.viewOrderUrl && (
+                            <div className="mt-2 text-xs">
+                              <a
+                                href={selectedMessage.parsed_body.order.viewOrderUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                View order details on eBay
+                              </a>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
+
+                    {/* Thread view built from parsed_body.history + parsed_body.currentMessage */}
+                    <div className="text-gray-800 text-sm">
+                      {showSource ? (
+                        <pre className="whitespace-pre-wrap font-mono text-xs bg-gray-50 p-3 rounded border border-gray-200 overflow-x-auto">
+                          {selectedMessage.body}
+                        </pre>
+                      ) : selectedMessage.parsed_body &&
+                        ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
+                          selectedMessage.parsed_body.currentMessage) ? (
+                        <div className="space-y-3">
+                          {[...(selectedMessage.parsed_body.history || []),
+                            ...(selectedMessage.parsed_body.currentMessage
+                              ? [selectedMessage.parsed_body.currentMessage]
+                              : []),
+                          ].map((entry, idx) => {
+                            const dir = entry.direction || 'system';
+                            const isBuyer = dir === 'inbound';
+                            const isSeller = dir === 'outbound';
+                            const isSystem = dir === 'system';
+
+                            const containerAlign = isSystem
+                              ? 'items-center justify-center'
+                              : isSeller
+                              ? 'items-end justify-end'
+                              : 'items-start justify-start';
+
+                            const bubbleClasses = isSystem
+                              ? 'bg-gray-100 text-gray-800'
+                              : isSeller
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-100 text-gray-900';
+
+                            return (
+                              <div key={idx} className={`flex ${containerAlign}`}>
+                                <div
+                                  className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${bubbleClasses}`}
+                                >
+                                  {entry.author && (
+                                    <div className="text-[11px] mb-1 opacity-80">
+                                      {entry.author}
+                                      {entry.timestamp && (
+                                        <span className="ml-1">
+                                          · {new Date(entry.timestamp).toLocaleString()}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  <div className="text-xs md:text-sm">
+                                    {renderTextWithLineBreaks(entry.text)}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="whitespace-pre-wrap">
+                          {plainBody}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {(selectedMessage.order_id || selectedMessage.listing_id) && (
