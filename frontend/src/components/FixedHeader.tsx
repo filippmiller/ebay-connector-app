@@ -26,6 +26,7 @@ const TABS: HeaderTab[] = [
   { name: 'MESSAGES', path: '/messages' },
   { name: 'OFFERS', path: '/offers' },
   { name: 'TASKS', path: '/tasks' },
+  { name: 'ACCOUNTING', path: '/accounting', adminOnly: true },
   { name: 'ADMIN', path: '/admin', adminOnly: true }
 ];
 

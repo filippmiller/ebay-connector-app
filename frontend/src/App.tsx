@@ -30,6 +30,7 @@ import AdminDataMigrationPage from './pages/AdminDataMigrationPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
 import TasksPage from './pages/TasksPage';
+import AccountingPage from './pages/AccountingPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -265,6 +266,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <AdminJobsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/accounting/*"
+            element={
+              <ProtectedRoute>
+                <AccountingPage />
               </ProtectedRoute>
             }
           />

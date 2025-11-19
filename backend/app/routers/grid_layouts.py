@@ -85,6 +85,20 @@ OFFERS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="expires_at", label="Expires at", type="datetime", width_default=180),
 ]
 
+# SKU catalog grid: logical view over sku table used by LISTING tab (and future SKU tab).
+SKU_CATALOG_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="id", label="ID", type="number", width_default=60),
+  ColumnMeta(name="sku_code", label="SKU", type="string", width_default=160),
+  ColumnMeta(name="model", label="Model", type="string", width_default=180),
+  ColumnMeta(name="category", label="Category", type="string", width_default=140),
+  ColumnMeta(name="condition", label="Condition", type="string", width_default=120),
+  ColumnMeta(name="part_number", label="Part #", type="string", width_default=140),
+  ColumnMeta(name="price", label="Price", type="money", width_default=120),
+  ColumnMeta(name="title", label="Title", type="string", width_default=260),
+  ColumnMeta(name="brand", label="Brand", type="string", width_default=140),
+  ColumnMeta(name="rec_updated", label="Updated", type="datetime", width_default=180),
+]
+
 ACTIVE_INVENTORY_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="last_seen_at", label="Last seen", type="datetime", width_default=180),
   ColumnMeta(name="sku", label="SKU", type="string", width_default=160),
@@ -253,6 +267,19 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "created_at", "direction": "desc"},
     },
+    "sku_catalog": {
+        "visible_columns": [
+            "id",
+            "sku_code",
+            "model",
+            "category",
+            "condition",
+            "part_number",
+            "price",
+            "title",
+        ],
+        "sort": {"column": "rec_updated", "direction": "desc"},
+    },
     "active_inventory": {
         "visible_columns": [
             "last_seen_at",
@@ -386,6 +413,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return MESSAGES_COLUMNS_META
     if grid_key == "offers":
         return OFFERS_COLUMNS_META
+    if grid_key == "sku_catalog":
+        return SKU_CATALOG_COLUMNS_META
     if grid_key == "active_inventory":
         return ACTIVE_INVENTORY_COLUMNS_META
     if grid_key == "cases":
