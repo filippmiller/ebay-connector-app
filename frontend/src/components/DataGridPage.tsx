@@ -57,6 +57,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
+  const [search, setSearch] = useState('');
 
   const gridPrefs = useGridPreferences(gridKey);
 
@@ -74,10 +75,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     }
   }, [extraParams]);
 
-  // Reset pagination when grid key or filters change
+  // Reset pagination when grid key, filters, or search change
   useEffect(() => {
     setOffset(0);
-  }, [gridKey, extraParamsKey]);
+  }, [gridKey, extraParamsKey, search]);
 
   const availableColumnsMap = useMemo(() => {
     const map: Record<string, GridColumnMeta> = {};
@@ -144,6 +145,9 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
           offset,
           columns: orderedVisibleColumns.join(','),
         };
+        if (search && search.trim()) {
+          params.search = search.trim();
+        }
         if (cfg.sort && cfg.sort.column) {
           params.sort_by = cfg.sort.column;
           params.sort_dir = cfg.sort.direction;
@@ -164,7 +168,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     };
 
     fetchData();
-  }, [gridPrefs.loading, gridPrefs.columns, orderedVisibleColumns, limit, offset, gridKey, extraParamsKey, extraParams]);
+  }, [gridPrefs.loading, gridPrefs.columns, orderedVisibleColumns, limit, offset, gridKey, extraParamsKey, extraParams, search]);
 
   const reorderColumns = (list: string[], fromName: string, toName: string): string[] => {
     if (fromName === toName) return list;
@@ -306,6 +310,57 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
           )}
         </div>
         <div className="flex items-center gap-3 text-sm">
+          <input
+            className="px-2 py-1 border rounded-md text-xs bg-white placeholder:text-gray-400"
+            placeholder="Search all columns"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="flex items-center gap-1 text-xs text-gray-600">
+            <span>Sort:</span>
+            <select
+              className="px-2 py-1 border rounded-md bg-white"
+              value={currentSort?.column || ''}
+              onChange={(e) => {
+                const newCol = e.target.value;
+                if (!newCol) {
+                  gridPrefs.setColumns({ sort: null });
+                  return;
+                }
+                const prevSort = gridPrefs.columns?.sort;
+                const nextDirection: 'asc' | 'desc' =
+                  prevSort && prevSort.column === newCol ? prevSort.direction : 'desc';
+                gridPrefs.setColumns({
+                  sort: { column: newCol, direction: nextDirection },
+                });
+              }}
+            >
+              <option value="">Default</option>
+              {orderedVisibleColumns
+                .filter((name) => availableColumnsMap[name]?.sortable !== false)
+                .map((name) => (
+                  <option key={name} value={name}>
+                    {availableColumnsMap[name]?.label || name}
+                  </option>
+                ))}
+            </select>
+            <button
+              type="button"
+              className="px-2 py-1 border rounded-md bg-white disabled:opacity-50"
+              disabled={!currentSort}
+              onClick={() => {
+                if (!currentSort) return;
+                gridPrefs.setColumns({
+                  sort: {
+                    column: currentSort.column,
+                    direction: currentSort.direction === 'asc' ? 'desc' : 'asc',
+                  },
+                });
+              }}
+            >
+              {currentSort?.direction === 'asc' ? 'Asc ▲' : 'Desc ▼'}
+            </button>
+          </div>
           {buttonLayout === 'right' && (
             <button
               className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50 shadow-sm"

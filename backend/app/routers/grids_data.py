@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, asc
+from sqlalchemy import desc, asc, or_
 from sqlalchemy.orm import Session
 import enum
 
@@ -264,6 +264,7 @@ async def get_grid_data(
                 offset,
                 sort_column,
                 sort_dir,
+                search=search,
             )
         finally:
             db_sqla.close()
@@ -487,6 +488,7 @@ def _get_sku_catalog_data(
     offset: int,
     sort_column: Optional[str],
     sort_dir: str,
+    search: Optional[str] = None,
 ) -> Dict[str, Any]:
     """SKU catalog grid backed by the SQ catalog table (sq_items).
 
@@ -498,6 +500,20 @@ def _get_sku_catalog_data(
     from decimal import Decimal
 
     query = db.query(SqItem)
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                SqItem.sku.ilike(like),
+                SqItem.title.ilike(like),
+                SqItem.description.ilike(like),
+                SqItem.part_number.ilike(like),
+                SqItem.mpn.ilike(like),
+                SqItem.upc.ilike(like),
+                SqItem.part.ilike(like),
+            )
+        )
 
     total = query.count()
 
