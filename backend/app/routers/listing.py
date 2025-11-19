@@ -22,7 +22,7 @@ ALLOWED_LISTING_STATUS_MAP: Dict[str, InventoryStatus] = {
 
 
 class DraftListingItemPayload(BaseModel):
-    sku_id: int = Field(..., description="SKU.id of the catalog item")
+    sku_code: str = Field(..., description="SKU.sku_code from the SKU table")
     price: Optional[float] = Field(None)
     quantity: int = Field(1, ge=1)
     condition: Optional[str] = None
@@ -38,6 +38,13 @@ class DraftListingItemPayload(BaseModel):
         v_norm = v.strip().lower()
         if v_norm not in ALLOWED_LISTING_STATUS_MAP:
             raise ValueError("Invalid status; allowed: awaiting_moderation, checked")
+        return v_norm
+
+    @validator("sku_code")
+    def validate_sku_code(cls, v: str) -> str:
+        v_norm = (v or "").strip()
+        if not v_norm:
+            raise ValueError("sku_code is required")
         return v_norm
 
 
@@ -65,7 +72,7 @@ class ListingCommitRequest(BaseModel):
 
 class ListingCommitItemResponse(BaseModel):
     inventory_id: int
-    sku_id: int
+    sku_code: str
     storage: Optional[str]
     status: str
 
@@ -83,53 +90,41 @@ async def commit_listing_items(
 ) -> ListingCommitResponse:
     """Commit draft listing items into the inventory table.
 
-    This endpoint is used by the LISTING UI: it accepts a batch of SKUs plus
-    storage/status info and creates corresponding Inventory rows.
+    This endpoint is used by the LISTING UI: it accepts a batch of draft rows
+    keyed by SKU.sku_code and creates corresponding Inventory rows in Supabase
+    using the canonical SKU table.
     """
-    # Normalize global default status -> InventoryStatus
-    default_status_enum = ALLOWED_LISTING_STATUS_MAP[payload.default_status]
+    # Normalize global default status -> InventoryStatus (also validates value)
+    _ = ALLOWED_LISTING_STATUS_MAP[payload.default_status]
 
-    # Fetch all referenced SKUs in one query
-    sku_ids = {item.sku_id for item in payload.items}
-    sku_rows = db.query(SKU).filter(SKU.id.in_(sku_ids)).all()
-    sku_by_id: Dict[int, SKU] = {s.id: s for s in sku_rows}
+    # Fetch all referenced SKUs in one query using sku_code.
+    sku_codes = {item.sku_code for item in payload.items}
+    sku_rows = db.query(SKU).filter(SKU.sku_code.in_(sku_codes)).all()
+    sku_by_code: Dict[str, SKU] = {s.sku_code: s for s in sku_rows}
 
-    missing = [sid for sid in sku_ids if sid not in sku_by_id]
+    missing = [code for code in sku_codes if code not in sku_by_code]
     if missing:
-        raise HTTPException(status_code=400, detail={"error": "unknown_sku_ids", "ids": missing})
-
-    # Optional: ensure all SKUs share the same model if model_id is provided
-    if payload.model_id is not None:
-        mismatched: Dict[int, str] = {}
-        for sid, sku in sku_by_id.items():
-            if sku.model and sku.model != str(payload.model_id) and sku.model != payload.model_id:
-                mismatched[sid] = sku.model or ""
-        if mismatched:
-            logger.warning(
-                "listing.commit model_id mismatch user=%s requested_model_id=%s mismatched=%s",
-                current_user.id,
-                payload.model_id,
-                mismatched,
-            )
+        raise HTTPException(status_code=400, detail={"error": "unknown_sku_codes", "codes": missing})
 
     created_items: List[ListingCommitItemResponse] = []
 
     try:
         for item in payload.items:
-            sku = sku_by_id[item.sku_id]
+            sku = sku_by_code[item.sku_code]
 
             # Resolve storage: per-row overrides global
             storage_value: Optional[str] = item.storage or payload.storage
             if not storage_value:
                 raise HTTPException(
                     status_code=400,
-                    detail={"error": "missing_storage", "sku_id": item.sku_id},
+                    detail={"error": "missing_storage", "sku_code": item.sku_code},
                 )
 
             # Resolve status
             status_key = (item.status or payload.default_status)
             status_enum = ALLOWED_LISTING_STATUS_MAP[status_key]
 
+            # Map SKU row → inventory logical fields.
             inv = Inventory(
                 sku_id=sku.id,
                 sku_code=sku.sku_code,
@@ -155,7 +150,7 @@ async def commit_listing_items(
             created_items.append(
                 ListingCommitItemResponse(
                     inventory_id=inv.id,
-                    sku_id=sku.id,
+                    sku_code=sku.sku_code,
                     storage=inv.storage,
                     status=inv.status.value if inv.status else "",
                 )

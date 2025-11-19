@@ -145,7 +145,7 @@ export default function ListingPage() {
       storage: globalStorage || undefined,
       default_status: globalStatus,
       items: selectedDraftItems.map((item) => ({
-        sku_id: item.skuId,
+        sku_code: item.skuCode,
         price: item.price,
         quantity: item.quantity,
         condition: item.condition,
@@ -165,8 +165,8 @@ export default function ListingPage() {
         description: `${createdCount} items committed to inventory`,
       });
 
-      const committedSkuIds = new Set(resp.data?.items?.map((i: any) => i.sku_id) ?? []);
-      setDraftItems((prev) => prev.filter((i) => !committedSkuIds.has(i.skuId)));
+      const committedSkuCodes = new Set(resp.data?.items?.map((i: any) => i.sku_code) ?? []);
+      setDraftItems((prev) => prev.filter((i) => !committedSkuCodes.has(i.skuCode)));
       setSelectedDraftIds(new Set());
     } catch (e: any) {
       const detail = e?.response?.data?.detail ?? e?.message ?? 'Commit failed';
