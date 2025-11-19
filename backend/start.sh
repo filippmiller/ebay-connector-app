@@ -1,48 +1,80 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Backend startup script for Railway
+# Notes:
+# - Pure LF line endings so bash inside the container does not see stray CR characters
+# - No "pipefail" (not supported in some busybox/dash shells) — we only use POSIX-safe options
+set -eu
+
+# Resolve ROOT_DIR based on this script's location.
+# In the container this should typically resolve to /app/backend.
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+ROOT_DIR="$SCRIPT_DIR"
+
+echo "[entry] Backend SCRIPT_PATH=${SCRIPT_PATH}"
+echo "[entry] Backend ROOT_DIR resolved to: ${ROOT_DIR}"
 
 # Resolve Python binary:
 # 1) Respect $PYTHON_BIN if already set.
-# 2) Otherwise prefer app virtualenvs if they exist.
-# 3) Fallback to whatever `python3`/`python` is on PATH.
-if [[ -z "${PYTHON_BIN:-}" ]]; then
-  if [[ -x "/app/.venv/bin/python" ]]; then
-    PYTHON_BIN="/app/.venv/bin/python"
-  elif [[ -x "/app/backend/.venv/bin/python" ]]; then
+# 2) Prefer project virtualenvs if they exist.
+# 3) Fall back to python3/python on PATH.
+if [ -z "${PYTHON_BIN:-}" ]; then
+  if [ -x "/app/backend/.venv/bin/python" ]; then
     PYTHON_BIN="/app/backend/.venv/bin/python"
+  elif [ -x "/app/.venv/bin/python" ]; then
+    PYTHON_BIN="/app/.venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
   else
-    PYTHON_BIN="$(command -v python3 || command -v python)"
+    echo "[entry] ERROR: Could not find a usable Python interpreter (python3/python)" >&2
+    exit 1
   fi
 fi
 
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "[entry] ERROR: PYTHON_BIN '$PYTHON_BIN' is not executable" >&2
+  exit 1
+fi
+
 echo "[entry] Using PYTHON_BIN=${PYTHON_BIN}"
+
+# Log which Python is actually running and whether core modules are available.
+"$PYTHON_BIN" - << 'EOF'
+import sys, importlib
+print("[entry] Python executable:", sys.executable)
+for mod in ("alembic", "uvicorn"):
+    try:
+        importlib.import_module(mod)
+        print(f"[entry] Python module available: {mod}")
+    except Exception as e:
+        print(f"[entry] WARNING: Python module missing: {mod} -> {e}")
+EOF
 
 export PYTHONUNBUFFERED=1
 echo "[entry] Starting backend service..."
 echo "[entry] PORT=${PORT:-8000}"
 echo "[entry] Database configured: ${DATABASE_URL:+yes}"
 
-# 0) Ensure Microsoft ODBC Driver 18 for SQL Server (msodbcsql18) is installed
+# 0) Ensure Microsoft ODBC Driver 18 for SQL Server (msodbcsql18) is installed.
 #    This is idempotent and safe to run on each container start.
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-${0}}")/.." && pwd)"
 SCRIPT_CANDIDATES=(
   "${ROOT_DIR}/scripts/install_msodbc18.sh"
   "/app/scripts/install_msodbc18.sh"
   "/scripts/install_msodbc18.sh"
 )
-if [[ "${INSTALL_MSODBC18:-1}" == "1" ]]; then
-  echo "[entry] Backend ROOT_DIR resolved to: ${ROOT_DIR}"
-
+if [ "${INSTALL_MSODBC18:-1}" = "1" ]; then
   # Resolve actual script path
   MSODBC_SCRIPT=""
   for candidate in "${SCRIPT_CANDIDATES[@]}"; do
-    if [[ -f "${candidate}" ]]; then
+    if [ -f "${candidate}" ]; then
       MSODBC_SCRIPT="${candidate}"
       break
     fi
   done
 
-  if [[ -z "${MSODBC_SCRIPT}" ]]; then
+  if [ -z "${MSODBC_SCRIPT}" ]; then
     echo "[entry] WARNING: install_msodbc18.sh not found in expected locations: ${SCRIPT_CANDIDATES[*]}" >&2
   else
     echo "[entry] Using msodbc install script: ${MSODBC_SCRIPT}"
@@ -52,7 +84,7 @@ if [[ "${INSTALL_MSODBC18:-1}" == "1" ]]; then
   if command -v odbcinst >/dev/null 2>&1 && odbcinst -q -d | grep -q "ODBC Driver 18 for SQL Server"; then
     echo "[entry] ODBC Driver 18 for SQL Server already installed."
   else
-    if [[ -n "${MSODBC_SCRIPT}" ]]; then
+    if [ -n "${MSODBC_SCRIPT}" ]; then
       echo "[entry] Installing Microsoft ODBC Driver 18 for SQL Server (msodbcsql18)..."
       if bash "${MSODBC_SCRIPT}"; then
         echo "[entry] msodbcsql18 install script completed successfully."
@@ -65,53 +97,52 @@ if [[ "${INSTALL_MSODBC18:-1}" == "1" ]]; then
   fi
 fi
 
-# 1) Миграции (можно временно выключить RUN_MIGRATIONS=0 в Railway Variables)
-if [[ "${RUN_MIGRATIONS:-1}" == "1" ]]; then
+# 1) Alembic migrations (can be disabled with RUN_MIGRATIONS=0 in Railway Variables).
+if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   echo "[entry] Checking Alembic state..."
-  cd /app
-  
+  cd /app/backend
+
   # Retry function for migrations with exponential backoff
   run_migrations_with_retry() {
-    local max_attempts=3
-    local attempt=1
-    local delay=2
-    
-    while [ $attempt -le $max_attempts ]; do
+    max_attempts=3
+    attempt=1
+    delay=2
+
+    while [ "$attempt" -le "$max_attempts" ]; do
       echo "[entry] Migration attempt $attempt/$max_attempts..."
-      
-      if "${PYTHON_BIN}" -m alembic upgrade heads; then
-        echo "[entry] ✅ Migrations completed successfully!"
+
+      if "$PYTHON_BIN" -m alembic upgrade heads; then
+        echo "[entry] Migrations completed successfully!"
         return 0
       else
-        if [ $attempt -lt $max_attempts ]; then
-          echo "[entry] ⚠️  Migration attempt $attempt failed, retrying in ${delay}s..."
-          sleep $delay
+        if [ "$attempt" -lt "$max_attempts" ]; then
+          echo "[entry] Migration attempt $attempt failed, retrying in ${delay}s..."
+          sleep "$delay"
           delay=$((delay * 2))  # Exponential backoff: 2s, 4s, 8s
         else
-          echo "[entry] ❌ All migration attempts failed, continuing anyway..."
+          echo "[entry] All migration attempts failed, continuing anyway..."
         fi
       fi
-      
+
       attempt=$((attempt + 1))
     done
-    
+
     return 1
   }
-  
+
   echo "[entry] alembic current before:"
-  "${PYTHON_BIN}" -m alembic current || echo "[entry] No current revision found"
+  "$PYTHON_BIN" -m alembic current || echo "[entry] No current revision found"
   echo "[entry] alembic heads:"
-  "${PYTHON_BIN}" -m alembic heads || echo "[entry] No heads found"
+  "$PYTHON_BIN" -m alembic heads || echo "[entry] No heads found"
   echo "[entry] Running migrations with retry logic..."
-  
+
   run_migrations_with_retry || {
     echo "[entry] WARNING: Migrations failed after retries, continuing anyway..."
   }
 fi
 
-# 2) Запуск приложения (exec — чтобы процесс не завершился после скрипта)
+# 2) Start the application (exec so the process stays attached to container lifecycle).
 echo "[entry] Starting uvicorn server..."
-exec "${PYTHON_BIN}" -m uvicorn app.main:app \
+exec "$PYTHON_BIN" -m uvicorn app.main:app \
   --host 0.0.0.0 --port "${PORT:-8000}" \
   --log-level debug --proxy-headers --forwarded-allow-ips="*"
-
