@@ -879,6 +879,14 @@ def _get_cases_data(
         except Exception:
             payload = {}
 
+        # Some legacy rows may store a primitive JSON value (e.g. a string) in
+        # the JSONB column. In that case json.loads(raw_payload) returns a
+        # plain str instead of a dict, and downstream .get calls would fail
+        # with AttributeError. Normalize to a dict so grid rendering is
+        # resilient to those rows.
+        if not isinstance(payload, dict):
+            payload = {}
+
         buyer_username = (
             payload.get("buyerUsername")
             or (payload.get("buyer") or {}).get("username")
