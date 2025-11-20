@@ -7,20 +7,9 @@ import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
 import FixedHeader from '@/components/FixedHeader';
 import apiClient from '../api/client';
+import DOMPurify from 'dompurify';
 
-interface ParsedThreadEntry {
-  // Backend fields (from parser)
-  author?: string | null;
-  direction: 'inbound' | 'outbound' | 'system' | string;
-  role?: 'buyer' | 'seller' | 'system' | 'other' | string;
-  text: string;
-  timestamp?: string | null;
-  // Optional, future-friendly fields from prompt spec
-  id?: string;
-  sentAt?: string;
-  fromName?: string;
-  toName?: string;
-}
+type Direction = 'inbound' | 'outbound' | 'system';
 
 interface ParsedOrder {
   orderNumber?: string;
@@ -45,11 +34,28 @@ interface ParsedBuyer {
   feedbackUrl?: string | null;
 }
 
-interface ParsedMessage {
-  buyer?: ParsedBuyer;
-  currentMessage?: ParsedThreadEntry | null;
-  history?: ParsedThreadEntry[];
+interface ParsedMessagePart {
+  id?: string;
+  direction: Direction | string;
+  text: string;
+  html?: string;
+  sentAt?: string; // ISO
+  fromName?: string;
+  toName?: string;
+  // Legacy fields from older parser (kept for backwards-compat)
+  author?: string | null;
+  role?: 'buyer' | 'seller' | 'system' | 'other' | string;
+  timestamp?: string | null;
+}
+
+interface ParsedBody {
   order?: ParsedOrder;
+  history?: ParsedMessagePart[];
+  currentMessage?: ParsedMessagePart | null;
+  previewText?: string;
+  richHtml?: string | null;
+  // Legacy extras from earlier parser
+  buyer?: ParsedBuyer;
   meta?: ParsedMeta;
   [key: string]: any;
 }
@@ -70,8 +76,8 @@ interface Message {
   message_date: string;
   order_id: string | null;
   listing_id: string | null;
-  // Parsed and normalized structure from backend (see ParsedMessage)
-  parsed_body?: ParsedMessage | null;
+  // Parsed and normalized structure from backend (see ParsedBody)
+  parsed_body?: ParsedBody | null;
   bucket?: 'offers' | 'cases' | 'ebay' | 'other';
 }
 
@@ -138,7 +144,7 @@ export const MessagesPage = () => {
   const [messageFolders, setMessageFolders] = useState<Record<string, string>>({});
   const [draggedMessageId, setDraggedMessageId] = useState<string | null>(null);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
-  const [showSource, setShowSource] = useState(false);
+  const [viewMode, setViewMode] = useState<'formatted' | 'plain' | 'source'>('formatted');
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [topHeightRatio, setTopHeightRatio] = useState(0.6);
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
@@ -189,9 +195,9 @@ export const MessagesPage = () => {
     loadStats();
   }, [selectedFolder, selectedBucket]);
 
-  // Reset source view when switching messages
+  // Reset view mode when switching messages
   useEffect(() => {
-    setShowSource(false);
+    setViewMode('formatted');
   }, [selectedMessage]);
 
   // Handle splitter drag events on window
@@ -458,8 +464,11 @@ export const MessagesPage = () => {
   };
 
   const getMessageSnippet = (message: Message): string => {
-    const parsedText = (message.parsed_body?.currentMessage?.text || '').trim();
-    let preview = parsedText || htmlToText(message.body || '');
+    const parsed = message.parsed_body;
+    let preview =
+      (parsed?.previewText && parsed.previewText.trim()) ||
+      (parsed?.currentMessage?.text && parsed.currentMessage.text.trim()) ||
+      htmlToText(message.body || '').trim();
 
     preview = preview.replace(/\s+/g, ' ').trim();
     const MAX_PREVIEW = 160;
@@ -825,13 +834,25 @@ export const MessagesPage = () => {
                         )}
                       </div>
                       <div className="flex flex-wrap gap-2 justify-end">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowSource((prev) => !prev)}
-                        >
-                          {showSource ? 'Hide source' : 'View source'}
-                        </Button>
+                        <div className="inline-flex rounded-md border bg-gray-50 overflow-hidden text-xs">
+                          {(
+                            [
+                              { key: 'formatted', label: 'Formatted' },
+                              { key: 'plain', label: 'Plain' },
+                              { key: 'source', label: 'Source' },
+                            ] as const
+                          ).map((m) => (
+                            <Button
+                              key={m.key}
+                              variant={viewMode === m.key ? 'secondary' : 'ghost'}
+                              size="sm"
+                              className="px-2 py-1 rounded-none first:rounded-l-md last:rounded-r-md border-0"
+                              onClick={() => setViewMode(m.key)}
+                            >
+                              {m.label}
+                            </Button>
+                          ))}
+                        </div>
                         <Button
                           variant="outline"
                           size="sm"
@@ -951,11 +972,15 @@ export const MessagesPage = () => {
                       </div>
                     )}
 
-                    {/* Thread view built from parsed_body.history + parsed_body.currentMessage */}
+                    {/* Thread view: formatted / plain / source modes */}
                     <div className="text-gray-800 text-sm">
-                      {selectedMessage.parsed_body &&
-                      ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
-                        selectedMessage.parsed_body.currentMessage) ? (
+                      {viewMode === 'source' ? (
+                        <pre className="max-h-80 overflow-auto text-xs bg-gray-50 p-2 rounded border border-gray-200">
+                          {selectedMessage.body}
+                        </pre>
+                      ) : selectedMessage.parsed_body &&
+                        ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
+                          selectedMessage.parsed_body.currentMessage) ? (
                         <div className="space-y-2">
                           {[...(selectedMessage.parsed_body.history || []),
                             ...(selectedMessage.parsed_body.currentMessage
@@ -981,6 +1006,19 @@ export const MessagesPage = () => {
                             const author = entry.fromName || entry.author;
                             const ts = entry.sentAt || entry.timestamp;
 
+                            const content = (() => {
+                              if (viewMode === 'formatted' && entry.html) {
+                                const safe = DOMPurify.sanitize(entry.html);
+                                return (
+                                  <div
+                                    className="prose prose-sm max-w-none"
+                                    dangerouslySetInnerHTML={{ __html: safe }}
+                                  />
+                                );
+                              }
+                              return renderTextWithLineBreaks(entry.text);
+                            })();
+
                             return (
                               <div key={entry.id || idx} className={`flex ${containerAlign}`}>
                                 <div
@@ -997,7 +1035,7 @@ export const MessagesPage = () => {
                                     </div>
                                   )}
                                   <div className="text-xs md:text-sm">
-                                    {renderTextWithLineBreaks(entry.text)}
+                                    {content}
                                   </div>
                                 </div>
                               </div>
@@ -1010,12 +1048,6 @@ export const MessagesPage = () => {
                         </div>
                       )}
                     </div>
-
-                    {showSource && (
-                      <pre className="mt-3 max-h-80 overflow-auto text-xs bg-gray-50 p-2 rounded border border-gray-200">
-                        {selectedMessage.body}
-                      </pre>
-                    )}
                   </div>
 
                   {(selectedMessage.order_id || selectedMessage.listing_id) && (
@@ -1130,13 +1162,25 @@ export const MessagesPage = () => {
                       )}
                     </div>
                     <div className="flex flex-wrap gap-2 justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowSource((prev) => !prev)}
-                      >
-                        {showSource ? 'Hide source' : 'View source'}
-                      </Button>
+                      <div className="inline-flex rounded-md border bg-gray-50 overflow-hidden text-xs">
+                        {(
+                          [
+                            { key: 'formatted', label: 'Formatted' },
+                            { key: 'plain', label: 'Plain' },
+                            { key: 'source', label: 'Source' },
+                          ] as const
+                        ).map((m) => (
+                          <Button
+                            key={m.key}
+                            variant={viewMode === m.key ? 'secondary' : 'ghost'}
+                            size="sm"
+                            className="px-2 py-1 rounded-none first:rounded-l-md last:rounded-r-md border-0"
+                            onClick={() => setViewMode(m.key)}
+                          >
+                            {m.label}
+                          </Button>
+                        ))}
+                      </div>
                       <Button
                         variant="default"
                         size="sm"
@@ -1238,9 +1282,13 @@ export const MessagesPage = () => {
                   )}
 
                   <div className="text-gray-800 text-sm">
-                    {selectedMessage.parsed_body &&
-                    ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
-                      selectedMessage.parsed_body.currentMessage) ? (
+                    {viewMode === 'source' ? (
+                      <pre className="max-h-80 overflow-auto text-xs bg-gray-50 p-2 rounded border border-gray-200">
+                        {selectedMessage.body}
+                      </pre>
+                    ) : selectedMessage.parsed_body &&
+                      ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
+                        selectedMessage.parsed_body.currentMessage) ? (
                       <div className="space-y-2">
                         {[...(selectedMessage.parsed_body.history || []),
                           ...(selectedMessage.parsed_body.currentMessage
@@ -1263,6 +1311,19 @@ export const MessagesPage = () => {
                           const author = entry.fromName || entry.author;
                           const ts = entry.sentAt || entry.timestamp;
 
+                          const content = (() => {
+                            if (viewMode === 'formatted' && entry.html) {
+                              const safe = DOMPurify.sanitize(entry.html);
+                              return (
+                                <div
+                                  className="prose prose-sm max-w-none"
+                                  dangerouslySetInnerHTML={{ __html: safe }}
+                                />
+                              );
+                            }
+                            return renderTextWithLineBreaks(entry.text);
+                          })();
+
                           return (
                             <div key={entry.id || idx} className={`flex ${containerAlign}`}>
                               <div
@@ -1279,7 +1340,7 @@ export const MessagesPage = () => {
                                   </div>
                                 )}
                                 <div className="text-xs md:text-sm">
-                                  {renderTextWithLineBreaks(entry.text)}
+                                  {content}
                                 </div>
                               </div>
                             </div>
@@ -1292,12 +1353,6 @@ export const MessagesPage = () => {
                       </div>
                     )}
                   </div>
-
-                  {showSource && (
-                    <pre className="mt-3 max-h-80 overflow-auto text-xs bg-gray-50 p-2 rounded border border-gray-200">
-                      {selectedMessage.body}
-                    </pre>
-                  )}
                 </div>
               </div>
 

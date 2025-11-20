@@ -4657,7 +4657,7 @@ class EbayService:
         from app.services.ebay_database import ebay_db
         from app.models_sqlalchemy import SessionLocal
         from app.models_sqlalchemy.models import Message as SqlMessage
-        from app.ebay.message_body_parser import parse_ebay_message_body
+        from app.services.message_parser import parse_ebay_message_html
         import time
 
         event_logger = SyncEventLogger(user_id, "messages", run_id=run_id)
@@ -4974,10 +4974,12 @@ class EbayService:
                             parsed_body = None
                             try:
                                 if body_html:
-                                    parsed_body = parse_ebay_message_body(
+                                    parsed = parse_ebay_message_html(
                                         body_html,
                                         our_account_username=ebay_user_id or "seller",
                                     )
+                                    # Store as plain JSON for the parsed_body JSONB column.
+                                    parsed_body = parsed.dict(exclude_none=True)
                             except Exception as parse_err:
                                 # Parsing errors should never break ingestion; log and continue.
                                 logger.warning(

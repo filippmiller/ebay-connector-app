@@ -288,6 +288,7 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
     try:
         from app.config import settings
         import asyncio
+        from app.services.message_parser import parse_ebay_message_html
         
         event_logger.log_start(f"Starting Messages sync from eBay ({settings.EBAY_ENVIRONMENT})")
         event_logger.log_info(f"API Configuration: Trading API (XML), message headers limit=200, bodies batch=10")
@@ -536,6 +537,20 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                             except Exception as e:
                                 logger.warning(f"Failed to parse date {receive_date_str}: {e}")
                         
+                        body_html = msg.get("text", "") or ""
+                        parsed_body = None
+                        try:
+                            if body_html:
+                                parsed = parse_ebay_message_html(
+                                    body_html,
+                                    our_account_username=recipient or "seller",
+                                )
+                                parsed_body = parsed.dict(exclude_none=True)
+                        except Exception as parse_err:
+                            logger.warning(
+                                f"Failed to parse eBay message body for {message_id}: {parse_err}"
+                            )
+
                         message = Message(
                             user_id=user_id,
                             message_id=message_id,
@@ -543,7 +558,7 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                             sender_username=sender,
                             recipient_username=recipient,
                             subject=msg.get("subject", ""),
-                            body=msg.get("text", ""),
+                            body=body_html,
                             message_type="MEMBER_MESSAGE",
                             is_read=msg.get("read", False),
                             is_flagged=msg.get("flagged", False),
@@ -552,7 +567,8 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                             message_date=message_date,
                             order_id=None,
                             listing_id=msg.get("itemid"),
-                            raw_data=str(msg)
+                            raw_data=str(msg),
+                            parsed_body=parsed_body,
                         )
                         db.add(message)
                         folder_stored += 1
