@@ -307,11 +307,16 @@ class EbayService:
     def get_authorization_url(self, redirect_uri: str, state: Optional[str] = None, scopes: Optional[List[str]] = None, environment: str = "production") -> str:
         """
         Generate eBay OAuth authorization URL.
-        
+
+        In normal flows, the `scopes` list is populated from the DB-backed
+        `ebay_scope_definitions` catalog by the /ebay/auth/start endpoint.
+        The hardcoded scope list below is used only as a last-resort fallback
+        when the caller passes an empty/None scopes list.
+
         Args:
-            redirect_uri: OAuth redirect URI
-            state: OAuth state parameter
-            scopes: List of OAuth scopes (if None, uses default)
+            redirect_uri: OAuth redirect URI (frontend callback URL, logged for diagnostics)
+            state: OAuth state parameter (opaque JSON for CSRF + metadata)
+            scopes: List of OAuth scopes. If empty/None, a conservative fallback list is applied.
             environment: 'sandbox' or 'production' (default: 'production')
         """
         # Temporarily set environment to get correct credentials
@@ -343,6 +348,9 @@ class EbayService:
                     detail="eBay RuName not configured"
                 )
             
+            # LAST-RESORT FALLBACK: if caller gave us no scopes at all, apply a minimal
+            # seller set so the flow can still succeed. Under normal circumstances
+            # /ebay/auth/start populates scopes from ebay_scope_definitions instead.
             if not scopes:
                 scopes = [
                     "https://api.ebay.com/oauth/api_scope",  # Base scope for Identity API (MUST be first)
@@ -350,9 +358,7 @@ class EbayService:
                     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",  # For Orders
                     "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
                     "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
-                    "https://api.ebay.com/oauth/api_scope/sell.postorder",  # For Post-Order cases (INR/SNAD)
                     "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription",  # For Notification API
-                    # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
                 ]
             
             # Ensure base scope is first (required for Identity API)

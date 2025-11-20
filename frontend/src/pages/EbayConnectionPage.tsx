@@ -17,15 +17,13 @@ import { SyncTerminal } from '../components/SyncTerminal';
 import { EbayDebugger } from '../components/EbayDebugger';
 import { EbayWorkersPanel } from '../components/workers/EbayWorkersPanel';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
-import { Link as LinkIcon, Loader2 } from 'lucide-react';
+import { Link as LinkIcon, Loader2, Copy } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
 
+// Fallback-only default scopes used when /ebay/scopes fails.
+// In normal flows, we always prefer the catalog from GET /ebay/scopes.
 const DEFAULT_SCOPES = [
   'https://api.ebay.com/oauth/api_scope',
-  'https://api.ebay.com/oauth/api_scope/sell.account',
-  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
-  'https://api.ebay.com/oauth/api_scope/sell.finances',
-  'https://api.ebay.com/oauth/api_scope/sell.inventory',
 ];
 
 export const EbayConnectionPage: React.FC = () => {
@@ -109,6 +107,11 @@ export const EbayConnectionPage: React.FC = () => {
   const [preflightScopes, setPreflightScopes] = useState<string[]>([]);
   const [extraScopesInput, setExtraScopesInput] = useState<string>('');
   const [preflightSubmitting, setPreflightSubmitting] = useState(false);
+
+  // Derived scope previews for the pre-flight modal
+  const baseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
+  const extraScopes = (extraScopesInput || '').trim().split(/\s+/).filter(Boolean);
+  const finalScopesPreview = Array.from(new Set([...baseScopes, ...extraScopes]));
 
   // Compact: collapse Connection Request Preview details by default
   const [showRequestPreview, setShowRequestPreview] = useState(false);
@@ -715,89 +718,231 @@ export const EbayConnectionPage: React.FC = () => {
               </Card>
 
               {/* Pre-flight Authorization Modal */}
-              <Dialog open={preflightOpen} onOpenChange={(o)=> { setPreflightOpen(o); if (!o) { setLoading(false); setPreflightSubmitting(false); } }}>
-                <DialogContent className="max-w-3xl max-h-[70vh] overflow-y-auto">
+              <Dialog
+                open={preflightOpen}
+                onOpenChange={(o)=> { setPreflightOpen(o); if (!o) { setLoading(false); setPreflightSubmitting(false); } }}
+              >
+                <DialogContent className="max-w-4xl w-full max-h-[80vh] flex flex-col">
                   <DialogHeader>
                     <DialogTitle>Review eBay Authorization Request</DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-4 text-sm">
-                    <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto whitespace-pre-wrap break-words">
-                      GET {preflightUrl}
-                    </div>
-                    <div>
-                      <div className="font-semibold mb-1">Scopes from URL</div>
-                      {preflightScopes.length > 0 ? (
-                        <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
-                          {preflightScopes.map((s,i)=> (
-                            <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50 break-all">{s}</span>
-                          ))}
+
+                  {/* Scrollable main content */}
+                  <div className="flex-1 overflow-y-auto space-y-4 text-sm">
+                    {/* Request overview */}
+                    <div className="border rounded-lg bg-white p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div>
+                          <h3 className="text-sm font-semibold mb-1">Request overview</h3>
+                          <p className="text-xs text-gray-500">
+                            This is the authorization request that will be sent to eBay. Sensitive values
+                            such as <code className="font-mono">client_id</code> and <code className="font-mono">state</code> are configured on the server.
+                          </p>
                         </div>
-                      ) : (
-                        <div className="text-gray-600">(none parsed)</div>
-                      )}
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={async () => {
+                            try {
+                              if (preflightUrl) {
+                                await navigator.clipboard.writeText(preflightUrl);
+                              }
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          title="Copy full URL"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+
+                      {/* Pretty query param view */}
+                      <ScrollArea className="max-h-32 rounded border bg-gray-50 p-3 text-xs font-mono">
+                        {(() => {
+                          try {
+                            const urlObj = preflightUrl ? new URL(preflightUrl) : null;
+                            const authBase = environment === 'production'
+                              ? 'https://auth.ebay.com/oauth2/authorize'
+                              : 'https://auth.sandbox.ebay.com/oauth2/authorize';
+                            const entries = urlObj ? Array.from(urlObj.searchParams.entries()) : [];
+                            const params: Record<string, string> = {};
+                            for (const [k, v] of entries) params[k] = v;
+
+                            const scopeCount = finalScopesPreview.length;
+                            const safeClientId = params.client_id ? '******** (configured server-side)' : 'configured server-side';
+                            const redirect = params.redirect_uri || '(configured server-side)';
+                            const statePreview = params.state && params.state.length > 80
+                              ? `${params.state.slice(0, 80)}…`
+                              : (params.state || '(generated server-side)');
+
+                            return (
+                              <div className="space-y-1">
+                                <div className="font-semibold text-gray-800 mb-1">
+                                  GET {authBase}
+                                </div>
+                                {params.response_type && (
+                                  <div>response_type: <span className="text-gray-900">{params.response_type}</span></div>
+                                )}
+                                <div>client_id: <span className="text-gray-900">{safeClientId}</span></div>
+                                <div>redirect_uri: <span className="text-gray-900 break-all">{redirect}</span></div>
+                                <div>
+                                  scope: <span className="text-gray-900">{scopeCount} scopes</span>{' '}
+                                  <span className="text-gray-500">(see sections below)</span>
+                                </div>
+                                <div>
+                                  state: <span className="text-gray-900 break-all">{statePreview}</span>
+                                </div>
+                              </div>
+                            );
+                          } catch {
+                            return (
+                              <div className="space-y-1">
+                                <div className="font-semibold text-gray-800 mb-1">
+                                  GET
+                                </div>
+                                <div className="break-all">{preflightUrl || '(no URL parsed)'}</div>
+                              </div>
+                            );
+                          }
+                        })()}
+                      </ScrollArea>
                     </div>
-                    <div>
-                      <div className="font-semibold mb-1">Additional scopes (space-separated)</div>
-                      <textarea
-                        className="w-full border rounded p-2 font-mono text-xs"
-                        rows={3}
-                        placeholder="Paste extra scopes here to request all whitelisted ones"
-                        value={extraScopesInput}
-                        onChange={(e)=> setExtraScopesInput(e.target.value)}
-                      />
-                      <div className="text-xs text-gray-500 mt-1">We’ll merge these with the current list and request them in one authorization.</div>
+
+                    {/* Scopes hierarchy */}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {/* Base scopes from catalog */}
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Base scopes from catalog</h3>
+                        <p className="text-xs text-gray-500">
+                          These scopes come from the catalog returned by <code className="font-mono">/ebay/scopes</code> and
+                          form the base of every seller connection.
+                        </p>
+                        <ScrollArea className="max-h-40 rounded border p-2 bg-slate-50">
+                          <div className="flex flex-wrap gap-1">
+                            {baseScopes.length > 0 ? (
+                              baseScopes.map((s) => (
+                                <span
+                                  key={s}
+                                  className="text-xs px-2 py-0.5 rounded border bg-white break-all"
+                                >
+                                  {s}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-gray-500">No base scopes available.</span>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </div>
+
+                      {/* Additional scopes input */}
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Additional scopes (optional)</h3>
+                        <p className="text-xs text-gray-500">
+                          Paste extra scopes here (space-separated). We’ll merge them with the base catalog
+                          scopes before redirecting to eBay.
+                        </p>
+                        <textarea
+                          className="w-full border rounded p-2 font-mono text-xs max-h-24"
+                          rows={3}
+                          placeholder="https://api.ebay.com/oauth/api_scope/some.new.scope https://..."
+                          value={extraScopesInput}
+                          onChange={(e)=> setExtraScopesInput(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Final scope set preview */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-sm font-semibold">Final scope set to be requested</h3>
+                        <span className="text-xs text-gray-600">
+                          Final scope set: <span className="font-semibold">{finalScopesPreview.length}</span>{' '}
+                          scopes will be requested.
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        This is the exact union of the base catalog scopes and any additional scopes you
+                        entered above. It is what will be sent when you proceed to eBay.
+                      </p>
+                      <ScrollArea className="max-h-40 rounded border p-2 bg-slate-100">
+                        <div className="flex flex-wrap gap-1">
+                          {finalScopesPreview.length > 0 ? (
+                            finalScopesPreview.map((s) => (
+                              <span
+                                key={s}
+                                className="text-xs px-2 py-0.5 rounded border bg-white break-all"
+                              >
+                                {s}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-gray-500">No scopes would be requested.</span>
+                          )}
+                        </div>
+                      </ScrollArea>
                     </div>
                   </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={()=> { setPreflightOpen(false); setLoading(false); setPreflightSubmitting(false); }}>Cancel</Button>
-                    <Button
-                      variant="outline"
-                      disabled={preflightSubmitting}
-                      onClick={async ()=> {
-                        try {
-                          setPreflightSubmitting(true);
-                          const redirectUri = `${window.location.origin}/ebay/callback`;
-                          const baseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
-                          const union = Array.from(new Set(baseScopes));
-                          const { data } = await api.post(
-                            `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
-                            { scopes: union },
-                          );
-                          setPreflightOpen(false);
-                          window.location.assign(data.authorization_url);
-                        } catch (e) {
-                          setLoading(false);
-                          setPreflightSubmitting(false);
-                        }
-                      }}
-                    >
-                      Request all my scopes
-                    </Button>
-                    <Button
-                      disabled={preflightSubmitting}
-                      onClick={async ()=> {
-                        try {
-                          setPreflightSubmitting(true);
-                          const redirectUri = `${window.location.origin}/ebay/callback`;
-                          const baseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
-                          const added = (extraScopesInput||'').trim().split(/\s+/).filter(Boolean);
-                          const union = added.length > 0
-                            ? Array.from(new Set([...baseScopes, ...added]))
-                            : Array.from(new Set(baseScopes));
-                          const { data } = await api.post(
-                            `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
-                            { scopes: union },
-                          );
-                          setPreflightOpen(false);
-                          window.location.assign(data.authorization_url);
-                        } catch (e) {
-                          setLoading(false);
-                          setPreflightSubmitting(false);
-                        }
-                      }}
-                    >
-                      {preflightSubmitting ? 'Redirecting…' : 'Proceed to eBay'}
-                    </Button>
+
+                  {/* Sticky footer */}
+                  <DialogFooter className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t pt-3">
+                    <div className="text-xs text-gray-500 sm:mr-4">
+                      We’ll open eBay with the final scope set shown above. You can review or copy the
+                      request details before proceeding.
+                    </div>
+                    <div className="flex gap-2 justify-end w-full sm:w-auto">
+                      <Button
+                        variant="outline"
+                        onClick={()=> { setPreflightOpen(false); setLoading(false); setPreflightSubmitting(false); }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={preflightSubmitting}
+                        onClick={async ()=> {
+                          try {
+                            setPreflightSubmitting(true);
+                            const redirectUri = `${window.location.origin}/ebay/callback`;
+                            const union = Array.from(new Set(baseScopes));
+                            const { data } = await api.post(
+                              `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+                              { scopes: union },
+                            );
+                            setPreflightOpen(false);
+                            window.location.assign(data.authorization_url);
+                          } catch (e) {
+                            setLoading(false);
+                            setPreflightSubmitting(false);
+                          }
+                        }}
+                      >
+                        Request all my scopes
+                      </Button>
+                      <Button
+                        disabled={preflightSubmitting}
+                        onClick={async ()=> {
+                          try {
+                            setPreflightSubmitting(true);
+                            const redirectUri = `${window.location.origin}/ebay/callback`;
+                            const union = finalScopesPreview;
+                            const { data } = await api.post(
+                              `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+                              { scopes: union },
+                            );
+                            setPreflightOpen(false);
+                            window.location.assign(data.authorization_url);
+                          } catch (e) {
+                            setLoading(false);
+                            setPreflightSubmitting(false);
+                          }
+                        }}
+                      >
+                        {preflightSubmitting ? 'Redirecting…' : 'Proceed to eBay'}
+                      </Button>
+                    </div>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>

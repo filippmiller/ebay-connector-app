@@ -18,32 +18,13 @@ depends_on = None
 
 
 SCOPES = [
-    # User consent grant scopes
+    # User consent grant scopes (canonical full seller set)
     {
         "scope": "https://api.ebay.com/oauth/api_scope",
-        "description": "View public data from eBay",
+        "description": "Base scope for Identity API and public data from eBay",
         "grant_type": "both",  # available for both user-consent and client-credentials
     },
-    {
-        "scope": "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
-        "description": "View your eBay marketing activities, such as ad campaigns and listing promotions",
-        "grant_type": "user",
-    },
-    {
-        "scope": "https://api.ebay.com/oauth/api_scope/sell.marketing",
-        "description": "View and manage your eBay marketing activities, such as ad campaigns and listing promotions",
-        "grant_type": "user",
-    },
-    {
-        "scope": "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
-        "description": "View your inventory and offers",
-        "grant_type": "user",
-    },
-    {
-        "scope": "https://api.ebay.com/oauth/api_scope/sell.inventory",
-        "description": "View and manage your inventory and offers",
-        "grant_type": "user",
-    },
+    # Account / seller profile
     {
         "scope": "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
         "description": "View your account settings",
@@ -54,6 +35,7 @@ SCOPES = [
         "description": "View and manage your account settings",
         "grant_type": "user",
     },
+    # Fulfillment, orders, and returns
     {
         "scope": "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
         "description": "View your order fulfillments",
@@ -65,20 +47,121 @@ SCOPES = [
         "grant_type": "user",
     },
     {
-        "scope": "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
-        "description": "View your selling analytics data, such as performance reports",
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.fulfillment.return.readonly",
+        "description": "View return-related fulfillment details",
+        "grant_type": "user",
+    },
+    # Buyer orders (read-only visibility for diagnostics)
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/buy.order.readonly",
+        "description": "View buyer orders in a read-only diagnostic context",
+        "grant_type": "user",
+    },
+    # Finances
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.finances.readonly",
+        "description": "View your payment and order-related financial information",
         "grant_type": "user",
     },
     {
         "scope": "https://api.ebay.com/oauth/api_scope/sell.finances",
-        "description": "View and manage your payment and order information to display this information to you and allow you to initiate refunds using the third party application",
+        "description": "View and manage your payment and order information, including initiating refunds",
+        "grant_type": "user",
+    },
+    # Payment disputes and cases
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.payment.dispute.readonly",
+        "description": "View payment disputes and related details",
         "grant_type": "user",
     },
     {
         "scope": "https://api.ebay.com/oauth/api_scope/sell.payment.dispute",
-        "description": "View and manage disputes and related details (including payment and order information)",
+        "description": "View and manage payment disputes and related details",
         "grant_type": "user",
     },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.case.readonly",
+        "description": "View case details (INR/SNAD, post-order cases)",
+        "grant_type": "user",
+    },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.case",
+        "description": "View and manage case details (INR/SNAD, post-order cases)",
+        "grant_type": "user",
+    },
+    # Inventory and offers
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
+        "description": "View your inventory and offers",
+        "grant_type": "user",
+    },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.inventory",
+        "description": "View and manage your inventory and offers",
+        "grant_type": "user",
+    },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.offer.readonly",
+        "description": "View your offers and their details",
+        "grant_type": "user",
+    },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.offer",
+        "description": "View and manage your offers",
+        "grant_type": "user",
+    },
+    # Marketing
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+        "description": "View your eBay marketing activities, such as ad campaigns and listing promotions",
+        "grant_type": "user",
+    },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.marketing",
+        "description": "View and manage your eBay marketing activities, such as ad campaigns and listing promotions",
+        "grant_type": "user",
+    },
+    # Analytics
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
+        "description": "View your selling analytics data, such as performance reports",
+        "grant_type": "user",
+    },
+    # Notifications
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription",
+        "description": "View and manage your event notification subscriptions",
+        "grant_type": "user",
+    },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription.readonly",
+        "description": "View your event notification subscriptions",
+        "grant_type": "user",
+    },
+    # Feedback
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/commerce.feedback",
+        "description": "Allows access to Feedback APIs.",
+        "grant_type": "user",
+    },
+    # Messaging (new commerce.messaging scopes)
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/commerce.messaging.readonly",
+        "description": "View your eBay messages and conversations",
+        "grant_type": "user",
+    },
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/commerce.messaging",
+        "description": "View and manage your eBay messages and conversations",
+        "grant_type": "user",
+    },
+    # Existing commerce.message scope (kept for backwards-compat or alternative APIs)
+    {
+        "scope": "https://api.ebay.com/oauth/api_scope/commerce.message",
+        "description": "Allows access to legacy or alternate eBay Message APIs.",
+        "grant_type": "user",
+    },
+    # Stores / reputation / identity / shipping / extras kept in catalog
     {
         "scope": "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
         "description": "View a user's basic information, such as username or business account details, from their eBay member account",
@@ -92,16 +175,6 @@ SCOPES = [
     {
         "scope": "https://api.ebay.com/oauth/api_scope/sell.reputation.readonly",
         "description": "View your reputation data, such as feedback",
-        "grant_type": "user",
-    },
-    {
-        "scope": "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription",
-        "description": "View and manage your event notification subscriptions",
-        "grant_type": "user",
-    },
-    {
-        "scope": "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription.readonly",
-        "description": "View your event notification subscriptions",
         "grant_type": "user",
     },
     {
@@ -130,21 +203,11 @@ SCOPES = [
         "grant_type": "user",
     },
     {
-        "scope": "https://api.ebay.com/oauth/api_scope/commerce.message",
-        "description": "Allows access to eBay Message APIs.",
-        "grant_type": "user",
-    },
-    {
-        "scope": "https://api.ebay.com/oauth/api_scope/commerce.feedback",
-        "description": "Allows access to Feedback APIs.",
-        "grant_type": "user",
-    },
-    {
         "scope": "https://api.ebay.com/oauth/api_scope/commerce.shipping",
         "description": "View and manage shipping information",
         "grant_type": "user",
     },
-    # Client credentials only scopes
+    # Client credentials only scopes (not requested via user-consent flows)
     {
         "scope": "https://api.ebay.com/oauth/api_scope/commerce.feedback.readonly",
         "description": "Allows readonly access to Feedback APIs.",

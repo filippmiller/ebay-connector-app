@@ -19,34 +19,9 @@ const FEATURE_TOKEN_INFO = (
   (typeof window !== 'undefined' && (localStorage.getItem('enable_token_info') === '1' || new URLSearchParams(window.location.search).get('tokeninfo') === '1'))
 );
 
-// Full set of whitelisted scopes provided by admin (base first)
-const MY_SCOPES: string[] = [
-  'https://api.ebay.com/oauth/api_scope',
-  'https://api.ebay.com/oauth/api_scope/sell.marketing.readonly',
-  'https://api.ebay.com/oauth/api_scope/sell.marketing',
-  'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
-  'https://api.ebay.com/oauth/api_scope/sell.inventory',
-  'https://api.ebay.com/oauth/api_scope/sell.account.readonly',
-  'https://api.ebay.com/oauth/api_scope/sell.account',
-  'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
-  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
-  'https://api.ebay.com/oauth/api_scope/sell.analytics.readonly',
-  'https://api.ebay.com/oauth/api_scope/sell.finances',
-  'https://api.ebay.com/oauth/api_scope/sell.payment.dispute',
-  'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
-  'https://api.ebay.com/oauth/api_scope/sell.reputation',
-  'https://api.ebay.com/oauth/api_scope/sell.reputation.readonly',
-  'https://api.ebay.com/oauth/api_scope/commerce.notification.subscription',
-  'https://api.ebay.com/oauth/api_scope/commerce.notification.subscription.readonly',
-  'https://api.ebay.com/oauth/api_scope/sell.stores',
-  'https://api.ebay.com/oauth/api_scope/sell.stores.readonly',
-  'https://api.ebay.com/oauth/scope/sell.edelivery',
-  'https://api.ebay.com/oauth/api_scope/commerce.vero',
-  'https://api.ebay.com/oauth/api_scope/sell.inventory.mapping',
-  'https://api.ebay.com/oauth/api_scope/commerce.message',
-  'https://api.ebay.com/oauth/api_scope/commerce.feedback',
-  'https://api.ebay.com/oauth/api_scope/commerce.shipping',
-];
+// Catalog-backed seller scope set is loaded dynamically from GET /ebay/scopes.
+// This replaces the previous hardcoded MY_SCOPES list so that all tools use
+// the same canonical scope catalog as /ebay/auth/start.
 import { Loader2, Play, Copy, Check } from 'lucide-react';
 
 interface DebugTemplate {
@@ -229,9 +204,12 @@ export const EbayDebugger: React.FC = () => {
   const [tokenInfoHistory, setTokenInfoHistory] = useState<TokenInfoHistoryEntry[]>([]);
   const [tokenInfoRequestLoading, setTokenInfoRequestLoading] = useState(false);
 
+  const [catalogScopes, setCatalogScopes] = useState<string[]>([]);
+
   useEffect(() => {
     loadTemplates();
     void loadAccounts();
+    void loadCatalogScopes();
     if (activeTab === 'debugger') {
       // Keep debugger terminal fresh, but keep controls compact
       void loadDebuggerLogs();
@@ -276,14 +254,18 @@ export const EbayDebugger: React.FC = () => {
   }, [environment, totalTestingMode]);
 
   // When reconnect modal opens or scopes change, pre-generate the authorization URL.
-  // IMPORTANT: always request the full whitelisted scope set, not just the minimal missing scopes,
-  // so that reconnect from the Debugger never "shrinks" the token to a narrower scope set.
+  // IMPORTANT: always request the full catalog-backed seller scope set, not just the
+  // minimal missing scopes, so that reconnect from the Debugger never "shrinks"
+  // the token to a narrower scope set.
   useEffect(() => {
     const gen = async () => {
       if (!showReconnect || reconnectScopes.length === 0) return;
       try {
+        const baseScopes = catalogScopes.length
+          ? catalogScopes
+          : ['https://api.ebay.com/oauth/api_scope'];
+        const union = Array.from(new Set([...(reconnectScopes || []), ...baseScopes]));
         const redirectUri = `${window.location.origin}/ebay/callback`;
-        const union = Array.from(new Set([...(reconnectScopes || []), ...MY_SCOPES]));
         const { data } = await api.post(
           `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
           { scopes: union },
@@ -294,7 +276,32 @@ export const EbayDebugger: React.FC = () => {
       }
     };
     void gen();
-  }, [showReconnect, reconnectScopes, environment]);
+  }, [showReconnect, reconnectScopes, environment, catalogScopes]);
+
+  const loadCatalogScopes = async () => {
+    try {
+      const res = await ebayApi.getAvailableScopes();
+      const scopes = (res.scopes || []).map((s) => s.scope);
+      setCatalogScopes(scopes);
+
+      // Cross-check that REQUIRED_SCOPES_BY_TEMPLATE are present in the catalog.
+      const missingByTemplate: Record<string, string[]> = {};
+      Object.entries(REQUIRED_SCOPES_BY_TEMPLATE).forEach(([tpl, required]) => {
+        const missing = required.filter((s) => !scopes.includes(s));
+        if (missing.length > 0) {
+          missingByTemplate[tpl] = missing;
+        }
+      });
+      if (Object.keys(missingByTemplate).length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn('Debugger REQUIRED_SCOPES_BY_TEMPLATE refers to scopes not present in catalog:', missingByTemplate);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load eBay scope catalog for debugger:', e);
+      setCatalogScopes([]);
+    }
+  };
 
   const loadAccounts = async () => {
     try {
@@ -1451,7 +1458,10 @@ export const EbayDebugger: React.FC = () => {
               <Button variant="outline" onClick={async ()=> {
                 try {
                   const redirectUri = `${window.location.origin}/ebay/callback`;
-                  const union = Array.from(new Set([...(reconnectScopes||[]), ...MY_SCOPES]));
+                  const baseScopes = catalogScopes.length
+                    ? catalogScopes
+                    : ['https://api.ebay.com/oauth/api_scope'];
+                  const union = Array.from(new Set([...(reconnectScopes||[]), ...baseScopes]));
                   const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
                   localStorage.setItem('ebay_oauth_environment', environment);
                   window.location.href = data.authorization_url;
