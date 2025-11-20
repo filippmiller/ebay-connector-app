@@ -78,7 +78,7 @@ export default function SKUPage() {
                 <div className="font-semibold text-gray-700 text-sm">Selected SKU details</div>
                 <div className="flex items-center gap-2">
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     disabled={typeof selectedRow.id !== 'number'}
                     onClick={handleOpenEditFromSelection}
