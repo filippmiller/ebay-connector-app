@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Date, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc, Table
+from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Date, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc, Table, inspect
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -373,24 +373,44 @@ try:
         Base.metadata,
         autoload_with=engine,
     )
+    # Inspect primary key constraint; this table currently has none defined
+    # at the database level, so we will treat the real "ID" column as the
+    # logical primary key for ORM purposes.
+    inspector = inspect(engine)
+    pk_info = inspector.get_pk_constraint(
+        tbl_parts_inventory_table.name,
+        schema=tbl_parts_inventory_table.schema,
+    )
+    pk_cols = list(pk_info.get("constrained_columns") or [])
+    if not pk_cols and "ID" in tbl_parts_inventory_table.c:
+        pk_cols = ["ID"]
 except NoSuchTableError:
     logger.warning(
         "tbl_parts_inventory not found in database; TblPartsInventory will be abstract in this environment",
     )
     tbl_parts_inventory_table = None
+    pk_cols = []
 
 
-if tbl_parts_inventory_table is not None:
+if tbl_parts_inventory_table is not None and pk_cols:
     class TblPartsInventory(Base):
-        """Supabase parts inventory table mapped to tbl_parts_inventory."""
+        """Supabase parts inventory table mapped to tbl_parts_inventory.
+
+        Uses the real numeric "ID" column (or DB-defined PK) as the mapper
+        primary key so SQLAlchemy can assemble a valid identity map even
+        though the legacy table lacks an explicit PRIMARY KEY constraint.
+        """
 
         __table__ = tbl_parts_inventory_table
+        __mapper_args__ = {
+            "primary_key": tuple(tbl_parts_inventory_table.c[col] for col in pk_cols),
+        }
 else:
     class TblPartsInventory(Base):
-        """Abstract placeholder when tbl_parts_inventory does not exist.
+        """Abstract placeholder when tbl_parts_inventory does not exist or lacks a usable PK.
 
-        Marked abstract so SQLAlchemy does not try to map a non-existent table
-        and the application can still start cleanly.
+        Marked abstract so SQLAlchemy does not try to map a non-existent or
+        unusable table and the application can still start cleanly.
         """
 
         __abstract__ = True
