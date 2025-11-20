@@ -19,7 +19,7 @@ import {
 import { Button } from '@/components/ui/button';
 import api from '@/lib/apiClient';
 import { useToast } from '@/hooks/use-toast';
-import { useSqDictionaries, type DictionariesResponse } from '@/hooks/useSqDictionaries';
+import { useSqDictionaries } from '@/hooks/useSqDictionaries';
 
 export type SkuFormMode = 'create' | 'edit';
 
