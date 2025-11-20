@@ -71,17 +71,32 @@ class EbayService:
         }
 
         # Structured logging for admin Notifications test endpoint.
-        # We intentionally do NOT log headers here to avoid leaking tokens.
+        # Authorization and any sensitive headers are redacted.
         if debug_log is not None:
             debug_log.append(f"[req] {method.upper()} {url}")
+            debug_log.append("[req] headers:")
+            masked_headers = {}
+            for k, v in headers.items():
+                lk = k.lower()
+                if lk == "authorization":
+                    masked = "***REDACTED***"
+                elif "secret" in lk or "token" in lk:
+                    masked = "***REDACTED***"
+                else:
+                    masked = v
+                masked_headers[k] = masked
+                debug_log.append(f"  {k}: {masked}")
+
+            debug_log.append("[req] body:")
             if json_body is not None:
                 try:
                     body_str = json.dumps(json_body, indent=2, sort_keys=True)
                 except Exception:
                     body_str = str(json_body)
-                if len(body_str) > 4000:
-                    body_str = body_str[:4000] + "... (truncated)"
-                debug_log.append(f"[req] body: {body_str}")
+                for line in body_str.splitlines() or [""]:
+                    debug_log.append(f"  {line}")
+            else:
+                debug_log.append("  <no body>")
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -100,14 +115,34 @@ class EbayService:
             body = resp.text
 
         if debug_log is not None:
-            debug_log.append(f"[res] status={resp.status_code}")
-            try:
-                pretty = json.dumps(body, indent=2, sort_keys=True) if isinstance(body, (dict, list)) else str(body)
-            except Exception:
-                pretty = str(body)
-            if len(pretty) > 4000:
-                pretty = pretty[:4000] + "... (truncated)"
-            debug_log.append(f"[res] body: {pretty}")
+            debug_log.append(f"[res] status: {resp.status_code}")
+            # Response headers (with any sensitive values redacted)
+            debug_log.append("[res] headers:")
+            resp_headers = {}
+            for k, v in resp.headers.items():
+                lk = k.lower()
+                if lk == "set-cookie" or "token" in lk or "authorization" in lk:
+                    masked = "***REDACTED***"
+                else:
+                    masked = v
+                resp_headers[k] = masked
+                debug_log.append(f"  {k}: {masked}")
+
+            # Response body
+            debug_log.append("[res] body:")
+            if isinstance(body, (dict, list)):
+                try:
+                    pretty = json.dumps(body, indent=2, sort_keys=True)
+                except Exception:
+                    pretty = str(body)
+            else:
+                # Non-JSON body; best-effort text representation
+                try:
+                    pretty = str(body)
+                except Exception:
+                    pretty = f"<non-text body of type {type(body).__name__}>"
+            for line in pretty.splitlines() or [""]:
+                debug_log.append(f"  {line}")
 
         if 200 <= resp.status_code < 300:
             return resp

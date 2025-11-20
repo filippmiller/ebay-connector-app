@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ebayApi, type AdminEbayEvent, type AdminEbayEventDetail, type NotificationsStatus } from '../api/ebay';
+import { ebayApi, type AdminEbayEvent, type AdminEbayEventDetail, type NotificationsStatus, type NotificationAccountInfo, type TestNotificationResponse } from '../api/ebay';
 import { useAuth } from '@/auth/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -52,6 +52,9 @@ export default function EbayNotificationsPage() {
   const [recentErrorCount, setRecentErrorCount] = useState(0);
   // Diagnostics log (status + test button) shown in terminal panel
   const [diagLog, setDiagLog] = useState<string[]>([]);
+  // Full verbose logs for the last Test notification call
+  const [testLogs, setTestLogs] = useState<string[]>([]);
+  const [testAccount, setTestAccount] = useState<NotificationAccountInfo | null>(null);
 
   // Webhook / Notification API status
   const [statusInfo, setStatusInfo] = useState<NotificationsStatus | null>(null);
@@ -233,6 +236,14 @@ export default function EbayNotificationsPage() {
                       <span className="ml-1 text-[10px] opacity-80">({statusInfo.reason})</span>
                     )}
                   </span>
+                  {statusInfo.account && (
+                    <div className="text-[11px] text-gray-600">
+                      Using eBay account: <span className="font-mono text-gray-900">{statusInfo.account.username || statusInfo.account.id}</span>
+                      {statusInfo.account.environment && (
+                        <span className="ml-1 text-gray-500">({statusInfo.account.environment})</span>
+                      )}
+                    </div>
+                  )}
                   {statusInfo.notificationError && (
                     <button
                       type="button"
@@ -249,7 +260,15 @@ export default function EbayNotificationsPage() {
                 size="sm"
                 onClick={async () => {
                   try {
-                    const resp = await ebayApi.testMarketplaceDeletionNotification();
+                    const resp: TestNotificationResponse = await ebayApi.testMarketplaceDeletionNotification();
+                    if (resp.account) {
+                      setTestAccount(resp.account);
+                    }
+                    if (Array.isArray(resp.logs)) {
+                      setTestLogs(resp.logs);
+                    } else {
+                      setTestLogs([]);
+                    }
                     if (!resp.ok) {
                       const nErr = resp.notificationError;
                       const nErrText = resp.errorSummary
@@ -299,25 +318,32 @@ export default function EbayNotificationsPage() {
                     void fetchEvents(0);
                     void loadStatus();
                   } catch (e: any) {
-                    const data = e?.response?.data;
-                    const nErr = data?.notificationError;
-                    const nErrText = data?.errorSummary
+                    const data: TestNotificationResponse | undefined = e?.response?.data;
+                    if (data?.account) {
+                      setTestAccount(data.account);
+                    }
+                    if (Array.isArray(data?.logs)) {
+                      setTestLogs(data.logs!);
+                    }
+                    const dataAny = data as any;
+                    const nErr = dataAny?.notificationError;
+                    const nErrText = dataAny?.errorSummary
                       || (nErr?.message
                         ? `Notification API ${nErr.status_code ?? ''} – ${nErr.message}`
                         : undefined);
-                    const diag = data?.errorSummary
-                      || data?.message
+                    const diag = dataAny?.errorSummary
+                      || dataAny?.message
                       || nErrText
-                      || data?.reason
+                      || dataAny?.reason
                       || e?.message
                       || 'Unknown error';
                     appendDiag(`[test] FAILED ${diag}`);
                     toast({
                       title: 'Test notification failed',
                       description:
-                        data?.message ||
+                        dataAny?.message ||
                         nErrText ||
-                        data?.reason ||
+                        dataAny?.reason ||
                         e?.message ||
                         'Unknown error',
                       variant: 'destructive',
@@ -708,6 +734,42 @@ export default function EbayNotificationsPage() {
                   )}
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Notification API debug log for last Test notification */}
+          <Card className="mt-4">
+            <CardHeader className="py-2 px-4 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle className="text-sm">Notification API debug log (last test)</CardTitle>
+                <CardDescription className="text-xs text-gray-600">
+                  Full request/response conversation with eBay for the most recent Test notification.
+                </CardDescription>
+              </div>
+              {testAccount && (
+                <div className="text-[11px] text-gray-600">
+                  Account:{' '}
+                  <span className="font-mono text-gray-900">
+                    {testAccount.username || testAccount.id}
+                  </span>
+                  {testAccount.environment && (
+                    <span className="ml-1 text-gray-500">({testAccount.environment})</span>
+                  )}
+                </div>
+              )}
+            </CardHeader>
+            <CardContent className="pt-0 pb-3 px-4">
+              <ScrollArea className="h-72 w-full rounded border bg-black text-gray-100 p-3 font-mono text-[11px]">
+                {testLogs && testLogs.length > 0 ? (
+                  <pre className="whitespace-pre-wrap break-words">
+                    {testLogs.join('\n')}
+                  </pre>
+                ) : (
+                  <div className="text-gray-500 text-xs">
+                    No test logs yet. Click "Test notification" to see full Notification API request/response.
+                  </div>
+                )}
+              </ScrollArea>
             </CardContent>
           </Card>
 

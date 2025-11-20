@@ -48,6 +48,12 @@ export interface AdminEbayEventDetail extends AdminEbayEvent {
   payload: any;
 }
 
+export interface NotificationAccountInfo {
+  id: string;
+  username?: string | null;
+  environment?: string | null;
+}
+
 export interface NotificationsStatus {
   environment: string;
   webhookUrl: string | null;
@@ -72,6 +78,27 @@ export interface NotificationsStatus {
     body?: any;
     [key: string]: any;
   } | null;
+  account?: NotificationAccountInfo | null;
+}
+
+export interface TestNotificationResponse {
+  ok: boolean;
+  environment: string;
+  destinationId?: string;
+  subscriptionId?: string;
+  message?: string;
+  reason?: string;
+  webhookUrl?: string;
+  errorSummary?: string;
+  notificationError?: {
+    status_code?: number;
+    message?: string;
+    body?: any;
+    [key: string]: any;
+  } | null;
+  error?: string;
+  logs?: string[];
+  account?: NotificationAccountInfo | null;
 }
 
 export const ebayApi = {
@@ -231,24 +258,8 @@ export const ebayApi = {
     return response.data;
   },
 
-  async testMarketplaceDeletionNotification(): Promise<{
-    ok: boolean;
-    environment: string;
-    destinationId?: string;
-    subscriptionId?: string;
-    message: string;
-    reason?: string;
-    webhookUrl?: string;
-    errorSummary?: string;
-    notificationError?: {
-      status_code?: number;
-      message?: string;
-      body?: any;
-      [key: string]: any;
-    } | null;
-    logs?: string[];
-  }> {
-    const response = await apiClient.post(
+  async testMarketplaceDeletionNotification(): Promise<TestNotificationResponse> {
+    const response = await apiClient.post<TestNotificationResponse>(
       '/api/admin/notifications/test-marketplace-deletion',
       {},
     );

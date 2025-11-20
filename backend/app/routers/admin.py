@@ -629,7 +629,14 @@ async def get_notifications_status(
             "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
+            "account": None,
         }
+
+    account_info = {
+        "id": str(account.id),
+        "username": account.username or account.ebay_user_id,
+        "environment": env,
+    }
 
     token: Optional[EbayToken] = (
         db.query(EbayToken)
@@ -649,6 +656,7 @@ async def get_notifications_status(
             "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
+            "account": account_info,
         }
 
     access_token = token.access_token
@@ -709,6 +717,7 @@ async def get_notifications_status(
             "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
+            "account": account_info,
         }
 
     # Recent events for this topic in the last 24h
@@ -788,6 +797,7 @@ async def get_notifications_status(
         "verificationStatus": verification_status,
         "recentEvents": {"count": recent_count, "lastEventTime": last_event_time},
         "checkedAt": checked_at,
+        "account": account_info,
     }
 
 
@@ -849,6 +859,11 @@ async def test_marketplace_account_deletion_notification(
             "reason": "no_access_token",
             "message": "No eBay access token available for the selected account.",
             "environment": env,
+            "account": {
+                "id": str(account.id),
+                "username": account.username or account.ebay_user_id,
+                "environment": env,
+            },
         }
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
 
@@ -865,6 +880,11 @@ async def test_marketplace_account_deletion_notification(
 
     topic_id = "MARKETPLACE_ACCOUNT_DELETION"
     debug_log: list[str] = []
+    account_info = {
+        "id": str(account.id),
+        "username": account.username or account.ebay_user_id,
+        "environment": env,
+    }
     try:
         logger.info(
             "[notifications:test] Ensuring destination for account_id=%s username=%s",
@@ -932,16 +952,21 @@ async def test_marketplace_account_deletion_notification(
             "notificationError": notification_error,
             "errorSummary": error_summary,
             "logs": debug_log,
+            "account": account_info,
+            "error": error_summary,
         }
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
     except Exception as exc:  # pragma: no cover - defensive catch-all
         logger.error("[notifications:test] Unexpected error during notification test", exc_info=True)
+        message = f"Unexpected error: {type(exc).__name__}: {exc}"
         payload = {
             "ok": False,
             "reason": "unexpected_error",
-            "message": f"Unexpected error: {type(exc).__name__}: {exc}",
+            "message": message,
             "environment": env,
             "webhookUrl": endpoint_url,
+            "account": account_info,
+            "error": message,
         }
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=payload)
 
@@ -953,4 +978,5 @@ async def test_marketplace_account_deletion_notification(
         "message": "Test notification requested; check ebay_events and Notifications UI.",
         "notificationTest": test_result,
         "logs": debug_log,
+        "account": account_info,
     }
