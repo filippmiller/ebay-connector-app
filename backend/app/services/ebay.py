@@ -137,10 +137,12 @@ class EbayService:
 
         body = {
             "name": "OneMillionParts Notifications",
+            "status": "ENABLED",
             "deliveryConfig": {
                 "endpoint": endpoint_url,
                 "verificationToken": verification_token,
                 "protocol": "HTTPS",
+                "payloadFormat": "JSON",
             },
         }
 
