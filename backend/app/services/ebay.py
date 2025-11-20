@@ -143,6 +143,9 @@ class EbayService:
                 "verificationToken": verification_token,
                 "protocol": "HTTPS",
                 "payloadFormat": "JSON",
+                # Some variants of the Notifications API expect status on the deliveryConfig as well.
+                # Including it here is harmless and satisfies both shapes.
+                "status": "ENABLED",
             },
         }
 
