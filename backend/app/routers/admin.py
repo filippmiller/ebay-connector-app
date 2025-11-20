@@ -915,6 +915,24 @@ async def test_marketplace_account_deletion_notification(
         sub_id = sub.get("subscriptionId") or sub.get("id")
         logger.info("[notifications:test] Subscription ready id=%s status=%s", sub_id, sub.get("status"))
 
+        if not sub_id:
+            msg = (
+                "Subscription was created or retrieved but subscriptionId is missing; "
+                "cannot invoke Notification API test for MARKETPLACE_ACCOUNT_DELETION."
+            )
+            logger.error("[notifications:test] %s", msg)
+            debug_log.append(f"[subscription] ERROR: {msg}")
+            payload = {
+                "ok": False,
+                "reason": "no_subscription_id",
+                "message": msg,
+                "environment": env,
+                "webhookUrl": endpoint_url,
+                "logs": debug_log,
+                "account": account_info,
+            }
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
         test_result = await ebay_service.test_notification_subscription(
             app_access_token,
             sub_id,

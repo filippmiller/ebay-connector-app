@@ -359,15 +359,83 @@ class EbayService:
                 json_body=body,
                 debug_log=debug_log,
             )
+
+            created_sub: Dict[str, Any] | None = None
+            sub_id: Optional[str] = None
+
+            # First, try to read subscriptionId from the JSON body (if any).
             try:
-                created_sub = create_resp.json() or {}
+                body_json = create_resp.json() or {}
+                if isinstance(body_json, dict):
+                    created_sub = body_json
+                    sub_id = (
+                        body_json.get("subscriptionId")
+                        or body_json.get("id")
+                    )
             except Exception:
-                created_sub = {
-                    "topicId": topic_id,
-                    "destinationId": destination_id,
-                    "status": "ENABLED",
-                }
-            return created_sub
+                # Some variants of the API may return 201 + empty body.
+                created_sub = None
+
+            # If subscriptionId was not present in the body, try the Location header.
+            if not sub_id:
+                location = create_resp.headers.get("location") or create_resp.headers.get("Location")
+                if location:
+                    # Expected shape: .../subscription/{id}
+                    try:
+                        sub_id = location.rstrip("/").split("/")[-1]
+                        if debug_log is not None:
+                            debug_log.append(
+                                f"[subscription] Parsed subscriptionId from Location header: {sub_id}",
+                            )
+                    except Exception:
+                        sub_id = None
+
+            # If we have a subscriptionId, ensure the returned object carries it.
+            if sub_id:
+                if created_sub is None or not isinstance(created_sub, dict):
+                    created_sub = {}
+                created_sub.setdefault("subscriptionId", sub_id)
+                created_sub.setdefault("id", sub_id)
+                created_sub.setdefault("topicId", topic_id)
+                created_sub.setdefault("destinationId", destination_id)
+                created_sub.setdefault("status", "ENABLED")
+                return created_sub
+
+            # Last resort: re-fetch subscriptions and pick the one matching topic+destination.
+            if debug_log is not None:
+                debug_log.append(
+                    "[subscription] Could not determine subscriptionId from create response; refetching list",
+                )
+            refetch_resp = await self._notification_api_request(
+                "GET",
+                "/commerce/notification/v1/subscription",
+                sub_token,
+                debug_log=debug_log,
+            )
+            try:
+                refetch_json = refetch_resp.json() or {}
+            except Exception:
+                refetch_json = {}
+            refetch_subs = refetch_json.get("subscriptions") or []
+            for sub in refetch_subs:
+                if sub.get("topicId") == topic_id and sub.get("destinationId") == destination_id:
+                    return sub
+
+            # If we still do not have a subscription object, surface a clear error
+            # instead of returning a dict without subscriptionId.
+            msg = (
+                "Notification API created a subscription but subscriptionId could not "
+                "be resolved from the response or subsequent list call."
+            )
+            if debug_log is not None:
+                debug_log.append(f"[subscription] ERROR: {msg}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "message": msg,
+                    "status_code": 500,
+                },
+            )
 
         # Ensure it is enabled / up to date
         sub_id = existing.get("subscriptionId") or existing.get("id")
