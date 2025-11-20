@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Dat
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.exc import NoSuchTableError
 from datetime import datetime
 import enum
 import uuid
@@ -369,16 +370,31 @@ class TblPartsInventory(Base):
     This maps to the Supabase/Postgres table "tbl"."parts__inventory" and
     reflects all columns at runtime from the live database schema so that
     the application always stays in sync with the real table definition.
+
+    In environments where that schema/table is not present (e.g. lightweight
+    Railway deployments), we fall back to a minimal placeholder definition so
+    that Alembic and metadata imports do not crash with NoSuchTableError.
     """
 
-    __table__ = Table(
-        "parts__inventory",
-        Base.metadata,
-        schema="tbl",
-        autoload_with=engine,
-    )
+    __tablename__ = "parts__inventory"
 
-
+    try:
+        __table__ = Table(
+            "parts__inventory",
+            Base.metadata,
+            schema="tbl",
+            autoload_with=engine,
+        )
+    except NoSuchTableError:
+        # Define a minimal placeholder table; application code that actually
+        # depends on the real legacy table should not run in environments
+        # where it does not exist.
+        __table__ = Table(
+            "parts__inventory",
+            Base.metadata,
+            Column("id", Integer, primary_key=True),
+            schema="tbl",
+        )
 class SqItem(Base):
     """SQ catalog item mapped to the canonical `SKU_catalog` table.
 
