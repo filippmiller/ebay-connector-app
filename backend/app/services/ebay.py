@@ -1027,9 +1027,14 @@ class EbayService:
             settings.EBAY_ENVIRONMENT = original_env
 
     def save_user_tokens(
+        self,
+        user_id: str,
+        token_response: EbayTokenResponse,
+        environment: Optional[str] = None,
+    ) -> None:
         """
         Save eBay tokens to user record based on environment.
-        
+
         Args:
             user_id: User ID
             token_response: Token response from eBay
@@ -1037,14 +1042,14 @@ class EbayService:
         """
         env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
         expires_at = datetime.utcnow() + timedelta(seconds=token_response.expires_in)
-        
+
         if env == "sandbox":
             updates = {
                 "ebay_connected": True,
                 "ebay_sandbox_access_token": token_response.access_token,
                 "ebay_sandbox_refresh_token": token_response.refresh_token,
                 "ebay_sandbox_token_expires_at": expires_at,
-                "ebay_environment": env
+                "ebay_environment": env,
             }
         else:
             updates = {
@@ -1052,21 +1057,21 @@ class EbayService:
                 "ebay_access_token": token_response.access_token,
                 "ebay_refresh_token": token_response.refresh_token,
                 "ebay_token_expires_at": expires_at,
-                "ebay_environment": env
+                "ebay_environment": env,
             }
-        
+
         db.update_user(user_id, updates)
-        
+
         ebay_logger.log_ebay_event(
             "user_tokens_saved",
             f"Saved eBay tokens for user {user_id}",
             request_data={
                 "user_id": user_id,
-                "expires_at": expires_at.isoformat()
+                "expires_at": expires_at.isoformat(),
             },
-            status="success"
+            status="success",
         )
-        
+
         logger.info(f"Saved eBay tokens for user: {user_id}")
     
     async def fetch_orders(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
