@@ -900,6 +900,12 @@ async def test_marketplace_account_deletion_notification(
         dest_id = dest.get("destinationId") or dest.get("id")
         logger.info("[notifications:test] Destination ready id=%s", dest_id)
 
+        # For MARKETPLACE_ACCOUNT_DELETION (APPLICATION-scope topic), use an
+        # application access token (client_credentials) for subscription and
+        # test calls, per eBay Notification API requirements.
+        app_access_token = await ebay_service.get_app_access_token()
+        debug_log.append("[token] Using eBay application access token (client_credentials) for subscription + test")
+
         sub = await ebay_service.ensure_notification_subscription(
             access_token,
             dest_id,
@@ -910,7 +916,7 @@ async def test_marketplace_account_deletion_notification(
         logger.info("[notifications:test] Subscription ready id=%s status=%s", sub_id, sub.get("status"))
 
         test_result = await ebay_service.test_notification_subscription(
-            access_token,
+            app_access_token,
             sub_id,
             debug_log=debug_log,
         )

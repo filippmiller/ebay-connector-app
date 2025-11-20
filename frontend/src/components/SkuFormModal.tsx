@@ -19,50 +19,7 @@ import {
 import { Button } from '@/components/ui/button';
 import api from '@/lib/apiClient';
 import { useToast } from '@/hooks/use-toast';
-
-interface InternalCategoryDto {
-  id: number;
-  code: string;
-  label: string;
-}
-
-interface ShippingGroupDto {
-  id: number;
-  code: string;
-  label: string;
-}
-
-interface ConditionDto {
-  id: number;
-  code: string;
-  label: string;
-}
-
-interface ListingTypeDto {
-  code: string;
-  label: string;
-}
-
-interface ListingDurationDto {
-  code: string;
-  label: string;
-  days: number | null;
-}
-
-interface SiteDto {
-  code: string;
-  label: string;
-  site_id: number;
-}
-
-interface DictionariesResponse {
-  internal_categories: InternalCategoryDto[];
-  shipping_groups: ShippingGroupDto[];
-  conditions: ConditionDto[];
-  listing_types: ListingTypeDto[];
-  listing_durations: ListingDurationDto[];
-  sites: SiteDto[];
-}
+import { useSqDictionaries, type DictionariesResponse } from '@/hooks/useSqDictionaries';
 
 export type SkuFormMode = 'create' | 'edit';
 
@@ -162,8 +119,7 @@ const EMPTY_FORM: SkuFormState = {
 export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormModalProps) {
   const { toast } = useToast();
 
-  const [dictionaries, setDictionaries] = useState<DictionariesResponse | null>(null);
-  const [loadingDictionaries, setLoadingDictionaries] = useState(false);
+  const { data: dictionaries, loading: dictionariesLoading, error: dictionariesError } = useSqDictionaries();
   const [loadingItem, setLoadingItem] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<SkuFormState>(EMPTY_FORM);
@@ -176,31 +132,12 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     [form.conditionDescription],
   );
 
-  // Load dictionaries once when the modal is first opened.
+  // Surface dictionary loading errors via toast once when the modal opens.
   useEffect(() => {
     if (!open) return;
-    if (dictionaries || loadingDictionaries) return;
-
-    const load = async () => {
-      try {
-        setLoadingDictionaries(true);
-        const resp = await api.get<DictionariesResponse>('/api/sq/dictionaries');
-        setDictionaries(resp.data);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (e: any) {
-        // Keep the UI usable even if dictionaries fail, but surface the error.
-        toast({
-          title: 'Failed to load SKU dictionaries',
-          description: String(e?.response?.data?.detail || e.message || e),
-          variant: 'destructive',
-        });
-      } finally {
-        setLoadingDictionaries(false);
-      }
-    };
-
-    void load();
-  }, [open, dictionaries, loadingDictionaries, toast]);
+    if (!dictionariesError) return;
+    toast({ title: 'Failed to load SQ dictionaries', description: dictionariesError, variant: 'destructive' });
+  }, [open, dictionariesError, toast]);
 
   // Reset / prefill form when modal mode or target changes.
   useEffect(() => {
@@ -290,8 +227,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
   const conditionOptions = dictionaries?.conditions ?? [];
   const defaultUsedConditionId = useMemo(() => {
+    if (!conditionOptions.length) return '';
     const used = conditionOptions.find((c) => c.code.toUpperCase() === 'USED');
-    return used?.id != null ? String(used.id) : conditionOptions[0]?.id != null ? String(conditionOptions[0].id) : '';
+    return used?.id != null ? String(used.id) : String(conditionOptions[0].id);
   }, [conditionOptions]);
 
   // Ensure we always have a condition default in create mode once dictionaries load.
@@ -451,7 +389,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     }
   };
 
-  const disabled = saving || loadingDictionaries || (mode === 'edit' && loadingItem);
+  const disabled = saving || dictionariesLoading || (mode === 'edit' && loadingItem);
 
   return (
     <Dialog
@@ -460,7 +398,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
         if (!nextOpen) onClose();
       }}
     >
-      <DialogContent className="max-w-5xl w-full max-h-[90vh] flex flex-col">
+      <DialogContent className="max-w-5xl max-w-[95vw] w-full max-h-[90vh] min-w-[720px] min-h-[420px] flex flex-col resize-both overflow-auto">
         <DialogHeader>
           <DialogTitle>{mode === 'create' ? 'Create SKU' : 'Edit SKU'}</DialogTitle>
           <DialogDescription>
@@ -469,16 +407,16 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto pr-1 space-y-4 text-xs">
+        <div className="flex-1 overflow-y-auto pr-1 space-y-3 text-xs">
           {/* Title & Model */}
-          <section className="border rounded-md p-3 space-y-2 bg-gray-50/60">
+          <section className="border rounded-md p-2.5 space-y-1.5 bg-gray-50/60">
             <div className="flex items-center justify-between gap-2">
               <h3 className="font-semibold text-sm">Title &amp; Model</h3>
               <span className="text-[11px] text-gray-500">
                 {titleRemaining} characters left
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div className="md:col-span-2">
                 <label className="block text-[11px] font-medium mb-1">Title *</label>
                 <Input
@@ -504,9 +442,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* SKU & Category */}
-          <section className="border rounded-md p-3 space-y-3">
+          <section className="border rounded-md p-2.5 space-y-2">
             <h3 className="font-semibold text-sm">SKU &amp; Category</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-medium">SKU</label>
                 <div className="flex items-center gap-2">
@@ -561,7 +499,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                       onValueChange={(value) => handleChange('internalCategoryCode', value)}
                     >
                       <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder={loadingDictionaries ? 'Loading…' : 'Select category'} />
+                        <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select category'} />
                       </SelectTrigger>
                       <SelectContent>
                         {(dictionaries?.internal_categories || []).map((c) => (
@@ -607,9 +545,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Images */}
-          <section className="border rounded-md p-3 space-y-2">
+          <section className="border rounded-md p-2.5 space-y-1.5">
             <h3 className="font-semibold text-sm">Images (Pic#1–Pic#12)</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5">
               {form.pics.map((value, idx) => (
                 <div key={idx} className="space-y-1">
                   <label className="text-[11px] font-medium block">Pic#{idx + 1}</label>
@@ -625,9 +563,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Shipping */}
-          <section className="border rounded-md p-3 space-y-3">
+          <section className="border rounded-md p-2.5 space-y-2">
             <h3 className="font-semibold text-sm">Shipping</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div>
                 <label className="text-[11px] font-medium mb-1 block">Shipping group *</label>
                 <Select
@@ -635,7 +573,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   onValueChange={(value) => handleChange('shippingGroupCode', value)}
                 >
                   <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder={loadingDictionaries ? 'Loading…' : 'Select group'} />
+                    <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select group'} />
                   </SelectTrigger>
                   <SelectContent>
                     {(dictionaries?.shipping_groups || []).map((g) => (
@@ -675,9 +613,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Identifiers & condition */}
-          <section className="border rounded-md p-3 space-y-3">
+          <section className="border rounded-md p-2.5 space-y-2">
             <h3 className="font-semibold text-sm">Identifiers &amp; condition</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <div>
                 <label className="text-[11px] font-medium mb-1 block">UPC / EAN / ISBN</label>
                 <Input
@@ -784,7 +722,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Price & weight */}
-          <section className="border rounded-md p-3 space-y-3">
+          <section className="border rounded-md p-2.5 space-y-2">
             <h3 className="font-semibold text-sm">Price &amp; weight</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
               <div>
@@ -827,7 +765,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           {/* Listing settings */}
           <section className="border rounded-md p-3 space-y-3">
             <h3 className="font-semibold text-sm">Listing settings</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
               <div>
                 <label className="text-[11px] font-medium mb-1 block">Listing type</label>
                 <Select
@@ -905,14 +843,14 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Descriptions */}
-          <section className="border rounded-md p-3 space-y-3">
+          <section className="border rounded-md p-2.5 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <h3 className="font-semibold text-sm">Descriptions &amp; templates</h3>
               <span className="text-[11px] text-gray-500">
                 Condition description: {conditionDescRemaining} characters left
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <div className="space-y-1">
                 <label className="text-[11px] font-medium block">Condition description</label>
                 <Textarea
@@ -934,9 +872,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Advanced flags */}
-          <section className="border rounded-md p-3 space-y-3 bg-gray-50/60">
+          <section className="border rounded-md p-2.5 space-y-2 bg-gray-50/60">
             <h3 className="font-semibold text-sm">Advanced</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
               <div>
                 <label className="flex items-center gap-1 text-[11px] mb-1">
                   <Checkbox
@@ -963,7 +901,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
         </div>
 
-        <div className="mt-4 flex justify-end gap-2 text-xs">
+        <div className="mt-3 flex justify-end gap-2 text-xs">
           <Button
             type="button"
             variant="outline"

@@ -286,7 +286,7 @@ class EbayService:
         Returns the subscription JSON object.
         """
 
-        # Fetch topic metadata to determine schemaVersion
+        # Fetch topic metadata to determine schemaVersion and scope.
         topic_resp = await self._notification_api_request(
             "GET",
             f"/commerce/notification/v1/topic/{topic_id}",
@@ -303,11 +303,28 @@ class EbayService:
         else:
             schema_version = str(topic_json.get("schemaVersion") or "1.0")
 
+        # Decide which token to use for subscription operations.
+        topic_scope = str(topic_json.get("scope") or "").upper()
+        use_app_token = topic_scope == "APPLICATION" or topic_id == "MARKETPLACE_ACCOUNT_DELETION"
+        sub_token = access_token
+
+        if use_app_token:
+            if debug_log is not None:
+                debug_log.append(
+                    f"[topic] scope={topic_scope or 'UNKNOWN'}; using application access token for subscription calls",
+                )
+            # Obtain an application access token via client_credentials grant.
+            sub_token = await self.get_app_access_token()
+        elif debug_log is not None:
+            debug_log.append(
+                f"[topic] scope={topic_scope or 'UNKNOWN'}; using user access token for subscription calls",
+            )
+
         # List subscriptions and look for a match
         subs_resp = await self._notification_api_request(
             "GET",
             "/commerce/notification/v1/subscription",
-            access_token,
+            sub_token,
             debug_log=debug_log,
         )
         try:
@@ -338,7 +355,7 @@ class EbayService:
             create_resp = await self._notification_api_request(
                 "POST",
                 "/commerce/notification/v1/subscription",
-                access_token,
+                sub_token,
                 json_body=body,
                 debug_log=debug_log,
             )
@@ -366,7 +383,7 @@ class EbayService:
         await self._notification_api_request(
             "PUT",
             f"/commerce/notification/v1/subscription/{sub_id}",
-            access_token,
+            sub_token,
             json_body=body,
             debug_log=debug_log,
         )
@@ -718,7 +735,7 @@ class EbayService:
                 )
         finally:
             settings.EBAY_ENVIRONMENT = original_env
-    
+
     async def refresh_access_token(
         self,
         refresh_token: str,
@@ -828,7 +845,7 @@ class EbayService:
                         )
 
                     raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
+                        status_code=response.status_code,
                         detail=f"Failed to refresh token: {error_detail}",
                     )
 
@@ -888,8 +905,128 @@ class EbayService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=error_msg,
             )
-    
-    def save_user_tokens(self, user_id: str, token_response: EbayTokenResponse, environment: Optional[str] = None):
+
+    async def get_app_access_token(
+        self,
+        scopes: Optional[List[str]] = None,
+        environment: Optional[str] = None,
+    ) -> str:
+        """Obtain an application access token via client credentials grant.
+
+        By default, uses ["https://api.ebay.com/oauth/api_scope"].
+        """
+        target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
+        original_env = settings.EBAY_ENVIRONMENT
+        settings.EBAY_ENVIRONMENT = target_env
+
+        try:
+            if not settings.ebay_client_id or not settings.ebay_cert_id:
+                ebay_logger.log_ebay_event(
+                    "app_token_error",
+                    "eBay credentials not configured for app token",
+                    status="error",
+                    error="EBAY_CLIENT_ID or EBAY_CERT_ID not set",
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="eBay credentials not configured",
+                )
+
+            credentials = f"{settings.ebay_client_id}:{settings.ebay_cert_id}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {encoded_credentials}",
+            }
+
+            if not scopes:
+                scopes = ["https://api.ebay.com/oauth/api_scope"]
+
+            # Normalize scopes: strip whitespace and drop empties.
+            scopes = [s.strip() for s in scopes if s and s.strip()]
+            scope_str = " ".join(scopes)
+
+            data = {
+                "grant_type": "client_credentials",
+                "scope": scope_str,
+            }
+
+            masked_headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": "Basic **** (masked)",
+            }
+
+            ebay_logger.log_ebay_event(
+                "app_token_request",
+                "Requesting eBay application access token via client_credentials",
+                request_data={
+                    "environment": target_env,
+                    "scopes": scopes,
+                    "url": self.token_url,
+                    "headers": masked_headers,
+                },
+            )
+
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        self.token_url,
+                        headers=headers,
+                        data=data,
+                    )
+
+                try:
+                    response_body: Any = response.json()
+                except ValueError:
+                    response_body = response.text
+
+                ebay_logger.log_ebay_event(
+                    "app_token_response",
+                    f"Received app token response with status {response.status_code}",
+                    response_data={
+                        "status_code": response.status_code,
+                        "body": response_body if isinstance(response_body, (dict, list)) else str(response_body)[:2000],
+                    },
+                )
+
+                if response.status_code != 200:
+                    error_detail = response_body if isinstance(response_body, str) else response.text
+                    logger.error(f"Failed to obtain eBay application access token: {error_detail}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to obtain eBay application access token: {error_detail}",
+                    )
+
+                token_data = response_body if isinstance(response_body, dict) else response.json()
+                access_token = token_data.get("access_token")
+                if not access_token:
+                    logger.error("eBay app token response missing access_token field")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="eBay app token response missing access_token",
+                    )
+
+                logger.info("Successfully obtained eBay application access token")
+                return str(access_token)
+
+            except httpx.RequestError as e:
+                error_msg = f"HTTP request failed while obtaining app token: {str(e)}"
+                ebay_logger.log_ebay_event(
+                    "app_token_error",
+                    "HTTP request error during app token retrieval",
+                    status="error",
+                    error=error_msg,
+                )
+                logger.error(error_msg)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=error_msg,
+                )
+        finally:
+            settings.EBAY_ENVIRONMENT = original_env
+
+    def save_user_tokens(
         """
         Save eBay tokens to user record based on environment.
         
