@@ -24,6 +24,7 @@ import FixedHeader from '@/components/FixedHeader';
 // In normal flows, we always prefer the catalog from GET /ebay/scopes.
 const DEFAULT_SCOPES = [
   'https://api.ebay.com/oauth/api_scope',
+  'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
 ];
 
 export const EbayConnectionPage: React.FC = () => {

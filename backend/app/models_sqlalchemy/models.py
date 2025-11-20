@@ -8,6 +8,7 @@ import enum
 import uuid
 
 from . import Base, engine
+from app.utils.logger import logger
 
 
 class UserRole(str, enum.Enum):
@@ -364,21 +365,33 @@ class Inventory(Base):
     )
 
 
-class SqItem(Base):
-            Base.metadata,
-            schema="tbl",
-            autoload_with=engine,
-        )
-    except NoSuchTableError:
-        # Define a minimal placeholder table; application code that actually
-        # depends on the real legacy table should not run in environments
-        # where it does not exist.
-        __table__ = Table(
-            "parts__inventory",
-            Base.metadata,
-            Column("id", Integer, primary_key=True),
-            schema="tbl",
-        )
+class TblPartsInventory(Base):
+    """Supabase parts inventory table mapped to tbl_parts_inventory.
+
+    Uses reflection against the live database via the shared engine. If the
+    table does not exist in the current environment, we log a warning and
+    leave __table__ as None so that application code can handle it gracefully
+    without crashing on import.
+    """
+
+    __tablename__ = "tbl_parts_inventory"
+    __table__ = None  # type: ignore[assignment]
+
+
+# Attempt reflection at import time, but never crash if the table is missing.
+try:
+    TblPartsInventory.__table__ = Table(
+        "tbl_parts_inventory",
+        Base.metadata,
+        autoload_with=engine,
+    )
+except NoSuchTableError:
+    logger.warning(
+        "tbl_parts_inventory not found in database; TblPartsInventory disabled in this environment",
+    )
+    TblPartsInventory.__table__ = None
+
+
 class SqItem(Base):
     """SQ catalog item mapped to the canonical `SKU_catalog` table.
 

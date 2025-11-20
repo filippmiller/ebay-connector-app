@@ -455,20 +455,35 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
 def _inventory_columns_meta_from_reflection() -> List[ColumnMeta]:
     """Build ColumnMeta for the inventory grid from the reflected parts table.
 
-    This reflects the Supabase relation "tbl.parts__inventory" directly using a
-    lightweight Table object so that grid columns always mirror the real schema
-    without requiring a dedicated ORM model.
+    This uses TblPartsInventory.__table__ so that grid columns always mirror
+    the real Supabase schema of tbl_parts_inventory without hardcoding it.
     """
     global INVENTORY_COLUMNS_META
     if INVENTORY_COLUMNS_META:
         return INVENTORY_COLUMNS_META
 
-    from sqlalchemy import MetaData, Table
-    from app.models_sqlalchemy import engine
-    from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText, Boolean as SA_Boolean, DateTime as SA_DateTime, Date as SA_Date, Integer as SA_Integer, BigInteger as SA_BigInteger, Numeric as SA_Numeric, Float as SA_Float
+    from app.models_sqlalchemy.models import TblPartsInventory
+    from sqlalchemy.sql.sqltypes import (
+        String,
+        Text,
+        CHAR,
+        VARCHAR,
+        Unicode,
+        UnicodeText,
+        Boolean as SA_Boolean,
+        DateTime as SA_DateTime,
+        Date as SA_Date,
+        Integer as SA_Integer,
+        BigInteger as SA_BigInteger,
+        Numeric as SA_Numeric,
+        Float as SA_Float,
+    )
 
-    metadata = MetaData()
-    table = Table("tbl.parts__inventory", metadata, autoload_with=engine)
+    table = TblPartsInventory.__table__
+    if table is None or not list(table.columns):
+        INVENTORY_COLUMNS_META = []
+        return INVENTORY_COLUMNS_META
+
     cols: List[ColumnMeta] = []
     for col in table.columns:
         t = col.type

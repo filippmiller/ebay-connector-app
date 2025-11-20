@@ -5,7 +5,6 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, asc, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import Table, MetaData
 import enum
 
 from app.database import get_db
@@ -22,6 +21,7 @@ from app.models_sqlalchemy.models import (
     AccountingCashExpense,
     AccountingTransaction as AccountingTxn,
     SqItem,
+    TblPartsInventory,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -650,25 +650,6 @@ def _get_sku_catalog_data(
     }
 
 
-_PARTS_INV_METADATA: MetaData | None = None
-_PARTS_INV_TABLE: Table | None = None
-
-
-def _get_parts_inventory_table(bind) -> Table:
-    """Lazily reflect the tbl.parts__inventory relation for inventory grid use.
-
-    This avoids crashing Alembic or the app if the table is temporarily missing;
-    reflection only occurs when the inventory grid endpoints are actually called.
-    """
-    global _PARTS_INV_METADATA, _PARTS_INV_TABLE
-    if _PARTS_INV_TABLE is not None:
-        return _PARTS_INV_TABLE
-
-    _PARTS_INV_METADATA = MetaData()
-    _PARTS_INV_TABLE = Table("tbl.parts__inventory", _PARTS_INV_METADATA, autoload_with=bind)
-    return _PARTS_INV_TABLE
-
-
 def _get_inventory_data(
     db: Session,
     current_user: UserModel,
@@ -681,22 +662,32 @@ def _get_inventory_data(
     ebay_status: Optional[str],
     search: Optional[str],
 ) -> Dict[str, Any]:
-    """Inventory grid backed directly by the Supabase table tbl.parts__inventory.
+    """Inventory grid backed directly by the Supabase table tbl_parts_inventory.
 
-    Uses a reflected Table object for the legacy parts inventory relation so that
-    all real columns are available without hardcoding a schema in the code.
+    This uses the reflected TblPartsInventory.__table__ so that all real
+    columns from the underlying table are available without hardcoding a
+    schema in the code.
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
-    from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText, Boolean as SA_Boolean, DateTime as SA_DateTime, Date as SA_Date, Integer as SA_Integer, BigInteger as SA_BigInteger, Numeric as SA_Numeric, Float as SA_Float
+    from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText
 
-    table = _get_parts_inventory_table(db.bind)
+    table = TblPartsInventory.__table__
+    if table is None or not list(table.columns):
+        # Table missing in this environment – return empty result set but do not crash.
+        return {
+            "rows": [],
+            "limit": limit,
+            "offset": offset,
+            "total": 0,
+            "sort": None,
+        }
 
     # Map columns by key and by lowercase key for flexible lookup.
     cols_by_key = {c.key: c for c in table.columns}
     cols_by_lower = {c.key.lower(): c for c in table.columns}
 
-    # Query rows as plain row mappings (no ORM class), using all columns.
+    # Query rows as plain row mappings using the reflected table columns.
     columns = list(table.columns)
     query = db.query(*columns)
 
