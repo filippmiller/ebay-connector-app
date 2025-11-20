@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ebayApi, type AdminEbayEvent } from '../api/ebay';
+import { ebayApi, type AdminEbayEvent, type AdminEbayEventDetail, type NotificationsStatus } from '../api/ebay';
 import { useAuth } from '@/auth/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '';
@@ -22,9 +23,11 @@ function formatDate(value: string | null | undefined) {
 export default function EbayNotificationsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   const [events, setEvents] = useState<AdminEbayEvent[]>([]);
   const [selected, setSelected] = useState<AdminEbayEvent | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<AdminEbayEventDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +47,14 @@ export default function EbayNotificationsPage() {
   const [sortBy, setSortBy] = useState<'event_time' | 'created_at'>('event_time');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  // Live terminal of most recent events (independent of filters)
+  const [recentEvents, setRecentEvents] = useState<AdminEbayEvent[]>([]);
+  const [recentErrorCount, setRecentErrorCount] = useState(0);
+
+  // Webhook / Notification API status
+  const [statusInfo, setStatusInfo] = useState<NotificationsStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+
   useEffect(() => {
     if (!user) return;
     if (user.role !== 'admin') {
@@ -52,6 +63,7 @@ export default function EbayNotificationsPage() {
     }
     // Initial load
     void fetchEvents(0);
+    void loadStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -102,6 +114,73 @@ export default function EbayNotificationsPage() {
     void fetchEvents(0);
   };
 
+  const loadStatus = async () => {
+    setStatusLoading(true);
+    try {
+      const s = await ebayApi.getNotificationsStatus();
+      setStatusInfo(s);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load notifications status', e);
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  // Live terminal polling for last 50 events, independent of filters
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRecent = async () => {
+      try {
+        const data = await ebayApi.getAdminEbayEvents({
+          limit: 50,
+          offset: 0,
+          sortBy: 'event_time',
+          sortDir: 'desc',
+        });
+        if (cancelled) return;
+        const items = data.items || [];
+        setRecentEvents(items);
+        const errCount = items.filter(
+          (ev) => ev.status === 'FAILED' || ev.signature_valid === false,
+        ).length;
+        setRecentErrorCount(errCount);
+      } catch (e) {
+        // swallow; this is best-effort diagnostics
+      }
+    };
+
+    void loadRecent();
+    const id = window.setInterval(loadRecent, 7000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  // Load full detail when selection changes
+  useEffect(() => {
+    if (!selected) {
+      setSelectedDetail(null);
+      return;
+    }
+    let cancelled = false;
+    const loadDetail = async () => {
+      try {
+        const detail = await ebayApi.getAdminEbayEventDetail(selected.id);
+        if (!cancelled) setSelectedDetail(detail);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load event detail', e);
+      }
+    };
+    void loadDetail();
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
   const canPrev = offset > 0;
   const canNext = offset + limit < total;
   const fromRow = total === 0 ? 0 : offset + 1;
@@ -112,19 +191,89 @@ export default function EbayNotificationsPage() {
       <FixedHeader />
       <div className="pt-12 px-4 py-6">
         <div className="max-w-7xl mx-auto flex flex-col gap-4">
-          <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold">eBay Notifications Center</h1>
               <p className="text-sm text-gray-600">
                 Unified inbox of eBay webhook and polling events from the ebay_events table.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => void fetchEvents(0)} disabled={loading}>
+            <div className="flex items-center gap-3">
+              {statusInfo && (
+                <span
+                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                    statusInfo.state === 'ok'
+                      ? 'bg-green-100 text-green-800'
+                      : statusInfo.state === 'no_events'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-red-100 text-red-800'
+                  }`}
+                >
+                  Webhook: {statusInfo.state === 'ok'
+                    ? 'OK'
+                    : statusInfo.state === 'no_events'
+                    ? 'No events yet'
+                    : 'Misconfigured'}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const resp = await ebayApi.testMarketplaceDeletionNotification();
+                    toast({
+                      title: 'Test notification requested',
+                      description: resp.message,
+                    });
+                    void fetchEvents(0);
+                    void loadStatus();
+                  } catch (e: any) {
+                    toast({
+                      title: 'Test notification failed',
+                      description: e?.response?.data?.detail || e?.message || 'Unknown error',
+                      variant: 'destructive',
+                    });
+                  }
+                }}
+                disabled={statusLoading}
+              >
+                Test notification
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void fetchEvents(0);
+                  void loadStatus();
+                }}
+                disabled={loading || statusLoading}
+              >
                 Refresh
               </Button>
             </div>
           </div>
+
+          {recentErrorCount > 0 && (
+            <Alert className="border-yellow-400 bg-yellow-50 text-yellow-900">
+              <AlertDescription className="text-xs flex items-center justify-between gap-3">
+                <span>
+                  {recentErrorCount} recent events have errors (FAILED status or invalid signature).
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={() => {
+                    setStatus('FAILED');
+                    void fetchEvents(0);
+                  }}
+                >
+                  Show failed events
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
 
           {error && (
             <Alert variant="destructive">
@@ -346,12 +495,12 @@ export default function EbayNotificationsPage() {
                   </div>
                 </div>
 
-                <div className="md:w-1/3 p-4 bg-gray-50 min-h-[16rem]">
-                  <h2 className="text-sm font-semibold mb-2">Event detail</h2>
+                <div className="md:w-1/3 p-4 bg-gray-50 min-h-[16rem] flex flex-col gap-3">
+                  <h2 className="text-sm font-semibold">Event detail</h2>
                   {!selected ? (
                     <p className="text-xs text-gray-500">Select an event from the table to inspect its payload.</p>
                   ) : (
-                    <div className="flex flex-col gap-2 text-xs">
+                    <div className="flex flex-col gap-2 text-xs flex-1 min-h-0">
                       <div>
                         <div className="font-semibold text-gray-700">Meta</div>
                         <dl className="mt-1 grid grid-cols-[auto,1fr] gap-x-2 gap-y-1">
@@ -392,11 +541,15 @@ export default function EbayNotificationsPage() {
                         </dl>
                       </div>
 
-                      <div className="mt-2">
-                        <div className="font-semibold text-gray-700 mb-1">Payload preview</div>
-                        <ScrollArea className="max-h-[40vh] rounded border bg-gray-900 text-gray-100 p-2 text-[11px]">
+                      <div className="mt-1 flex-1 min-h-0 flex flex-col gap-2">
+                        <div className="font-semibold text-gray-700 mb-1">Payload</div>
+                        <ScrollArea className="max-h-[32vh] rounded border bg-gray-900 text-gray-100 p-2 text-[11px]">
                           <pre className="whitespace-pre-wrap break-words font-mono">
-                            {JSON.stringify(selected.payload_preview, null, 2)}
+                            {JSON.stringify(
+                              selectedDetail?.payload ?? selected.payload_preview,
+                              null,
+                              2,
+                            )}
                           </pre>
                         </ScrollArea>
                       </div>
@@ -404,6 +557,56 @@ export default function EbayNotificationsPage() {
                   )}
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Live terminal-style log of recent events */}
+          <Card className="mt-4">
+            <CardHeader className="py-2 px-4 flex items-center justify-between">
+              <CardTitle className="text-sm">Recent events (live)</CardTitle>
+              <span className="text-[11px] text-gray-500">Auto-refreshing every few seconds</span>
+            </CardHeader>
+            <CardContent className="pt-0 pb-3 px-4">
+              <ScrollArea className="h-40 w-full rounded border bg-gray-950 text-gray-100 p-2 font-mono text-[11px]">
+                {recentEvents.length === 0 ? (
+                  <div className="text-gray-500">No events yet.</div>
+                ) : (
+                  <div className="space-y-1">
+                    {recentEvents.map((ev) => {
+                      const t = formatDate(ev.event_time || ev.created_at);
+                      const time = t ? new Date(ev.event_time || ev.created_at || '').toLocaleTimeString('en-US', {
+                        hour12: false,
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      }) : '';
+                      const hasError = ev.status === 'FAILED' || ev.signature_valid === false;
+                      const isOk = !hasError && (ev.status === 'RECEIVED' || ev.status === 'PROCESSED');
+                      const dotClass = hasError
+                        ? 'bg-red-500'
+                        : isOk
+                        ? 'bg-green-400'
+                        : 'bg-gray-500';
+                      const entityLabel = ev.entity_type && ev.entity_id
+                        ? `${ev.entity_type}:${ev.entity_id}`
+                        : '-';
+                      return (
+                        <div key={ev.id} className="flex items-center gap-2">
+                          <span className={`inline-block w-2 h-2 rounded-full ${dotClass}`} />
+                          <span className="text-gray-400 mr-1">[{time || '??:??:??'}]</span>
+                          <span className="text-gray-100 mr-1">{ev.topic || '-'}</span>
+                          <span className="text-gray-400 mr-1">
+                            {ev.source}/{ev.channel}
+                          </span>
+                          <span className="text-gray-300 mr-1">{entityLabel}</span>
+                          <span className="text-gray-400 mr-1">{ev.ebay_account || '-'}</span>
+                          <span className="text-gray-500">{ev.status}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </ScrollArea>
             </CardContent>
           </Card>
         </div>

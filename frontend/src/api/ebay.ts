@@ -43,6 +43,25 @@ export interface GetAdminEbayEventsParams {
   sortDir?: 'asc' | 'desc';
 }
 
+export interface AdminEbayEventDetail extends AdminEbayEvent {
+  headers: any;
+  payload: any;
+}
+
+export interface NotificationsStatus {
+  environment: string;
+  webhookUrl: string | null;
+  state: 'ok' | 'no_events' | 'misconfigured';
+  reason: string | null;
+  destination: any | null;
+  subscription: any | null;
+  recentEvents: {
+    count: number;
+    lastEventTime: string | null;
+  };
+  notificationError?: any;
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -184,6 +203,32 @@ export const ebayApi = {
     const qs = searchParams.toString();
     const response = await apiClient.get<AdminEbayEventsResponse>(
       `/api/admin/ebay-events${qs ? `?${qs}` : ''}`,
+    );
+    return response.data;
+  },
+
+  async getAdminEbayEventDetail(eventId: string): Promise<AdminEbayEventDetail> {
+    const response = await apiClient.get<AdminEbayEventDetail>(
+      `/api/admin/ebay-events/${encodeURIComponent(eventId)}`,
+    );
+    return response.data;
+  },
+
+  async getNotificationsStatus(): Promise<NotificationsStatus> {
+    const response = await apiClient.get<NotificationsStatus>('/api/admin/notifications/status');
+    return response.data;
+  },
+
+  async testMarketplaceDeletionNotification(): Promise<{
+    ok: boolean;
+    environment: string;
+    destinationId?: string;
+    subscriptionId?: string;
+    message: string;
+  }> {
+    const response = await apiClient.post(
+      '/api/admin/notifications/test-marketplace-deletion',
+      {},
     );
     return response.data;
   },

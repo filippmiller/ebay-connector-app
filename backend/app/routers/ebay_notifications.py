@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import Response
 
 from app.services.ebay_event_inbox import log_ebay_event
@@ -22,16 +22,20 @@ async def ebay_events_webhook(request: Request) -> Response:
     does not perform any business processing.
     """
 
-    try:
-        raw_body = await request.body()
-        payload: Dict[str, Any]
-        if not raw_body:
-            payload = {}
-        else:
-            try:
-                payload = json.loads(raw_body)
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="invalid_json_body")
+    # We deliberately avoid propagating JSON parsing errors back to eBay.
+    # Instead, we best-effort capture whatever we can and always return 2xx,
+    # so that eBay does not mark the destination as unhealthy while we debug.
+    raw_body = await request.body()
+    payload: Dict[str, Any]
+    parse_error: str | None = None
+    if not raw_body:
+        payload = {}
+    else:
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError as exc:
+            payload = {"_raw": raw_body.decode("utf-8", errors="replace")}
+            parse_error = f"invalid_json_body: {exc}"
 
         # Normalize headers (lower-case keys for consistency)
         headers = {k.lower(): v for k, v in request.headers.items()}
@@ -68,42 +72,77 @@ async def ebay_events_webhook(request: Request) -> Response:
 
         # Persist normalized event row. We keep entity_type / entity_id / ebay_account
         # empty for now; processors will enrich them later.
-        log_ebay_event(
-            source=source,
-            channel=channel,
-            topic=topic,
-            entity_type=None,
-            entity_id=None,
-            ebay_account=None,
-            event_time=event_time,
-            publish_time=publish_time,
-            headers=headers,
-            payload=payload,
-            status="RECEIVED",
-            error=None,
-            signature_valid=signature_valid,
-            signature_kid=signature_kid,
-        )
+        status_value = "FAILED" if parse_error else "RECEIVED"
+        error_value = parse_error or None
+
+        try:
+            log_ebay_event(
+                source=source,
+                channel=channel,
+                topic=topic,
+                entity_type=None,
+                entity_id=None,
+                ebay_account=None,
+                event_time=event_time,
+                publish_time=publish_time,
+                headers=headers,
+                payload=payload,
+                status=status_value,
+                error=error_value,
+                signature_valid=signature_valid,
+                signature_kid=signature_kid,
+            )
+        except Exception:
+            # Even if logging fails (e.g. DB outage), we *still* return 2xx so
+            # that eBay does not start backing off the destination. The error is
+            # recorded in application logs for investigation.
+            logger.error("Failed to persist ebay_events row for webhook", exc_info=True)
 
         # Per Notification API requirements, any 2xx indicates success; we
         # intentionally return an empty 204 response body.
         return Response(status_code=204)
 
-    except HTTPException:
-        raise
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Unhandled error in eBay events webhook: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="internal_error")
+        # Best-effort log a FAILED event with minimal context.
+        try:
+            log_ebay_event(
+                source="notification",
+                channel="commerce_notification",
+                topic=None,
+                entity_type=None,
+                entity_id=None,
+                ebay_account=None,
+                event_time=None,
+                publish_time=None,
+                headers={k.lower(): v for k, v in request.headers.items()},
+                payload={"_raw": raw_body.decode("utf-8", errors="replace")} if raw_body else {},
+                status="FAILED",
+                error=f"unhandled_error: {exc}",
+                signature_valid=None,
+                signature_kid=None,
+            )
+        except Exception:
+            logger.error("Failed to persist FAILED ebay_events row after unhandled error", exc_info=True)
+
+        # Still return 2xx to keep destination healthy from eBay's perspective.
+        return Response(status_code=204)
 
 
 @router.get("/events")
-async def ebay_events_challenge_placeholder() -> Dict[str, str]:
-    """Placeholder for Notification API destination challenge handling.
+async def ebay_events_challenge(
+    challenge_code: str | None = Query(None, alias="challengeCode"),
+) -> Dict[str, str]:
+    """Handle Notification API destination challenge (minimal implementation).
 
-    eBay may call this endpoint with a challenge payload when validating a
-    destination. Proper cryptographic handling will be wired in a follow-up
-    change; for now we expose a no-op endpoint so the route exists.
+    When a destination is (re)configured, eBay may send a challenge request with
+    a ``challengeCode`` query parameter. The expected response is a JSON body
+    with ``challengeResponse`` echoing the same value. We do not yet perform
+    any additional signature validation here; that will be wired separately.
     """
 
-    # TODO: Implement real destination challenge verification per eBay docs.
-    return {"status": "not_implemented", "message": "Notification challenge handling will be implemented separately."}
+    if challenge_code:
+        logger.info("Received eBay notification challengeCode=%s", challenge_code)
+        return {"challengeResponse": challenge_code}
+
+    return {"status": "ok", "message": "No challengeCode provided"}

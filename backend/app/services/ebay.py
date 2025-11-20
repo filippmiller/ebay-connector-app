@@ -1,7 +1,7 @@
 import base64
 import httpx
 import asyncio
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from fastapi import HTTPException, status
@@ -33,6 +33,266 @@ class EbayService:
         
         self.production_auth_url = "https://auth.ebay.com/oauth2/authorize"
         self.production_token_url = "https://api.ebay.com/identity/v1/oauth2/token"
+
+    # ------------------------------------------------------------------
+    # Notification API helpers (destinations, subscriptions, tests)
+    # ------------------------------------------------------------------
+
+    async def _notification_api_request(
+        self,
+        method: str,
+        path: str,
+        access_token: str,
+        *,
+        json_body: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: float = 30.0,
+    ) -> httpx.Response:
+        """Low-level helper for calling the Notification API.
+
+        Raises HTTPException on non-2xx responses with the full error payload
+        included in ``detail`` for easier surfacing in the admin UI.
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required for Notification API",
+            )
+
+        base_url = settings.ebay_api_base_url.rstrip("/")
+        url = f"{base_url}{path}"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.request(method, url, headers=headers, json=json_body, params=params)
+        except httpx.RequestError as exc:
+            logger.error("Notification API request error %s %s: %s", method, url, exc, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Notification API request error: {exc}",
+            )
+
+        if 200 <= resp.status_code < 300:
+            return resp
+
+        # Surface as much error detail as we can for admin debugging.
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text
+
+        logger.error(
+            "Notification API error %s %s status=%s body=%s",
+            method,
+            url,
+            resp.status_code,
+            body,
+        )
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail={"message": "Notification API error", "status_code": resp.status_code, "body": body},
+        )
+
+    async def ensure_notification_destination(
+        self,
+        access_token: str,
+        endpoint_url: str,
+        verification_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Ensure a Notification API destination exists for the given endpoint.
+
+        Returns a dict containing at least ``destinationId`` and ``endpoint``.
+        """
+
+        # List existing destinations
+        resp = await self._notification_api_request(
+            "GET",
+            "/commerce/notification/v1/destination",
+            access_token,
+        )
+        data = resp.json() or {}
+        destinations = data.get("destinations") or data.get("destinationConfigurations") or []
+
+        existing = None
+        for dest in destinations:
+            delivery_cfg = dest.get("deliveryConfig") or {}
+            if delivery_cfg.get("endpoint") == endpoint_url:
+                existing = dest
+                break
+
+        if existing:
+            return existing
+
+        if not verification_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="EBAY_NOTIFICATION_VERIFICATION_TOKEN is required to create a destination",
+            )
+
+        body = {
+            "name": "OneMillionParts Notifications",
+            "deliveryConfig": {
+                "endpoint": endpoint_url,
+                "verificationToken": verification_token,
+                "protocol": "HTTPS",
+            },
+        }
+
+        created_resp = await self._notification_api_request(
+            "POST",
+            "/commerce/notification/v1/destination",
+            access_token,
+            json_body=body,
+        )
+        return created_resp.json()
+
+    async def ensure_notification_subscription(
+        self,
+        access_token: str,
+        destination_id: str,
+        topic_id: str,
+    ) -> Dict[str, Any]:
+        """Ensure a subscription exists for ``topic_id`` + ``destination_id``.
+
+        Returns the subscription JSON object.
+        """
+
+        # Fetch topic metadata to determine schemaVersion
+        topic_resp = await self._notification_api_request(
+            "GET",
+            f"/commerce/notification/v1/topic/{topic_id}",
+            access_token,
+        )
+        topic_json = topic_resp.json() or {}
+        schema_versions = topic_json.get("supportedSchemaVersions") or []
+        if isinstance(schema_versions, list) and schema_versions:
+            schema_version = str(schema_versions[-1])
+        else:
+            schema_version = str(topic_json.get("schemaVersion") or "1.0")
+
+        # List subscriptions and look for a match
+        subs_resp = await self._notification_api_request(
+            "GET",
+            "/commerce/notification/v1/subscription",
+            access_token,
+        )
+        subs_json = subs_resp.json() or {}
+        subscriptions = subs_json.get("subscriptions") or []
+
+        existing = None
+        for sub in subscriptions:
+            if sub.get("topicId") == topic_id and sub.get("destinationId") == destination_id:
+                existing = sub
+                break
+
+        payload_cfg = {
+            "format": "JSON",
+            "deliveryProtocol": "HTTPS",
+            "schemaVersion": schema_version,
+        }
+
+        if existing is None:
+            body = {
+                "topicId": topic_id,
+                "destinationId": destination_id,
+                "status": "ENABLED",
+                "payload": payload_cfg,
+            }
+            create_resp = await self._notification_api_request(
+                "POST",
+                "/commerce/notification/v1/subscription",
+                access_token,
+                json_body=body,
+            )
+            return create_resp.json()
+
+        # Ensure it is enabled / up to date
+        sub_id = existing.get("subscriptionId") or existing.get("id")
+        if not sub_id:
+            return existing
+
+        body = {
+            "topicId": topic_id,
+            "destinationId": destination_id,
+            "status": "ENABLED",
+            "payload": payload_cfg,
+        }
+        await self._notification_api_request(
+            "PUT",
+            f"/commerce/notification/v1/subscription/{sub_id}",
+            access_token,
+            json_body=body,
+        )
+        existing["status"] = "ENABLED"
+        existing["payload"] = payload_cfg
+        return existing
+
+    async def test_notification_subscription(
+        self,
+        access_token: str,
+        subscription_id: str,
+    ) -> Dict[str, Any]:
+        """Trigger Notification API test for a subscription."""
+
+        resp = await self._notification_api_request(
+            "POST",
+            f"/commerce/notification/v1/subscription/{subscription_id}/test",
+            access_token,
+            json_body={},
+        )
+        # eBay usually returns 204 No Content; normalize to a simple payload.
+        return {"status_code": resp.status_code}
+
+    async def get_notification_status(
+        self,
+        access_token: str,
+        endpoint_url: str,
+        topic_id: str,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Inspect current Notification destination + subscription state.
+
+        Returns (destination, subscription) where either element may be None.
+        """
+
+        # Destinations
+        dest_resp = await self._notification_api_request(
+            "GET",
+            "/commerce/notification/v1/destination",
+            access_token,
+        )
+        dest_json = dest_resp.json() or {}
+        destinations = dest_json.get("destinations") or dest_json.get("destinationConfigurations") or []
+
+        dest = None
+        for d in destinations:
+            delivery_cfg = d.get("deliveryConfig") or {}
+            if delivery_cfg.get("endpoint") == endpoint_url:
+                dest = d
+                break
+
+        # Subscriptions
+        sub = None
+        if dest is not None:
+            dest_id = dest.get("destinationId") or dest.get("id")
+            sub_resp = await self._notification_api_request(
+                "GET",
+                "/commerce/notification/v1/subscription",
+                access_token,
+            )
+            sub_json = sub_resp.json() or {}
+            subs = sub_json.get("subscriptions") or []
+            for s in subs:
+                if s.get("topicId") == topic_id and s.get("destinationId") == dest_id:
+                    sub = s
+                    break
+
+        return dest, sub
     
     @property
     def auth_url(self) -> str:
@@ -91,6 +351,7 @@ class EbayService:
                     "https://api.ebay.com/oauth/api_scope/sell.finances",  # For Transactions
                     "https://api.ebay.com/oauth/api_scope/sell.inventory",  # For Inventory/Offers
                     "https://api.ebay.com/oauth/api_scope/sell.postorder",  # For Post-Order cases (INR/SNAD)
+                    "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription",  # For Notification API
                     # "https://api.ebay.com/oauth/api_scope/trading"  # REMOVED - not activated in app, use commerce.message for Messages API instead
                 ]
             

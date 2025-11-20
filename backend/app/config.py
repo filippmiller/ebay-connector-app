@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     EBAY_PRODUCTION_REDIRECT_URI: Optional[str] = None
     EBAY_PRODUCTION_RUNAME: Optional[str] = None
     
+    # Notification API configuration (destination + verification token)
+    #
+    # EBAY_NOTIFICATION_DESTINATION_URL should be the externally reachable URL
+    # that eBay will call, e.g. "https://api.yourdomain.com/webhooks/ebay/events".
+    # EBAY_NOTIFICATION_VERIFICATION_TOKEN is the opaque token used during
+    # destination verification challenges (32–80 chars, [A-Za-z0-9_-]).
+    EBAY_NOTIFICATION_DESTINATION_URL: Optional[str] = None
+    EBAY_NOTIFICATION_VERIFICATION_TOKEN: Optional[str] = None
+    
     # DATABASE_URL must be provided via environment from Railway (Supabase/Postgres)
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     

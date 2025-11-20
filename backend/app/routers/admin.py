@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_, and_
 from typing import Optional, Any
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from ..models_sqlalchemy import get_db
 from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
@@ -12,6 +12,7 @@ from ..models.user import User
 from ..utils.logger import logger
 from ..services.ebay import ebay_service
 from ..services.ebay_connect_logger import ebay_connect_logger
+from ..config import settings
 
 FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
 
@@ -542,4 +543,240 @@ async def list_ebay_events(
         "total": total,
         "limit": limit,
         "offset": offset,
+    }
+
+
+@router.get("/ebay-events/{event_id}")
+async def get_ebay_event_detail(
+    event_id: str,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return full details (including headers+payload) for a single ebay_events row."""
+
+    ev: Optional[EbayEvent] = db.query(EbayEvent).filter(EbayEvent.id == event_id).first()
+    if not ev:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found")
+
+    return {
+        "id": str(ev.id),
+        "created_at": ev.created_at.isoformat() if ev.created_at else None,
+        "source": ev.source,
+        "channel": ev.channel,
+        "topic": ev.topic,
+        "entity_type": ev.entity_type,
+        "entity_id": ev.entity_id,
+        "ebay_account": ev.ebay_account,
+        "event_time": ev.event_time.isoformat() if ev.event_time else None,
+        "publish_time": ev.publish_time.isoformat() if ev.publish_time else None,
+        "status": ev.status,
+        "error": ev.error,
+        "signature_valid": ev.signature_valid,
+        "signature_kid": ev.signature_kid,
+        "headers": ev.headers or {},
+        "payload": ev.payload,
+    }
+
+
+@router.get("/notifications/status")
+async def get_notifications_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return high-level health for the Notifications Center webhook.
+
+    Status is derived from Notification API destination/subscription state and
+    the presence of recent MARKETPLACE_ACCOUNT_DELETION events.
+    """
+
+    from ..models_sqlalchemy.models import EbayAccount, EbayToken  # avoid cycles
+
+    env = settings.EBAY_ENVIRONMENT
+    endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
+
+    if not endpoint_url:
+        return {
+            "environment": env,
+            "webhookUrl": None,
+            "state": "misconfigured",
+            "reason": "missing_destination_url",
+            "destination": None,
+            "subscription": None,
+            "recentEvents": {"count": 0, "lastEventTime": None},
+        }
+
+    # Pick first active account for this org
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.org_id == current_user.id, EbayAccount.is_active == True)  # noqa: E712
+        .order_by(desc(EbayAccount.connected_at))
+        .first()
+    )
+    if not account:
+        return {
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "state": "misconfigured",
+            "reason": "no_account",
+            "destination": None,
+            "subscription": None,
+            "recentEvents": {"count": 0, "lastEventTime": None},
+        }
+
+    token: Optional[EbayToken] = (
+        db.query(EbayToken)
+        .filter(EbayToken.ebay_account_id == account.id)
+        .order_by(desc(EbayToken.updated_at))
+        .first()
+    )
+    if not token or not token.access_token:
+        return {
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "state": "misconfigured",
+            "reason": "no_access_token",
+            "destination": None,
+            "subscription": None,
+            "recentEvents": {"count": 0, "lastEventTime": None},
+        }
+
+    access_token = token.access_token
+
+    # Query Notification API for destination + subscription state
+    topic_id = "MARKETPLACE_ACCOUNT_DELETION"
+    try:
+        dest, sub = await ebay_service.get_notification_status(access_token, endpoint_url, topic_id)
+    except HTTPException as exc:
+        # Surface Notification API error as misconfigured state
+        return {
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "state": "misconfigured",
+            "reason": "notification_api_error",
+            "notificationError": exc.detail,
+            "destination": None,
+            "subscription": None,
+            "recentEvents": {"count": 0, "lastEventTime": None},
+        }
+
+    # Recent events for this topic in the last 24h
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=24)
+
+    recent_q = db.query(EbayEvent).filter(EbayEvent.topic == topic_id)
+    recent_q = recent_q.filter(
+        or_(
+            and_(EbayEvent.event_time.isnot(None), EbayEvent.event_time >= window_start),
+            and_(EbayEvent.event_time.is_(None), EbayEvent.created_at >= window_start),
+        )
+    )
+    recent_count = recent_q.count()
+
+    latest = (
+        db.query(EbayEvent)
+        .filter(EbayEvent.topic == topic_id)
+        .order_by(
+            EbayEvent.event_time.desc().nullslast(),
+            EbayEvent.created_at.desc(),
+        )
+        .first()
+    )
+    last_event_time = None
+    if latest:
+        last_event_time = (latest.event_time or latest.created_at).isoformat() if (
+            latest.event_time or latest.created_at
+        ) else None
+
+    state = "misconfigured"
+    reason = None
+    if dest is None:
+        reason = "no_destination"
+    else:
+        dest_status = (dest.get("status") or "").upper() or "UNKNOWN"
+        sub_status = (sub.get("status") or "").upper() if sub else None
+        if sub is None:
+            reason = "no_subscription"
+        elif sub_status != "ENABLED":
+            reason = "subscription_not_enabled"
+        elif recent_count == 0:
+            state = "no_events"
+            reason = "no_recent_events"
+        else:
+            state = "ok"
+            reason = None
+
+    return {
+        "environment": env,
+        "webhookUrl": endpoint_url,
+        "state": state,
+        "reason": reason,
+        "destination": dest,
+        "subscription": sub,
+        "recentEvents": {"count": recent_count, "lastEventTime": last_event_time},
+    }
+
+
+@router.post("/notifications/test-marketplace-deletion")
+async def test_marketplace_account_deletion_notification(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Trigger a Notification API test for MARKETPLACE_ACCOUNT_DELETION.
+
+    This endpoint ensures that a destination and subscription exist for the
+    configured webhook URL, then calls the Notification API test operation.
+    """
+
+    from ..models_sqlalchemy.models import EbayAccount, EbayToken  # avoid cycles
+
+    env = settings.EBAY_ENVIRONMENT
+    endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
+    if not endpoint_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="EBAY_NOTIFICATION_DESTINATION_URL is not configured",
+        )
+
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.org_id == current_user.id, EbayAccount.is_active == True)  # noqa: E712
+        .order_by(desc(EbayAccount.connected_at))
+        .first()
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_account")
+
+    token: Optional[EbayToken] = (
+        db.query(EbayToken)
+        .filter(EbayToken.ebay_account_id == account.id)
+        .order_by(desc(EbayToken.updated_at))
+        .first()
+    )
+    if not token or not token.access_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_access_token")
+
+    access_token = token.access_token
+    verification_token = settings.EBAY_NOTIFICATION_VERIFICATION_TOKEN
+
+    # Ensure destination + subscription exist
+    topic_id = "MARKETPLACE_ACCOUNT_DELETION"
+    dest = await ebay_service.ensure_notification_destination(
+        access_token,
+        endpoint_url,
+        verification_token=verification_token,
+    )
+    dest_id = dest.get("destinationId") or dest.get("id")
+
+    sub = await ebay_service.ensure_notification_subscription(access_token, dest_id, topic_id)
+    sub_id = sub.get("subscriptionId") or sub.get("id")
+
+    test_result = await ebay_service.test_notification_subscription(access_token, sub_id)
+
+    return {
+        "ok": True,
+        "environment": env,
+        "destinationId": dest_id,
+        "subscriptionId": sub_id,
+        "message": "Test notification requested; check ebay_events and Notifications UI.",
+        "notificationTest": test_result,
     }
