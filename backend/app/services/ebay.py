@@ -1,6 +1,7 @@
 import base64
 import httpx
 import asyncio
+import json
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -47,6 +48,7 @@ class EbayService:
         json_body: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
         timeout: float = 30.0,
+        debug_log: Optional[List[str]] = None,
     ) -> httpx.Response:
         """Low-level helper for calling the Notification API.
 
@@ -68,6 +70,19 @@ class EbayService:
             "Content-Type": "application/json",
         }
 
+        # Structured logging for admin Notifications test endpoint.
+        # We intentionally do NOT log headers here to avoid leaking tokens.
+        if debug_log is not None:
+            debug_log.append(f"[req] {method.upper()} {url}")
+            if json_body is not None:
+                try:
+                    body_str = json.dumps(json_body, indent=2, sort_keys=True)
+                except Exception:
+                    body_str = str(json_body)
+                if len(body_str) > 4000:
+                    body_str = body_str[:4000] + "... (truncated)"
+                debug_log.append(f"[req] body: {body_str}")
+
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.request(method, url, headers=headers, json=json_body, params=params)
@@ -78,14 +93,24 @@ class EbayService:
                 detail=f"Notification API request error: {exc}",
             )
 
-        if 200 <= resp.status_code < 300:
-            return resp
-
-        # Surface as much error detail as we can for admin debugging.
+        # Parse body once so we can both log and surface it on errors.
         try:
             body = resp.json()
         except Exception:
             body = resp.text
+
+        if debug_log is not None:
+            debug_log.append(f"[res] status={resp.status_code}")
+            try:
+                pretty = json.dumps(body, indent=2, sort_keys=True) if isinstance(body, (dict, list)) else str(body)
+            except Exception:
+                pretty = str(body)
+            if len(pretty) > 4000:
+                pretty = pretty[:4000] + "... (truncated)"
+            debug_log.append(f"[res] body: {pretty}")
+
+        if 200 <= resp.status_code < 300:
+            return resp
 
         logger.error(
             "Notification API error %s %s status=%s body=%s",
@@ -104,6 +129,7 @@ class EbayService:
         access_token: str,
         endpoint_url: str,
         verification_token: Optional[str] = None,
+        debug_log: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Ensure a Notification API destination exists for the given endpoint.
 
@@ -115,6 +141,7 @@ class EbayService:
             "GET",
             "/commerce/notification/v1/destination",
             access_token,
+            debug_log=debug_log,
         )
         data = resp.json() or {}
         destinations = data.get("destinations") or data.get("destinationConfigurations") or []
@@ -126,7 +153,38 @@ class EbayService:
                 existing = dest
                 break
 
+        # If a destination already exists but is disabled, try to re-enable it
+        # instead of creating a brand new configuration. This keeps the
+        # Notification API diagnostics cleaner and avoids "duplicate
+        # destination" errors.
         if existing:
+            dest_status = (existing.get("status") or "").upper()
+            dest_id = existing.get("destinationId") or existing.get("id")
+            if dest_id and dest_status != "ENABLED":
+                delivery_cfg = existing.get("deliveryConfig") or {}
+                body = {
+                    "name": existing.get("name") or "OneMillionParts Notifications",
+                    "status": "ENABLED",
+                    "deliveryConfig": {
+                        "endpoint": endpoint_url,
+                        # Prefer explicit verification_token, fall back to the
+                        # one already stored on the destination if present.
+                        "verificationToken": verification_token
+                        or delivery_cfg.get("verificationToken"),
+                        "protocol": "HTTPS",
+                        "payloadFormat": "JSON",
+                        "status": "ENABLED",
+                    },
+                }
+                update_resp = await self._notification_api_request(
+                    "PUT",
+                    f"/commerce/notification/v1/destination/{dest_id}",
+                    access_token,
+                    json_body=body,
+                    debug_log=debug_log,
+                )
+                return update_resp.json()
+
             return existing
 
         if not verification_token:
@@ -154,6 +212,7 @@ class EbayService:
             "/commerce/notification/v1/destination",
             access_token,
             json_body=body,
+            debug_log=debug_log,
         )
         return created_resp.json()
 
@@ -162,6 +221,7 @@ class EbayService:
         access_token: str,
         destination_id: str,
         topic_id: str,
+        debug_log: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Ensure a subscription exists for ``topic_id`` + ``destination_id``.
 
@@ -173,6 +233,7 @@ class EbayService:
             "GET",
             f"/commerce/notification/v1/topic/{topic_id}",
             access_token,
+            debug_log=debug_log,
         )
         topic_json = topic_resp.json() or {}
         schema_versions = topic_json.get("supportedSchemaVersions") or []
@@ -186,6 +247,7 @@ class EbayService:
             "GET",
             "/commerce/notification/v1/subscription",
             access_token,
+            debug_log=debug_log,
         )
         subs_json = subs_resp.json() or {}
         subscriptions = subs_json.get("subscriptions") or []
@@ -214,6 +276,7 @@ class EbayService:
                 "/commerce/notification/v1/subscription",
                 access_token,
                 json_body=body,
+                debug_log=debug_log,
             )
             return create_resp.json()
 
@@ -233,6 +296,7 @@ class EbayService:
             f"/commerce/notification/v1/subscription/{sub_id}",
             access_token,
             json_body=body,
+            debug_log=debug_log,
         )
         existing["status"] = "ENABLED"
         existing["payload"] = payload_cfg
@@ -242,6 +306,7 @@ class EbayService:
         self,
         access_token: str,
         subscription_id: str,
+        debug_log: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Trigger Notification API test for a subscription."""
 
@@ -250,6 +315,7 @@ class EbayService:
             f"/commerce/notification/v1/subscription/{subscription_id}/test",
             access_token,
             json_body={},
+            debug_log=debug_log,
         )
         # eBay usually returns 204 No Content; normalize to a simple payload.
         return {"status_code": resp.status_code}
@@ -259,6 +325,7 @@ class EbayService:
         access_token: str,
         endpoint_url: str,
         topic_id: str,
+        debug_log: Optional[List[str]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """Inspect current Notification destination + subscription state.
 
@@ -270,6 +337,7 @@ class EbayService:
             "GET",
             "/commerce/notification/v1/destination",
             access_token,
+            debug_log=debug_log,
         )
         dest_json = dest_resp.json() or {}
         destinations = dest_json.get("destinations") or dest_json.get("destinationConfigurations") or []
@@ -289,6 +357,7 @@ class EbayService:
                 "GET",
                 "/commerce/notification/v1/subscription",
                 access_token,
+                debug_log=debug_log,
             )
             sub_json = sub_resp.json() or {}
             subs = sub_json.get("subscriptions") or []

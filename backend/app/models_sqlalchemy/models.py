@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Date, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc
+from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Date, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc, Table
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -6,7 +6,7 @@ from datetime import datetime
 import enum
 import uuid
 
-from . import Base
+from . import Base, engine
 
 
 class UserRole(str, enum.Enum):
@@ -360,6 +360,22 @@ class Inventory(Base):
         Index('idx_inventory_created_desc', desc(rec_created)),
         Index('idx_composite_status_warehouse', 'status', 'warehouse_id'),
         Index('idx_composite_storage_status', 'storage_id', 'status'),
+    )
+
+
+class TblPartsInventory(Base):
+    """Reflected model for the legacy parts inventory table.
+
+    This maps to the Supabase/Postgres table "tbl"."parts__inventory" and
+    reflects all columns at runtime from the live database schema so that
+    the application always stays in sync with the real table definition.
+    """
+
+    __table__ = Table(
+        "parts__inventory",
+        Base.metadata,
+        schema="tbl",
+        autoload_with=engine,
     )
 
 

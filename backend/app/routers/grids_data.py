@@ -16,13 +16,12 @@ from app.models_sqlalchemy.models import (
     OfferState,
     OfferDirection,
     ActiveInventory,
-    Inventory,
+    TblPartsInventory,
     Purchase,
     AccountingBankStatement,
     AccountingCashExpense,
     AccountingTransaction as AccountingTxn,
     SqItem,
-    EbayStatus,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -129,7 +128,9 @@ async def get_grid_data(
     elif grid_key == "finances_fees":
         default_sort_col = "created_at"
     elif grid_key == "inventory":
-        default_sort_col = "rec_created"
+        # Let the inventory grid implementation choose a sensible default
+        # (typically primary key or a created-at style column).
+        default_sort_col = None
 
     sort_column = sort_by if sort_by in allowed_cols else default_sort_col
 
@@ -661,76 +662,79 @@ def _get_inventory_data(
     ebay_status: Optional[str],
     search: Optional[str],
 ) -> Dict[str, Any]:
-    """Inventory grid backed directly by the inventory table (tbl.parts_inventory).
+    """Inventory grid backed directly by the Supabase table tbl.parts__inventory.
 
-    Exposes a wide set of real columns so the grid can be configured to show any
-    field from the underlying table, with optional filters for storage ID,
-    eBay status, and a global text search across common text fields.
+    Uses the reflected TblPartsInventory model so that all real columns from the
+    legacy parts inventory table are available to the grid without hardcoding a
+    schema in the code.
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
+    from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText, Boolean as SA_Boolean, DateTime as SA_DateTime, Date as SA_Date, Integer as SA_Integer, BigInteger as SA_BigInteger, Numeric as SA_Numeric, Float as SA_Float
 
-    query = db.query(Inventory)
+    table = TblPartsInventory.__table__
 
-    # Optional filters
+    # Map columns by key and by lowercase key for flexible lookup.
+    cols_by_key = {c.key: c for c in table.columns}
+    cols_by_lower = {c.key.lower(): c for c in table.columns}
+
+    query = db.query(TblPartsInventory)
+
+    # Optional filters: Storage ID
     if storage_id:
-        like = f"%{storage_id}%"
-        query = query.filter(Inventory.storage_id.ilike(like))
+        storage_col = cols_by_lower.get("storageid") or cols_by_lower.get("storage_id")
+        if storage_col is not None and isinstance(storage_col.type, (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)):
+            like = f"%{storage_id}%"
+            query = query.filter(storage_col.ilike(like))
 
+    # Optional filters: eBay status
     if ebay_status:
-        try:
-            status_enum = EbayStatus[ebay_status.upper()]
-            query = query.filter(Inventory.ebay_status == status_enum)
-        except KeyError:
-            # If the value does not map to the enum, ignore the filter rather than erroring.
-            pass
+        ebay_status_col = (
+            cols_by_lower.get("ebay_status")
+            or cols_by_lower.get("ebaystatus")
+            or cols_by_lower.get("ebay_status_id")
+        )
+        if ebay_status_col is not None and isinstance(ebay_status_col.type, (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)):
+            like = f"%{ebay_status}%"
+            query = query.filter(ebay_status_col.ilike(like))
 
+    # Global search across all string-like columns when provided.
     if search:
         like = f"%{search}%"
-        query = query.filter(
-            or_(
-                Inventory.sku_code.ilike(like),
-                Inventory.model.ilike(like),
-                Inventory.category.ilike(like),
-                Inventory.part_number.ilike(like),
-                Inventory.title.ilike(like),
-                Inventory.price_currency.ilike(like),
-                Inventory.ebay_listing_id.ilike(like),
-                Inventory.storage_id.ilike(like),
-                Inventory.storage.ilike(like),
-                Inventory.author.ilike(like),
-                Inventory.tracking_number.ilike(like),
-            )
-        )
+        string_cols = [
+            c
+            for c in table.columns
+            if isinstance(c.type, (String, Text, CHAR, VARCHAR, Unicode, UnicodeText))
+        ]
+        if string_cols:
+            query = query.filter(or_(*[c.ilike(like) for c in string_cols]))
 
     total = query.count()
 
-    # Allow sorting on a safe subset of real columns.
-    allowed_sort_cols = {
-        "id": Inventory.id,
-        "sku_code": Inventory.sku_code,
-        "model": Inventory.model,
-        "category": Inventory.category,
-        "status": Inventory.status,
-        "ebay_status": Inventory.ebay_status,
-        "price_value": Inventory.price_value,
-        "storage_id": Inventory.storage_id,
-        "rec_created": Inventory.rec_created,
-        "rec_updated": Inventory.rec_updated,
-    }
-    sort_attr = allowed_sort_cols.get(sort_column or "rec_created")
-    if sort_attr is None:
-        sort_attr = Inventory.rec_created
-    if sort_dir == "desc":
-        query = query.order_by(desc(sort_attr))
+    # Determine sort column dynamically. Prefer an explicit request if valid,
+    # otherwise fall back to primary key or the first column.
+    sort_attr = None
+    if sort_column and sort_column in cols_by_key:
+        sort_attr = cols_by_key[sort_column]
     else:
-        query = query.order_by(asc(sort_attr))
+        pk_cols = list(table.primary_key.columns)
+        if pk_cols:
+            sort_attr = pk_cols[0]
+        elif cols_by_key:
+            sort_attr = next(iter(cols_by_key.values()))
 
-    rows_db: List[Inventory] = query.offset(offset).limit(limit).all()
+    if sort_attr is not None:
+        if sort_dir == "asc":
+            query = query.order_by(asc(sort_attr))
+        else:
+            query = query.order_by(desc(sort_attr))
 
-    def _serialize(item: Inventory) -> Dict[str, Any]:
+    rows_db: List[TblPartsInventory] = query.offset(offset).limit(limit).all()
+
+    def _serialize(item: TblPartsInventory) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
+            # Use getattr so we don't depend on explicit attributes in the model.
             value = getattr(item, col, None)
             if isinstance(value, dt_type):
                 row[col] = value.isoformat()

@@ -262,6 +262,13 @@ export default function EbayNotificationsPage() {
                         || resp.reason
                         || 'Notification test failed';
                       appendDiag(`[test] FAILED ${diag}`);
+                      if (Array.isArray(resp.logs)) {
+                        resp.logs.forEach((line) => {
+                          if (typeof line === 'string' && line.trim()) {
+                            appendDiag(line);
+                          }
+                        });
+                      }
                       toast({
                         title: 'Test notification failed',
                         description:
@@ -277,6 +284,13 @@ export default function EbayNotificationsPage() {
                         `[test] OK env=${resp.environment} dest=${resp.destinationId || '-'} ` +
                           `sub=${resp.subscriptionId || '-'} statusCode=${statusCode ?? ''}`,
                       );
+                      if (Array.isArray(resp.logs)) {
+                        resp.logs.forEach((line) => {
+                          if (typeof line === 'string' && line.trim()) {
+                            appendDiag(line);
+                          }
+                        });
+                      }
                       toast({
                         title: 'Test notification requested',
                         description: resp.message,
@@ -706,7 +720,7 @@ export default function EbayNotificationsPage() {
               </span>
             </CardHeader>
             <CardContent className="pt-0 pb-3 px-4">
-              <ScrollArea className="h-64 w-full rounded border bg-gray-950 text-gray-100 p-2 font-mono text-[12px]">
+              <ScrollArea className="h-80 w-full rounded border bg-gray-950 text-gray-100 p-2 font-mono text-[12px]">
                 <div className="space-y-1">
                   {diagLog.map((line, idx) => (
                     <div key={`diag-${idx}`} className="text-[11px] text-gray-200">

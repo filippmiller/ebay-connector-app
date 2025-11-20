@@ -57,6 +57,9 @@ export interface NotificationsStatus {
   subscription: any | null;
   destinationId?: string | null;
   subscriptionId?: string | null;
+  destinationStatus?: string | null;
+  subscriptionStatus?: string | null;
+  verificationStatus?: string | null;
   recentEvents: {
     count: number;
     lastEventTime: string | null;
@@ -243,6 +246,7 @@ export const ebayApi = {
       body?: any;
       [key: string]: any;
     } | null;
+    logs?: string[];
   }> {
     const response = await apiClient.post(
       '/api/admin/notifications/test-marketplace-deletion',

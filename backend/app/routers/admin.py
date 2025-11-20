@@ -726,12 +726,26 @@ async def get_notifications_status(
 
     state = "misconfigured"
     reason = None
+    dest_status: str | None = None
+    sub_status: str | None = None
+    verification_status: str | None = None
+
     if dest is None:
         reason = "no_destination"
     else:
         dest_status = (dest.get("status") or "").upper() or "UNKNOWN"
+        delivery_cfg = dest.get("deliveryConfig") or {}
+        raw_ver_status = delivery_cfg.get("verificationStatus")
+        if isinstance(raw_ver_status, str) and raw_ver_status:
+            verification_status = raw_ver_status.upper()
         sub_status = (sub.get("status") or "").upper() if sub else None
-        if sub is None:
+
+        if dest_status != "ENABLED":
+            reason = "destination_disabled"
+        elif verification_status and verification_status not in ("CONFIRMED", "VERIFIED"):
+            # eBay may report UNCONFIRMED / PENDING while the challenge flow is in progress.
+            reason = "verification_pending"
+        elif sub is None:
             reason = "no_subscription"
         elif sub_status != "ENABLED":
             reason = "subscription_not_enabled"
@@ -740,7 +754,7 @@ async def get_notifications_status(
             reason = "no_recent_events"
         else:
             state = "ok"
-            reason = None
+            reason = "subscription_enabled"
 
     dest_id = dest.get("destinationId") or dest.get("id") if dest else None
     sub_id = sub.get("subscriptionId") or sub.get("id") if sub else None
@@ -754,6 +768,9 @@ async def get_notifications_status(
         "subscription": sub,
         "destinationId": dest_id,
         "subscriptionId": sub_id,
+        "destinationStatus": dest_status,
+        "subscriptionStatus": sub_status,
+        "verificationStatus": verification_status,
         "recentEvents": {"count": recent_count, "lastEventTime": last_event_time},
         "checkedAt": checked_at,
     }
@@ -832,6 +849,7 @@ async def test_marketplace_account_deletion_notification(
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
 
     topic_id = "MARKETPLACE_ACCOUNT_DELETION"
+    debug_log: list[str] = []
     try:
         logger.info(
             "[notifications:test] Ensuring destination for account_id=%s username=%s",
@@ -842,15 +860,25 @@ async def test_marketplace_account_deletion_notification(
             access_token,
             endpoint_url,
             verification_token=verification_token,
+            debug_log=debug_log,
         )
         dest_id = dest.get("destinationId") or dest.get("id")
         logger.info("[notifications:test] Destination ready id=%s", dest_id)
 
-        sub = await ebay_service.ensure_notification_subscription(access_token, dest_id, topic_id)
+        sub = await ebay_service.ensure_notification_subscription(
+            access_token,
+            dest_id,
+            topic_id,
+            debug_log=debug_log,
+        )
         sub_id = sub.get("subscriptionId") or sub.get("id")
         logger.info("[notifications:test] Subscription ready id=%s status=%s", sub_id, sub.get("status"))
 
-        test_result = await ebay_service.test_notification_subscription(access_token, sub_id)
+        test_result = await ebay_service.test_notification_subscription(
+            access_token,
+            sub_id,
+            debug_log=debug_log,
+        )
         logger.info(
             "[notifications:test] Test notification call completed status_code=%s",
             test_result.get("status_code"),
@@ -888,6 +916,7 @@ async def test_marketplace_account_deletion_notification(
             "webhookUrl": endpoint_url,
             "notificationError": notification_error,
             "errorSummary": error_summary,
+            "logs": debug_log,
         }
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
     except Exception as exc:  # pragma: no cover - defensive catch-all
@@ -908,4 +937,5 @@ async def test_marketplace_account_deletion_notification(
         "subscriptionId": sub_id,
         "message": "Test notification requested; check ebay_events and Notifications UI.",
         "notificationTest": test_result,
+        "logs": debug_log,
     }
