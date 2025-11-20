@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getMessages, updateMessage, getMessageStats, MessagesListResponse } from '../api/messages';
-import { Mail, MailOpen, Star, Archive, Search, Inbox, Send, Flag, FolderPlus, Folder, Trash2 } from 'lucide-react';
+import { Mail, MailOpen, Star, Archive, Search, Inbox, Send, Flag, FolderPlus, Folder, Trash2, Maximize2, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
@@ -137,6 +137,13 @@ export const MessagesPage = () => {
   // Map of message.id -> custom folder name (e.g. "old"). Stored locally for now.
   const [messageFolders, setMessageFolders] = useState<Record<string, string>>({});
   const [draggedMessageId, setDraggedMessageId] = useState<string | null>(null);
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [showSource, setShowSource] = useState(false);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [topHeightRatio, setTopHeightRatio] = useState(0.6);
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+  const rightPaneRef = useRef<HTMLDivElement | null>(null);
+  const splitStateRef = useRef({ startY: 0, startRatio: 0.6 });
 
   // Load persisted custom folders and message-folder assignments from localStorage once.
   useEffect(() => {
@@ -181,6 +188,40 @@ export const MessagesPage = () => {
     loadMessages();
     loadStats();
   }, [selectedFolder, selectedBucket]);
+
+  // Reset source view when switching messages
+  useEffect(() => {
+    setShowSource(false);
+  }, [selectedMessage]);
+
+  // Handle splitter drag events on window
+  useEffect(() => {
+    if (!isDraggingSplit) return;
+
+    const handleMove = (e: MouseEvent) => {
+      const container = rightPaneRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const height = rect.height || 1;
+      const deltaY = e.clientY - splitStateRef.current.startY;
+      let nextRatio = splitStateRef.current.startRatio + deltaY / height;
+      // Clamp between 20% and 80%
+      nextRatio = Math.max(0.2, Math.min(0.8, nextRatio));
+      setTopHeightRatio(nextRatio);
+    };
+
+    const handleUp = () => {
+      setIsDraggingSplit(false);
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [isDraggingSplit]);
 
   const loadMessages = async () => {
     try {
@@ -339,6 +380,7 @@ export const MessagesPage = () => {
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, messageId: string) => {
     setDraggedMessageId(messageId);
     try {
+      e.dataTransfer.setData('application/x-message-id', messageId);
       e.dataTransfer.setData('text/plain', messageId);
       e.dataTransfer.effectAllowed = 'move';
     } catch {
@@ -355,7 +397,7 @@ export const MessagesPage = () => {
     let id = draggedMessageId;
     if (!id) {
       try {
-        id = e.dataTransfer.getData('text/plain') || null;
+        id = e.dataTransfer.getData('application/x-message-id') || e.dataTransfer.getData('text/plain') || null;
       } catch {
         id = null;
       }
@@ -365,6 +407,7 @@ export const MessagesPage = () => {
     setMessageFolders((prev) => ({ ...prev, [id as string]: folderName }));
     setSelectedCustomFolder(folderName);
     setDraggedMessageId(null);
+    setDragOverFolder(null);
   };
 
   const formatDate = (dateString: string) => {
@@ -402,9 +445,15 @@ export const MessagesPage = () => {
     try {
       const div = document.createElement('div');
       div.innerHTML = html;
-      return (div.textContent || div.innerText || '').trim();
+      // Strip scripts/styles/noscript so CSS/JS don't leak into text
+      div.querySelectorAll('script, style, noscript').forEach((el) => el.remove());
+      const text = div.textContent || div.innerText || '';
+      return text
+        .replace(/\s+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
     } catch {
-      return html;
+      return (html || '').toString();
     }
   };
 
@@ -443,12 +492,23 @@ export const MessagesPage = () => {
         <div className="w-64 border-r bg-gray-50 p-4 flex flex-col">
           <div className="space-y-1">
             <Button
-              variant={selectedFolder === 'inbox' ? 'secondary' : 'ghost'}
-              className="w-full justify-start"
+              variant={
+                selectedFolder === 'inbox'
+                  ? 'secondary'
+                  : dragOverFolder === 'inbox'
+                  ? 'outline'
+                  : 'ghost'
+              }
+              className={`w-full justify-start ${
+                dragOverFolder === 'inbox' ? 'border border-blue-400 bg-blue-50' : ''
+              }`}
               onClick={() => {
                 setSelectedFolder('inbox');
                 setSelectedCustomFolder(null);
               }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragEnter={() => setDragOverFolder('inbox')}
+              onDragLeave={() => setDragOverFolder((prev) => (prev === 'inbox' ? null : prev))}
             >
               <Inbox className="mr-2 h-4 w-4" />
               Inbox
@@ -460,24 +520,46 @@ export const MessagesPage = () => {
             </Button>
 
             <Button
-              variant={selectedFolder === 'sent' ? 'secondary' : 'ghost'}
-              className="w-full justify-start"
+              variant={
+                selectedFolder === 'sent'
+                  ? 'secondary'
+                  : dragOverFolder === 'sent'
+                  ? 'outline'
+                  : 'ghost'
+              }
+              className={`w-full justify-start ${
+                dragOverFolder === 'sent' ? 'border border-blue-400 bg-blue-50' : ''
+              }`}
               onClick={() => {
                 setSelectedFolder('sent');
                 setSelectedCustomFolder(null);
               }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragEnter={() => setDragOverFolder('sent')}
+              onDragLeave={() => setDragOverFolder((prev) => (prev === 'sent' ? null : prev))}
             >
               <Send className="mr-2 h-4 w-4" />
               Sent
             </Button>
 
             <Button
-              variant={selectedFolder === 'flagged' ? 'secondary' : 'ghost'}
-              className="w-full justify-start"
+              variant={
+                selectedFolder === 'flagged'
+                  ? 'secondary'
+                  : dragOverFolder === 'flagged'
+                  ? 'outline'
+                  : 'ghost'
+              }
+              className={`w-full justify-start ${
+                dragOverFolder === 'flagged' ? 'border border-blue-400 bg-blue-50' : ''
+              }`}
               onClick={() => {
                 setSelectedFolder('flagged');
                 setSelectedCustomFolder(null);
               }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragEnter={() => setDragOverFolder('flagged')}
+              onDragLeave={() => setDragOverFolder((prev) => (prev === 'flagged' ? null : prev))}
             >
               <Flag className="mr-2 h-4 w-4" />
               Flagged
@@ -489,12 +571,23 @@ export const MessagesPage = () => {
             </Button>
 
             <Button
-              variant={selectedFolder === 'archived' ? 'secondary' : 'ghost'}
-              className="w-full justify-start"
+              variant={
+                selectedFolder === 'archived'
+                  ? 'secondary'
+                  : dragOverFolder === 'archived'
+                  ? 'outline'
+                  : 'ghost'
+              }
+              className={`w-full justify-start ${
+                dragOverFolder === 'archived' ? 'border border-blue-400 bg-blue-50' : ''
+              }`}
               onClick={() => {
                 setSelectedFolder('archived');
                 setSelectedCustomFolder(null);
               }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragEnter={() => setDragOverFolder('archived')}
+              onDragLeave={() => setDragOverFolder((prev) => (prev === 'archived' ? null : prev))}
             >
               <Archive className="mr-2 h-4 w-4" />
               Archived
@@ -521,10 +614,20 @@ export const MessagesPage = () => {
               {customFolders.map((name) => (
                 <Button
                   key={name}
-                  variant={selectedCustomFolder === name ? 'secondary' : 'ghost'}
-                  className="w-full justify-start"
+                  variant={
+                    selectedCustomFolder === name
+                      ? 'secondary'
+                      : dragOverFolder === name
+                      ? 'outline'
+                      : 'ghost'
+                  }
+                  className={`w-full justify-start ${
+                    dragOverFolder === name ? 'border border-blue-400 bg-blue-50' : ''
+                  }`}
                   onClick={() => setSelectedCustomFolder(name)}
                   onDragOver={(e) => e.preventDefault()}
+                  onDragEnter={() => setDragOverFolder(name)}
+                  onDragLeave={() => setDragOverFolder((prev) => (prev === name ? null : prev))}
                   onDrop={(e) => handleDropOnCustomFolder(e, name)}
                 >
                   <Folder className="mr-2 h-4 w-4" />
@@ -535,11 +638,11 @@ export const MessagesPage = () => {
           </div>
         </div>
 
-        {/* Right side: top list + bottom detail */}
-        <div className="flex-1 flex flex-col min-h-0">
-          {/* Toolbar with search + Gmail-like buckets */}
+        {/* Right side: header + resizable split view */}
+        <div className="flex-1 flex flex-col min-h-0" ref={rightPaneRef}>
+          {/* Compact toolbar with search + Gmail-like buckets in one row */}
           <div className="border-b bg-white">
-            <div className="p-4 flex items-center gap-3">
+            <div className="px-4 py-2 flex items-center justify-between gap-3">
               <div className="relative flex-1 max-w-xl">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
@@ -550,38 +653,43 @@ export const MessagesPage = () => {
                   onKeyDown={(e) => e.key === 'Enter' && loadMessages()}
                 />
               </div>
-            </div>
-            <div className="pb-3 flex justify-center">
-              <div className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-1 text-xs">
-                {([
-                  { key: 'primary', label: 'Primary' },
-                  { key: 'offers', label: 'Offers' },
-                  { key: 'cases', label: 'Cases & Disputes' },
-                  { key: 'ebay', label: 'eBay Messages' },
-                ] as const).map((b) => (
-                  <Button
-                    key={b.key}
-                    variant={selectedBucket === b.key ? 'secondary' : 'ghost'}
-                    size="sm"
-                    className="flex items-center gap-1 px-3 rounded-full"
-                    onClick={() => setSelectedBucket(b.key)}
-                  >
-                    <span>{b.label}</span>
-                    <Badge
-                      variant={selectedBucket === b.key ? 'default' : 'outline'}
-                      className="ml-1"
+              <div className="flex items-center justify-end">
+                <div className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-1 text-xs">
+                  {([
+                    { key: 'primary', label: 'Primary' },
+                    { key: 'offers', label: 'Offers' },
+                    { key: 'cases', label: 'Cases & Disputes' },
+                    { key: 'ebay', label: 'eBay Messages' },
+                  ] as const).map((b) => (
+                    <Button
+                      key={b.key}
+                      variant={selectedBucket === b.key ? 'secondary' : 'ghost'}
+                      size="sm"
+                      className="flex items-center gap-1 px-3 rounded-full"
+                      onClick={() => setSelectedBucket(b.key)}
                     >
-                      {bucketCounts[b.key] ?? 0}
-                    </Badge>
-                  </Button>
-                ))}
+                      <span>{b.label}</span>
+                      <Badge
+                        variant={selectedBucket === b.key ? 'default' : 'outline'}
+                        className="ml-1"
+                      >
+                        {bucketCounts[b.key] ?? 0}
+                      </Badge>
+                    </Button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Top panel - message list (60% of available height) */}
-          <div className="basis-3/5 border-b bg-white min-h-0">
-            <ScrollArea className="h-full">
+          {/* Resizable split: top list + bottom detail */}
+          <div className="flex-1 flex flex-col min-h-0">
+            {/* Top panel - message list */}
+            <div
+              style={{ flexBasis: `${topHeightRatio * 100}%` }}
+              className="min-h-[120px] border-b bg-white overflow-hidden"
+            >
+              <ScrollArea className="h-full">
               {loading ? (
                 <div className="p-4 text-center text-gray-500">Loading...</div>
               ) : visibleMessages.length === 0 ? (
@@ -660,12 +768,24 @@ export const MessagesPage = () => {
             </ScrollArea>
           </div>
 
-          {/* Bottom panel - message detail & reply (40% of available height) */}
-          <div className="basis-2/5 flex flex-col bg-white min-h-0">
-            {selectedMessage ? (
+            {/* Splitter handle */}
+            <div
+              className={`h-1 bg-gray-200 ${isDraggingSplit ? 'bg-gray-300' : ''} cursor-row-resize`}
+              onMouseDown={(e) => {
+                splitStateRef.current = { startY: e.clientY, startRatio: topHeightRatio };
+                setIsDraggingSplit(true);
+              }}
+            />
+
+            {/* Bottom panel - message detail & reply */}
+            <div
+              style={{ flexBasis: `${(1 - topHeightRatio) * 100}%` }}
+              className="min-h-[160px] flex flex-col bg-white overflow-hidden"
+            >
+              {selectedMessage ? (
               <>
-                <div className="border-b p-4 md:p-6">
-                  <div className="flex items-start justify-between gap-4 mb-4">
+                <div className="border-b p-4 md:p-4">
+                  <div className="flex items-start justify-between gap-4 mb-2">
                     <div className="flex-1 min-w-0">
                       <h2 className="text-lg md:text-xl font-semibold mb-1 truncate">
                         {selectedMessage.subject || '(No subject)'}
@@ -706,6 +826,20 @@ export const MessagesPage = () => {
                       </div>
                       <div className="flex flex-wrap gap-2 justify-end">
                         <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowSource((prev) => !prev)}
+                        >
+                          {showSource ? 'Hide source' : 'View source'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIsDetailModalOpen(true)}
+                        >
+                          <Maximize2 className="h-4 w-4 mr-1" /> Pop out
+                        </Button>
+                        <Button
                           variant="default"
                           size="sm"
                           onClick={() => {
@@ -744,7 +878,7 @@ export const MessagesPage = () => {
                 </div>
 
                 <ScrollArea className="flex-1 p-4 md:p-6">
-                  <div className="space-y-4 text-gray-800 text-sm">
+                  <div className="space-y-3 text-gray-800 text-sm">
                     {/* Order / item card from parsed_body.order, if available */}
                     {selectedMessage.parsed_body?.order && (
                       <div className="flex gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -822,7 +956,7 @@ export const MessagesPage = () => {
                       {selectedMessage.parsed_body &&
                       ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
                         selectedMessage.parsed_body.currentMessage) ? (
-                        <div className="space-y-3">
+                        <div className="space-y-2">
                           {[...(selectedMessage.parsed_body.history || []),
                             ...(selectedMessage.parsed_body.currentMessage
                               ? [selectedMessage.parsed_body.currentMessage]
@@ -876,6 +1010,12 @@ export const MessagesPage = () => {
                         </div>
                       )}
                     </div>
+
+                    {showSource && (
+                      <pre className="mt-3 max-h-80 overflow-auto text-xs bg-gray-50 p-2 rounded border border-gray-200">
+                        {selectedMessage.body}
+                      </pre>
+                    )}
                   </div>
 
                   {(selectedMessage.order_id || selectedMessage.listing_id) && (
@@ -936,6 +1076,153 @@ export const MessagesPage = () => {
           </div>
         </div>
       </div>
+    </div>
+
+      {/* Pop-out modal for full-screen message view */}
+      {isDetailModalOpen && selectedMessage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-[90vw] max-w-5xl h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2 border-b">
+              <div className="text-sm font-semibold truncate">
+                {selectedMessage.subject || '(No subject)'}
+              </div>
+              <button
+                type="button"
+                className="p-1 rounded hover:bg-gray-100"
+                onClick={() => setIsDetailModalOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <div className="h-full overflow-auto p-4">
+                {/* Reuse the same order card + thread view as in the detail panel */}
+                <div className="space-y-3 text-gray-800 text-sm max-w-3xl mx-auto">
+                  {selectedMessage.parsed_body?.order && (
+                    <div className="flex gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                      {selectedMessage.parsed_body.order.imageUrl && (
+                        <div className="flex-shrink-0">
+                          <img
+                            src={selectedMessage.parsed_body.order.imageUrl}
+                            alt={selectedMessage.parsed_body.order.title || 'Item image'}
+                            className="w-16 h-16 object-cover rounded"
+                          />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        {selectedMessage.parsed_body.order.title && (
+                          <div className="font-semibold text-sm mb-1 truncate">
+                            {selectedMessage.parsed_body.order.itemUrl ? (
+                              <a
+                                href={selectedMessage.parsed_body.order.itemUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                {selectedMessage.parsed_body.order.title}
+                              </a>
+                            ) : (
+                              selectedMessage.parsed_body.order.title
+                            )}
+                          </div>
+                        )}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-700">
+                          {selectedMessage.parsed_body.order.orderNumber && (
+                            <div>
+                              <span className="font-medium">Order #:</span>{' '}
+                              {selectedMessage.parsed_body.order.orderNumber}
+                            </div>
+                          )}
+                          {selectedMessage.parsed_body.order.itemId && (
+                            <div>
+                              <span className="font-medium">Item ID:</span>{' '}
+                              {selectedMessage.parsed_body.order.itemId}
+                            </div>
+                          )}
+                          {selectedMessage.parsed_body.order.transactionId && (
+                            <div>
+                              <span className="font-medium">Transaction ID:</span>{' '}
+                              {selectedMessage.parsed_body.order.transactionId}
+                            </div>
+                          )}
+                          {selectedMessage.parsed_body.order.status && (
+                            <div>
+                              <span className="font-medium">Status:</span>{' '}
+                              {selectedMessage.parsed_body.order.status}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-gray-800 text-sm">
+                    {selectedMessage.parsed_body &&
+                    ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
+                      selectedMessage.parsed_body.currentMessage) ? (
+                      <div className="space-y-2">
+                        {[...(selectedMessage.parsed_body.history || []),
+                          ...(selectedMessage.parsed_body.currentMessage
+                            ? [selectedMessage.parsed_body.currentMessage]
+                            : []),
+                        ].map((entry, idx) => {
+                          const dir = (entry.direction || 'system') as string;
+                          const isSeller = dir === 'outbound';
+                          const isSystem = dir === 'system';
+                          const containerAlign = isSystem
+                            ? 'items-center justify-center'
+                            : isSeller
+                            ? 'items-end justify-end'
+                            : 'items-start justify-start';
+                          const bubbleClasses = isSystem
+                            ? 'bg-gray-100 text-gray-800'
+                            : isSeller
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-100 text-gray-900';
+                          const author = entry.fromName || entry.author;
+                          const ts = entry.sentAt || entry.timestamp;
+
+                          return (
+                            <div key={entry.id || idx} className={`flex ${containerAlign}`}>
+                              <div
+                                className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${bubbleClasses}`}
+                              >
+                                {author && (
+                                  <div className="text-[11px] mb-1 opacity-80">
+                                    {author}
+                                    {ts && (
+                                      <span className="ml-1">
+                                        · {new Date(ts).toLocaleString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                <div className="text-xs md:text-sm">
+                                  {renderTextWithLineBreaks(entry.text)}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="whitespace-pre-wrap">
+                        {htmlToText(selectedMessage.body)}
+                      </div>
+                    )}
+                  </div>
+
+                  {showSource && (
+                    <pre className="mt-3 max-h-80 overflow-auto text-xs bg-gray-50 p-2 rounded border border-gray-200">
+                      {selectedMessage.body}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
