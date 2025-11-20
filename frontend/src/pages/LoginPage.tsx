@@ -26,16 +26,20 @@ export const LoginPage: React.FC = () => {
     } catch (err: any) {
       // Extract error message from Axios error response
       let errorMessage = 'Login failed';
-      if (err?.response?.status === 401) {
+
+      const hasResponse = !!err?.response;
+      if (!hasResponse) {
+        // Network-level error: backend is likely down or unreachable.
+        errorMessage = 'Backend temporarily unavailable. Please check backend status/logs and try again.';
+      } else if (err.response.status === 401) {
         errorMessage = 'Incorrect email or password';
-      }
-      if (err?.response?.data?.detail) {
+      } else if (err.response.data?.detail) {
         errorMessage = err.response.data.detail;
-      } else if (err?.response?.data?.message) {
+      } else if (err.response.data?.message) {
         errorMessage = err.response.data.message;
-      } else if (err?.response?.data?.error) {
+      } else if (err.response.data?.error) {
         errorMessage = err.response.data.error;
-      } else if (err?.message) {
+      } else if (err.message) {
         errorMessage = err.message;
       }
       

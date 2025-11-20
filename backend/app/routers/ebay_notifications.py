@@ -25,17 +25,19 @@ async def ebay_events_webhook(request: Request) -> Response:
     # We deliberately avoid propagating JSON parsing errors back to eBay.
     # Instead, we best-effort capture whatever we can and always return 2xx,
     # so that eBay does not mark the destination as unhealthy while we debug.
-    raw_body = await request.body()
-    payload: Dict[str, Any]
-    parse_error: str | None = None
-    if not raw_body:
-        payload = {}
-    else:
-        try:
-            payload = json.loads(raw_body)
-        except json.JSONDecodeError as exc:
-            payload = {"_raw": raw_body.decode("utf-8", errors="replace")}
-            parse_error = f"invalid_json_body: {exc}"
+    raw_body: bytes = b""
+    try:
+        raw_body = await request.body()
+        payload: Dict[str, Any]
+        parse_error: str | None = None
+        if not raw_body:
+            payload = {}
+        else:
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError as exc:
+                payload = {"_raw": raw_body.decode("utf-8", errors="replace")}
+                parse_error = f"invalid_json_body: {exc}"
 
         # Normalize headers (lower-case keys for consistency)
         headers = {k.lower(): v for k, v in request.headers.items()}
