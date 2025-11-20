@@ -1,6 +1,48 @@
 import { apiClient } from './client';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
 
+export interface AdminEbayEvent {
+  id: string;
+  created_at: string | null;
+  source: string;
+  channel: string;
+  topic: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  ebay_account: string | null;
+  event_time: string | null;
+  publish_time: string | null;
+  status: string;
+  error: string | null;
+  signature_valid: boolean | null;
+  signature_kid: string | null;
+  // Preview subset of the raw payload; structure depends on event type.
+  payload_preview: any;
+}
+
+export interface AdminEbayEventsResponse {
+  items: AdminEbayEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface GetAdminEbayEventsParams {
+  topic?: string;
+  entityType?: string;
+  entityId?: string;
+  ebayAccount?: string;
+  source?: string;
+  channel?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+  sortBy?: 'event_time' | 'created_at';
+  sortDir?: 'asc' | 'desc';
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -119,6 +161,30 @@ export const ebayApi = {
     const params = new URLSearchParams();
     params.set('active_only', activeOnly ? 'true' : 'false');
     const response = await apiClient.get(`/ebay-accounts?${params.toString()}`);
+    return response.data;
+  },
+
+  async getAdminEbayEvents(params: GetAdminEbayEventsParams = {}): Promise<AdminEbayEventsResponse> {
+    const searchParams = new URLSearchParams();
+
+    if (params.topic) searchParams.set('topic', params.topic);
+    if (params.entityType) searchParams.set('entityType', params.entityType);
+    if (params.entityId) searchParams.set('entityId', params.entityId);
+    if (params.ebayAccount) searchParams.set('ebayAccount', params.ebayAccount);
+    if (params.source) searchParams.set('source', params.source);
+    if (params.channel) searchParams.set('channel', params.channel);
+    if (params.status) searchParams.set('status', params.status);
+    if (params.from) searchParams.set('from', params.from);
+    if (params.to) searchParams.set('to', params.to);
+    if (typeof params.limit === 'number') searchParams.set('limit', String(params.limit));
+    if (typeof params.offset === 'number') searchParams.set('offset', String(params.offset));
+    if (params.sortBy) searchParams.set('sortBy', params.sortBy);
+    if (params.sortDir) searchParams.set('sortDir', params.sortDir);
+
+    const qs = searchParams.toString();
+    const response = await apiClient.get<AdminEbayEventsResponse>(
+      `/api/admin/ebay-events${qs ? `?${qs}` : ''}`,
+    );
     return response.data;
   },
 };

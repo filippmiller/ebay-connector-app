@@ -41,6 +41,11 @@ export default function AdminPage() {
             <h2 className="text-lg font-semibold">Data Migration</h2>
             <p className="text-sm text-gray-600 mt-1">Explore external MSSQL DB and prepare migration</p>
           </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/notifications')}>
+            <h2 className="text-lg font-semibold">Notifications</h2>
+            <p className="text-sm text-gray-600 mt-1">View eBay notification inbox & webhook events</p>
+          </Card>
           
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/timesheets/admin')}>
             <h2 className="text-lg font-semibold">Timesheets</h2>
