@@ -422,6 +422,10 @@ class SqItem(Base):
     # backed by a real column on SKU_catalog.
     model = None  # Convenience display field for model name/code (no backing column)
     part = Column("Part", Text, nullable=True)  # [Part]
+    # Optional short human-readable title for the listing (added by modern app).
+    # The underlying column is created via Alembic migration using
+    # `ALTER TABLE "SKU_catalog" ADD COLUMN IF NOT EXISTS "Title" text`.
+    title = Column("Title", Text, nullable=True)  # [Title]
 
     # Pricing
     price = Column("Price", Numeric(12, 2), nullable=True)  # [Price]

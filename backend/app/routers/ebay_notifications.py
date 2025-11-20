@@ -1,15 +1,48 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import Response, JSONResponse
+from app.config import settings
 from app.services.ebay_event_inbox import log_ebay_event
 from app.utils.logger import logger
 
 
 router = APIRouter(prefix="/webhooks/ebay", tags=["ebay_webhooks"])
+
+
+def _compute_challenge_response(challenge_code: str) -> str:
+    """Compute Marketplace Account Deletion challengeResponse.
+
+    Per eBay docs, the value is:
+        hex_sha256(challengeCode + verificationToken + endpointUrl)
+    where endpointUrl MUST exactly match the destination endpoint registered
+    with Notification API and in the eBay Dev Portal.
+    """
+
+    verification_token = settings.EBAY_NOTIFICATION_VERIFICATION_TOKEN
+    endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
+
+    if not verification_token or not endpoint_url:
+        logger.error(
+            "Cannot compute eBay challengeResponse: missing verification token or destination URL",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Notification challenge configuration is incomplete on the server.",
+        )
+
+    raw = f"{challenge_code}{verification_token}{endpoint_url}".encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()
+    logger.info(
+        "[challenge] computed challengeResponse for endpoint=%s challengeCode=%s",
+        endpoint_url,
+        challenge_code,
+    )
+    return digest
 
 
 @router.post("/events", status_code=204)
@@ -39,10 +72,17 @@ async def ebay_events_webhook(request: Request) -> Response:
                 parse_error = f"invalid_json_body: {exc}"
 
         # Handle potential POST-based challenge payloads from Notification API.
-        if isinstance(payload, dict) and "challenge" in payload and not payload.get("notification") and not payload.get("metadata"):
-            challenge_value = str(payload.get("challenge"))
-            logger.info("Received eBay notification POST challenge=%s", challenge_value)
-            return JSONResponse({"challengeResponse": challenge_value})
+        if isinstance(payload, dict) and not payload.get("notification") and not payload.get("metadata"):
+            challenge_value = (
+                payload.get("challengeCode")
+                or payload.get("challenge_code")
+                or payload.get("challenge")
+            )
+            if challenge_value:
+                challenge_str = str(challenge_value)
+                logger.info("[challenge] Received eBay POST challenge challengeCode=%s", challenge_str)
+                response_value = _compute_challenge_response(challenge_str)
+                return JSONResponse({"challengeResponse": response_value})
 
         # Normalize headers (lower-case keys for consistency)
         headers = {k.lower(): v for k, v in request.headers.items()}
@@ -138,18 +178,21 @@ async def ebay_events_webhook(request: Request) -> Response:
 
 @router.get("/events")
 async def ebay_events_challenge(
-    challenge_code: str | None = Query(None, alias="challengeCode"),
+    challenge_code_q: str | None = Query(None, alias="challenge_code"),
+    challenge_code_camel: str | None = Query(None, alias="challengeCode"),
 ) -> Dict[str, str]:
-    """Handle Notification API destination challenge (minimal implementation).
+    """Handle Notification API destination challenge (GET variant).
 
-    When a destination is (re)configured, eBay may send a challenge request with
-    a ``challengeCode`` query parameter. The expected response is a JSON body
-    with ``challengeResponse`` echoing the same value. We do not yet perform
-    any additional signature validation here; that will be wired separately.
+    eBay may send either ``challenge_code`` or ``challengeCode`` as the query
+    parameter name. We support both and compute the Marketplace Account
+    Deletion challengeResponse using the configured verification token and
+    destination URL.
     """
 
-    if challenge_code:
-        logger.info("Received eBay notification challengeCode=%s", challenge_code)
-        return {"challengeResponse": challenge_code}
+    code = challenge_code_q or challenge_code_camel
+    if code:
+        logger.info("[challenge] Received eBay GET challenge challengeCode=%s", code)
+        response_value = _compute_challenge_response(code)
+        return {"challengeResponse": response_value}
 
-    return {"status": "ok", "message": "No challengeCode provided"}
+    return {"status": "ok", "message": "No challenge code provided"}

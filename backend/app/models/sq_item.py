@@ -37,11 +37,61 @@ class SqItemBase(BaseModel):
     mpn: Optional[str] = None
     upc: Optional[str] = None
 
+    # Images (PicURL1..PicURL12 in the legacy table)
+    pic_url1: Optional[str] = None
+    pic_url2: Optional[str] = None
+    pic_url3: Optional[str] = None
+    pic_url4: Optional[str] = None
+    pic_url5: Optional[str] = None
+    pic_url6: Optional[str] = None
+    pic_url7: Optional[str] = None
+    pic_url8: Optional[str] = None
+    pic_url9: Optional[str] = None
+    pic_url10: Optional[str] = None
+    pic_url11: Optional[str] = None
+    pic_url12: Optional[str] = None
+
+    # Physical properties / weight
+    weight: Optional[Decimal] = None
+    weight_major: Optional[Decimal] = None
+    weight_minor: Optional[Decimal] = None
+    package_depth: Optional[Decimal] = None
+    package_length: Optional[Decimal] = None
+    package_width: Optional[Decimal] = None
+    size: Optional[str] = None
+    unit: Optional[str] = None
+
+    # Optional grade & packaging
+    item_grade_id: Optional[int] = None
+    basic_package_id: Optional[int] = None
+
+    # Identification flags
+    color_flag: Optional[bool] = None
+    color_value: Optional[str] = None
+    epid_flag: Optional[bool] = None
+    epid_value: Optional[str] = None
+
     alert_flag: Optional[bool] = None
     alert_message: Optional[str] = None
 
     title: Optional[str] = None
     brand: Optional[str] = None
+
+    # Template / listing metadata (subset actually used by the UI)
+    custom_template_flag: Optional[bool] = None
+    custom_template_description: Optional[str] = None
+    condition_description: Optional[str] = None
+    domestic_only_flag: Optional[bool] = None
+    external_category_flag: Optional[bool] = None
+    external_category_id: Optional[str] = None
+    external_category_name: Optional[str] = None
+    listing_type: Optional[str] = None
+    listing_duration: Optional[str] = None
+    listing_duration_in_days: Optional[int] = None
+    use_standard_template_for_external_category_flag: Optional[bool] = None
+    use_ebay_motors_site_flag: Optional[bool] = None
+    site_id: Optional[str] = None
+    one_time_auction: Optional[bool] = None
 
     warehouse_id: Optional[int] = None
     storage_alias: Optional[str] = None

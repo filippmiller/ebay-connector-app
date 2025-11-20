@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, asc, desc
+from sqlalchemy import or_, asc, desc, func
 
 from app.models_sqlalchemy import get_db
 from app.models_sqlalchemy.models import (
@@ -141,25 +141,96 @@ async def create_sq_item(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> SqItemRead:
-    """Create a new SQ catalog item.
+    """Create a new SQ catalog item for the SKU popup form.
 
-    ``record_created`` / ``record_created_by`` are populated automatically.
+    The implementation mirrors the legacy semantics as closely as possible:
+
+    * If ``sku`` is empty, the next numeric SKU is generated as ``MAX(SKU) + 1``.
+    * ``Title`` is required and limited to 80 characters.
+    * ``Price`` must be positive.
+    * An internal category is required unless ``external_category_flag`` is set
+      ("eBay category" mode).
+    * Audit / status fields are initialised with sensible defaults.
     """
 
     now = datetime.now(timezone.utc)
+
+    # --- High-level validation mirroring the UI rules ----------------------
+    title = (payload.title or "").strip() if payload.title is not None else ""
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    if len(title) > 80:
+        raise HTTPException(status_code=400, detail="Title must be at most 80 characters")
+
+    if payload.price is None or payload.price <= 0:
+        raise HTTPException(status_code=400, detail="Price must be greater than 0")
+
+    # When not using external/eBay category, internal category is required.
+    if not payload.external_category_flag:
+        if payload.category is None or str(payload.category).strip() == "":
+            raise HTTPException(status_code=400, detail="Internal category is required")
 
     data = payload.model_dump(exclude_unset=True)
     item = SqItem()
     for key, value in data.items():
         setattr(item, key, value)
 
-    # Auto-generate SKU if not provided – simple prefix + timestamp for now
+    # --- Auto-generated numeric SKU ----------------------------------------
     if not item.sku:
-        item.sku = f"SQ-{int(now.timestamp())}"
+        # ``SKU`` is stored as a numeric column on SKU_catalog. We still treat
+        # it as a logical string in the API, but generation is purely numeric
+        # using the legacy pattern MAX(SKU)+1.
+        max_sku = db.query(func.max(SqItem.sku)).scalar()
+        try:
+            current_max = int(max_sku) if max_sku is not None else 0
+        except (TypeError, ValueError):
+            current_max = 0
+        item.sku = current_max + 1
+    else:
+        # Ensure uniqueness when user provides an explicit SKU.
+        existing = db.query(SqItem).filter(SqItem.sku == item.sku).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="SKU must be unique")
 
+    # --- Defaults mirroring legacy behaviour -------------------------------
+    if not item.market:
+        item.market = "eBay"
+
+    # In the legacy system UseEbayID was stored as a text flag ("Y"/"N"). We
+    # keep that contract even though the column is a plain Text field.
+    if not item.use_ebay_id:
+        item.use_ebay_id = "Y"
+
+    # Record / status defaults
+    if item.price is not None and item.price_updated is None:
+        item.price_updated = now
+
+    if item.record_status is None:
+        item.record_status = 1
+    if item.record_status_flag is None:
+        item.record_status_flag = True
+    if item.checked_status is None:
+        item.checked_status = False
+
+    # Audit fields
+    username = (
+        getattr(current_user, "username", None)
+        or getattr(current_user, "email", None)
+        or "system"
+    )
     if not item.record_created:
         item.record_created = now
-    item.record_created_by = current_user.username if getattr(current_user, "username", None) else (current_user.email if getattr(current_user, "email", None) else "system")
+    item.record_created_by = username
+    item.record_updated = now
+    item.record_updated_by = username
+
+    # Shipping / listing sensible defaults
+    if not item.listing_type:
+        item.listing_type = "FixedPriceItem"
+    if not item.listing_duration:
+        item.listing_duration = "GTC"
+    if item.listing_duration_in_days is None:
+        item.listing_duration_in_days = None
 
     db.add(item)
     db.commit()
@@ -178,20 +249,35 @@ async def update_sq_item(
     """Update an existing SQ catalog item.
 
     Only fields present in the payload are patched; audit fields are updated
-    automatically.
+    automatically. When the price changes, the previous value is moved to
+    ``previous_price`` and ``price_updated`` is refreshed.
     """
 
     item = db.query(SqItem).filter(SqItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="SQ item not found")
 
+    # Capture old price before patching
+    old_price = item.price
+
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(item, key, value)
 
     now = datetime.now(timezone.utc)
+
+    # If price changed and a new price was provided, update history fields.
+    if "price" in data and item.price is not None and item.price != old_price:
+        item.previous_price = old_price
+        item.price_updated = now
+
+    username = (
+        getattr(current_user, "username", None)
+        or getattr(current_user, "email", None)
+        or "system"
+    )
     item.record_updated = now
-    item.record_updated_by = current_user.username if getattr(current_user, "username", None) else (current_user.email if getattr(current_user, "email", None) else "system")
+    item.record_updated_by = username
 
     db.commit()
     db.refresh(item)

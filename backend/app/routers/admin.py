@@ -674,7 +674,22 @@ async def get_notifications_status(
         else:
             nerr = {"status_code": exc.status_code, "message": str(detail)}
 
-        body_preview = nerr.get("body")
+        # Try to detect explicit challenge verification failures (195020) so we
+        # can surface a clearer reason in Diagnostics.
+        reason = "notification_api_error"
+        body_obj = nerr.get("body")
+        if isinstance(body_obj, dict):
+            try:
+                errors = body_obj.get("errors") or []
+                for err in errors:
+                    if isinstance(err, dict) and err.get("errorId") == 195020:
+                        reason = "verification_failed"
+                        break
+            except Exception:
+                # Best-effort only; fall back to generic reason if parsing fails.
+                pass
+
+        body_preview = body_obj
         if isinstance(body_preview, (dict, list)):
             body_preview = str(body_preview)[:300]
         error_summary = f"Notification API HTTP {nerr.get('status_code')} - {nerr.get('message')}"
@@ -685,7 +700,7 @@ async def get_notifications_status(
             "environment": env,
             "webhookUrl": endpoint_url,
             "state": "misconfigured",
-            "reason": "notification_api_error",
+            "reason": reason,
             "notificationError": nerr,
             "errorSummary": error_summary,
             "destination": None,

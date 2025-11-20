@@ -1,9 +1,37 @@
 import { useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
+import { SkuFormModal, type SkuFormMode } from '@/components/SkuFormModal';
+import { Button } from '@/components/ui/button';
 
 export default function SKUPage() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedRow, setSelectedRow] = useState<Record<string, any> | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<SkuFormMode>('create');
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const handleOpenCreate = () => {
+    setFormMode('create');
+    setEditingId(null);
+    setFormOpen(true);
+  };
+
+  const handleOpenEditFromSelection = () => {
+    if (!selectedRow || typeof selectedRow.id !== 'number') return;
+    setFormMode('edit');
+    setEditingId(selectedRow.id);
+    setFormOpen(true);
+  };
+
+  const handleSaved = (id: number) => {
+    // Trigger grid reload and keep last saved row selected in the detail panel.
+    setRefreshKey((prev) => prev + 1);
+    setFormOpen(false);
+    setEditingId(id);
+    // The grid does not expose a selected-row API; we keep the old detail until user clicks again.
+  };
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -13,8 +41,13 @@ export default function SKUPage() {
           <div>
             <h1 className="text-2xl font-bold">SKU Catalog</h1>
             <p className="text-xs text-gray-500">
-              Read-only view of the canonical SKU table from Supabase. Select a row to see basic details.
+              SQ catalog backed by the canonical SKU table. Use the form to create or edit SKUs.
             </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" className="text-xs" onClick={handleOpenCreate}>
+              Add SKU
+            </Button>
           </div>
         </div>
 
@@ -29,6 +62,7 @@ export default function SKUPage() {
               <DataGridPage
                 gridKey="sku_catalog"
                 title="SKU catalog"
+                extraParams={{ _refresh: refreshKey }}
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 onRowClick={(row: any) => {
                   setSelectedRow(row || null);
@@ -37,9 +71,22 @@ export default function SKUPage() {
             </div>
           </div>
 
-          {/* Bottom: simple detail panel from selected grid row */}
+          {/* Bottom: detail panel from selected grid row */}
           {selectedRow ? (
             <div className="flex-[1] min-h-[160px] border rounded-lg bg-white flex flex-col p-3 text-xs gap-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-semibold text-gray-700 text-sm">Selected SKU details</div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={typeof selectedRow.id !== 'number'}
+                    onClick={handleOpenEditFromSelection}
+                  >
+                    Edit SKU
+                  </Button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-x-6 gap-y-1">
                 <div>
                   <div className="font-semibold text-gray-600">Title</div>
@@ -67,7 +114,7 @@ export default function SKUPage() {
                 </div>
                 <div>
                   <div className="font-semibold text-gray-600">Condition</div>
-                  <div className="text-sm">{selectedRow.condition || '-'}</div>
+                  <div className="text-sm">{selectedRow.condition || selectedRow.condition_description || '-'}</div>
                 </div>
                 <div>
                   <div className="font-semibold text-gray-600">Part Number</div>
@@ -92,7 +139,14 @@ export default function SKUPage() {
           )}
         </div>
       </div>
+
+      <SkuFormModal
+        open={formOpen}
+        mode={formMode}
+        skuId={editingId}
+        onSaved={handleSaved}
+        onClose={() => setFormOpen(false)}
+      />
     </div>
   );
 }
-
