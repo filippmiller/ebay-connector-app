@@ -367,17 +367,19 @@ class Inventory(Base):
 class TblPartsInventory(Base):
     """Reflected model for the legacy parts inventory table.
 
-    This maps to the Supabase/Postgres table "tbl"."parts__inventory" and
+    This maps to the Supabase/Postgres relation "tbl.parts__inventory" and
     reflects all columns at runtime from the live database schema so that
     the application always stays in sync with the real table definition.
 
-    In environments where that schema/table is not present (e.g. lightweight
-    Railway deployments), we fall back to a minimal placeholder definition so
-    that Alembic and metadata imports do not crash with NoSuchTableError.
+    NOTE: In Supabase this table is created as a single quoted identifier
+    with a dot in the name, similar to how SKU_catalog is mapped above.
     """
 
-    __tablename__ = "parts__inventory"
-
+    __table__ = Table(
+        "tbl.parts__inventory",
+        Base.metadata,
+        autoload_with=engine,
+    )
     try:
         __table__ = Table(
             "parts__inventory",
