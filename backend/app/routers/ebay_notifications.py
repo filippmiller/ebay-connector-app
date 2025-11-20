@@ -4,8 +4,7 @@ import json
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request, Query
-from fastapi.responses import Response
-
+from fastapi.responses import Response, JSONResponse
 from app.services.ebay_event_inbox import log_ebay_event
 from app.utils.logger import logger
 
@@ -38,6 +37,12 @@ async def ebay_events_webhook(request: Request) -> Response:
             except json.JSONDecodeError as exc:
                 payload = {"_raw": raw_body.decode("utf-8", errors="replace")}
                 parse_error = f"invalid_json_body: {exc}"
+
+        # Handle potential POST-based challenge payloads from Notification API.
+        if isinstance(payload, dict) and "challenge" in payload and not payload.get("notification") and not payload.get("metadata"):
+            challenge_value = str(payload.get("challenge"))
+            logger.info("Received eBay notification POST challenge=%s", challenge_value)
+            return JSONResponse({"challengeResponse": challenge_value})
 
         # Normalize headers (lower-case keys for consistency)
         headers = {k.lower(): v for k, v in request.headers.items()}

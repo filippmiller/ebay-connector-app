@@ -276,9 +276,20 @@ def _run_one_to_one_migration_sync(
             # Build Postgres INSERT.
             insert_cols = ", ".join(f'"{name}"' for name in column_names)
             value_placeholders = ", ".join(f":{name}" for name in column_names)
+
+            # Make 1:1 migrations idempotent for tables with a primary key 'id'.
+            conflict_cols: List[str] = []
+            if "id" in column_names:
+                conflict_cols = ["id"]
+
+            conflict_clause = ""
+            if conflict_cols:
+                conflict_cols_sql = ", ".join(f'"{c}"' for c in conflict_cols)
+                conflict_clause = f" ON CONFLICT ({conflict_cols_sql}) DO NOTHING"
+
             insert_sql = text(
                 f'INSERT INTO "{payload.target_schema}"."{payload.target_table}" '
-                f'({insert_cols}) VALUES ({value_placeholders})'
+                f'({insert_cols}) VALUES ({value_placeholders}){conflict_clause}'
             )
 
             offset = 0

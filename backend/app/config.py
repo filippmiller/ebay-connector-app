@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     JWT_SECRET: Optional[str] = None
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Default token lifetime (in minutes). Adjust via ACCESS_TOKEN_EXPIRE_MINUTES env var.
+    # Increased from 30 minutes to 300 minutes (~5 hours) to support long-running admin tasks.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 300
     DEBUG: bool = False
     
     @property

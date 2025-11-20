@@ -273,9 +273,20 @@ async def run_migration_command(
 
     col_list_sql = ", ".join(f'"{c}"' for c in insert_columns)
     values_placeholders = ", ".join(f":{c}" for c in insert_columns)
+
+    # Make migrations idempotent for typical tables that have a primary key 'id'.
+    conflict_cols: List[str] = []
+    if "id" in insert_columns:
+        conflict_cols = ["id"]
+
+    conflict_clause = ""
+    if conflict_cols:
+        conflict_cols_sql = ", ".join(f'"{c}"' for c in conflict_cols)
+        conflict_clause = f" ON CONFLICT ({conflict_cols_sql}) DO NOTHING"
+
     insert_sql = text(
         f'INSERT INTO "{target_schema}"."{target.table}" ({col_list_sql}) '
-        f"VALUES ({values_placeholders})"
+        f"VALUES ({values_placeholders}){conflict_clause}"
     )
 
     # Optionally truncate target table first

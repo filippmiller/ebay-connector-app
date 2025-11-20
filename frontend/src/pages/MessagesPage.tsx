@@ -1120,6 +1120,16 @@ export const MessagesPage = () => {
                       )}
                     </div>
                     <div className="flex flex-wrap gap-2 justify-end">
+                      <Badge variant="outline">
+                        {selectedMessage.direction === 'INCOMING' ? 'Inbox' : 'Sent'}
+                      </Badge>
+                      {selectedMessage.is_read ? (
+                        <Badge variant="outline">Read</Badge>
+                      ) : (
+                        <Badge variant="default">Unread</Badge>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 justify-end">
                       <Button
                         variant="outline"
                         size="sm"
@@ -1131,13 +1141,9 @@ export const MessagesPage = () => {
                         variant="default"
                         size="sm"
                         onClick={() => {
-                          // Close modal and focus reply box in the main view
-                          setIsDetailModalOpen(false);
-                          setTimeout(() => {
-                            const textarea = document.getElementById('reply-textarea');
-                            textarea?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            (textarea as HTMLTextAreaElement | null)?.focus?.();
-                          }, 50);
+                          const textarea = document.getElementById('reply-textarea-modal') as HTMLTextAreaElement | null;
+                          textarea?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                          textarea?.focus?.();
                         }}
                       >
                         <Send className="h-4 w-4 mr-1" /> Reply
@@ -1294,10 +1300,45 @@ export const MessagesPage = () => {
                   )}
                 </div>
               </div>
+
+              {/* Reply box pinned to bottom of pop-out */}
+              <div className="border-t p-4">
+                <h3 className="font-semibold mb-2">Reply message</h3>
+                <textarea
+                  id="reply-textarea-modal"
+                  className="w-full border rounded-md p-2 text-sm min-h-[120px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Type your reply here..."
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                />
+                <div className="mt-3 flex flex-wrap gap-2 justify-end">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      console.log('Send reply (stub):', {
+                        messageId: selectedMessage.id,
+                        replyText,
+                      });
+                      setReplyText('');
+                    }}
+                  >
+                    <Send className="h-4 w-4 mr-1" /> Reply
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setReplyText('')}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
     </div>
   );
+};
 };
