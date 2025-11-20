@@ -16,11 +16,13 @@ from app.models_sqlalchemy.models import (
     OfferState,
     OfferDirection,
     ActiveInventory,
+    Inventory,
     Purchase,
     AccountingBankStatement,
     AccountingCashExpense,
     AccountingTransaction as AccountingTxn,
     SqItem,
+    EbayStatus,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -88,6 +90,11 @@ async def get_grid_data(
     # Messages-specific filters (mirroring /messages)
     folder: Optional[str] = Query(None),
     unread_only: bool = False,
+    # Accounting / generic filters
+    source_type: Optional[str] = Query(None),
+    storage_id: Optional[str] = Query(None, alias="storageID"),
+    # Inventory-specific filters
+    ebay_status: Optional[str] = Query(None),
     search: Optional[str] = None,
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -121,6 +128,8 @@ async def get_grid_data(
         default_sort_col = "booking_date"
     elif grid_key == "finances_fees":
         default_sort_col = "created_at"
+    elif grid_key == "inventory":
+        default_sort_col = "rec_created"
 
     sort_column = sort_by if sort_by in allowed_cols else default_sort_col
 
@@ -178,6 +187,23 @@ async def get_grid_data(
                 offset,
                 sort_column,
                 sort_dir,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "inventory":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_inventory_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                storage_id=storage_id,
+                ebay_status=ebay_status,
+                search=search,
             )
         finally:
             db_sqla.close()
@@ -608,6 +634,110 @@ def _get_sku_catalog_data(
                 row[col] = value.isoformat()
             elif isinstance(value, Decimal):
                 row[col] = float(value)
+            else:
+                row[col] = value
+        return row
+
+    rows = [_serialize(item) for item in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_inventory_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    storage_id: Optional[str],
+    ebay_status: Optional[str],
+    search: Optional[str],
+) -> Dict[str, Any]:
+    """Inventory grid backed directly by the inventory table (tbl.parts_inventory).
+
+    Exposes a wide set of real columns so the grid can be configured to show any
+    field from the underlying table, with optional filters for storage ID,
+    eBay status, and a global text search across common text fields.
+    """
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    query = db.query(Inventory)
+
+    # Optional filters
+    if storage_id:
+        like = f"%{storage_id}%"
+        query = query.filter(Inventory.storage_id.ilike(like))
+
+    if ebay_status:
+        try:
+            status_enum = EbayStatus[ebay_status.upper()]
+            query = query.filter(Inventory.ebay_status == status_enum)
+        except KeyError:
+            # If the value does not map to the enum, ignore the filter rather than erroring.
+            pass
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                Inventory.sku_code.ilike(like),
+                Inventory.model.ilike(like),
+                Inventory.category.ilike(like),
+                Inventory.part_number.ilike(like),
+                Inventory.title.ilike(like),
+                Inventory.price_currency.ilike(like),
+                Inventory.ebay_listing_id.ilike(like),
+                Inventory.storage_id.ilike(like),
+                Inventory.storage.ilike(like),
+                Inventory.author.ilike(like),
+                Inventory.tracking_number.ilike(like),
+            )
+        )
+
+    total = query.count()
+
+    # Allow sorting on a safe subset of real columns.
+    allowed_sort_cols = {
+        "id": Inventory.id,
+        "sku_code": Inventory.sku_code,
+        "model": Inventory.model,
+        "category": Inventory.category,
+        "status": Inventory.status,
+        "ebay_status": Inventory.ebay_status,
+        "price_value": Inventory.price_value,
+        "storage_id": Inventory.storage_id,
+        "rec_created": Inventory.rec_created,
+        "rec_updated": Inventory.rec_updated,
+    }
+    sort_attr = allowed_sort_cols.get(sort_column or "rec_created")
+    if sort_attr is None:
+        sort_attr = Inventory.rec_created
+    if sort_dir == "desc":
+        query = query.order_by(desc(sort_attr))
+    else:
+        query = query.order_by(asc(sort_attr))
+
+    rows_db: List[Inventory] = query.offset(offset).limit(limit).all()
+
+    def _serialize(item: Inventory) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            value = getattr(item, col, None)
+            if isinstance(value, dt_type):
+                row[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                row[col] = float(value)
+            elif isinstance(value, enum.Enum):
+                row[col] = value.value
             else:
                 row[col] = value
         return row

@@ -664,12 +664,30 @@ async def get_notifications_status(
             exc.status_code,
             exc.detail,
         )
+        detail = exc.detail
+        if isinstance(detail, dict):
+            nerr = {
+                "status_code": detail.get("status_code", exc.status_code),
+                "message": detail.get("message") or str(detail),
+                "body": detail.get("body"),
+            }
+        else:
+            nerr = {"status_code": exc.status_code, "message": str(detail)}
+
+        body_preview = nerr.get("body")
+        if isinstance(body_preview, (dict, list)):
+            body_preview = str(body_preview)[:300]
+        error_summary = f"Notification API HTTP {nerr.get('status_code')} - {nerr.get('message')}"
+        if body_preview:
+            error_summary += f" | body: {body_preview}"
+
         return {
             "environment": env,
             "webhookUrl": endpoint_url,
             "state": "misconfigured",
             "reason": "notification_api_error",
-            "notificationError": exc.detail,
+            "notificationError": nerr,
+            "errorSummary": error_summary,
             "destination": None,
             "subscription": None,
             "destinationId": None,
@@ -851,6 +869,13 @@ async def test_marketplace_account_deletion_notification(
                 "message": str(detail),
             }
 
+        body_preview = notification_error.get("body")
+        if isinstance(body_preview, (dict, list)):
+            body_preview = str(body_preview)[:300]
+        error_summary = f"Notification API HTTP {notification_error.get('status_code')} - {notification_error.get('message')}"
+        if body_preview:
+            error_summary += f" | body: {body_preview}"
+
         logger.error(
             "[notifications:test] Notification API error during test: %s",
             notification_error,
@@ -862,6 +887,7 @@ async def test_marketplace_account_deletion_notification(
             "environment": env,
             "webhookUrl": endpoint_url,
             "notificationError": notification_error,
+            "errorSummary": error_summary,
         }
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
     except Exception as exc:  # pragma: no cover - defensive catch-all

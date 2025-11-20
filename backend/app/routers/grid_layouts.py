@@ -141,6 +141,35 @@ ACTIVE_INVENTORY_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
 ]
 
+# Inventory grid: direct view over the main inventory table (tbl.parts_inventory equivalent).
+INVENTORY_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="id", label="ID", type="number", width_default=70),
+  ColumnMeta(name="sku_id", label="SKU ID", type="number", width_default=90),
+  ColumnMeta(name="sku_code", label="SKU", type="string", width_default=150),
+  ColumnMeta(name="model", label="Model", type="string", width_default=200),
+  ColumnMeta(name="category", label="Category", type="string", width_default=140),
+  ColumnMeta(name="condition", label="Condition", type="string", width_default=120),
+  ColumnMeta(name="part_number", label="Part #", type="string", width_default=140),
+  ColumnMeta(name="title", label="Title", type="string", width_default=260),
+  ColumnMeta(name="price_value", label="Price", type="money", width_default=120),
+  ColumnMeta(name="price_currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="ebay_listing_id", label="eBay listing ID", type="string", width_default=180),
+  ColumnMeta(name="ebay_status", label="eBay status", type="string", width_default=130),
+  ColumnMeta(name="status", label="Status", type="string", width_default=120),
+  ColumnMeta(name="photo_count", label="Photos", type="number", width_default=80),
+  ColumnMeta(name="notes", label="Notes", type="string", width_default=220),
+  ColumnMeta(name="storage_id", label="Storage ID", type="string", width_default=120),
+  ColumnMeta(name="storage", label="Storage", type="string", width_default=120),
+  ColumnMeta(name="warehouse_id", label="Warehouse ID", type="number", width_default=110),
+  ColumnMeta(name="quantity", label="Qty", type="number", width_default=70),
+  ColumnMeta(name="rec_created", label="Created", type="datetime", width_default=180),
+  ColumnMeta(name="rec_updated", label="Updated", type="datetime", width_default=180),
+  ColumnMeta(name="author", label="Author", type="string", width_default=140),
+  ColumnMeta(name="buyer_info", label="Buyer info", type="string", width_default=220),
+  ColumnMeta(name="tracking_number", label="Tracking #", type="string", width_default=160),
+  ColumnMeta(name="raw_payload", label="Raw payload", type="string", width_default=260),
+]
+
 ACCOUNTING_BANK_STATEMENTS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=80),
   ColumnMeta(name="statement_period_start", label="Period start", type="date", width_default=140),
@@ -331,6 +360,25 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "last_seen_at", "direction": "desc"},
     },
+    "inventory": {
+        "visible_columns": [
+            "id",
+            "sku_code",
+            "status",
+            "ebay_status",
+            "storage_id",
+            "model",
+            "category",
+            "part_number",
+            "title",
+            "price_value",
+            "price_currency",
+            "quantity",
+            "rec_created",
+            "author",
+        ],
+        "sort": {"column": "rec_created", "direction": "desc"},
+    },
     "cases": {
         "visible_columns": [
             "open_date",
@@ -454,6 +502,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return SKU_CATALOG_COLUMNS_META
     if grid_key == "active_inventory":
         return ACTIVE_INVENTORY_COLUMNS_META
+    if grid_key == "inventory":
+        return INVENTORY_COLUMNS_META
     if grid_key == "cases":
         return CASES_COLUMNS_META
     if grid_key == "finances":

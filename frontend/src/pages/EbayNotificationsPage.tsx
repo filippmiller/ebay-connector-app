@@ -50,6 +50,8 @@ export default function EbayNotificationsPage() {
   // Live terminal of most recent events (independent of filters)
   const [recentEvents, setRecentEvents] = useState<AdminEbayEvent[]>([]);
   const [recentErrorCount, setRecentErrorCount] = useState(0);
+  // Diagnostics log (status + test button) shown in terminal panel
+  const [diagLog, setDiagLog] = useState<string[]>([]);
 
   // Webhook / Notification API status
   const [statusInfo, setStatusInfo] = useState<NotificationsStatus | null>(null);
@@ -115,14 +117,24 @@ export default function EbayNotificationsPage() {
     void fetchEvents(0);
   };
 
+  const appendDiag = (line: string) => {
+    setDiagLog((prev) => {
+      const next = [...prev, line];
+      return next.length > 200 ? next.slice(next.length - 200) : next;
+    });
+  };
+
   const loadStatus = async () => {
     setStatusLoading(true);
     try {
       const s = await ebayApi.getNotificationsStatus();
       setStatusInfo(s);
+      const summary = s.errorSummary || `state=${s.state} reason=${s.reason || 'n/a'}`;
+      appendDiag(`[status] ${summary}`);
     } catch (e: any) {
       // eslint-disable-next-line no-console
       console.error('Failed to load notifications status', e);
+      appendDiag(`[status] FAILED ${e?.message || 'Unknown error'}`);
     } finally {
       setStatusLoading(false);
     }
@@ -240,9 +252,16 @@ export default function EbayNotificationsPage() {
                     const resp = await ebayApi.testMarketplaceDeletionNotification();
                     if (!resp.ok) {
                       const nErr = resp.notificationError;
-                      const nErrText = nErr?.message
-                        ? `Notification API ${nErr.status_code ?? ''} – ${nErr.message}`
-                        : undefined;
+                      const nErrText = resp.errorSummary
+                        || (nErr?.message
+                          ? `Notification API ${nErr.status_code ?? ''} – ${nErr.message}`
+                          : undefined);
+                      const diag = resp.errorSummary
+                        || resp.message
+                        || nErrText
+                        || resp.reason
+                        || 'Notification test failed';
+                      appendDiag(`[test] FAILED ${diag}`);
                       toast({
                         title: 'Test notification failed',
                         description:
@@ -253,6 +272,11 @@ export default function EbayNotificationsPage() {
                         variant: 'destructive',
                       });
                     } else {
+                      const statusCode = (resp as any).notificationTest?.status_code;
+                      appendDiag(
+                        `[test] OK env=${resp.environment} dest=${resp.destinationId || '-'} ` +
+                          `sub=${resp.subscriptionId || '-'} statusCode=${statusCode ?? ''}`,
+                      );
                       toast({
                         title: 'Test notification requested',
                         description: resp.message,
@@ -263,9 +287,17 @@ export default function EbayNotificationsPage() {
                   } catch (e: any) {
                     const data = e?.response?.data;
                     const nErr = data?.notificationError;
-                    const nErrText = nErr?.message
-                      ? `Notification API ${nErr.status_code ?? ''} – ${nErr.message}`
-                      : undefined;
+                    const nErrText = data?.errorSummary
+                      || (nErr?.message
+                        ? `Notification API ${nErr.status_code ?? ''} – ${nErr.message}`
+                        : undefined);
+                    const diag = data?.errorSummary
+                      || data?.message
+                      || nErrText
+                      || data?.reason
+                      || e?.message
+                      || 'Unknown error';
+                    appendDiag(`[test] FAILED ${diag}`);
                     toast({
                       title: 'Test notification failed',
                       description:
@@ -362,13 +394,10 @@ export default function EbayNotificationsPage() {
                   <span className="font-semibold">Last health check:</span>{' '}
                   <span>{statusInfo.checkedAt ? formatDate(statusInfo.checkedAt) : 'n/a'}</span>
                 </div>
-                {statusInfo.notificationError && (
+                {statusInfo.errorSummary && (
                   <div className="mt-1">
                     <span className="font-semibold text-red-700">Notification API error:</span>{' '}
-                    <span>
-                      {statusInfo.notificationError.status_code && `HTTP ${statusInfo.notificationError.status_code} `}
-                      {statusInfo.notificationError.message || ''}
-                    </span>
+                    <span>{statusInfo.errorSummary}</span>
                   </div>
                 )}
                 <button
@@ -678,11 +707,21 @@ export default function EbayNotificationsPage() {
             </CardHeader>
             <CardContent className="pt-0 pb-3 px-4">
               <ScrollArea className="h-64 w-full rounded border bg-gray-950 text-gray-100 p-2 font-mono text-[12px]">
-                {recentEvents.length === 0 ? (
-                  <div className="text-gray-500">No events yet.</div>
-                ) : (
-                  <div className="space-y-1">
-                    {recentEvents.map((ev) => {
+                <div className="space-y-1">
+                  {diagLog.map((line, idx) => (
+                    <div key={`diag-${idx}`} className="text-[11px] text-gray-200">
+                      {line}
+                    </div>
+                  ))}
+                  {diagLog.length > 0 && recentEvents.length > 0 && (
+                    <div className="text-gray-600 text-[10px] border-t border-gray-700 mt-1 pt-1">
+                      --- events ---
+                    </div>
+                  )}
+                  {recentEvents.length === 0 ? (
+                    <div className="text-gray-500">No events yet.</div>
+                  ) : (
+                    recentEvents.map((ev) => {
                       const t = formatDate(ev.event_time || ev.created_at);
                       const time = t ? new Date(ev.event_time || ev.created_at || '').toLocaleTimeString('en-US', {
                         hour12: false,
@@ -713,9 +752,9 @@ export default function EbayNotificationsPage() {
                           <span className="text-gray-500">{ev.status}</span>
                         </div>
                       );
-                    })}
-                  </div>
-                )}
+                    })
+                  )}
+                </div>
               </ScrollArea>
             </CardContent>
           </Card>

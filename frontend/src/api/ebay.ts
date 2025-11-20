@@ -62,6 +62,7 @@ export interface NotificationsStatus {
     lastEventTime: string | null;
   };
   checkedAt?: string;
+  errorSummary?: string;
   notificationError?: {
     status_code?: number;
     message?: string;
@@ -235,6 +236,7 @@ export const ebayApi = {
     message: string;
     reason?: string;
     webhookUrl?: string;
+    errorSummary?: string;
     notificationError?: {
       status_code?: number;
       message?: string;
