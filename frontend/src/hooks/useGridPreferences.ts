@@ -162,7 +162,24 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         widths: {},
         sort: null,
       };
-      return { ...base, ...partial };
+
+      // Start from base and apply partial, but keep order consistent with visible.
+      let nextVisible = partial.visible ?? base.visible;
+      let nextOrder = partial.order ?? base.order;
+
+      // If visible was updated without an explicit order, drop hidden columns from order
+      // while preserving existing relative order for the remaining ones.
+      if (partial.visible && !partial.order) {
+        const visibleSet = new Set(partial.visible);
+        nextOrder = base.order.filter((name) => visibleSet.has(name));
+      }
+
+      return {
+        ...base,
+        ...partial,
+        visible: nextVisible,
+        order: nextOrder,
+      };
     });
   }, []);
 

@@ -280,12 +280,14 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     window.removeEventListener('mousemove', onMouseMoveResize);
     window.removeEventListener('mouseup', onMouseUpResize);
     if (!gridPrefs.columns) return;
-    // Persist widths into preferences (local only; saved on explicit Save)
+    // Persist widths into preferences and immediately save to the backend so
+    // column sizes survive page reloads without requiring an explicit Save.
     const widths: Record<string, number> = { ...gridPrefs.columns.widths };
     columns.forEach((c) => {
       widths[c.name] = c.width;
     });
     gridPrefs.setColumns({ widths });
+    void gridPrefs.save();
   };
 
   const gridTitle = title || gridKey;
