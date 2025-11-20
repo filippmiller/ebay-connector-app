@@ -128,9 +128,9 @@ async def get_grid_data(
     elif grid_key == "finances_fees":
         default_sort_col = "created_at"
     elif grid_key == "inventory":
-        # Let the inventory grid implementation choose a sensible default
-        # (typically primary key or a created-at style column).
-        default_sort_col = None
+        # Default to the numeric ID column so newest rows (highest IDs)
+        # appear first when sort_dir is "desc".
+        default_sort_col = "ID"
 
     sort_column = sort_by if sort_by in allowed_cols else default_sort_col
 
@@ -691,12 +691,30 @@ def _get_inventory_data(
     columns = list(table.columns)
     query = db.query(*columns)
 
-    # Optional filters: Storage ID
+    # Optional filters: Storage ID / Storage location
     if storage_id:
-        storage_col = cols_by_lower.get("storageid") or cols_by_lower.get("storage_id")
-        if storage_col is not None and isinstance(storage_col.type, (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)):
-            like = f"%{storage_id}%"
-            query = query.filter(storage_col.ilike(like))
+        like = f"%{storage_id}%"
+        # Support a range of legacy column names seen in tbl_parts_inventory.
+        candidate_keys = [
+            "storageid",
+            "storage_id",
+            "storage",
+            "alternativestorage",
+            "alternative_storage",
+            "storagealias",
+            "storage_alias",
+        ]
+        storage_cols = [
+            cols_by_lower[name]
+            for name in candidate_keys
+            if name in cols_by_lower
+            and isinstance(
+                cols_by_lower[name].type,
+                (String, Text, CHAR, VARCHAR, Unicode, UnicodeText),
+            )
+        ]
+        if storage_cols:
+            query = query.filter(or_(*[col.ilike(like) for col in storage_cols]))
 
     # Optional filters: eBay status
     if ebay_status:

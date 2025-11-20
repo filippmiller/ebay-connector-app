@@ -338,9 +338,10 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "sort": {"column": "last_seen_at", "direction": "desc"},
     },
     "inventory": {
-        # Visible columns and sort will be derived from the reflected table.
+        # Visible columns will be derived from the reflected table; default sort
+        # is by numeric ID so newest records (highest IDs) appear first.
         "visible_columns": [],
-        "sort": None,
+        "sort": {"column": "ID", "direction": "desc"},
     },
     "cases": {
         "visible_columns": [

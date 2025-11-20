@@ -90,9 +90,44 @@
     --grid-header-text-color: #1d4ed8;
   }
 
-  .app-grid.grid-theme-dark {
+.app-grid.grid-theme-dark {
     --grid-header-bg: #111827;
     --grid-header-text-color: #e5e7eb;
+  }
+
+  /* Full dark theme: dark background + light text for all grid elements */
+  .app-grid.grid-theme-dark {
+    background-color: #020617; /* slate-950 */
+    color: #e5e7eb; /* gray-200 */
+  }
+
+  .app-grid.grid-theme-dark table,
+  .app-grid.grid-theme-dark thead,
+  .app-grid.grid-theme-dark tbody tr,
+  .app-grid.grid-theme-dark tbody td {
+    background-color: #020617;
+    color: #e5e7eb;
+  }
+
+  .app-grid.grid-theme-dark tbody tr:nth-child(even) {
+    background-color: #020617;
+  }
+
+  .app-grid.grid-theme-dark tbody tr:hover {
+    background-color: #1f2937; /* slate-800 */
+  }
+
+  /* Override Tailwind background utilities inside dark grids */
+  .app-grid.grid-theme-dark .bg-white,
+  .app-grid.grid-theme-dark .bg-gray-50,
+  .app-grid.grid-theme-dark .bg-gray-100,
+  .app-grid.grid-theme-dark .bg-indigo-50 {
+    background-color: transparent;
+  }
+
+  .app-grid.grid-theme-dark .text-gray-500,
+  .app-grid.grid-theme-dark .text-gray-600 {
+    color: #e5e7eb;
   }
 
   .app-grid.grid-theme-highContrast {
