@@ -365,31 +365,35 @@ class Inventory(Base):
     )
 
 
-class TblPartsInventory(Base):
-    """Supabase parts inventory table mapped to tbl_parts_inventory.
-
-    Uses reflection against the live database via the shared engine. If the
-    table does not exist in the current environment, we log a warning and
-    leave __table__ as None so that application code can handle it gracefully
-    without crashing on import.
-    """
-
-    __tablename__ = "tbl_parts_inventory"
-    __table__ = None  # type: ignore[assignment]
-
-
-# Attempt reflection at import time, but never crash if the table is missing.
+# Attempt reflection of the legacy Supabase inventory table at import time,
+# but never crash the app if it is missing in the current environment.
 try:
-    TblPartsInventory.__table__ = Table(
-        "tbl_parts_inventory",
+    tbl_parts_inventory_table = Table(
+        "tbl_parts_inventory",  # REAL table name, do not change
         Base.metadata,
         autoload_with=engine,
     )
 except NoSuchTableError:
     logger.warning(
-        "tbl_parts_inventory not found in database; TblPartsInventory disabled in this environment",
+        "tbl_parts_inventory not found in database; TblPartsInventory will be abstract in this environment",
     )
-    TblPartsInventory.__table__ = None
+    tbl_parts_inventory_table = None
+
+
+if tbl_parts_inventory_table is not None:
+    class TblPartsInventory(Base):
+        """Supabase parts inventory table mapped to tbl_parts_inventory."""
+
+        __table__ = tbl_parts_inventory_table
+else:
+    class TblPartsInventory(Base):
+        """Abstract placeholder when tbl_parts_inventory does not exist.
+
+        Marked abstract so SQLAlchemy does not try to map a non-existent table
+        and the application can still start cleanly.
+        """
+
+        __abstract__ = True
 
 
 class SqItem(Base):
