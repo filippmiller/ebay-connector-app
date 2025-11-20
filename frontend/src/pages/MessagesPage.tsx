@@ -8,43 +8,49 @@ import { ScrollArea } from '../components/ui/scroll-area';
 import FixedHeader from '@/components/FixedHeader';
 import apiClient from '../api/client';
 
-interface ParsedBodyMessageEntry {
+interface ParsedThreadEntry {
+  // Backend fields (from parser)
   author?: string | null;
-  direction?: 'inbound' | 'outbound' | 'system' | string;
+  direction: 'inbound' | 'outbound' | 'system' | string;
   role?: 'buyer' | 'seller' | 'system' | 'other' | string;
-  text?: string;
+  text: string;
   timestamp?: string | null;
+  // Optional, future-friendly fields from prompt spec
+  id?: string;
+  sentAt?: string;
+  fromName?: string;
+  toName?: string;
 }
 
-interface ParsedBodyOrder {
-  title?: string;
-  itemUrl?: string;
-  imageUrl?: string;
-  status?: string;
+interface ParsedOrder {
+  orderNumber?: string;
   itemId?: string;
   transactionId?: string;
-  orderNumber?: string;
+  title?: string;
+  imageUrl?: string;
+  itemUrl?: string;
+  status?: string;
   viewOrderUrl?: string;
 }
 
-interface ParsedBodyMeta {
+interface ParsedMeta {
   emailReferenceId?: string;
   [key: string]: any;
 }
 
-interface ParsedBodyBuyer {
+interface ParsedBuyer {
   username?: string;
   feedbackScore?: number | null;
   profileUrl?: string | null;
   feedbackUrl?: string | null;
 }
 
-interface ParsedBody {
-  buyer?: ParsedBodyBuyer;
-  currentMessage?: ParsedBodyMessageEntry | null;
-  history?: ParsedBodyMessageEntry[];
-  order?: ParsedBodyOrder;
-  meta?: ParsedBodyMeta;
+interface ParsedMessage {
+  buyer?: ParsedBuyer;
+  currentMessage?: ParsedThreadEntry | null;
+  history?: ParsedThreadEntry[];
+  order?: ParsedOrder;
+  meta?: ParsedMeta;
   [key: string]: any;
 }
 
@@ -64,7 +70,8 @@ interface Message {
   message_date: string;
   order_id: string | null;
   listing_id: string | null;
-  parsed_body?: ParsedBody | null;
+  // Parsed and normalized structure from backend (see ParsedMessage)
+  parsed_body?: ParsedMessage | null;
   bucket?: 'offers' | 'cases' | 'ebay' | 'other';
 }
 
@@ -130,7 +137,6 @@ export const MessagesPage = () => {
   // Map of message.id -> custom folder name (e.g. "old"). Stored locally for now.
   const [messageFolders, setMessageFolders] = useState<Record<string, string>>({});
   const [draggedMessageId, setDraggedMessageId] = useState<string | null>(null);
-  const [showSource, setShowSource] = useState(false);
 
   // Load persisted custom folders and message-folder assignments from localStorage once.
   useEffect(() => {
@@ -170,11 +176,6 @@ export const MessagesPage = () => {
       console.error('Failed to persist message folders', e);
     }
   }, [messageFolders]);
-
-  // Whenever the selected message changes, reset source view.
-  useEffect(() => {
-    setShowSource(false);
-  }, [selectedMessage]);
 
   useEffect(() => {
     loadMessages();
@@ -396,22 +397,27 @@ export const MessagesPage = () => {
     }
   };
 
-  const plainBody = useMemo(() => {
-    if (!selectedMessage?.body) return '';
+  const htmlToText = (html: string | null | undefined): string => {
+    if (!html) return '';
     try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(selectedMessage.body, 'text/html');
-      const text = doc.body.textContent || '';
-      return text.trim() || selectedMessage.body;
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      return (div.textContent || div.innerText || '').trim();
     } catch {
-      return selectedMessage.body;
+      return html;
     }
-  }, [selectedMessage]);
+  };
 
   const getMessageSnippet = (message: Message): string => {
-    const parsedText = message.parsed_body?.currentMessage?.text;
-    const source = parsedText && parsedText.trim().length > 0 ? parsedText : message.body || '';
-    return source.replace(/\s+/g, ' ').trim();
+    const parsedText = (message.parsed_body?.currentMessage?.text || '').trim();
+    let preview = parsedText || htmlToText(message.body || '');
+
+    preview = preview.replace(/\s+/g, ' ').trim();
+    const MAX_PREVIEW = 160;
+    if (preview.length > MAX_PREVIEW) {
+      preview = preview.slice(0, MAX_PREVIEW - 1).trimEnd() + '…';
+    }
+    return preview;
   };
 
   const renderTextWithLineBreaks = (text?: string) => {
@@ -700,13 +706,6 @@ export const MessagesPage = () => {
                       </div>
                       <div className="flex flex-wrap gap-2 justify-end">
                         <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowSource((prev) => !prev)}
-                        >
-                          {showSource ? 'Hide source' : 'Show source'}
-                        </Button>
-                        <Button
                           variant="default"
                           size="sm"
                           onClick={() => {
@@ -820,20 +819,16 @@ export const MessagesPage = () => {
 
                     {/* Thread view built from parsed_body.history + parsed_body.currentMessage */}
                     <div className="text-gray-800 text-sm">
-                      {showSource ? (
-                        <pre className="whitespace-pre-wrap font-mono text-xs bg-gray-50 p-3 rounded border border-gray-200 overflow-x-auto">
-                          {selectedMessage.body}
-                        </pre>
-                      ) : selectedMessage.parsed_body &&
-                        ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
-                          selectedMessage.parsed_body.currentMessage) ? (
+                      {selectedMessage.parsed_body &&
+                      ((selectedMessage.parsed_body.history && selectedMessage.parsed_body.history.length > 0) ||
+                        selectedMessage.parsed_body.currentMessage) ? (
                         <div className="space-y-3">
                           {[...(selectedMessage.parsed_body.history || []),
                             ...(selectedMessage.parsed_body.currentMessage
                               ? [selectedMessage.parsed_body.currentMessage]
                               : []),
                           ].map((entry, idx) => {
-                            const dir = entry.direction || 'system';
+                            const dir = (entry.direction || 'system') as string;
                             const isSeller = dir === 'outbound';
                             const isSystem = dir === 'system';
 
@@ -849,17 +844,20 @@ export const MessagesPage = () => {
                               ? 'bg-blue-600 text-white'
                               : 'bg-gray-100 text-gray-900';
 
+                            const author = entry.fromName || entry.author;
+                            const ts = entry.sentAt || entry.timestamp;
+
                             return (
-                              <div key={idx} className={`flex ${containerAlign}`}>
+                              <div key={entry.id || idx} className={`flex ${containerAlign}`}>
                                 <div
                                   className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${bubbleClasses}`}
                                 >
-                                  {entry.author && (
+                                  {author && (
                                     <div className="text-[11px] mb-1 opacity-80">
-                                      {entry.author}
-                                      {entry.timestamp && (
+                                      {author}
+                                      {ts && (
                                         <span className="ml-1">
-                                          · {new Date(entry.timestamp).toLocaleString()}
+                                          · {new Date(ts).toLocaleString()}
                                         </span>
                                       )}
                                     </div>
@@ -874,7 +872,7 @@ export const MessagesPage = () => {
                         </div>
                       ) : (
                         <div className="whitespace-pre-wrap">
-                          {plainBody}
+                          {htmlToText(selectedMessage.body)}
                         </div>
                       )}
                     </div>
