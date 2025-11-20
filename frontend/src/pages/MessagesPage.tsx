@@ -1341,4 +1341,3 @@ export const MessagesPage = () => {
     </div>
   );
 };
-};
