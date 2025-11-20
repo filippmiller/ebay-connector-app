@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
-from typing import Optional
+from sqlalchemy import desc, or_, and_
+from typing import Optional, Any
 import os
 from datetime import datetime, timezone
 
 from ..models_sqlalchemy import get_db
-from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition
+from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
 from ..services.auth import admin_required
 from ..models.user import User
 from ..utils.logger import logger
@@ -400,4 +400,146 @@ async def refresh_ebay_access_token(
     return {
         "access_expires_at": access_expires_at.isoformat() if access_expires_at else None,
         "access_ttl_sec": ttl_sec,
+    }
+
+
+@router.get("/ebay-events")
+async def list_ebay_events(
+    topic: Optional[str] = Query(None, description="Exact topic or comma-separated list of topics"),
+    entity_type: Optional[str] = Query(None, alias="entityType"),
+    entity_id: Optional[str] = Query(None, alias="entityId"),
+    ebay_account: Optional[str] = Query(None, alias="ebayAccount"),
+    source: Optional[str] = Query(None),
+    channel: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    from_ts: Optional[str] = Query(None, alias="from", description="ISO timestamp lower bound"),
+    to_ts: Optional[str] = Query(None, alias="to", description="ISO timestamp upper bound"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    sort_by: Optional[str] = Query(None, alias="sortBy", description="event_time or created_at"),
+    sort_dir: str = Query("desc", alias="sortDir", description="asc or desc"),
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """List eBay events for the admin Notifications UI.
+
+    Filtering is intentionally simple for the first version and can be
+    extended as we add processors and more metadata.
+    """
+
+    query = db.query(EbayEvent)
+
+    if topic:
+        topics = [t.strip() for t in topic.split(",") if t.strip()]
+        if topics:
+            if len(topics) == 1:
+                query = query.filter(EbayEvent.topic == topics[0])
+            else:
+                query = query.filter(EbayEvent.topic.in_(topics))
+
+    if entity_type:
+        query = query.filter(EbayEvent.entity_type == entity_type)
+    if entity_id:
+        query = query.filter(EbayEvent.entity_id == entity_id)
+    if ebay_account:
+        query = query.filter(EbayEvent.ebay_account == ebay_account)
+    if source:
+        query = query.filter(EbayEvent.source == source)
+    if channel:
+        query = query.filter(EbayEvent.channel == channel)
+    if status:
+        query = query.filter(EbayEvent.status == status)
+
+    def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+        if not ts:
+            return None
+        try:
+            if ts.endswith("Z"):
+                ts_local = ts.replace("Z", "+00:00")
+            else:
+                ts_local = ts
+            return datetime.fromisoformat(ts_local)
+        except Exception:
+            return None
+
+    from_dt = _parse_iso(from_ts)
+    to_dt = _parse_iso(to_ts)
+
+    if from_dt:
+        query = query.filter(
+            or_(
+                and_(EbayEvent.event_time.isnot(None), EbayEvent.event_time >= from_dt),
+                and_(EbayEvent.event_time.is_(None), EbayEvent.created_at >= from_dt),
+            )
+        )
+
+    if to_dt:
+        query = query.filter(
+            or_(
+                and_(EbayEvent.event_time.isnot(None), EbayEvent.event_time <= to_dt),
+                and_(EbayEvent.event_time.is_(None), EbayEvent.created_at <= to_dt),
+            )
+        )
+
+    total = query.count()
+
+    # Sorting
+    effective_sort_by = (sort_by or "event_time").lower()
+    if effective_sort_by not in ("event_time", "created_at"):
+        effective_sort_by = "event_time"
+
+    sort_field = EbayEvent.event_time if effective_sort_by == "event_time" else EbayEvent.created_at
+    if (sort_dir or "desc").lower() == "asc":
+        query = query.order_by(sort_field.asc())
+    else:
+        query = query.order_by(sort_field.desc())
+
+    events = query.offset(offset).limit(limit).all()
+
+    items = []
+    for ev in events:
+        payload = ev.payload or {}
+        payload_preview: Any
+
+        if isinstance(payload, dict):
+            # Prefer Notification API-style preview when available.
+            preferred_keys = ["metadata", "notification"]
+            preview = {k: payload.get(k) for k in preferred_keys if k in payload}
+
+            if not preview:
+                # Fallback: shallow preview of a few top-level keys.
+                preview = {}
+                for idx, (k, v) in enumerate(payload.items()):
+                    preview[k] = v
+                    if idx >= 4:
+                        break
+            payload_preview = preview
+        else:
+            payload_preview = payload
+
+        items.append(
+            {
+                "id": str(ev.id),
+                "created_at": ev.created_at.isoformat() if ev.created_at else None,
+                "source": ev.source,
+                "channel": ev.channel,
+                "topic": ev.topic,
+                "entity_type": ev.entity_type,
+                "entity_id": ev.entity_id,
+                "ebay_account": ev.ebay_account,
+                "event_time": ev.event_time.isoformat() if ev.event_time else None,
+                "publish_time": ev.publish_time.isoformat() if ev.publish_time else None,
+                "status": ev.status,
+                "error": ev.error,
+                "signature_valid": ev.signature_valid,
+                "signature_kid": ev.signature_kid,
+                "payload_preview": payload_preview,
+            }
+        )
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }

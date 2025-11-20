@@ -1167,6 +1167,42 @@ class EbayHealthEvent(Base):
     )
 
 
+class EbayEvent(Base):
+    """Unified inbox of all eBay-related events (webhooks, pollers, manual)."""
+
+    __tablename__ = "ebay_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    # Provenance
+    source = Column(Text, nullable=False)  # notification, rest_poll, trading_poll, manual_test, ...
+    channel = Column(Text, nullable=False)  # commerce_notification, sell_fulfillment_api, trading_messages, ...
+    topic = Column(Text, nullable=True)
+
+    # Logical entity
+    entity_type = Column(Text, nullable=True)
+    entity_id = Column(Text, nullable=True)
+
+    # Account context (seller account / username / ebay_user_id or similar)
+    ebay_account = Column(Text, nullable=True)
+
+    # Timestamps
+    event_time = Column(DateTime(timezone=True), nullable=True)
+    publish_time = Column(DateTime(timezone=True), nullable=True)
+
+    # Processing status on our side
+    status = Column(Text, nullable=False, default="RECEIVED")
+    error = Column(Text, nullable=True)
+
+    # Metadata & payload
+    headers = Column(JSONB, nullable=False, default=dict)
+    signature_valid = Column(Boolean, nullable=True)
+    signature_kid = Column(Text, nullable=True)
+
+    payload = Column(JSONB, nullable=False)
+
+
 class EbayStatusBuyer(Base):
     """Dictionary of internal BUYING statuses (legacy tbl_ebay_buyer Status dictionary).
 

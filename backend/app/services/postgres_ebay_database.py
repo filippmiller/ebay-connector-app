@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models_sqlalchemy import get_db
 from app.utils.logger import logger
+from app.services.ebay_event_inbox import log_ebay_event
 
 
 class PostgresEbayDatabase:
@@ -270,6 +271,7 @@ class PostgresEbayDatabase:
                 batch = orders[i:i + batch_size]
                 
                 values_list = []
+                
                 for order_data in batch:
                     if not order_data.get('orderId'):
                         logger.warning("Skipping order without orderId")
@@ -289,12 +291,43 @@ class PostgresEbayDatabase:
                             li['ebay_user_id'] = ebay_user_id
 
                         all_line_items.extend(line_items)
-                        
+
+                        # Log a unified ebay_events row for this order so that the
+                        # Notifications Center has a polling-based view as well.
+                        try:
+                            event_time_raw = order_data.get('lastModifiedDate') or order_data.get('creationDate')
+                            log_ebay_event(
+                                source="rest_poll",
+                                channel="sell_fulfillment_api",
+                                topic="ORDER_UPDATED",
+                                entity_type="ORDER",
+                                entity_id=order_data.get('orderId'),
+                                ebay_account=ebay_user_id or ebay_account_id,
+                                event_time=event_time_raw,
+                                publish_time=None,
+                                headers={
+                                    "worker": "orders_worker",
+                                    "api_family": "orders",
+                                    "user_id": user_id,
+                                    "ebay_account_id": ebay_account_id,
+                                    "ebay_user_id": ebay_user_id,
+                                },
+                                payload=order_data,
+                                db=session,
+                            )
+                        except Exception:
+                            # Never fail the worker because of event-inbox logging;
+                            # emit a warning and continue.
+                            logger.warning(
+                                "Failed to log ebay_events row for order %s",
+                                order_data.get('orderId'),
+                                exc_info=True,
+                            )
+
                         values_list.append(normalized_order)
                     except Exception as e:
                         logger.error(f"Error normalizing order {order_data.get('orderId')}: {str(e)}")
                         continue
-                
                 if not values_list:
                     continue
                 
@@ -567,6 +600,30 @@ class PostgresEbayDatabase:
             open_date = dispute_data.get("openDate")
             respond_by_date = dispute_data.get("respondByDate")
 
+            # Log into unified ebay_events inbox (best-effort, never fail on error).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="post_order_api",
+                    topic="PAYMENT_DISPUTE_UPDATED",
+                    entity_type="DISPUTE",
+                    entity_id=dispute_id,
+                    ebay_account=ebay_user_id or ebay_account_id,
+                    event_time=open_date,
+                    publish_time=None,
+                    headers={
+                        "worker": "disputes_worker",
+                        "api_family": "disputes",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
+                    payload=dispute_data,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for dispute %s", dispute_id, exc_info=True)
+
             query = text(
                 """
                 INSERT INTO ebay_disputes
@@ -643,6 +700,30 @@ class PostgresEbayDatabase:
             case_status = case_data.get("status") or case_data.get("caseStatus")
             open_date = case_data.get("openDate") or case_data.get("open_date")
             close_date = case_data.get("closeDate") or case_data.get("close_date")
+
+            # Log into unified ebay_events inbox (best-effort, never fail on error).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="post_order_api",
+                    topic="CASE_UPDATED",
+                    entity_type="CASE",
+                    entity_id=case_id,
+                    ebay_account=ebay_user_id or ebay_account_id,
+                    event_time=open_date,
+                    publish_time=None,
+                    headers={
+                        "worker": "cases_worker",
+                        "api_family": "cases",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
+                    payload=case_data,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for case %s", case_id, exc_info=True)
 
             query = text(
                 """
@@ -722,6 +803,30 @@ class PostgresEbayDatabase:
             txn_type = transaction.get("transactionType")
             txn_status = transaction.get("transactionStatus")
             booking_date = transaction.get("transactionDate")
+
+            # Log into unified ebay_events inbox (best-effort).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="sell_finances_api",
+                    topic="FINANCES_TRANSACTION_UPDATED",
+                    entity_type="FINANCES_TRANSACTION",
+                    entity_id=txn_id,
+                    ebay_account=ebay_user_id or ebay_account_id,
+                    event_time=booking_date,
+                    publish_time=None,
+                    headers={
+                        "worker": "finances_worker",
+                        "api_family": "finances",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
+                    payload=transaction,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for finances transaction %s", txn_id, exc_info=True)
 
             amount_obj = transaction.get("amount") or {}
             amount_value = amount_obj.get("value")
@@ -910,9 +1015,9 @@ class PostgresEbayDatabase:
             if not offer_id:
                 logger.error("Offer data missing offerId")
                 return False
-            
+
             now = datetime.utcnow()
-            
+
             listing_id = offer_data.get('listingId')
             buyer_username = offer_data.get('buyer', {}).get('username')
             
@@ -923,6 +1028,30 @@ class PostgresEbayDatabase:
             offer_status = offer_data.get('status')
             offer_date = offer_data.get('creationDate')
             expiration_date = offer_data.get('expirationDate')
+
+            # Log into unified ebay_events inbox (best-effort).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="marketing_offers",
+                    topic="OFFER_UPDATED",
+                    entity_type="OFFER",
+                    entity_id=offer_id,
+                    ebay_account=ebay_user_id or ebay_account_id,
+                    event_time=offer_date,
+                    publish_time=None,
+                    headers={
+                        "worker": "offers_worker",
+                        "api_family": "offers",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
+                    payload=offer_data,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for offer %s", offer_id, exc_info=True)
             
             query = text("""
                 INSERT INTO ebay_offers 
@@ -991,13 +1120,37 @@ class PostgresEbayDatabase:
             if not transaction_id:
                 logger.error("Transaction data missing transactionId")
                 return False
-            
+
             now = datetime.utcnow()
-            
+
             order_id = transaction_data.get('orderId')
             transaction_date = transaction_data.get('transactionDate')
             transaction_type = transaction_data.get('transactionType')
             transaction_status = transaction_data.get('transactionStatus')
+
+            # Log into unified ebay_events inbox (legacy transactions path).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="sell_finances_api",
+                    topic="TRANSACTION_UPDATED",
+                    entity_type="TRANSACTION",
+                    entity_id=transaction_id,
+                    ebay_account=ebay_user_id or ebay_account_id,
+                    event_time=transaction_date,
+                    publish_time=None,
+                    headers={
+                        "worker": "transactions_worker",
+                        "api_family": "transactions",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
+                    payload=transaction_data,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for transaction %s", transaction_id, exc_info=True)
             
             amount_data = transaction_data.get('amount', {})
             amount = amount_data.get('value')

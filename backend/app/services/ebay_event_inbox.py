@@ -108,8 +108,13 @@ def log_ebay_event(
         )
 
         session.add(ev)
-        session.commit()
-        session.refresh(ev)
+        if owns_session:
+            session.commit()
+            session.refresh(ev)
+        else:
+            # Let the caller control transaction boundaries; we still flush so
+            # that the insert is staged for commit.
+            session.flush()
         return ev
 
     except Exception:
