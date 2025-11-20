@@ -104,7 +104,7 @@ export const EbayConnectionPage: React.FC = () => {
   // Pre-flight modal state
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightUrl, setPreflightUrl] = useState<string>('');
-  const [preflightScopes, setPreflightScopes] = useState<string[]>([]);
+  const [, setPreflightScopes] = useState<string[]>([]);
   const [extraScopesInput, setExtraScopesInput] = useState<string>('');
   const [preflightSubmitting, setPreflightSubmitting] = useState(false);
 
