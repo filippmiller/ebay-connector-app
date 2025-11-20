@@ -54,6 +54,7 @@ export default function EbayNotificationsPage() {
   // Webhook / Notification API status
   const [statusInfo, setStatusInfo] = useState<NotificationsStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [showRawStatus, setShowRawStatus] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -200,21 +201,36 @@ export default function EbayNotificationsPage() {
             </div>
             <div className="flex items-center gap-3">
               {statusInfo && (
-                <span
-                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    statusInfo.state === 'ok'
-                      ? 'bg-green-100 text-green-800'
+                <div className="flex flex-col items-end gap-1">
+                  <span
+                    className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                      statusInfo.state === 'ok'
+                        ? 'bg-green-100 text-green-800'
+                        : statusInfo.state === 'no_events'
+                        ? 'bg-yellow-100 text-yellow-800'
+                        : 'bg-red-100 text-red-800'
+                    }`}
+                  >
+                    Webhook:{' '}
+                    {statusInfo.state === 'ok'
+                      ? 'OK'
                       : statusInfo.state === 'no_events'
-                      ? 'bg-yellow-100 text-yellow-800'
-                      : 'bg-red-100 text-red-800'
-                  }`}
-                >
-                  Webhook: {statusInfo.state === 'ok'
-                    ? 'OK'
-                    : statusInfo.state === 'no_events'
-                    ? 'No events yet'
-                    : 'Misconfigured'}
-                </span>
+                      ? 'No events yet'
+                      : 'Misconfigured'}
+                    {statusInfo.reason && (
+                      <span className="ml-1 text-[10px] opacity-80">({statusInfo.reason})</span>
+                    )}
+                  </span>
+                  {statusInfo.notificationError && (
+                    <button
+                      type="button"
+                      className="text-[10px] text-red-700 underline"
+                      onClick={() => setShowRawStatus((prev) => !prev)}
+                    >
+                      {showRawStatus ? 'Hide Notification API details' : 'Show Notification API details'}
+                    </button>
+                  )}
+                </div>
               )}
               <Button
                 variant="outline"
@@ -222,16 +238,42 @@ export default function EbayNotificationsPage() {
                 onClick={async () => {
                   try {
                     const resp = await ebayApi.testMarketplaceDeletionNotification();
-                    toast({
-                      title: 'Test notification requested',
-                      description: resp.message,
-                    });
+                    if (!resp.ok) {
+                      const nErr = resp.notificationError;
+                      const nErrText = nErr?.message
+                        ? `Notification API ${nErr.status_code ?? ''} – ${nErr.message}`
+                        : undefined;
+                      toast({
+                        title: 'Test notification failed',
+                        description:
+                          resp.message ||
+                          nErrText ||
+                          resp.reason ||
+                          'Notification test failed; see status details.',
+                        variant: 'destructive',
+                      });
+                    } else {
+                      toast({
+                        title: 'Test notification requested',
+                        description: resp.message,
+                      });
+                    }
                     void fetchEvents(0);
                     void loadStatus();
                   } catch (e: any) {
+                    const data = e?.response?.data;
+                    const nErr = data?.notificationError;
+                    const nErrText = nErr?.message
+                      ? `Notification API ${nErr.status_code ?? ''} – ${nErr.message}`
+                      : undefined;
                     toast({
                       title: 'Test notification failed',
-                      description: e?.response?.data?.detail || e?.message || 'Unknown error',
+                      description:
+                        data?.message ||
+                        nErrText ||
+                        data?.reason ||
+                        e?.message ||
+                        'Unknown error',
                       variant: 'destructive',
                     });
                   }
@@ -279,6 +321,72 @@ export default function EbayNotificationsPage() {
             <Alert variant="destructive">
               <AlertDescription className="text-sm">{error}</AlertDescription>
             </Alert>
+          )}
+
+          {/* Diagnostics block for Notification webhook */}
+          {statusInfo && (
+            <Card>
+              <CardHeader className="py-2 px-4">
+                <CardTitle className="text-sm">Diagnostics</CardTitle>
+                <CardDescription className="text-xs text-gray-600">
+                  Environment and Notification API destination/subscription state for MARKETPLACE_ACCOUNT_DELETION.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="px-4 pb-3 pt-1 text-xs text-gray-700 space-y-1">
+                <div>
+                  <span className="font-semibold">Environment:</span>{' '}
+                  <span>{statusInfo.environment}</span>
+                </div>
+                <div>
+                  <span className="font-semibold">Webhook URL:</span>{' '}
+                  <span className="font-mono break-all text-[11px]">{statusInfo.webhookUrl || 'not configured'}</span>
+                </div>
+                <div>
+                  <span className="font-semibold">DestinationId:</span>{' '}
+                  <span className="font-mono text-[11px]">{statusInfo.destinationId || '—'}</span>
+                </div>
+                <div>
+                  <span className="font-semibold">SubscriptionId:</span>{' '}
+                  <span className="font-mono text-[11px]">{statusInfo.subscriptionId || '—'}</span>
+                </div>
+                <div>
+                  <span className="font-semibold">Recent events (24h):</span>{' '}
+                  <span>
+                    {statusInfo.recentEvents.count} events
+                    {statusInfo.recentEvents.lastEventTime && (
+                      <> (last at {formatDate(statusInfo.recentEvents.lastEventTime)})</>
+                    )}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-semibold">Last health check:</span>{' '}
+                  <span>{statusInfo.checkedAt ? formatDate(statusInfo.checkedAt) : 'n/a'}</span>
+                </div>
+                {statusInfo.notificationError && (
+                  <div className="mt-1">
+                    <span className="font-semibold text-red-700">Notification API error:</span>{' '}
+                    <span>
+                      {statusInfo.notificationError.status_code && `HTTP ${statusInfo.notificationError.status_code} `}
+                      {statusInfo.notificationError.message || ''}
+                    </span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="mt-2 text-[11px] text-blue-600 underline"
+                  onClick={() => setShowRawStatus((prev) => !prev)}
+                >
+                  {showRawStatus ? 'Hide raw status JSON' : 'Show raw status JSON'}
+                </button>
+                {showRawStatus && (
+                  <div className="mt-2 max-h-64 overflow-auto rounded border bg-gray-900 text-gray-100 p-2">
+                    <pre className="text-[11px] font-mono whitespace-pre-wrap break-all">
+                      {JSON.stringify(statusInfo, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
 
           <Card>
@@ -564,10 +672,12 @@ export default function EbayNotificationsPage() {
           <Card className="mt-4">
             <CardHeader className="py-2 px-4 flex items-center justify-between">
               <CardTitle className="text-sm">Recent events (live)</CardTitle>
-              <span className="text-[11px] text-gray-500">Auto-refreshing every few seconds</span>
+              <span className="text-[11px] text-gray-500">
+                Environment: {statusInfo?.environment || 'unknown'} · Last 50 by event_time desc
+              </span>
             </CardHeader>
             <CardContent className="pt-0 pb-3 px-4">
-              <ScrollArea className="h-40 w-full rounded border bg-gray-950 text-gray-100 p-2 font-mono text-[11px]">
+              <ScrollArea className="h-64 w-full rounded border bg-gray-950 text-gray-100 p-2 font-mono text-[12px]">
                 {recentEvents.length === 0 ? (
                   <div className="text-gray-500">No events yet.</div>
                 ) : (

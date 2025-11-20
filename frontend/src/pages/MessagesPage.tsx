@@ -1098,6 +1098,81 @@ export const MessagesPage = () => {
               <div className="h-full overflow-auto p-4">
                 {/* Reuse the same order card + thread view as in the detail panel */}
                 <div className="space-y-3 text-gray-800 text-sm max-w-3xl mx-auto">
+                  {/* Modal actions & status row */}
+                  <div className="flex items-center justify-between gap-3 mb-1">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline">
+                        {selectedMessage.bucket === 'offers'
+                          ? 'OFFERS'
+                          : selectedMessage.bucket === 'cases'
+                          ? 'CASES & DISPUTES'
+                          : selectedMessage.bucket === 'ebay'
+                          ? 'EBAY MESSAGE'
+                          : 'OTHER'}
+                      </Badge>
+                      <Badge variant="outline">
+                        {selectedMessage.direction === 'INCOMING' ? 'Inbox' : 'Sent'}
+                      </Badge>
+                      {selectedMessage.is_read ? (
+                        <Badge variant="outline">Read</Badge>
+                      ) : (
+                        <Badge variant="default">Unread</Badge>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowSource((prev) => !prev)}
+                      >
+                        {showSource ? 'Hide source' : 'View source'}
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          // Close modal and focus reply box in the main view
+                          setIsDetailModalOpen(false);
+                          setTimeout(() => {
+                            const textarea = document.getElementById('reply-textarea');
+                            textarea?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            (textarea as HTMLTextAreaElement | null)?.focus?.();
+                          }, 50);
+                        }}
+                      >
+                        <Send className="h-4 w-4 mr-1" /> Reply
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={draftLoading}
+                        onClick={() => handleDraftWithAI(selectedMessage)}
+                      >
+                        {draftLoading ? 'AI answering…' : 'AI Answer'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          handleArchive(selectedMessage);
+                          setIsDetailModalOpen(false);
+                        }}
+                      >
+                        <Archive className="h-4 w-4 mr-1" /> Archive
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          handleDelete(selectedMessage);
+                          setIsDetailModalOpen(false);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+
                   {selectedMessage.parsed_body?.order && (
                     <div className="flex gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                       {selectedMessage.parsed_body.order.imageUrl && (

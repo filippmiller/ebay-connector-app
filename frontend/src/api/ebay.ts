@@ -55,11 +55,19 @@ export interface NotificationsStatus {
   reason: string | null;
   destination: any | null;
   subscription: any | null;
+  destinationId?: string | null;
+  subscriptionId?: string | null;
   recentEvents: {
     count: number;
     lastEventTime: string | null;
   };
-  notificationError?: any;
+  checkedAt?: string;
+  notificationError?: {
+    status_code?: number;
+    message?: string;
+    body?: any;
+    [key: string]: any;
+  } | null;
 }
 
 export const ebayApi = {
@@ -225,6 +233,14 @@ export const ebayApi = {
     destinationId?: string;
     subscriptionId?: string;
     message: string;
+    reason?: string;
+    webhookUrl?: string;
+    notificationError?: {
+      status_code?: number;
+      message?: string;
+      body?: any;
+      [key: string]: any;
+    } | null;
   }> {
     const response = await apiClient.post(
       '/api/admin/notifications/test-marketplace-deletion',

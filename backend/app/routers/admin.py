@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_, and_
 from typing import Optional, Any
@@ -593,6 +594,7 @@ async def get_notifications_status(
 
     env = settings.EBAY_ENVIRONMENT
     endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
+    checked_at = datetime.now(timezone.utc).isoformat()
 
     if not endpoint_url:
         return {
@@ -602,7 +604,10 @@ async def get_notifications_status(
             "reason": "missing_destination_url",
             "destination": None,
             "subscription": None,
+            "destinationId": None,
+            "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
+            "checkedAt": checked_at,
         }
 
     # Pick first active account for this org
@@ -620,7 +625,10 @@ async def get_notifications_status(
             "reason": "no_account",
             "destination": None,
             "subscription": None,
+            "destinationId": None,
+            "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
+            "checkedAt": checked_at,
         }
 
     token: Optional[EbayToken] = (
@@ -637,7 +645,10 @@ async def get_notifications_status(
             "reason": "no_access_token",
             "destination": None,
             "subscription": None,
+            "destinationId": None,
+            "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
+            "checkedAt": checked_at,
         }
 
     access_token = token.access_token
@@ -647,7 +658,12 @@ async def get_notifications_status(
     try:
         dest, sub = await ebay_service.get_notification_status(access_token, endpoint_url, topic_id)
     except HTTPException as exc:
-        # Surface Notification API error as misconfigured state
+        # Surface Notification API error as misconfigured state with structured payload for UI diagnostics.
+        logger.error(
+            "Notification status check failed via Notification API: status=%s detail=%s",
+            exc.status_code,
+            exc.detail,
+        )
         return {
             "environment": env,
             "webhookUrl": endpoint_url,
@@ -656,7 +672,10 @@ async def get_notifications_status(
             "notificationError": exc.detail,
             "destination": None,
             "subscription": None,
+            "destinationId": None,
+            "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
+            "checkedAt": checked_at,
         }
 
     # Recent events for this topic in the last 24h
@@ -705,6 +724,9 @@ async def get_notifications_status(
             state = "ok"
             reason = None
 
+    dest_id = dest.get("destinationId") or dest.get("id") if dest else None
+    sub_id = sub.get("subscriptionId") or sub.get("id") if sub else None
+
     return {
         "environment": env,
         "webhookUrl": endpoint_url,
@@ -712,7 +734,10 @@ async def get_notifications_status(
         "reason": reason,
         "destination": dest,
         "subscription": sub,
+        "destinationId": dest_id,
+        "subscriptionId": sub_id,
         "recentEvents": {"count": recent_count, "lastEventTime": last_event_time},
+        "checkedAt": checked_at,
     }
 
 
@@ -731,11 +756,21 @@ async def test_marketplace_account_deletion_notification(
 
     env = settings.EBAY_ENVIRONMENT
     endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
+    logger.info(
+        "[notifications:test] Starting MARKETPLACE_ACCOUNT_DELETION test env=%s endpoint_url=%s user_id=%s",
+        env,
+        endpoint_url,
+        current_user.id,
+    )
+
     if not endpoint_url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="EBAY_NOTIFICATION_DESTINATION_URL is not configured",
-        )
+        payload = {
+            "ok": False,
+            "reason": "no_destination_url",
+            "message": "EBAY_NOTIFICATION_DESTINATION_URL is not configured on the backend.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
 
     account: Optional[EbayAccount] = (
         db.query(EbayAccount)
@@ -744,7 +779,13 @@ async def test_marketplace_account_deletion_notification(
         .first()
     )
     if not account:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_account")
+        payload = {
+            "ok": False,
+            "reason": "no_account",
+            "message": "No active eBay account found for this organization.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
 
     token: Optional[EbayToken] = (
         db.query(EbayToken)
@@ -753,24 +794,86 @@ async def test_marketplace_account_deletion_notification(
         .first()
     )
     if not token or not token.access_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_access_token")
+        payload = {
+            "ok": False,
+            "reason": "no_access_token",
+            "message": "No eBay access token available for the selected account.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
 
     access_token = token.access_token
     verification_token = settings.EBAY_NOTIFICATION_VERIFICATION_TOKEN
+    if not verification_token:
+        payload = {
+            "ok": False,
+            "reason": "no_verification_token",
+            "message": "EBAY_NOTIFICATION_VERIFICATION_TOKEN is required to create a destination.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
 
-    # Ensure destination + subscription exist
     topic_id = "MARKETPLACE_ACCOUNT_DELETION"
-    dest = await ebay_service.ensure_notification_destination(
-        access_token,
-        endpoint_url,
-        verification_token=verification_token,
-    )
-    dest_id = dest.get("destinationId") or dest.get("id")
+    try:
+        logger.info(
+            "[notifications:test] Ensuring destination for account_id=%s username=%s",
+            account.id,
+            account.username,
+        )
+        dest = await ebay_service.ensure_notification_destination(
+            access_token,
+            endpoint_url,
+            verification_token=verification_token,
+        )
+        dest_id = dest.get("destinationId") or dest.get("id")
+        logger.info("[notifications:test] Destination ready id=%s", dest_id)
 
-    sub = await ebay_service.ensure_notification_subscription(access_token, dest_id, topic_id)
-    sub_id = sub.get("subscriptionId") or sub.get("id")
+        sub = await ebay_service.ensure_notification_subscription(access_token, dest_id, topic_id)
+        sub_id = sub.get("subscriptionId") or sub.get("id")
+        logger.info("[notifications:test] Subscription ready id=%s status=%s", sub_id, sub.get("status"))
 
-    test_result = await ebay_service.test_notification_subscription(access_token, sub_id)
+        test_result = await ebay_service.test_notification_subscription(access_token, sub_id)
+        logger.info(
+            "[notifications:test] Test notification call completed status_code=%s",
+            test_result.get("status_code"),
+        )
+    except HTTPException as exc:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            notification_error = {
+                "status_code": detail.get("status_code", exc.status_code),
+                "message": detail.get("message") or str(detail),
+                "body": detail.get("body"),
+            }
+        else:
+            notification_error = {
+                "status_code": exc.status_code,
+                "message": str(detail),
+            }
+
+        logger.error(
+            "[notifications:test] Notification API error during test: %s",
+            notification_error,
+        )
+        payload = {
+            "ok": False,
+            "reason": "notification_api_error",
+            "message": "Notification API returned an error while creating destination/subscription or sending the test notification.",
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "notificationError": notification_error,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+    except Exception as exc:  # pragma: no cover - defensive catch-all
+        logger.error("[notifications:test] Unexpected error during notification test", exc_info=True)
+        payload = {
+            "ok": False,
+            "reason": "unexpected_error",
+            "message": f"Unexpected error: {type(exc).__name__}: {exc}",
+            "environment": env,
+            "webhookUrl": endpoint_url,
+        }
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=payload)
 
     return {
         "ok": True,

@@ -124,6 +124,14 @@ if ! ensure_python_package "uvicorn" "uvicorn==0.32.0"; then
   exit 1
 fi
 
+# Ensure MSSQL SQLAlchemy dialect for pytds is available for admin tools
+# (DB Explorer MSSQL tab and Dual-DB Migration Studio). This installs the
+# pure-Python driver that provides the `mssql+pytds` dialect.
+if ! ensure_python_package "sqlalchemy_pytds" "sqlalchemy-pytds==1.0.2"; then
+  echo "[entry] FATAL: sqlalchemy-pytds is required for MSSQL connections" >&2
+  exit 1
+fi
+
 export PYTHONUNBUFFERED=1
 echo "[entry] Starting backend service..."
 echo "[entry] PORT=${PORT:-8000}"
