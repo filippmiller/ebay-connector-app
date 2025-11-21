@@ -39,6 +39,21 @@ _WORKER_FINANCES_TOPICS = {
     "TRANSACTION_UPDATED",  # legacy transactions path
 }
 
+# Payment disputes and Post-Order cases are also ingested via workers and
+# logged into ebay_events using these canonical topics.
+_WORKER_DISPUTE_TOPICS = {
+    "PAYMENT_DISPUTE_UPDATED",
+}
+
+_WORKER_CASE_TOPICS = {
+    "CASE_UPDATED",
+}
+
+# NOTE: ORDER_READY_TO_SHIP is intentionally *not* included in the worker
+# topic sets here. It is treated as a raw signal that the Shipping module will
+# consume directly (e.g. to drive "Awaiting shipment" queues) rather than a
+# piece of data that needs additional REST-based enrichment.
+
 
 def _get_session(db: Optional[Session] = None) -> Tuple[Session, bool]:
     """Return a session and a flag indicating ownership."""
@@ -63,7 +78,7 @@ def process_pending_events(
 
     Current behavior (Phase 1):
     - Select up to ``limit`` rows where ``processed_at IS NULL`` and ``topic`` is
-      one of the known worker topics (orders / finances).
+      one of the known worker topics (orders / finances / disputes / cases).
     - For each, mark it as processed immediately and record any errors in
       ``processing_error``.
     - In the future, this is the right hook to call Fulfillment/Finances APIs
@@ -82,7 +97,14 @@ def process_pending_events(
         q = (
             session.query(EbayEvent)
             .filter(EbayEvent.processed_at.is_(None))
-            .filter(EbayEvent.topic.in_(_WORKER_ORDER_TOPICS | _WORKER_FINANCES_TOPICS))
+            .filter(
+                EbayEvent.topic.in_(
+                    _WORKER_ORDER_TOPICS
+                    | _WORKER_FINANCES_TOPICS
+                    | _WORKER_DISPUTE_TOPICS
+                    | _WORKER_CASE_TOPICS,
+                ),
+            )
             .order_by(EbayEvent.created_at.asc())
             .limit(limit)
         )

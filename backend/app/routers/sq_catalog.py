@@ -5,7 +5,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, asc, desc, func
+from sqlalchemy import or_, asc, desc, func, select
+from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText, Integer, BigInteger, Numeric
 
 from app.models_sqlalchemy import get_db
 from app.models_sqlalchemy.models import (
@@ -14,6 +15,7 @@ from app.models_sqlalchemy.models import (
     SqShippingGroup,
     ItemCondition,
     Warehouse,
+    tbl_parts_models_table,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -27,6 +29,75 @@ from app.models.sq_item import (
 
 
 router = APIRouter(prefix="/api/sq", tags=["sq_catalog"])
+
+
+@router.get("/models/search")
+async def search_models(
+    q: str = Query(..., min_length=1, description="Search term for legacy parts models table"),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> dict:
+    """Live search endpoint for legacy ``tbl_parts_models`` table.
+
+    Returns a compact list of ``{id, label}`` entries that can be used by the
+    SKU create/edit form for model typeahead. The implementation is defensive
+    and tolerates environments where the underlying table does not exist.
+    """
+
+    table = tbl_parts_models_table
+    if table is None:
+        return {"items": [], "total": 0}
+
+    # Identify candidate ID and display label columns using simple heuristics
+    string_types = (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)
+    numeric_types = (Integer, BigInteger, Numeric)
+
+    columns = list(table.columns)
+    if not columns:
+        return {"items": [], "total": 0}
+
+    id_col = None
+    label_col = None
+
+    for col in columns:
+        if id_col is None and isinstance(col.type, numeric_types):
+            id_col = col
+
+        if isinstance(col.type, string_types):
+            name_lower = col.name.lower()
+            if any(key in name_lower for key in ("model", "name", "title", "part")):
+                label_col = label_col or col
+
+    if label_col is None:
+        # Fallback: first text-like column
+        for col in columns:
+            if isinstance(col.type, string_types):
+                label_col = col
+                break
+
+    if label_col is None:
+        return {"items": [], "total": 0}
+
+    if id_col is None:
+        id_col = columns[0]
+
+    like = f"%{q}%"
+    stmt = (
+        select(id_col, label_col)
+        .where(label_col.ilike(like))
+        .order_by(label_col)
+        .limit(limit)
+    )
+
+    rows = db.execute(stmt).fetchall()
+    items = [
+        {"id": row[0], "label": str(row[1])}
+        for row in rows
+        if row[1] is not None
+    ]
+
+    return {"items": items, "total": len(items)}
 
 
 @router.get("/items", response_model=SqItemListResponse)

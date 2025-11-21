@@ -947,6 +947,83 @@ class PostgresEbayDatabase:
                     }
                 )
 
+            # Internal heuristic: we treat an order as "ready to ship" when we see
+            # a successful SALE Finances transaction (credit to the seller) that
+            # carries an orderId. This is a first approximation based on the
+            # Sell Finances API docs and will be refined once the Shipping
+            # module is fully in place (e.g. checking fulfillment status and
+            # open disputes).
+            try:
+                txn_type_upper = (txn_type or "").upper()
+                txn_status_upper = (txn_status or "").upper()
+                successful_statuses = {"COMPLETED", "SUCCESS", "PAYOUT"}
+                is_successful_sale = (
+                    txn_type_upper == "SALE"
+                    and booking_entry == "CREDIT"
+                    and txn_status_upper in successful_statuses
+                )
+                if is_successful_sale and order_id:
+                    from datetime import timedelta, timezone
+
+                    from sqlalchemy import and_ as _and_, exists as _exists
+
+                    from app.models_sqlalchemy.models import EbayEvent  # local import to avoid cycles
+                    from app.services.ebay_event_inbox import (  # type: ignore
+                        log_ebay_event as _log_evt,
+                    )
+
+                    # Deduplicate: only emit one ORDER_READY_TO_SHIP per
+                    # (account, orderId) within a 30-day window.
+                    lookback = datetime.utcnow() - timedelta(days=30)
+                    account_key = ebay_user_id or ebay_account_id
+                    dup_query = session.query(_exists().where(
+                        _and_(
+                            EbayEvent.topic == "ORDER_READY_TO_SHIP",
+                            EbayEvent.entity_type == "ORDER",
+                            EbayEvent.entity_id == order_id,
+                            EbayEvent.created_at >= lookback,
+                            *(
+                                [EbayEvent.ebay_account == account_key]
+                                if account_key
+                                else []
+                            ),
+                        ),
+                    ))
+                    already_exists = bool(dup_query.scalar())
+
+                    if not already_exists:
+                        _log_evt(
+                            source="rest_poll",
+                            channel="computed",
+                            topic="ORDER_READY_TO_SHIP",
+                            entity_type="ORDER",
+                            entity_id=order_id,
+                            ebay_account=account_key,
+                            event_time=booking_date,
+                            publish_time=None,
+                            headers={
+                                "worker": "finances_worker",
+                                "rule": "successful_sale_implies_ready_to_ship",
+                                "user_id": user_id,
+                                "ebay_account_id": ebay_account_id,
+                                "ebay_user_id": ebay_user_id,
+                                "transaction_id": txn_id,
+                            },
+                            payload={
+                                "transactionId": txn_id,
+                                "transactionType": txn_type,
+                                "transactionStatus": txn_status,
+                                "orderId": order_id,
+                            },
+                            db=session,
+                        )
+            except Exception:
+                logger.warning(
+                    "Failed to log ORDER_READY_TO_SHIP event for finances transaction %s",
+                    txn_id,
+                    exc_info=True,
+                )
+
             if fee_rows:
                 insert_fee = text(
                     """

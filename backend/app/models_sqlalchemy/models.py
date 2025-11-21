@@ -416,6 +416,23 @@ else:
         __abstract__ = True
 
 
+# Optional reflection of the legacy models dictionary table used for the
+# SKU create/edit form typeahead (tbl_parts_models). Missing tables are
+# tolerated so that local/dev environments without the legacy schema still
+# boot cleanly.
+try:
+    tbl_parts_models_table = Table(
+        "tbl_parts_models",  # REAL table name provided by legacy system
+        Base.metadata,
+        autoload_with=engine,
+    )
+except NoSuchTableError:
+    logger.warning(
+        "tbl_parts_models not found in database; model search endpoint will return an empty result set",
+    )
+    tbl_parts_models_table = None
+
+
 class SqItem(Base):
     """SQ catalog item mapped to the canonical `SKU_catalog` table.
 
@@ -1566,3 +1583,136 @@ class TaskNotification(Base):
     __table_args__ = (
         Index("idx_task_notifications_user_status_created", "user_id", "status", "created_at"),
     )
+
+
+class ShippingJobStatus(str, enum.Enum):
+    NEW = "NEW"
+    PICKING = "PICKING"
+    PACKED = "PACKED"
+    SHIPPED = "SHIPPED"
+    CANCELLED = "CANCELLED"
+    ERROR = "ERROR"
+
+
+class ShippingLabelProvider(str, enum.Enum):
+    EBAY_LOGISTICS = "EBAY_LOGISTICS"
+    EXTERNAL = "EXTERNAL"
+    MANUAL = "MANUAL"
+
+
+class ShippingStatusSource(str, enum.Enum):
+    WAREHOUSE_SCAN = "WAREHOUSE_SCAN"
+    API = "API"
+    MANUAL = "MANUAL"
+
+
+class ShippingJob(Base):
+    __tablename__ = "shipping_jobs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    ebay_account_id = Column(String(36), ForeignKey("ebay_accounts.id"), nullable=True, index=True)
+    ebay_order_id = Column(Text, nullable=True, index=True)
+    ebay_order_line_item_ids = Column(JSONB, nullable=True)  # list[str]
+
+    buyer_user_id = Column(Text, nullable=True)
+    buyer_name = Column(Text, nullable=True)
+    ship_to_address = Column(JSONB, nullable=True)
+
+    warehouse_id = Column(Text, nullable=True)
+    storage_ids = Column(JSONB, nullable=True)  # list[str]
+
+    status = Column(Enum(ShippingJobStatus), nullable=False, default=ShippingJobStatus.NEW, index=True)
+
+    # Optional pointer to the primary label for this job. Kept as a plain
+    # string to avoid circular FK constraints with shipping_labels.
+    label_id = Column(String(36), nullable=True)
+
+    paid_time = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+
+    packages = relationship("ShippingPackage", back_populates="job", cascade="all, delete-orphan")
+    label = relationship("ShippingLabel", back_populates="job", uselist=False)
+    status_logs = relationship("ShippingStatusLog", back_populates="job", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_shipping_jobs_status_warehouse", "status", "warehouse_id"),
+        Index("idx_shipping_jobs_ebay_order_id", "ebay_order_id"),
+    )
+
+
+class ShippingPackage(Base):
+    __tablename__ = "shipping_packages"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    shipping_job_id = Column(String(36), ForeignKey("shipping_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    combined_for_buyer = Column(Boolean, nullable=False, default=False)
+
+    weight_oz = Column(Numeric(10, 2), nullable=True)
+    length_in = Column(Numeric(10, 2), nullable=True)
+    width_in = Column(Numeric(10, 2), nullable=True)
+    height_in = Column(Numeric(10, 2), nullable=True)
+
+    package_type = Column(Text, nullable=True)  # BOX, ENVELOPE, POLYMAILER, etc.
+    carrier_preference = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    job = relationship("ShippingJob", back_populates="packages")
+
+
+class ShippingLabel(Base):
+    __tablename__ = "shipping_labels"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    shipping_job_id = Column(String(36), ForeignKey("shipping_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    provider = Column(Enum(ShippingLabelProvider), nullable=False)
+    provider_shipment_id = Column(Text, nullable=True)
+
+    tracking_number = Column(Text, nullable=True, index=True)
+    carrier = Column(Text, nullable=True)
+    service_name = Column(Text, nullable=True)
+
+    label_url = Column(Text, nullable=True)
+    label_file_type = Column(Text, nullable=True)  # pdf, zpl, etc.
+
+    label_cost_amount = Column(Numeric(12, 2), nullable=True)
+    label_cost_currency = Column(CHAR(3), nullable=False, default="USD")
+
+    purchased_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    voided = Column(Boolean, nullable=False, default=False, index=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    job = relationship("ShippingJob", back_populates="label")
+
+    __table_args__ = (
+        Index("idx_shipping_labels_provider_shipment", "provider", "provider_shipment_id"),
+    )
+
+
+class ShippingStatusLog(Base):
+    __tablename__ = "shipping_status_log"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    shipping_job_id = Column(String(36), ForeignKey("shipping_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    status_before = Column(Enum(ShippingJobStatus), nullable=True)
+    status_after = Column(Enum(ShippingJobStatus), nullable=False)
+
+    source = Column(Enum(ShippingStatusSource), nullable=False, default=ShippingStatusSource.MANUAL)
+    reason = Column(Text, nullable=True)
+
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    job = relationship("ShippingJob", back_populates="status_logs")

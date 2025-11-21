@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,16 @@ interface SkuFormModalProps {
   /** Called after successful save with the saved SKU ID. */
   onSaved: (id: number) => void;
   onClose: () => void;
+}
+
+interface ModelOption {
+  id: number | string;
+  label: string;
+}
+
+interface HtmlEditorProps {
+  value: string;
+  onChange: (value: string) => void;
 }
 
 interface SkuFormState {
@@ -116,6 +126,68 @@ const EMPTY_FORM: SkuFormState = {
   alertMessage: '',
 };
 
+function HtmlEditor({ value, onChange }: HtmlEditorProps) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+    if (editorRef.current.innerHTML === (value || '')) return;
+    editorRef.current.innerHTML = value || '';
+  }, [value]);
+
+  const exec = (command: string, arg?: string) => {
+    if (typeof document === 'undefined') return;
+    // Deprecated but adequate for internal admin tooling.
+    document.execCommand(command, false, arg);
+  };
+
+  const handleInput = (event: any) => {
+    if (!event?.currentTarget) return;
+    onChange(event.currentTarget.innerHTML);
+  };
+
+  return (
+    <div className="border rounded-md bg-white flex flex-col">
+      <div className="flex flex-wrap items-center gap-1 border-b bg-gray-50 px-2 py-1 text-xs">
+        <span className="text-gray-500 mr-2">Toolbar:</span>
+        <button type="button" className="px-1 font-bold" onClick={() => exec('bold')}>
+          B
+        </button>
+        <button type="button" className="px-1 italic" onClick={() => exec('italic')}>
+          I
+        </button>
+        <button type="button" className="px-1 underline" onClick={() => exec('underline')}>
+          U
+        </button>
+        <button type="button" className="px-1" onClick={() => exec('formatBlock', '<h1>')}>
+          H1
+        </button>
+        <button type="button" className="px-1" onClick={() => exec('formatBlock', '<h2>')}>
+          H2
+        </button>
+        <button type="button" className="px-1" onClick={() => exec('formatBlock', '<h3>')}>
+          H3
+        </button>
+        <button type="button" className="px-1" onClick={() => exec('insertUnorderedList')}>
+          • List
+        </button>
+        <button type="button" className="px-1" onClick={() => exec('insertOrderedList')}>
+          1. List
+        </button>
+        <button type="button" className="px-1" onClick={() => exec('removeFormat')}>
+          Clear
+        </button>
+      </div>
+      <div
+        ref={editorRef}
+        className="min-h-[200px] max-h-[420px] overflow-y-auto p-2 text-sm leading-relaxed whitespace-pre-wrap"
+        contentEditable
+        onInput={handleInput}
+      />
+    </div>
+  );
+}
+
 export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormModalProps) {
   const { toast } = useToast();
 
@@ -124,6 +196,12 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<SkuFormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Model typeahead state
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [modelSearchLoading, setModelSearchLoading] = useState(false);
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const modelSearchTimeoutRef = useRef<number | undefined>(undefined);
 
   // Derived counters
   const titleRemaining = useMemo(() => 80 - (form.title?.length ?? 0), [form.title]);
@@ -256,6 +334,58 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
       next[index] = value;
       return { ...prev, pics: next };
     });
+  };
+
+  const handlePreviewPic = (index: number) => {
+    const url = (form.pics[index] || '').trim();
+    if (!url) return;
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleModelSearch = (value: string) => {
+    // Update form model text immediately so the field reflects user input.
+    handleChange('model', value);
+
+    // Clear any pending search.
+    if (modelSearchTimeoutRef.current !== undefined) {
+      window.clearTimeout(modelSearchTimeoutRef.current);
+    }
+
+    const query = value.trim();
+    if (!query) {
+      setModelOptions([]);
+      setModelDropdownOpen(false);
+      return;
+    }
+
+    setModelDropdownOpen(true);
+    setModelSearchLoading(true);
+
+    modelSearchTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const resp = await api.get<{ items: ModelOption[] }>(
+          '/api/sq/models/search',
+          { params: { q: query, limit: 20 } },
+        );
+        setModelOptions(resp.data?.items ?? []);
+      } catch (e) {
+        // Silent failure – leave previous options if any.
+        // eslint-disable-next-line no-console
+        console.error('Model search failed', e);
+      } finally {
+        setModelSearchLoading(false);
+      }
+    }, 300);
+  };
+
+  const handleSelectModel = (option: ModelOption) => {
+    setForm((prev) => ({
+      ...prev,
+      model: option.label,
+    }));
+    setModelDropdownOpen(false);
   };
 
   const validate = (): boolean => {
@@ -398,7 +528,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
         if (!nextOpen) onClose();
       }}
     >
-      <DialogContent className="max-w-5xl max-w-[95vw] w-full max-h-[90vh] min-w-[720px] min-h-[420px] flex flex-col resize-both overflow-auto">
+      <DialogContent className="max-w-5xl max-w-[95vw] w-full max-h-[90vh] min-w-[720px] min-h-[420px] flex flex-col resize-both overflow-auto text-sm">
         <DialogHeader>
           <DialogTitle>{mode === 'create' ? 'Create SKU' : 'Edit SKU'}</DialogTitle>
           <DialogDescription>
@@ -407,69 +537,99 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto pr-1 space-y-3 text-xs">
+        <div className="flex-1 overflow-y-auto pr-1 space-y-2 text-sm">
           {/* Title & Model */}
-          <section className="border rounded-md p-2.5 space-y-1.5 bg-gray-50/60">
+          <section className="border rounded-md p-2 space-y-1.5 bg-gray-50/60">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="font-semibold text-sm">Title &amp; Model</h3>
-              <span className="text-[11px] text-gray-500">
+              <h3 className="font-semibold text-base">Title &amp; Model</h3>
+              <span className="text-xs text-gray-500">
                 {titleRemaining} characters left
               </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div className="md:col-span-2">
-                <label className="block text-[11px] font-medium mb-1">Title *</label>
+                <label className="block text-sm font-medium mb-1">Title *</label>
                 <Input
                   value={form.title}
                   maxLength={80}
                   onChange={(e) => handleChange('title', e.target.value)}
-                  className="h-8 text-xs"
+                  className="h-9 text-sm max-w-xl"
                   placeholder="Short human-friendly title (max 80 chars)"
                 />
-                {errors.title && <p className="mt-1 text-[11px] text-red-600">{errors.title}</p>}
+                {errors.title && <p className="mt-1 text-xs text-red-600">{errors.title}</p>}
               </div>
-              <div>
-                <label className="block text-[11px] font-medium mb-1">Model *</label>
+              <div className="relative">
+                <label className="block text-sm font-medium mb-1">Model *</label>
                 <Input
                   value={form.model}
-                  onChange={(e) => handleChange('model', e.target.value)}
-                  className="h-8 text-xs"
-                  placeholder="Select model or type a part…"
+                  onChange={(e) => handleModelSearch(e.target.value)}
+                  onFocus={() => {
+                    if (form.model.trim()) setModelDropdownOpen(true);
+                  }}
+                  onBlur={() => {
+                    // Delay closing slightly so clicks on results still register.
+                    setTimeout(() => setModelDropdownOpen(false), 150);
+                  }}
+                  className="h-9 text-sm pr-8"
+                  placeholder="Type to search models (live from database)…"
                 />
-                {errors.model && <p className="mt-1 text-[11px] text-red-600">{errors.model}</p>}
+                {modelDropdownOpen && (
+                  <div className="absolute z-20 mt-1 w-full rounded-md border bg-white shadow-sm max-h-56 overflow-auto text-xs">
+                    {modelSearchLoading && (
+                      <div className="px-2 py-1 text-gray-500">Searching…</div>
+                    )}
+                    {!modelSearchLoading && modelOptions.length === 0 && (
+                      <div className="px-2 py-1 text-gray-500">No matches</div>
+                    )}
+                    {modelOptions.map((option) => (
+                      <button
+                        key={String(option.id)}
+                        type="button"
+                        className="block w-full px-2 py-1 text-left hover:bg-gray-100"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectModel(option);
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {errors.model && <p className="mt-1 text-xs text-red-600">{errors.model}</p>}
               </div>
             </div>
           </section>
 
           {/* SKU & Category */}
-          <section className="border rounded-md p-2.5 space-y-2">
-            <h3 className="font-semibold text-sm">SKU &amp; Category</h3>
+          <section className="border rounded-md p-2 space-y-2">
+            <h3 className="font-semibold text-base">SKU &amp; Category</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium">SKU</label>
+                <label className="text-sm font-medium">SKU</label>
                 <div className="flex items-center gap-2">
                   <Input
                     value={form.sku}
                     onChange={(e) => handleChange('sku', e.target.value.replace(/[^0-9]/g, ''))}
                     disabled={form.autoSku}
-                    className="h-8 text-xs"
-                    placeholder={form.autoSku ? 'Auto generated on save' : 'Numeric SKU'}
+                    className="h-8 text-sm max-w-[140px]"
+                    placeholder={form.autoSku ? 'Auto on save' : 'Numeric SKU'}
                   />
-                  <label className="flex items-center gap-1 text-[11px]">
+                  <label className="flex items-center gap-1 text-xs">
                     <Checkbox
                       checked={form.autoSku}
                       onCheckedChange={(checked) => handleChange('autoSku', Boolean(checked))}
                     />
-                    <span>Auto Generated SKU</span>
+                    <span>Auto Generated</span>
                   </label>
                 </div>
-                {errors.sku && <p className="mt-1 text-[11px] text-red-600">{errors.sku}</p>}
+                {errors.sku && <p className="mt-1 text-xs text-red-600">{errors.sku}</p>}
               </div>
 
               <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-medium mb-1 block">Category type</label>
-                  <div className="flex items-center gap-4 text-[11px]">
+                  <label className="text-sm font-medium mb-1 block">Category type</label>
+                  <div className="flex items-center gap-4 text-xs">
                     <label className="flex items-center gap-1">
                       <input
                         type="radio"
@@ -493,12 +653,12 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
                 {form.categoryType === 'internal' ? (
                   <div>
-                    <label className="text-[11px] font-medium mb-1 block">Internal category *</label>
+                    <label className="text-sm font-medium mb-1 block">Internal category *</label>
                     <Select
                       value={form.internalCategoryCode}
                       onValueChange={(value) => handleChange('internalCategoryCode', value)}
                     >
-                      <SelectTrigger className="h-8 text-xs">
+                      <SelectTrigger className="h-8 text-sm">
                         <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select category'} />
                       </SelectTrigger>
                       <SelectContent>
@@ -510,31 +670,31 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                       </SelectContent>
                     </Select>
                     {errors.category && (
-                      <p className="mt-1 text-[11px] text-red-600">{errors.category}</p>
+                      <p className="mt-1 text-xs text-red-600">{errors.category}</p>
                     )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2 items-center">
                     <div>
-                      <label className="text-[11px] font-medium mb-1 block">External category ID</label>
+                      <label className="text-sm font-medium mb-1 block">External category ID</label>
                       <Input
                         value={form.externalCategoryId}
                         onChange={(e) => handleChange('externalCategoryId', e.target.value)}
-                        className="h-8 text-xs"
+                        className="h-8 text-sm max-w-[160px]"
                         placeholder="eBay category ID"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-medium mb-1 block">External category name</label>
+                      <label className="text-sm font-medium mb-1 block">External category name</label>
                       <Input
                         value={form.externalCategoryName}
                         onChange={(e) => handleChange('externalCategoryName', e.target.value)}
-                        className="h-8 text-xs"
+                        className="h-8 text-sm"
                         placeholder="Category name"
                       />
                     </div>
                     {errors.externalCategory && (
-                      <p className="mt-1 text-[11px] text-red-600 col-span-2">
+                      <p className="mt-1 text-xs text-red-600 col-span-2">
                         {errors.externalCategory}
                       </p>
                     )}
@@ -545,34 +705,43 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Images */}
-          <section className="border rounded-md p-2.5 space-y-1.5">
-            <h3 className="font-semibold text-sm">Images (Pic#1–Pic#12)</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5">
+          <section className="border rounded-md p-2 space-y-1.5">
+            <h3 className="font-semibold text-base">Images (Pic#1–Pic#12)</h3>
+            <div className="space-y-1">
               {form.pics.map((value, idx) => (
-                <div key={idx} className="space-y-1">
-                  <label className="text-[11px] font-medium block">Pic#{idx + 1}</label>
+                <div key={idx} className="flex items-center gap-2 text-sm">
+                  <span className="w-16 text-right text-xs text-gray-600">Pic#{idx + 1}</span>
                   <Input
-                    className="h-7 text-[11px] font-mono"
+                    className="h-8 text-xs font-mono flex-1 min-w-0"
                     placeholder="https://…"
                     value={value}
                     onChange={(e) => handlePicChange(idx, e.target.value)}
                   />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="whitespace-nowrap text-xs h-7 px-2"
+                    onClick={() => handlePreviewPic(idx)}
+                  >
+                    Preview
+                  </Button>
                 </div>
               ))}
             </div>
           </section>
 
           {/* Shipping */}
-          <section className="border rounded-md p-2.5 space-y-2">
-            <h3 className="font-semibold text-sm">Shipping</h3>
+          <section className="border rounded-md p-2 space-y-2">
+            <h3 className="font-semibold text-base">Shipping</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div>
-                <label className="text-[11px] font-medium mb-1 block">Shipping group *</label>
+                <label className="text-sm font-medium mb-1 block">Shipping group *</label>
                 <Select
                   value={form.shippingGroupCode}
                   onValueChange={(value) => handleChange('shippingGroupCode', value)}
                 >
-                  <SelectTrigger className="h-8 text-xs">
+                  <SelectTrigger className="h-8 text-sm max-w-[200px]">
                     <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select group'} />
                   </SelectTrigger>
                   <SelectContent>
@@ -584,16 +753,16 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   </SelectContent>
                 </Select>
                 {errors.shippingGroupCode && (
-                  <p className="mt-1 text-[11px] text-red-600">{errors.shippingGroupCode}</p>
+                  <p className="mt-1 text-xs text-red-600">{errors.shippingGroupCode}</p>
                 )}
               </div>
               <div>
-                <label className="text-[11px] font-medium mb-1 block">Shipping type</label>
+                <label className="text-sm font-medium mb-1 block">Shipping type</label>
                 <Select
                   value={form.shippingType}
                   onValueChange={(value) => handleChange('shippingType', value as 'Flat' | 'Calculated')}
                 >
-                  <SelectTrigger className="h-8 text-xs">
+                  <SelectTrigger className="h-8 text-sm max-w-[160px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -607,7 +776,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   checked={form.domesticOnly}
                   onCheckedChange={(checked) => handleChange('domesticOnly', Boolean(checked))}
                 />
-                <span className="text-[11px]">Domestic only shipping</span>
+                <span className="text-xs">Domestic only shipping</span>
               </div>
             </div>
           </section>
@@ -722,32 +891,32 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Price & weight */}
-          <section className="border rounded-md p-2.5 space-y-2">
-            <h3 className="font-semibold text-sm">Price &amp; weight</h3>
+          <section className="border rounded-md p-2 space-y-2">
+            <h3 className="font-semibold text-base">Price &amp; weight</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
               <div>
-                <label className="text-[11px] font-medium mb-1 block">Price *</label>
+                <label className="text-sm font-medium mb-1 block">Price *</label>
                 <Input
                   value={form.price}
                   onChange={(e) => handleChange('price', e.target.value)}
-                  className="h-8 text-xs"
+                  className="h-8 text-sm max-w-[120px]"
                   placeholder="0.00"
                 />
-                {errors.price && <p className="mt-1 text-[11px] text-red-600">{errors.price}</p>}
+                {errors.price && <p className="mt-1 text-xs text-red-600">{errors.price}</p>}
               </div>
               <div className="flex items-center gap-2">
-                <div className="flex-1">
-                  <label className="text-[11px] font-medium mb-1 block">Weight</label>
+                <div className="flex-1 max-w-[160px]">
+                  <label className="text-sm font-medium mb-1 block">Weight</label>
                   <Input
                     value={form.weight}
                     onChange={(e) => handleChange('weight', e.target.value)}
-                    className="h-8 text-xs"
+                    className="h-8 text-sm"
                     placeholder="Numeric"
                   />
                 </div>
                 <div className="w-24 mt-5">
                   <Select value={form.unit} onValueChange={(v) => handleChange('unit', v)}>
-                    <SelectTrigger className="h-8 text-xs">
+                    <SelectTrigger className="h-8 text-sm">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -843,30 +1012,30 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </section>
 
           {/* Descriptions */}
-          <section className="border rounded-md p-2.5 space-y-2">
+          <section className="border rounded-md p-2 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="font-semibold text-sm">Descriptions &amp; templates</h3>
-              <span className="text-[11px] text-gray-500">
-                Condition description: {conditionDescRemaining} characters left
+              <h3 className="font-semibold text-base">Descriptions &amp; templates</h3>
+              <span className="text-xs text-gray-500">
+                Condition description: {conditionDescRemaining} characters left (max 1000)
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-[11px] font-medium block">Condition description</label>
+            <div className="space-y-2">
+              <div className="space-y-1 max-w-xl">
+                <label className="text-sm font-medium block">Condition description</label>
                 <Textarea
                   value={form.conditionDescription}
                   onChange={(e) => handleChange('conditionDescription', e.target.value)}
-                  className="min-h-[80px] text-xs"
+                  maxLength={1000}
+                  className="min-h-[70px] text-sm"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[11px] font-medium block">Description (HTML allowed)</label>
-                <Textarea
-                  value={form.description}
-                  onChange={(e) => handleChange('description', e.target.value)}
-                  className="min-h-[120px] text-xs font-mono"
-                  placeholder="Full listing description. HTML is stored as-is."
-                />
+                <label className="text-sm font-medium block">Description (HTML, WYSIWYG)</label>
+                <HtmlEditor value={form.description} onChange={(html) => handleChange('description', html)} />
+                <p className="text-xs text-gray-500">
+                  Full listing description. HTML is stored as-is; use the toolbar to adjust headings, fonts, colors,
+                  and lists.
+                </p>
               </div>
             </div>
           </section>

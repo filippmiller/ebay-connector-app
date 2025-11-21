@@ -30,13 +30,22 @@ this API at the time of writing.
 ## 2. Topics configured in Phase 1
 
 In Phase 1 of the Notifications Center, the connector configures and manages
-only a single concrete topic:
+the following concrete topics:
 
 - `MARKETPLACE_ACCOUNT_DELETION`
   - Scope: `APPLICATION` (application-scoped topic; subscriptions and tests
     must use an application access token obtained via client_credentials).
   - Purpose: receive account-deletion events for connected seller accounts.
   - Webhook: `POST /webhooks/ebay/events`.
+
+- `NEW_MESSAGE`
+  - Scope: `USER` (user-scoped topic; subscriptions and tests use the seller's
+    user access token).
+  - Purpose: receive notifications about new messages in the seller's inbox.
+  - Webhook: `POST /webhooks/ebay/events`.
+  - Notes: the webhook currently logs these events into `ebay_events` with
+    `entity_type="MESSAGE"` and `entity_id` set to the best-effort message or
+    thread identifier. A later Messages UI will consume these events.
 
 The topic registry is implemented in
 `backend/app/services/ebay_notification_topics.py` and is consumed by the

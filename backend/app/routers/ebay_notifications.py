@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import hashlib
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import Response, JSONResponse
 from app.config import settings
+from app.models_sqlalchemy import SessionLocal
+from app.models_sqlalchemy.models import EbayAccount
 from app.services.ebay_event_inbox import log_ebay_event
+from app.services.ebay_signature import verify_ebay_notification_signature
 from app.utils.logger import logger
 
 
@@ -61,7 +64,7 @@ async def ebay_events_webhook(request: Request) -> Response:
     try:
         raw_body = await request.body()
         payload: Dict[str, Any]
-        parse_error: str | None = None
+        parse_error: Optional[str] = None
         if not raw_body:
             payload = {}
         else:
@@ -84,14 +87,26 @@ async def ebay_events_webhook(request: Request) -> Response:
                 response_value = _compute_challenge_response(challenge_str)
                 return JSONResponse({"challengeResponse": response_value})
 
-        # Normalize headers (lower-case keys for consistency)
-        headers = {k.lower(): v for k, v in request.headers.items()}
+        # Normalize headers for storage. Keys are lower-cased and sensitive
+        # values (Authorization, *token*, *secret*) are redacted so that
+        # ebay_events.headers never leaks secrets.
+        headers: Dict[str, Any] = {}
+        for k, v in request.headers.items():
+            lk = k.lower()
+            if lk == "authorization" or "token" in lk or "secret" in lk:
+                headers[lk] = "***REDACTED***"
+            else:
+                headers[lk] = v
 
         source = "notification"
         channel = "commerce_notification"
-        topic = None
-        event_time = None
-        publish_time = None
+        topic: Optional[str] = None
+        event_time: Optional[str] = None
+        publish_time: Optional[str] = None
+        entity_type: Optional[str] = None
+        entity_id: Optional[str] = None
+        ebay_account_value: Optional[str] = None
+        account_note: Optional[str] = None
 
         if isinstance(payload, dict):
             metadata = payload.get("metadata") or {}
@@ -104,32 +119,140 @@ async def ebay_events_webhook(request: Request) -> Response:
                 event_time = notification.get("eventDate")
                 publish_time = notification.get("publishDate")
 
-        # Extract signature_kid from X-EBAY-SIGNATURE header if present.
-        signature_kid = None
-        signature_valid = None  # TODO: integrate real signature verification when utility is available.
+                # Topic-aware entity extraction for core Commerce Notification topics.
+                data = notification.get("data") or {}
+                if topic == "MARKETPLACE_ACCOUNT_DELETION":
+                    # ACCOUNT-level event; try to extract a stable account identifier.
+                    account_info = data.get("account") or data.get("seller") or {}
+                    username = account_info.get("username") or account_info.get("login")
+                    account_id = account_info.get("accountId") or account_info.get("userId")
+                    entity_type = "ACCOUNT"
+                    entity_id = username or account_id or None
 
-        sig_header = headers.get("x-ebay-signature")
-        if sig_header:
-            try:
-                sig_obj = json.loads(sig_header)
-                if isinstance(sig_obj, dict) and sig_obj.get("kid") is not None:
-                    signature_kid = str(sig_obj["kid"])
-            except Exception:
-                logger.warning("Failed to parse X-EBAY-SIGNATURE header", exc_info=True)
+                    # Best-effort internal EbayAccount resolution so that the grid
+                    # can group events by house/account. Failure here is non-fatal.
+                    try:
+                        if username or account_id:
+                            session = SessionLocal()
+                            try:
+                                q = session.query(EbayAccount)
+                                if username and account_id:
+                                    q = q.filter(
+                                        (EbayAccount.username == username)
+                                        | (EbayAccount.ebay_user_id == account_id),
+                                    )
+                                elif username:
+                                    q = q.filter(EbayAccount.username == username)
+                                else:
+                                    q = q.filter(EbayAccount.ebay_user_id == account_id)
+                                acc = q.first()
+                                if acc is not None:
+                                    ebay_account_value = acc.username or acc.ebay_user_id or acc.house_name
+                                else:
+                                    account_note = (
+                                        f"account_lookup_failed: no EbayAccount for username={username!r} "
+                                        f"or ebay_user_id={account_id!r}"
+                                    )
+                            finally:
+                                session.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to resolve EbayAccount for MAD webhook username=%s accountId=%s",
+                            username,
+                            account_id,
+                            exc_info=True,
+                        )
+                        # Do not treat this as a hard failure; just record a note.
+                        if not account_note:
+                            account_note = "account_lookup_failed: exception during resolution"
 
-        # Persist normalized event row. We keep entity_type / entity_id / ebay_account
-        # empty for now; processors will enrich them later.
+                elif topic == "NEW_MESSAGE":
+                    # Messaging event; try to extract message/thread identifiers.
+                    message = data.get("message") or data
+                    msg_id = (
+                        message.get("messageId")
+                        or message.get("id")
+                        or message.get("message_id")
+                    )
+                    thread_id = (
+                        message.get("threadId")
+                        or message.get("conversationId")
+                        or message.get("thread_id")
+                    )
+                    entity_type = "MESSAGE"
+                    entity_id = msg_id or thread_id or None
+
+                    # Best-effort account resolution from any seller/account block.
+                    seller_info = data.get("seller") or data.get("account") or {}
+                    username = seller_info.get("username") or seller_info.get("login")
+                    ebay_user_id = seller_info.get("userId") or seller_info.get("accountId")
+                    try:
+                        if username or ebay_user_id:
+                            session = SessionLocal()
+                            try:
+                                q = session.query(EbayAccount)
+                                if username and ebay_user_id:
+                                    q = q.filter(
+                                        (EbayAccount.username == username)
+                                        | (EbayAccount.ebay_user_id == ebay_user_id),
+                                    )
+                                elif username:
+                                    q = q.filter(EbayAccount.username == username)
+                                else:
+                                    q = q.filter(EbayAccount.ebay_user_id == ebay_user_id)
+                                acc = q.first()
+                                if acc is not None:
+                                    ebay_account_value = acc.username or acc.ebay_user_id or acc.house_name
+                                else:
+                                    account_note = (
+                                        f"account_lookup_failed: no EbayAccount for username={username!r} "
+                                        f"or ebay_user_id={ebay_user_id!r}"
+                                    )
+                            finally:
+                                session.close()
+                    except Exception:
+                        logger.warning(
+                            "Failed to resolve EbayAccount for NEW_MESSAGE webhook username=%s ebay_user_id=%s",
+                            username,
+                            ebay_user_id,
+                            exc_info=True,
+                        )
+                        if not account_note:
+                            account_note = "account_lookup_failed: exception during resolution"
+
+        # Extract and (best-effort) verify X-EBAY-SIGNATURE header when present.
+        signature_kid: Optional[str] = None
+        signature_valid: Optional[bool] = None
+        sig_error: Optional[dict] = None
+
+        raw_sig_header = request.headers.get("X-EBAY-SIGNATURE") or request.headers.get("x-ebay-signature")
+        if raw_sig_header:
+            is_valid, kid, err = await verify_ebay_notification_signature(raw_sig_header, raw_body)
+            signature_kid = kid
+            signature_valid = is_valid
+            sig_error = err
+
+        # Persist normalized event row. For now, business processing happens in
+        # downstream workers; this endpoint focuses on durable, debuggable
+        # storage of Notification events.
         status_value = "FAILED" if parse_error else "RECEIVED"
-        error_value = parse_error or None
+        error_parts: list[str] = []
+        if parse_error:
+            error_parts.append(parse_error)
+        if sig_error and sig_error.get("type"):
+            error_parts.append(f"signature_error:{sig_error['type']}")
+        if account_note:
+            error_parts.append(account_note)
+        error_value = "; ".join(error_parts) if error_parts else None
 
         try:
             log_ebay_event(
                 source=source,
                 channel=channel,
                 topic=topic,
-                entity_type=None,
-                entity_id=None,
-                ebay_account=None,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                ebay_account=ebay_account_value,
                 event_time=event_time,
                 publish_time=publish_time,
                 headers=headers,

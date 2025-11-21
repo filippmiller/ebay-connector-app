@@ -69,6 +69,14 @@ SUPPORTED_TOPICS: List[NotificationTopicConfig] = [
         # metadata including `scope` and supported schema versions.
         doc_url="https://developer.ebay.com/api-docs/sell/notification/resources/topic/methods/getTopic",
     ),
+    NotificationTopicConfig(
+        topic_id="NEW_MESSAGE",
+        default_entity_type="MESSAGE",
+        category="messaging",
+        # NEW_MESSAGE is a user-scoped topic used for message notifications.
+        scope_hint="USER",
+        doc_url="https://developer.ebay.com/api-docs/sell/notification/resources/topic/methods/getTopic",
+    ),
 ]
 
 
