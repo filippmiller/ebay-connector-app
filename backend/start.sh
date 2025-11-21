@@ -124,6 +124,13 @@ if ! ensure_python_package "uvicorn" "uvicorn==0.32.0"; then
   exit 1
 fi
 
+# Ensure cryptography is available for eBay webhook signature verification
+# (app.services.ebay_signature imports from cryptography.exceptions).
+if ! ensure_python_package "cryptography" "cryptography"; then
+  echo "[entry] FATAL: cryptography is required for eBay notification signature verification" >&2
+  exit 1
+fi
+
 # Ensure MSSQL SQLAlchemy dialect for pytds is available for admin tools
 # (DB Explorer MSSQL tab and Dual-DB Migration Studio). This installs the
 # pure-Python driver that provides the `mssql+pytds` dialect.
