@@ -14,6 +14,15 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
 
+    /* Global UI tweak variables */
+    --ui-root-font-size: 16px;
+    --ui-font-scale: 1;
+    --ui-nav-scale: 1;
+    --ui-nav-active-bg: #2563eb;
+    --ui-nav-active-text: #ffffff;
+    --ui-nav-inactive-bg: transparent;
+    --ui-nav-inactive-text: #374151;
+
     /* Global grid theme variables */
     --grid-row-height: 32px;
     --grid-header-height: 32px;
@@ -23,6 +32,12 @@
     --grid-row-hover-bg: #eef2ff; /* indigo-50 */
     --grid-row-selected-bg: #e0f2fe; /* sky-100 */
   }
+
+  html {
+    /* All Tailwind rem-based sizes (text, h-*, w-*) now scale with --ui-font-scale. */
+    font-size: calc(var(--ui-root-font-size) * var(--ui-font-scale));
+  }
+
   .dark {
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
@@ -37,6 +52,29 @@
 
 /* Grid theming helpers applied on .app-grid wrapper in DataGridPage */
 @layer components {
+  /* Top header navigation tabs */
+  .ui-nav-tab {
+    font-size: calc(0.875rem * var(--ui-nav-scale));
+    padding: calc(0.55rem * var(--ui-nav-scale)) calc(1.1rem * var(--ui-nav-scale));
+    min-height: calc(2.5rem * var(--ui-nav-scale));
+  }
+
+  .ui-nav-tab--active {
+    background-color: var(--ui-nav-active-bg);
+    color: var(--ui-nav-active-text);
+  }
+
+  .ui-nav-tab--inactive {
+    background-color: var(--ui-nav-inactive-bg);
+    color: var(--ui-nav-inactive-text);
+  }
+
+  .ui-tabs-trigger {
+    font-size: calc(0.875rem * var(--ui-nav-scale));
+    padding: calc(0.4rem * var(--ui-nav-scale)) calc(0.95rem * var(--ui-nav-scale));
+    min-height: calc(2.25rem * var(--ui-nav-scale));
+  }
+
   .app-grid {
     font-size: var(--grid-font-size);
   }
