@@ -361,8 +361,6 @@ async def update_sq_item(
 
 
 async def _debug_print_categories_and_shipping(db):
-    from sqlalchemy import text
-
     try:
         # 1) simply count rows
         count_sql = text('SELECT COUNT(*) AS cnt FROM "tbl_parts_category"')
