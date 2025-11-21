@@ -65,6 +65,11 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const startXRef = useRef<number>(0);
   const startWidthRef = useRef<number>(0);
   const draggingColRef = useRef<string | null>(null);
+  const columnsRef = useRef<ColumnState[]>([]);
+
+  useEffect(() => {
+    columnsRef.current = columns;
+  }, [columns]);
 
   const extraParamsKey = useMemo(() => {
     if (!extraParams) return '';
@@ -280,10 +285,11 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     window.removeEventListener('mousemove', onMouseMoveResize);
     window.removeEventListener('mouseup', onMouseUpResize);
     if (!gridPrefs.columns) return;
-    // Persist widths into preferences and immediately save to the backend so
-    // column sizes survive page reloads without requiring an explicit Save.
+    // Persist widths into preferences based on the *latest* rendered columns and
+    // immediately save to the backend so column sizes survive page reloads
+    // without requiring an explicit Save.
     const widths: Record<string, number> = { ...gridPrefs.columns.widths };
-    columns.forEach((c) => {
+    columnsRef.current.forEach((c) => {
       widths[c.name] = c.width;
     });
     gridPrefs.setColumns({ widths });
