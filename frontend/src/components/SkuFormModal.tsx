@@ -664,11 +664,17 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                         <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select category'} />
                       </SelectTrigger>
                       <SelectContent>
-                        {(dictionaries?.internal_categories || []).map((c) => (
-                          <SelectItem key={c.id} value={c.code}>
-                            {c.label}
+                        {dictionaries?.internal_categories && dictionaries.internal_categories.length > 0 ? (
+                          dictionaries.internal_categories.map((c) => (
+                            <SelectItem key={c.id} value={c.code}>
+                              {c.label}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="__empty" disabled>
+                            No categories found (0 rows in tbl_parts_category)
                           </SelectItem>
-                        ))}
+                        )}
                       </SelectContent>
                     </Select>
                     {errors.category && (

@@ -379,49 +379,44 @@ async def get_sq_dictionaries(
     # to sq_internal_categories otherwise.
     internal_categories: list[dict]
     try:
-        # Use a direct SQL query so we are independent of SQLAlchemy reflection
-        # quirks and column casing. We expect these three columns to exist in
-        # the legacy table:
-        #   CategoryID, CategoryDescr, ebayCategoryName
+        # Try querying with explicit "tbl_parts_category" first (no schema).
         rows = db.execute(
             text(
-                'SELECT "CategoryID", "CategoryDescr", "ebayCategoryName" '
-                'FROM public."tbl_parts_category" ORDER BY "CategoryID"'
+                'SELECT "CategoryID", "CategoryDescr", "eBayCategoryName" '
+                'FROM "tbl_parts_category" ORDER BY "CategoryID"'
             )
         ).fetchall()
-
-        if rows:
-            internal_categories = []
-            for cat_id, descr, ebay_name in rows:
-                parts = [str(cat_id)]
-                if descr:
-                    parts.append(str(descr).strip())
-                if ebay_name:
-                    parts.append(str(ebay_name).strip())
-                label = " — ".join(parts)
-                internal_categories.append(
-                    {"id": cat_id, "code": str(cat_id), "label": label, "category_id": cat_id, "category_descr": descr, "ebay_category_name": ebay_name}
+    except Exception:
+        try:
+            # Fallback: try public."tbl_parts_category" explicitly if previous failed
+            rows = db.execute(
+                text(
+                    'SELECT "CategoryID", "CategoryDescr", "eBayCategoryName" '
+                    'FROM public."tbl_parts_category" ORDER BY "CategoryID"'
                 )
-        else:
-            raise ValueError("tbl_parts_category returned no rows")
-    except Exception as exc:
-        logger.warning(f"Failed to load internal categories from tbl_parts_category: {exc}")
-        # Fallback: use normalized sq_internal_categories dictionary.
-        categories = (
-            db.query(SqInternalCategory)
-            .order_by(asc(SqInternalCategory.sort_order.nulls_last()), asc(SqInternalCategory.code))
-            .all()
-        )
-        internal_categories = [
-            {
-                "id": c.id,
-                "code": c.code,
-                # Include code in the label so the dropdown still shows
-                # code + description even in fallback mode.
-                "label": f"{c.code} — {c.label}",
-            }
-            for c in categories
-        ]
+            ).fetchall()
+        except Exception as exc:
+            logger.warning(f"Failed to load internal categories from tbl_parts_category: {exc}")
+            rows = []
+
+    if rows:
+        internal_categories = []
+        for cat_id, descr, ebay_name in rows:
+            parts = [str(cat_id)]
+            if descr:
+                parts.append(str(descr).strip())
+            if ebay_name:
+                parts.append(str(ebay_name).strip())
+            label = " — ".join(parts)
+            internal_categories.append(
+                {"id": cat_id, "code": str(cat_id), "label": label, "category_id": cat_id, "category_descr": descr, "ebay_category_name": ebay_name}
+            )
+    else:
+        # AUDIT 2025-11-21:
+        # Internal categories are loaded from tbl_parts_category (NOT from sq_internal_categories).
+        # If the query returns 0 rows, we log a warning and return an empty list to the UI.
+        logger.warning("Internal categories: 0 rows loaded from tbl_parts_category")
+        internal_categories = []
 
     # Shipping groups: source from public.tbl_internalshippinggroups
     shipping_groups: list[dict]
