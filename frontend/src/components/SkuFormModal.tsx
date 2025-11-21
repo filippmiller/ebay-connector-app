@@ -752,7 +752,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   <SelectContent>
                     {(dictionaries?.shipping_groups || []).map((g) => (
                       <SelectItem key={g.id} value={g.code}>
-                        {g.code} — {g.label}
+                        {g.label}
                       </SelectItem>
                     ))}
                   </SelectContent>

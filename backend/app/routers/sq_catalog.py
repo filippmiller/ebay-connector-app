@@ -19,7 +19,7 @@ from app.models_sqlalchemy.models import (
     tbl_parts_category_table,
 )
 from app.services.auth import get_current_user
-from app.models.user import User as UserModel
+from ..utils.logger import logger
 from app.models.sq_item import (
     SqItemCreate,
     SqItemUpdate,
@@ -386,7 +386,7 @@ async def get_sq_dictionaries(
         rows = db.execute(
             text(
                 'SELECT "CategoryID", "CategoryDescr", "ebayCategoryName" '
-                'FROM tbl_parts_category ORDER BY "CategoryID"'
+                'FROM public."tbl_parts_category" ORDER BY "CategoryID"'
             )
         ).fetchall()
 
@@ -400,11 +400,12 @@ async def get_sq_dictionaries(
                     parts.append(str(ebay_name).strip())
                 label = " — ".join(parts)
                 internal_categories.append(
-                    {"id": cat_id, "code": str(cat_id), "label": label}
+                    {"id": cat_id, "code": str(cat_id), "label": label, "category_id": cat_id, "category_descr": descr, "ebay_category_name": ebay_name}
                 )
         else:
             raise ValueError("tbl_parts_category returned no rows")
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"Failed to load internal categories from tbl_parts_category: {exc}")
         # Fallback: use normalized sq_internal_categories dictionary.
         categories = (
             db.query(SqInternalCategory)
@@ -422,11 +423,45 @@ async def get_sq_dictionaries(
             for c in categories
         ]
 
-    shipping_groups = (
-        db.query(SqShippingGroup)
-        .order_by(asc(SqShippingGroup.sort_order.nulls_last()), asc(SqShippingGroup.code))
-        .all()
-    )
+    # Shipping groups: source from public.tbl_internalshippinggroups
+    shipping_groups: list[dict]
+    try:
+        # ID, Name, Description, Active
+        rows = db.execute(
+            text(
+                'SELECT "ID", "Name" '
+                'FROM public."tbl_internalshippinggroups" '
+                'WHERE "Active" = true '
+                'ORDER BY "ID"'
+            )
+        ).fetchall()
+
+        if rows:
+            shipping_groups = []
+            for row in rows:
+                s_id = row[0]
+                s_name = row[1]
+                label = f"{s_id}: {s_name}"
+                shipping_groups.append({
+                    "id": s_id,
+                    "code": str(s_id),
+                    "name": s_name,
+                    "label": label
+                })
+        else:
+             raise ValueError("tbl_internalshippinggroups returned no rows")
+    except Exception as exc:
+        logger.warning(f"Failed to load shipping groups from tbl_internalshippinggroups: {exc}")
+        # Fallback
+        sg_rows = (
+            db.query(SqShippingGroup)
+            .order_by(asc(SqShippingGroup.sort_order.nulls_last()), asc(SqShippingGroup.code))
+            .all()
+        )
+        shipping_groups = [
+            {"id": g.id, "code": g.code, "label": g.label}
+            for g in sg_rows
+        ]
     conditions = (
         db.query(ItemCondition)
         .order_by(asc(ItemCondition.sort_order.nulls_last()), asc(ItemCondition.code))
@@ -451,10 +486,7 @@ async def get_sq_dictionaries(
 
     return {
         "internal_categories": internal_categories,
-        "shipping_groups": [
-            {"id": g.id, "code": g.code, "label": g.label}
-            for g in shipping_groups
-        ],
+        "shipping_groups": shipping_groups,
         "conditions": [
             {"id": cond.id, "code": cond.code, "label": cond.label}
             for cond in conditions
