@@ -38,14 +38,19 @@ the following concrete topics:
   - Purpose: receive account-deletion events for connected seller accounts.
   - Webhook: `POST /webhooks/ebay/events`.
 
-- `NEW_MESSAGE`
-  - Scope: `USER` (user-scoped topic; subscriptions and tests use the seller's
-    user access token).
-  - Purpose: receive notifications about new messages in the seller's inbox.
+- `AUTHORIZATION_REVOCATION`
+  - Scope: `APPLICATION` (application-scoped topic).
+  - Purpose: receive notifications when a seller revokes authorization for the
+    application. This is useful for keeping local account state in sync with the
+    seller's consent.
   - Webhook: `POST /webhooks/ebay/events`.
-  - Notes: the webhook currently logs these events into `ebay_events` with
-    `entity_type="MESSAGE"` and `entity_id` set to the best-effort message or
-    thread identifier. A later Messages UI will consume these events.
+
+> Note: earlier iterations experimented with a `NEW_MESSAGE` topic for
+> messaging. The Commerce Notification API does **not** currently document a
+> `NEW_MESSAGE` topic; attempting to query `/topic/NEW_MESSAGE` results in a
+> 404. As a result, `NEW_MESSAGE` is **not** part of the configured topic list
+> in Phase 1. Messaging-related functionality should continue to rely on the
+> REST Messages API and polling workers rather than Commerce Notification.
 
 The topic registry is implemented in
 `backend/app/services/ebay_notification_topics.py` and is consumed by the

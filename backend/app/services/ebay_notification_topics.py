@@ -69,12 +69,18 @@ SUPPORTED_TOPICS: List[NotificationTopicConfig] = [
         # metadata including `scope` and supported schema versions.
         doc_url="https://developer.ebay.com/api-docs/sell/notification/resources/topic/methods/getTopic",
     ),
+    # Second concrete topic used to exercise multi-topic diagnostics.
+    #
+    # AUTHORIZATION_REVOCATION is an application-scoped topic that notifies the
+    # app when a user revokes consent/authorization. Using a real, documented
+    # topic here ensures that /notifications/status does not attempt to look up
+    # imaginary topics (such as the previously assumed NEW_MESSAGE topic), which
+    # would lead to 404s from the Notification API.
     NotificationTopicConfig(
-        topic_id="NEW_MESSAGE",
-        default_entity_type="MESSAGE",
-        category="messaging",
-        # NEW_MESSAGE is a user-scoped topic used for message notifications.
-        scope_hint="USER",
+        topic_id="AUTHORIZATION_REVOCATION",
+        default_entity_type=None,
+        category="account",
+        scope_hint="APPLICATION",
         doc_url="https://developer.ebay.com/api-docs/sell/notification/resources/topic/methods/getTopic",
     ),
 ]
