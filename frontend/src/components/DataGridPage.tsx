@@ -303,8 +303,19 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const buttonLayout = gridPrefs.theme?.buttonLayout || 'right';
   const currentSort = gridPrefs.columns?.sort || null;
 
+  // Theme-driven visual customisation
+  const bodyFontSizeSetting = gridPrefs.theme?.fontSize || 'medium';
+  const bodyFontSizePx = bodyFontSizeSetting === 'small' ? 11 : bodyFontSizeSetting === 'large' ? 15 : 13;
+  const headerFontSizeSetting = gridPrefs.theme?.headerFontSize || bodyFontSizeSetting;
+  const headerFontSizePx = headerFontSizeSetting === 'small' ? 11 : headerFontSizeSetting === 'large' ? 15 : 13;
+  const headerTextColor = gridPrefs.theme?.headerTextColor as string | undefined;
+  const gridBackgroundColor = gridPrefs.theme?.backgroundColor as string | undefined;
+
   return (
-    <div className={`flex flex-col h-full app-grid grid-density-${density} grid-theme-${colorScheme}`}>
+    <div
+      className={`flex flex-col h-full app-grid grid-density-${density} grid-theme-${colorScheme}`}
+      style={{ fontSize: bodyFontSizePx, backgroundColor: gridBackgroundColor || undefined }}
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
@@ -398,7 +409,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
       {error && <div className="mb-2 text-xs text-red-600">{error}</div>}
 
-      <div className="flex-1 min-h-0 border rounded-lg bg-white overflow-auto">
+      <div
+        className="flex-1 min-h-0 border rounded-lg bg-white overflow-auto"
+        style={gridBackgroundColor ? { backgroundColor: gridBackgroundColor } : undefined}
+      >
         {gridPrefs.loading ? (
           <div className="p-4 text-sm text-gray-500">Loading layout…</div>
         ) : orderedVisibleColumns.length === 0 ? (
@@ -413,7 +427,12 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                   return (
                     <th
                       key={col.name}
-                      style={{ width: col.width, minWidth: col.width }}
+                      style={{
+                        width: col.width,
+                        minWidth: col.width,
+                        fontSize: headerFontSizePx,
+                        color: headerTextColor || undefined,
+                      }}
                       className="border-b border-r px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wide text-gray-600 sticky top-0 bg-gray-100 z-10 relative select-none"
                       onDragOver={(e) => handleDragOver(e, col.name)}
                       onDrop={(e) => handleDrop(e, col.name)}
@@ -620,6 +639,49 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                       <option value="right">Buttons right</option>
                       <option value="split">Title left, buttons right</option>
                     </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Grid background</span>
+                    <input
+                      type="color"
+                      className="border rounded px-1 py-1 h-7 w-full bg-white"
+                      value={
+                        typeof gridPrefs.theme.backgroundColor === 'string' && gridPrefs.theme.backgroundColor
+                          ? (gridPrefs.theme.backgroundColor as string)
+                          : '#ffffff'
+                      }
+                      onChange={(e) => gridPrefs.setTheme({ backgroundColor: e.target.value })}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Header font size</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px] bg-white"
+                      value={(gridPrefs.theme.headerFontSize as any) || gridPrefs.theme.fontSize}
+                      onChange={(e) => gridPrefs.setTheme({ headerFontSize: e.target.value as any })}
+                    >
+                      <option value="small">Small</option>
+                      <option value="medium">Medium</option>
+                      <option value="large">Large</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1 col-span-2">
+                    <span className="text-[11px] text-gray-600">Header text color</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="border rounded px-1 py-1 h-7 w-16 bg-white"
+                        value={
+                          typeof gridPrefs.theme.headerTextColor === 'string' && gridPrefs.theme.headerTextColor
+                            ? (gridPrefs.theme.headerTextColor as string)
+                            : '#4b5563'
+                        }
+                        onChange={(e) => gridPrefs.setTheme({ headerTextColor: e.target.value })}
+                      />
+                      <span className="text-[11px] text-gray-500">
+                        Choose a custom color for column names. Leave as default to use the theme colors.
+                      </span>
+                    </div>
                   </label>
                 </div>
               </div>

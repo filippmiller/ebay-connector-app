@@ -14,6 +14,12 @@ export interface GridThemeConfig {
   headerStyle: GridHeaderStyle;
   colorScheme: GridColorScheme;
   buttonLayout: GridButtonLayout;
+  /** Optional custom background color for the grid body (e.g. #ffffff). */
+  backgroundColor?: string;
+  /** Optional font size override specifically for column headers. */
+  headerFontSize?: GridFontSize;
+  /** Optional text color for column headers (e.g. #111827). */
+  headerTextColor?: string;
   // Allow forward-compatible flags without tightening the type too much
   [key: string]: unknown;
 }
