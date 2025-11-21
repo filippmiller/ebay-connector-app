@@ -756,11 +756,17 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                     <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select group'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {(dictionaries?.shipping_groups || []).map((g) => (
-                      <SelectItem key={g.id} value={g.code}>
-                        {g.label}
+                    {dictionaries?.shipping_groups && dictionaries.shipping_groups.length > 0 ? (
+                      dictionaries.shipping_groups.map((g) => (
+                        <SelectItem key={g.id} value={g.code}>
+                          {g.label}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__empty" disabled>
+                        No shipping groups found (0 rows in tbl_internalshippinggroups)
                       </SelectItem>
-                    ))}
+                    )}
                   </SelectContent>
                 </Select>
                 {errors.shippingGroupCode && (

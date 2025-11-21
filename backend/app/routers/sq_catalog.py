@@ -360,24 +360,64 @@ async def update_sq_item(
     return SqItemRead.model_validate(item)
 
 
+async def _debug_print_categories_and_shipping(db):
+    from sqlalchemy import text
+
+    try:
+        # 1) simply count rows
+        count_sql = text('SELECT COUNT(*) AS cnt FROM "tbl_parts_category"')
+        count_row = db.execute(count_sql).fetchone()
+        logger.info("DEBUG tbl_parts_category COUNT = %s", count_row[0] if count_row else 0)
+    except Exception as exc:
+        logger.exception("DEBUG ERROR counting tbl_parts_category", exc_info=exc)
+
+    try:
+        # 2) show first 3 rows
+        sample_sql = text('''
+            SELECT "CategoryID", "CategoryDescr", "eBayCategoryName"
+            FROM "tbl_parts_category"
+            ORDER BY "CategoryID"
+            LIMIT 3
+        ''')
+        rows = db.execute(sample_sql).fetchall()
+        logger.info("DEBUG tbl_parts_category SAMPLE = %s", rows)
+    except Exception as exc:
+        logger.exception("DEBUG ERROR sampling tbl_parts_category", exc_info=exc)
+
+    try:
+        # SHIPPING GROUPS
+        count_sql2 = text('SELECT COUNT(*) AS cnt FROM "tbl_internalshippinggroups"')
+        count_row2 = db.execute(count_sql2).fetchone()
+        logger.info("DEBUG tbl_internalshippinggroups COUNT = %s", count_row2[0] if count_row2 else 0)
+
+        sample_sql2 = text('''
+            SELECT "ID", "Name", "Active"
+            FROM "tbl_internalshippinggroups"
+            ORDER BY "ID"
+            LIMIT 6
+        ''')
+        rows2 = db.execute(sample_sql2).fetchall()
+        logger.info("DEBUG tbl_internalshippinggroups SAMPLE = %s", rows2)
+    except Exception as exc:
+        logger.exception("DEBUG ERROR sampling tbl_internalshippinggroups", exc_info=exc)
+
+
 @router.get("/dictionaries")
 async def get_sq_dictionaries(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict:
-    """Return dictionaries used by the SQ Create/Edit form.
+    """Return dictionaries used by the SQ Create/Edit form."""
+    
+    # Check DB connection details
+    from app.models_sqlalchemy import engine
+    logger.info("SQ dictionaries DB URL host=%s db=%s", engine.url.host, engine.url.database)
+    
+    # Run debug queries
+    await _debug_print_categories_and_shipping(db)
 
-    - Internal categories (sq_internal_categories)
-    - Shipping groups (sq_shipping_groups)
-    - Item conditions (item_conditions)
-    - Warehouses (warehouses)
-    - Static listing types / durations / sites
-    """
-
-    # Internal categories: prefer real legacy table tbl_parts_category when
-    # available so that codes/labels match the old system exactly. Fallback
-    # to sq_internal_categories otherwise.
-    internal_categories: list[dict]
+    # ---- INTERNAL CATEGORIES ----
+    internal_categories = []
     try:
         # Try querying with explicit "tbl_parts_category" first (no schema).
         rows = db.execute(
@@ -386,21 +426,20 @@ async def get_sq_dictionaries(
                 'FROM "tbl_parts_category" ORDER BY "CategoryID"'
             )
         ).fetchall()
-    except Exception:
+    except Exception as exc1:
+        # Fallback: try public."tbl_parts_category" explicitly if previous failed
         try:
-            # Fallback: try public."tbl_parts_category" explicitly if previous failed
             rows = db.execute(
                 text(
                     'SELECT "CategoryID", "CategoryDescr", "eBayCategoryName" '
                     'FROM public."tbl_parts_category" ORDER BY "CategoryID"'
                 )
             ).fetchall()
-        except Exception as exc:
-            logger.warning(f"Failed to load internal categories from tbl_parts_category: {exc}")
+        except Exception as exc2:
+            logger.warning(f"Failed to load internal categories from tbl_parts_category: {exc2}")
             rows = []
 
     if rows:
-        internal_categories = []
         for cat_id, descr, ebay_name in rows:
             parts = [str(cat_id)]
             if descr:
@@ -416,47 +455,53 @@ async def get_sq_dictionaries(
         # Internal categories are loaded from tbl_parts_category (NOT from sq_internal_categories).
         # If the query returns 0 rows, we log a warning and return an empty list to the UI.
         logger.warning("Internal categories: 0 rows loaded from tbl_parts_category")
-        internal_categories = []
 
-    # Shipping groups: source from public.tbl_internalshippinggroups
-    shipping_groups: list[dict]
+    # ---- SHIPPING GROUPS ----
+    shipping_groups = []
     try:
         # ID, Name, Description, Active
+        # Try without schema first
         rows = db.execute(
             text(
-                'SELECT "ID", "Name" '
-                'FROM public."tbl_internalshippinggroups" '
+                'SELECT "ID", "Name", "Active" '
+                'FROM "tbl_internalshippinggroups" '
                 'WHERE "Active" = true '
                 'ORDER BY "ID"'
             )
         ).fetchall()
+    except Exception:
+        try:
+            # Fallback to public schema
+            rows = db.execute(
+                text(
+                    'SELECT "ID", "Name", "Active" '
+                    'FROM public."tbl_internalshippinggroups" '
+                    'WHERE "Active" = true '
+                    'ORDER BY "ID"'
+                )
+            ).fetchall()
+        except Exception as exc:
+            logger.warning(f"Failed to load shipping groups from tbl_internalshippinggroups: {exc}")
+            rows = []
 
-        if rows:
-            shipping_groups = []
-            for row in rows:
-                s_id = row[0]
-                s_name = row[1]
-                label = f"{s_id}: {s_name}"
-                shipping_groups.append({
-                    "id": s_id,
-                    "code": str(s_id),
-                    "name": s_name,
-                    "label": label
-                })
-        else:
-             raise ValueError("tbl_internalshippinggroups returned no rows")
-    except Exception as exc:
-        logger.warning(f"Failed to load shipping groups from tbl_internalshippinggroups: {exc}")
-        # Fallback
-        sg_rows = (
-            db.query(SqShippingGroup)
-            .order_by(asc(SqShippingGroup.sort_order.nulls_last()), asc(SqShippingGroup.code))
-            .all()
-        )
-        shipping_groups = [
-            {"id": g.id, "code": g.code, "label": g.label}
-            for g in sg_rows
-        ]
+    if rows:
+        for row in rows:
+            s_id = row[0]
+            s_name = row[1]
+            s_active = row[2]
+            label = f"{s_id}: {s_name}"
+            shipping_groups.append({
+                "id": s_id,
+                "code": str(s_id),
+                "name": s_name,
+                "label": label,
+                "active": s_active
+            })
+    else:
+        # AUDIT 2025-11-21:
+        # Shipping groups are loaded from tbl_internalshippinggroups.
+        logger.warning("Shipping groups: 0 rows loaded from tbl_internalshippinggroups")
+
     conditions = (
         db.query(ItemCondition)
         .order_by(asc(ItemCondition.sort_order.nulls_last()), asc(ItemCondition.code))
