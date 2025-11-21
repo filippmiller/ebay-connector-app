@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 
 
 revision: str = "ebay_events_processing_20251121"
-down_revision: Union[str, Sequence[str], None] = "ebay_events_20251119"
+down_revision: Union[str, Sequence[str], None] = "20251120_add_title_to_sku_catalog"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

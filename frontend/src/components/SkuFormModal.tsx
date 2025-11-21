@@ -666,7 +666,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                       <SelectContent>
                         {(dictionaries?.internal_categories || []).map((c) => (
                           <SelectItem key={c.id} value={c.code}>
-                            {c.code} — {c.label}
+                            {c.label}
                           </SelectItem>
                         ))}
                       </SelectContent>

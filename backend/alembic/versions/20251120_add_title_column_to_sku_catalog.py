@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "20251120_add_title_to_sku_catalog"
-down_revision: Union[str, None] = "20251119_add_parsed_body_to_ebay_messages"
+down_revision: Union[str, None] = "ensure_commerce_identity_scope_20251120"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

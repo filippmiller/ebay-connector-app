@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, asc, desc, func, select
+from sqlalchemy import or_, asc, desc, func, select, text
 from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText, Integer, BigInteger, Numeric
 
 from app.models_sqlalchemy import get_db
@@ -378,64 +378,47 @@ async def get_sq_dictionaries(
     # available so that codes/labels match the old system exactly. Fallback
     # to sq_internal_categories otherwise.
     internal_categories: list[dict]
-    if tbl_parts_category_table is not None:
-        table = tbl_parts_category_table
-        cols = list(table.columns)
+    try:
+        # Use a direct SQL query so we are independent of SQLAlchemy reflection
+        # quirks and column casing. We expect these three columns to exist in
+        # the legacy table:
+        #   CategoryID, CategoryDescr, ebayCategoryName
+        rows = db.execute(
+            text(
+                'SELECT "CategoryID", "CategoryDescr", "ebayCategoryName" '
+                'FROM tbl_parts_category ORDER BY "CategoryID"'
+            )
+        ).fetchall()
 
-        # Heuristically find ID and label columns so we work regardless of
-        # exact casing (CategoryID vs "CategoryID" vs categoryid, etc.).
-        string_types = (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)
-        numeric_types = (Integer, BigInteger, Numeric)
-
-        col_id = table.c.get("CategoryID")
-        if col_id is None:
-            for c in cols:
-                if isinstance(c.type, numeric_types):
-                    col_id = c
-                    break
-        if col_id is None and cols:
-            col_id = cols[0]
-
-        col_descr = None
-        col_ebay_name = None
-        for c in cols:
-            if not isinstance(c.type, string_types):
-                continue
-            name_lower = c.name.lower()
-            if col_descr is None and ("categorydescr" in name_lower or "descr" in name_lower):
-                col_descr = c
-            if col_ebay_name is None and ("ebaycategoryname" in name_lower or "ebaycategory" in name_lower):
-                col_ebay_name = c
-
-        select_cols = [col_id]
-        if col_descr is not None:
-            select_cols.append(col_descr)
-        if col_ebay_name is not None:
-            select_cols.append(col_ebay_name)
-
-        stmt = select(*select_cols).order_by(col_id)
-        rows = db.execute(stmt).fetchall()
-
-        internal_categories = []
-        for row in rows:
-            cat_id = row[0]
-            descr = (row[1] or "").strip() if len(row) > 1 else ""
-            ebay_name = (row[2] or "").strip() if len(row) > 2 else ""
-            parts = [str(cat_id)]
-            if descr:
-                parts.append(descr)
-            if ebay_name:
-                parts.append(ebay_name)
-            label = " — ".join(parts)
-            internal_categories.append({"id": cat_id, "code": str(cat_id), "label": label})
-    else:
+        if rows:
+            internal_categories = []
+            for cat_id, descr, ebay_name in rows:
+                parts = [str(cat_id)]
+                if descr:
+                    parts.append(str(descr).strip())
+                if ebay_name:
+                    parts.append(str(ebay_name).strip())
+                label = " — ".join(parts)
+                internal_categories.append(
+                    {"id": cat_id, "code": str(cat_id), "label": label}
+                )
+        else:
+            raise ValueError("tbl_parts_category returned no rows")
+    except Exception:
+        # Fallback: use normalized sq_internal_categories dictionary.
         categories = (
             db.query(SqInternalCategory)
             .order_by(asc(SqInternalCategory.sort_order.nulls_last()), asc(SqInternalCategory.code))
             .all()
         )
         internal_categories = [
-            {"id": c.id, "code": c.code, "label": c.label}
+            {
+                "id": c.id,
+                "code": c.code,
+                # Include code in the label so the dropdown still shows
+                # code + description even in fallback mode.
+                "label": f"{c.code} — {c.label}",
+            }
             for c in categories
         ]
 
