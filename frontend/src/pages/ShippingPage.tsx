@@ -303,10 +303,10 @@ export default function ShippingPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="min-h-screen flex flex-col bg-gray-50">
       <FixedHeader />
-      <div className="pt-16 flex-1 px-4 py-6 overflow-hidden">
-        <div className="w-full h-full flex flex-col">
+      <main className="flex-1 min-h-0 px-4 py-6 overflow-auto">
+        <div className="w-full flex flex-col gap-2">
           <h1 className="text-3xl font-bold mb-4">Shipping</h1>
 
           <Tabs defaultValue="awaiting" className="w-full h-full flex flex-col">
@@ -745,7 +745,7 @@ export default function ShippingPage() {
             </TabsContent>
           </Tabs>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

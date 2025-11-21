@@ -197,11 +197,11 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
   const [form, setForm] = useState<SkuFormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Model typeahead state
+  // Model search state – search is triggered explicitly on Enter, not live
+  // on every keystroke.
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [modelSearchLoading, setModelSearchLoading] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
-  const modelSearchTimeoutRef = useRef<number | undefined>(undefined);
 
   // Derived counters
   const titleRemaining = useMemo(() => 80 - (form.title?.length ?? 0), [form.title]);
@@ -344,40 +344,36 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     }
   };
 
-  const handleModelSearch = (value: string) => {
-    // Update form model text immediately so the field reflects user input.
+  const handleModelInputChange = (value: string) => {
     handleChange('model', value);
-
-    // Clear any pending search.
-    if (modelSearchTimeoutRef.current !== undefined) {
-      window.clearTimeout(modelSearchTimeoutRef.current);
+    if (!value.trim()) {
+      setModelOptions([]);
+      setModelDropdownOpen(false);
     }
+  };
 
-    const query = value.trim();
-    if (!query) {
+  const runModelSearch = async (query: string) => {
+    const q = query.trim();
+    if (!q) {
       setModelOptions([]);
       setModelDropdownOpen(false);
       return;
     }
 
-    setModelDropdownOpen(true);
     setModelSearchLoading(true);
-
-    modelSearchTimeoutRef.current = window.setTimeout(async () => {
-      try {
-        const resp = await api.get<{ items: ModelOption[] }>(
-          '/api/sq/models/search',
-          { params: { q: query, limit: 20 } },
-        );
-        setModelOptions(resp.data?.items ?? []);
-      } catch (e) {
-        // Silent failure – leave previous options if any.
-        // eslint-disable-next-line no-console
-        console.error('Model search failed', e);
-      } finally {
-        setModelSearchLoading(false);
-      }
-    }, 300);
+    setModelDropdownOpen(true);
+    try {
+      const resp = await api.get<{ items: ModelOption[] }>('/api/sq/models/search', {
+        params: { q: q, limit: 40 },
+      });
+      setModelOptions(resp.data?.items ?? []);
+    } catch (e) {
+      // Silent failure – leave previous options if any.
+      // eslint-disable-next-line no-console
+      console.error('Model search failed', e);
+    } finally {
+      setModelSearchLoading(false);
+    }
   };
 
   const handleSelectModel = (option: ModelOption) => {
@@ -530,8 +526,8 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     >
       <DialogContent className="max-w-5xl max-w-[95vw] w-full max-h-[90vh] min-w-[720px] min-h-[420px] flex flex-col resize-both overflow-auto text-sm">
         <DialogHeader>
-          <DialogTitle>{mode === 'create' ? 'Create SKU' : 'Edit SKU'}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="ui-page-title">{mode === 'create' ? 'Create SKU' : 'Edit SKU'}</DialogTitle>
+          <DialogDescription className="ui-micro-label">
             Fill in the main business fields for the SQ catalog item. Description fields accept raw HTML and will be
             stored as-is in the database.
           </DialogDescription>
@@ -541,7 +537,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           {/* Title & Model */}
           <section className="border rounded-md p-2 space-y-1.5 bg-gray-50/60">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="font-semibold text-base">Title &amp; Model</h3>
+              <h3 className="ui-section-title">Title &amp; Model</h3>
               <span className="text-xs text-gray-500">
                 {titleRemaining} characters left
               </span>
@@ -562,16 +558,22 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                 <label className="block text-sm font-medium mb-1">Model *</label>
                 <Input
                   value={form.model}
-                  onChange={(e) => handleModelSearch(e.target.value)}
+                  onChange={(e) => handleModelInputChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void runModelSearch(form.model);
+                    }
+                  }}
                   onFocus={() => {
-                    if (form.model.trim()) setModelDropdownOpen(true);
+                    if (modelOptions.length) setModelDropdownOpen(true);
                   }}
                   onBlur={() => {
                     // Delay closing slightly so clicks on results still register.
                     setTimeout(() => setModelDropdownOpen(false), 150);
                   }}
                   className="h-9 text-sm pr-8"
-                  placeholder="Type to search models (live from database)…"
+                  placeholder="Type a keyword and press Enter to search models…"
                 />
                 {modelDropdownOpen && (
                   <div className="absolute z-20 mt-1 w-full rounded-md border bg-white shadow-sm max-h-56 overflow-auto text-xs">
@@ -603,7 +605,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
           {/* SKU & Category */}
           <section className="border rounded-md p-2 space-y-2">
-            <h3 className="font-semibold text-base">SKU &amp; Category</h3>
+            <h3 className="ui-section-title">SKU &amp; Category</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div className="flex flex-col gap-1">
                 <label className="text-sm font-medium">SKU</label>
@@ -706,7 +708,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
           {/* Images */}
           <section className="border rounded-md p-2 space-y-1.5">
-            <h3 className="font-semibold text-base">Images (Pic#1–Pic#12)</h3>
+            <h3 className="ui-section-title">Images (Pic#1–Pic#12)</h3>
             {/* On wide screens this becomes 2 rows × 6 columns so images only
                 take two lines of space. On smaller screens they wrap
                 naturally. */}
@@ -736,7 +738,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
           {/* Shipping */}
           <section className="border rounded-md p-2 space-y-2">
-            <h3 className="font-semibold text-base">Shipping</h3>
+            <h3 className="ui-section-title">Shipping</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
               <div>
                 <label className="text-sm font-medium mb-1 block">Shipping group *</label>
@@ -786,7 +788,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
           {/* Identifiers & condition */}
           <section className="border rounded-md p-2.5 space-y-2">
-            <h3 className="font-semibold text-sm">Identifiers &amp; condition</h3>
+            <h3 className="ui-section-title">Identifiers &amp; condition</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <div>
                 <label className="text-[11px] font-medium mb-1 block">UPC / EAN / ISBN</label>
@@ -895,7 +897,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
           {/* Price & weight */}
           <section className="border rounded-md p-2 space-y-2">
-            <h3 className="font-semibold text-base">Price &amp; weight</h3>
+            <h3 className="ui-section-title">Price &amp; weight</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
               <div>
                 <label className="text-sm font-medium mb-1 block">Price *</label>
@@ -936,7 +938,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
           {/* Listing settings */}
           <section className="border rounded-md p-3 space-y-3">
-            <h3 className="font-semibold text-sm">Listing settings</h3>
+            <h3 className="ui-section-title">Listing settings</h3>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
               <div>
                 <label className="text-[11px] font-medium mb-1 block">Listing type</label>
@@ -1017,7 +1019,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           {/* Descriptions */}
           <section className="border rounded-md p-2 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="font-semibold text-base">Descriptions &amp; templates</h3>
+              <h3 className="ui-section-title">Descriptions &amp; templates</h3>
               <span className="text-xs text-gray-500">
                 Condition description: {conditionDescRemaining} characters left (max 1000)
               </span>
@@ -1045,7 +1047,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
           {/* Advanced flags */}
           <section className="border rounded-md p-2.5 space-y-2 bg-gray-50/60">
-            <h3 className="font-semibold text-sm">Advanced</h3>
+            <h3 className="ui-section-title">Advanced</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
               <div>
                 <label className="flex items-center gap-1 text-[11px] mb-1">

@@ -23,6 +23,43 @@
     --ui-nav-inactive-bg: transparent;
     --ui-nav-inactive-text: #374151;
 
+    /* Typography role scales (multipliers on top of base rem + global ui font scale) */
+    --ui-font-scale-page-title: 1;
+    --ui-font-scale-section-title: 1;
+    --ui-font-scale-field-label: 1;
+    --ui-font-scale-micro-label: 1;
+    --ui-font-scale-table-header: 1;
+    --ui-font-scale-table-cell: 1;
+    --ui-font-scale-button-text: 1;
+
+    /* Font weights per role (numeric CSS font-weight values) */
+    --ui-font-weight-page-title: 700;
+    --ui-font-weight-section-title: 600;
+    --ui-font-weight-field-label: 500;
+    --ui-font-weight-table-header: 500;
+    --ui-font-weight-table-cell: 400;
+    --ui-font-weight-button-text: 500;
+
+    /* Micro label styling */
+    --ui-micro-label-transform: none;
+    --ui-micro-label-style: normal;
+
+    /* Text colors */
+    --ui-color-text-primary: #111827;
+    --ui-color-text-secondary: #374151;
+    --ui-color-text-muted: #6b7280;
+    --ui-color-text-heading: #111827;
+    --ui-color-text-link: #2563eb;
+
+    /* Button colors */
+    --ui-color-button-primary-bg: #18181b;
+    --ui-color-button-primary-text: #f9fafb;
+    --ui-color-button-secondary-bg: #e5e7eb;
+    --ui-color-button-secondary-text: #111827;
+
+    /* Controls size */
+    --ui-scale-button-input: 1;
+
     /* Global grid theme variables */
     --grid-row-height: 32px;
     --grid-header-height: 32px;
@@ -171,5 +208,71 @@
   .app-grid.grid-theme-highContrast {
     --grid-header-bg: #000000;
     --grid-header-text-color: #ffffff;
+  }
+}
+
+@layer utilities {
+  /* Typography role utilities */
+  .ui-page-title {
+    font-size: calc(var(--ui-font-scale-page-title) * 1.1rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-page-title);
+    color: var(--ui-color-text-heading);
+  }
+
+  .ui-section-title {
+    font-size: calc(var(--ui-font-scale-section-title) * 0.95rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-section-title);
+    color: var(--ui-color-text-secondary);
+  }
+
+  .ui-field-label {
+    font-size: calc(var(--ui-font-scale-field-label) * 0.85rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-field-label);
+    color: var(--ui-color-text-secondary);
+  }
+
+  .ui-micro-label {
+    font-size: calc(var(--ui-font-scale-micro-label) * 0.75rem * var(--ui-font-scale));
+    color: var(--ui-color-text-muted);
+    text-transform: var(--ui-micro-label-transform);
+    font-style: var(--ui-micro-label-style);
+  }
+
+  .ui-table-header {
+    font-size: calc(var(--ui-font-scale-table-header) * 0.78rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-table-header);
+    color: var(--ui-color-text-secondary);
+  }
+
+  .ui-table-cell {
+    font-size: calc(var(--ui-font-scale-table-cell) * 0.78rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-table-cell);
+    color: var(--ui-color-text-primary);
+  }
+
+  /* Button + input helpers */
+  .ui-btn {
+    font-size: calc(var(--ui-font-scale-button-text) * 0.875rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-button-text);
+  }
+
+  .ui-btn-primary {
+    background-color: var(--ui-color-button-primary-bg);
+    color: var(--ui-color-button-primary-text);
+  }
+
+  .ui-btn-secondary {
+    background-color: var(--ui-color-button-secondary-bg);
+    color: var(--ui-color-button-secondary-text);
+  }
+
+  .ui-input,
+  .ui-select,
+  .ui-btn {
+    padding-block: calc(var(--ui-scale-button-input) * 0.375rem);
+  }
+
+  .ui-link-text {
+    color: var(--ui-color-text-link);
   }
 }

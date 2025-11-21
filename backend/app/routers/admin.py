@@ -1,3 +1,75 @@
+
+
+@router.get("/notifications/status")
+async def get_notifications_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Public wrapper for notifications status that never raises.
+
+    Any internal error is converted into an ``ok=False`` response with an
+    appropriate ``state`` and ``errorSummary`` so the UI never sees a raw 500.
+    """
+
+    env = settings.EBAY_ENVIRONMENT
+    endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    try:
+        # Delegate to the core implementation which already handles most
+        # Notification API and configuration errors in a structured way.
+        return await _get_notifications_status_inner(current_user=current_user, db=db)
+    except HTTPException as http_exc:
+        # Do not propagate HTTPException status codes to the client; always
+        # respond with HTTP 200 and a clear diagnostic payload.
+        logger.warning(
+            "Notifications status HTTPException in wrapper: %s",
+            getattr(http_exc, "detail", http_exc),
+        )
+        detail = getattr(http_exc, "detail", None)
+        message = str(detail) if detail else "Notification API error"
+        return {
+            "ok": False,
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "state": "notification_api_error",
+            "reason": message,
+            "errorSummary": f"notification_api_error: {message}",
+            "destination": None,
+            "subscription": None,
+            "destinationId": None,
+            "subscriptionId": None,
+            "destinationStatus": None,
+            "subscriptionStatus": None,
+            "verificationStatus": None,
+            "recentEvents": {"count": 0, "lastEventTime": None},
+            "checkedAt": checked_at,
+            "account": None,
+            "topics": [],
+        }
+    except Exception as exc:  # pragma: no cover - last-resort safety net
+        logger.exception("Unexpected error in /api/admin/notifications/status wrapper")
+        message = str(exc)
+        return {
+            "ok": False,
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "state": "internal_error",
+            "reason": message,
+            "errorSummary": f"internal_error: {type(exc).__name__}: {message}",
+            "destination": None,
+            "subscription": None,
+            "destinationId": None,
+            "subscriptionId": None,
+            "destinationStatus": None,
+            "subscriptionStatus": None,
+            "verificationStatus": None,
+            "recentEvents": {"count": 0, "lastEventTime": None},
+            "checkedAt": checked_at,
+            "account": None,
+            "topics": [],
+        }
+
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -580,8 +652,10 @@ async def get_ebay_event_detail(
     }
 
 
-@router.get("/notifications/status")
-async def get_notifications_status(
+# Internal helper implementing the core notifications status logic.
+# The public route wrapper `get_notifications_status` below delegates to this
+# helper and adds a final catch-all for robustness.
+async def _get_notifications_status_inner(
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ):
@@ -886,14 +960,15 @@ async def get_notifications_status(
             verification_status = raw_ver_status.upper()
         sub_status = (sub.get("status") or "").upper() if sub else None
 
-        if dest_status != "ENABLED":
+        if dest_status != "INACTIVE" and dest_status != "ENABLED":
+            # Destination exists but is not in an active state.
             reason = "destination_disabled"
         elif verification_status and verification_status not in ("CONFIRMED", "VERIFIED"):
             # eBay may report UNCONFIRMED / PENDING while the challenge flow is in progress.
             reason = "verification_pending"
         elif sub is None:
             reason = "no_subscription"
-        elif sub_status != "ENABLED":
+        elif sub_status not in (None, "ENABLED"):
             reason = "subscription_not_enabled"
         elif recent_count == 0:
             state = "no_events"
@@ -1049,23 +1124,23 @@ async def get_notifications_status(
             }
         )
 
-    # Derive a concise error summary for non-OK states so the UI does not have
-    # to guess based on `state`/`reason`.
-    error_summary: str | None = None
-    if state == "no_events":
-        error_summary = "No recent events received for the primary webhook topic in the last 24 hours."
-    elif state == "misconfigured":
-        if reason == "no_destination":
-            error_summary = "Notification destination does not exist for the configured webhook URL."
-        elif reason == "destination_disabled":
-            error_summary = "Notification destination is not ENABLED."
-        elif reason == "verification_pending":
-            error_summary = "Notification destination verification is not yet CONFIRMED/VERIFIED."
-        elif reason == "no_subscription":
-            error_summary = "No subscription exists for the primary webhook topic."
-        elif reason == "subscription_not_enabled":
-            error_summary = "Subscription for the primary webhook topic is not ENABLED."
-
+        # Derive a concise error summary for non-OK states so the UI does not
+        # have to guess based on ``state``/``reason``.
+        error_summary: Optional[str] = None
+        if state == "no_events":
+            error_summary = "No recent events received for the primary webhook topic in the last 24 hours."
+        elif state == "misconfigured":
+            if reason == "no_destination":
+                error_summary = "Notification destination does not exist for the configured webhook URL."
+            elif reason == "destination_disabled":
+                error_summary = "Notification destination is not ENABLED."
+            elif reason == "verification_pending":
+                # eBay may report UNCONFIRMED / PENDING while the challenge flow is in progress.
+                error_summary = "Notification destination verification is not yet complete."
+            elif reason == "no_subscription":
+                error_summary = "No subscription exists for the primary webhook topic."
+            elif reason == "subscription_not_enabled":
+                error_summary = "Subscription for the primary webhook topic is not ENABLED."
     ok = state == "ok"
 
     return {

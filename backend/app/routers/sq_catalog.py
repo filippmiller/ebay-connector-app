@@ -83,9 +83,10 @@ async def search_models(
     if id_col is None:
         id_col = columns[0]
 
-    # Prefix search ("L500" → models starting with L500). This keeps the
-    # result focused while still being fast for large tables.
-    like = f"{q}%"
+    # Use a contains search so that queries like "L500" match anywhere in the
+    # model label. This is triggered explicitly from the UI (on Enter) so we
+    # can afford a broader match.
+    like = f"%{q}%"
     stmt = (
         select(id_col, label_col)
         .where(label_col.ilike(like))
@@ -379,11 +380,40 @@ async def get_sq_dictionaries(
     internal_categories: list[dict]
     if tbl_parts_category_table is not None:
         table = tbl_parts_category_table
-        col_id = table.c.get("CategoryID") or list(table.columns)[0]
-        col_descr = table.c.get("CategoryDescr") or table.c.get("CategoryDesc")
-        col_ebay_name = table.c.get("ebayCategoryName")
+        cols = list(table.columns)
 
-        stmt = select(col_id, col_descr, col_ebay_name).order_by(col_id)
+        # Heuristically find ID and label columns so we work regardless of
+        # exact casing (CategoryID vs "CategoryID" vs categoryid, etc.).
+        string_types = (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)
+        numeric_types = (Integer, BigInteger, Numeric)
+
+        col_id = table.c.get("CategoryID")
+        if col_id is None:
+            for c in cols:
+                if isinstance(c.type, numeric_types):
+                    col_id = c
+                    break
+        if col_id is None and cols:
+            col_id = cols[0]
+
+        col_descr = None
+        col_ebay_name = None
+        for c in cols:
+            if not isinstance(c.type, string_types):
+                continue
+            name_lower = c.name.lower()
+            if col_descr is None and ("categorydescr" in name_lower or "descr" in name_lower):
+                col_descr = c
+            if col_ebay_name is None and ("ebaycategoryname" in name_lower or "ebaycategory" in name_lower):
+                col_ebay_name = c
+
+        select_cols = [col_id]
+        if col_descr is not None:
+            select_cols.append(col_descr)
+        if col_ebay_name is not None:
+            select_cols.append(col_ebay_name)
+
+        stmt = select(*select_cols).order_by(col_id)
         rows = db.execute(stmt).fetchall()
 
         internal_categories = []

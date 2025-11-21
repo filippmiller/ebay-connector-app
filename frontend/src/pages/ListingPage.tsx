@@ -252,7 +252,7 @@ export default function ListingPage() {
             <table className="min-w-full text-[11px] border-collapse">
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="px-2 py-1 border-b border-r w-6">
+                  <th className="ui-table-header px-2 py-1 border-b border-r w-6">
                     <input
                       type="checkbox"
                       className="h-3 w-3"
@@ -260,16 +260,16 @@ export default function ListingPage() {
                       onChange={toggleSelectAllDraft}
                     />
                   </th>
-                  <th className="px-2 py-1 border-b border-r">#</th>
-                  <th className="px-2 py-1 border-b border-r">SKU</th>
-                  <th className="px-2 py-1 border-b border-r">Model</th>
-                  <th className="px-2 py-1 border-b border-r">Category</th>
-                  <th className="px-2 py-1 border-b border-r text-right">Price</th>
-                  <th className="px-2 py-1 border-b border-r text-center">Qty</th>
-                  <th className="px-2 py-1 border-b border-r">Condition</th>
-                  <th className="px-2 py-1 border-b border-r">Storage</th>
-                  <th className="px-2 py-1 border-b border-r">Status</th>
-                  <th className="px-2 py-1 border-b">Title</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">#</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">SKU</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">Model</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">Category</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r text-right">Price</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r text-center">Qty</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">Condition</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">Storage</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">Status</th>
+                  <th className="ui-table-header px-2 py-1 border-b">Title</th>
                 </tr>
               </thead>
               <tbody>
@@ -285,7 +285,7 @@ export default function ListingPage() {
                       key={item.tempId}
                       className={`border-t ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-50`}
                     >
-                      <td className="px-2 py-1 border-r text-center">
+                      <td className="ui-table-cell px-2 py-1 border-r text-center">
                         <input
                           type="checkbox"
                           className="h-3 w-3"
@@ -293,16 +293,16 @@ export default function ListingPage() {
                           onChange={() => toggleDraftSelection(item.tempId)}
                         />
                       </td>
-                      <td className="px-2 py-1 border-r text-right text-gray-500">{idx + 1}</td>
-                      <td className="px-2 py-1 border-r font-mono">{item.skuCode}</td>
-                      <td className="px-2 py-1 border-r truncate max-w-xs">{item.model || '-'}</td>
-                      <td className="px-2 py-1 border-r">{item.category || '-'}</td>
-                      <td className="px-2 py-1 border-r text-right">
+                      <td className="ui-table-cell px-2 py-1 border-r text-right text-gray-500">{idx + 1}</td>
+                      <td className="ui-table-cell px-2 py-1 border-r font-mono">{item.skuCode}</td>
+                      <td className="ui-table-cell px-2 py-1 border-r truncate max-w-xs">{item.model || '-'}</td>
+                      <td className="ui-table-cell px-2 py-1 border-r">{item.category || '-'}</td>
+                      <td className="ui-table-cell px-2 py-1 border-r text-right">
                         {item.price ? item.price.toFixed(2) : '-'}
                       </td>
-                      <td className="px-2 py-1 border-r text-center">{item.quantity}</td>
-                      <td className="px-2 py-1 border-r">{item.condition || '-'}</td>
-                      <td className="px-2 py-1 border-r font-mono">
+                      <td className="ui-table-cell px-2 py-1 border-r text-center">{item.quantity}</td>
+                      <td className="ui-table-cell px-2 py-1 border-r">{item.condition || '-'}</td>
+                      <td className="ui-table-cell px-2 py-1 border-r font-mono">
                         <input
                           className="border rounded px-1 py-0.5 text-[11px] w-20"
                           value={item.storage}
@@ -315,10 +315,10 @@ export default function ListingPage() {
                           }
                         />
                       </td>
-                      <td className="px-2 py-1 border-r">
+                      <td className="ui-table-cell px-2 py-1 border-r">
                         {item.status === 'awaiting_moderation' ? 'Awaiting moderation' : 'Checked'}
                       </td>
-                      <td className="px-2 py-1 truncate max-w-md">{item.title || '-'}</td>
+                      <td className="ui-table-cell px-2 py-1 truncate max-w-md">{item.title || '-'}</td>
                     </tr>
                   ))
                 )}

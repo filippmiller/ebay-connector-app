@@ -228,9 +228,9 @@ export default function EbayNotificationsPage() {
   const toRow = Math.min(offset + limit, total);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       <FixedHeader />
-      <div className="pt-12 px-4 py-6">
+      <main className="flex-1 min-h-0 px-4 py-6 overflow-auto">
         <div className="max-w-7xl mx-auto flex flex-col gap-4">
             <div className="flex items-center justify-between">
             <div>
@@ -964,7 +964,7 @@ export default function EbayNotificationsPage() {
             </CardContent>
           </Card>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

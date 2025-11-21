@@ -8,9 +8,9 @@ export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       <FixedHeader />
-      <main className="w-full pt-16 px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 min-h-0 w-full px-4 sm:px-6 lg:px-8 py-8 overflow-auto">
         <div className="max-w-7xl mx-auto">
         <div className="mb-8">
           <h2 className="text-2xl font-bold mb-4">Quick Access</h2>

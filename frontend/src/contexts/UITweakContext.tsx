@@ -2,6 +2,44 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 
 export type GridDensityPreset = 'compact' | 'normal' | 'comfortable';
 
+export type UiTypographyRole =
+  | 'pageTitle'
+  | 'sectionTitle'
+  | 'fieldLabel'
+  | 'microLabel'
+  | 'tableHeader'
+  | 'tableCell'
+  | 'buttonText';
+
+export type UiFontWeight = 'normal' | 'medium' | 'semibold' | 'bold';
+
+export interface UiTypographySettings {
+  /** Per-role font scale multiplier on top of the global fontScale. */
+  fontScale: Record<UiTypographyRole, number>;
+  /** Optional per-role font weight overrides. */
+  fontWeight: Partial<Record<UiTypographyRole, UiFontWeight>>;
+  /** Micro-label presentation options. */
+  microLabelUppercase: boolean;
+  microLabelItalic: boolean;
+}
+
+export interface UiColorSettings {
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  textHeading: string;
+  textLink: string;
+  buttonPrimaryBg: string;
+  buttonPrimaryText: string;
+  buttonSecondaryBg: string;
+  buttonSecondaryText: string;
+}
+
+export interface UiControlSizeSettings {
+  /** Extra multiplier for button & input vertical padding/height, on top of global fontScale. */
+  buttonAndInputScale: number; // e.g. 0.8–1.4
+}
+
 export interface UITweakSettings {
   /** Global multiplier for root font size; affects all rem-based Tailwind sizing. */
   fontScale: number; // e.g. 0.8 – 2.0
@@ -14,7 +52,53 @@ export interface UITweakSettings {
   navActiveText: string;
   navInactiveBg: string;
   navInactiveText: string;
+
+  /** Fine-grained typography controls for dense forms & tables. */
+  typography: UiTypographySettings;
+  /** Global text + button color roles (separate from nav colors). */
+  colors: UiColorSettings;
+  /** Extra control over button/input sizing. */
+  controls: UiControlSizeSettings;
 }
+
+const DEFAULT_TYPOGRAPHY: UiTypographySettings = {
+  fontScale: {
+    pageTitle: 1,
+    sectionTitle: 1,
+    fieldLabel: 1,
+    microLabel: 1,
+    tableHeader: 1,
+    tableCell: 1,
+    buttonText: 1,
+  },
+  fontWeight: {
+    pageTitle: 'bold',
+    sectionTitle: 'semibold',
+    fieldLabel: 'medium',
+    tableHeader: 'medium',
+    tableCell: 'normal',
+    buttonText: 'medium',
+  },
+  microLabelUppercase: false,
+  microLabelItalic: false,
+};
+
+const DEFAULT_COLORS: UiColorSettings = {
+  // Roughly match Tailwind gray palette & current design.
+  textPrimary: '#111827', // gray-900
+  textSecondary: '#374151', // gray-700
+  textMuted: '#6b7280', // gray-500
+  textHeading: '#111827',
+  textLink: '#2563eb', // blue-600
+  buttonPrimaryBg: '#18181b', // zinc-900 (default button)
+  buttonPrimaryText: '#f9fafb', // gray-50
+  buttonSecondaryBg: '#e5e7eb', // gray-200
+  buttonSecondaryText: '#111827',
+};
+
+const DEFAULT_CONTROLS: UiControlSizeSettings = {
+  buttonAndInputScale: 1,
+};
 
 export const DEFAULT_UI_TWEAK: UITweakSettings = {
   fontScale: 1,
@@ -24,6 +108,9 @@ export const DEFAULT_UI_TWEAK: UITweakSettings = {
   navActiveText: '#ffffff',
   navInactiveBg: 'transparent',
   navInactiveText: '#374151', // gray-700
+  typography: DEFAULT_TYPOGRAPHY,
+  colors: DEFAULT_COLORS,
+  controls: DEFAULT_CONTROLS,
 };
 
 const STORAGE_KEY = 'ui_tweak_v1';
@@ -36,17 +123,73 @@ interface UITweakContextValue {
 
 const UITweakContext = createContext<UITweakContextValue | undefined>(undefined);
 
+const FONT_WEIGHT_MAP: Record<UiFontWeight, string> = {
+  normal: '400',
+  medium: '500',
+  semibold: '600',
+  bold: '700',
+};
+
 function applySettingsToDocument(settings: UITweakSettings) {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
 
+  // Global scale + nav
   root.style.setProperty('--ui-font-scale', String(settings.fontScale));
   root.style.setProperty('--ui-nav-scale', String(settings.navScale));
 
+  // Nav colors
   root.style.setProperty('--ui-nav-active-bg', settings.navActiveBg);
   root.style.setProperty('--ui-nav-active-text', settings.navActiveText);
   root.style.setProperty('--ui-nav-inactive-bg', settings.navInactiveBg);
   root.style.setProperty('--ui-nav-inactive-text', settings.navInactiveText);
+
+  // Typography roles
+  const t = settings.typography;
+  const fs = t.fontScale;
+  const fw = t.fontWeight;
+
+  root.style.setProperty('--ui-font-scale-page-title', String(fs.pageTitle ?? 1));
+  root.style.setProperty('--ui-font-scale-section-title', String(fs.sectionTitle ?? 1));
+  root.style.setProperty('--ui-font-scale-field-label', String(fs.fieldLabel ?? 1));
+  root.style.setProperty('--ui-font-scale-micro-label', String(fs.microLabel ?? 1));
+  root.style.setProperty('--ui-font-scale-table-header', String(fs.tableHeader ?? 1));
+  root.style.setProperty('--ui-font-scale-table-cell', String(fs.tableCell ?? 1));
+  root.style.setProperty('--ui-font-scale-button-text', String(fs.buttonText ?? 1));
+
+  const pageTitleWeight = fw.pageTitle ?? DEFAULT_TYPOGRAPHY.fontWeight.pageTitle ?? 'bold';
+  const sectionTitleWeight = fw.sectionTitle ?? DEFAULT_TYPOGRAPHY.fontWeight.sectionTitle ?? 'semibold';
+  const fieldLabelWeight = fw.fieldLabel ?? DEFAULT_TYPOGRAPHY.fontWeight.fieldLabel ?? 'medium';
+  const tableHeaderWeight = fw.tableHeader ?? DEFAULT_TYPOGRAPHY.fontWeight.tableHeader ?? 'medium';
+  const tableCellWeight = fw.tableCell ?? DEFAULT_TYPOGRAPHY.fontWeight.tableCell ?? 'normal';
+  const buttonTextWeight = fw.buttonText ?? DEFAULT_TYPOGRAPHY.fontWeight.buttonText ?? 'medium';
+
+  root.style.setProperty('--ui-font-weight-page-title', FONT_WEIGHT_MAP[pageTitleWeight]);
+  root.style.setProperty('--ui-font-weight-section-title', FONT_WEIGHT_MAP[sectionTitleWeight]);
+  root.style.setProperty('--ui-font-weight-field-label', FONT_WEIGHT_MAP[fieldLabelWeight]);
+  root.style.setProperty('--ui-font-weight-table-header', FONT_WEIGHT_MAP[tableHeaderWeight]);
+  root.style.setProperty('--ui-font-weight-table-cell', FONT_WEIGHT_MAP[tableCellWeight]);
+  root.style.setProperty('--ui-font-weight-button-text', FONT_WEIGHT_MAP[buttonTextWeight]);
+
+  root.style.setProperty('--ui-micro-label-transform', t.microLabelUppercase ? 'uppercase' : 'none');
+  root.style.setProperty('--ui-micro-label-style', t.microLabelItalic ? 'italic' : 'normal');
+
+  // Text colors
+  const c = settings.colors;
+  root.style.setProperty('--ui-color-text-primary', c.textPrimary);
+  root.style.setProperty('--ui-color-text-secondary', c.textSecondary);
+  root.style.setProperty('--ui-color-text-muted', c.textMuted);
+  root.style.setProperty('--ui-color-text-heading', c.textHeading);
+  root.style.setProperty('--ui-color-text-link', c.textLink);
+
+  // Button colors
+  root.style.setProperty('--ui-color-button-primary-bg', c.buttonPrimaryBg);
+  root.style.setProperty('--ui-color-button-primary-text', c.buttonPrimaryText);
+  root.style.setProperty('--ui-color-button-secondary-bg', c.buttonSecondaryBg);
+  root.style.setProperty('--ui-color-button-secondary-text', c.buttonSecondaryText);
+
+  // Controls size
+  root.style.setProperty('--ui-scale-button-input', String(settings.controls.buttonAndInputScale));
 
   // Map grid density to base CSS custom properties used by .app-grid.
   // These values are chosen to roughly match the existing density presets.
@@ -65,6 +208,37 @@ function applySettingsToDocument(settings: UITweakSettings) {
   }
 }
 
+function mergeSettings(base: UITweakSettings, partial?: Partial<UITweakSettings> | null): UITweakSettings {
+  if (!partial) return base;
+
+  const next: UITweakSettings = {
+    ...base,
+    ...partial,
+    typography: {
+      ...base.typography,
+      ...(partial.typography || {}),
+      fontScale: {
+        ...base.typography.fontScale,
+        ...(partial.typography?.fontScale || {}),
+      },
+      fontWeight: {
+        ...base.typography.fontWeight,
+        ...(partial.typography?.fontWeight || {}),
+      },
+    },
+    colors: {
+      ...base.colors,
+      ...(partial.colors || {}),
+    },
+    controls: {
+      ...base.controls,
+      ...(partial.controls || {}),
+    },
+  };
+
+  return next;
+}
+
 function loadInitialSettings(): UITweakSettings {
   if (typeof window === 'undefined') return DEFAULT_UI_TWEAK;
 
@@ -72,7 +246,7 @@ function loadInitialSettings(): UITweakSettings {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_UI_TWEAK;
     const parsed = JSON.parse(raw) as Partial<UITweakSettings>;
-    return { ...DEFAULT_UI_TWEAK, ...parsed };
+    return mergeSettings(DEFAULT_UI_TWEAK, parsed);
   } catch (e) {
     console.error('Failed to parse UITweak settings from localStorage', e);
     return DEFAULT_UI_TWEAK;
@@ -98,7 +272,7 @@ export const UITweakProvider: React.FC<{ children: React.ReactNode }> = ({ child
     () => ({
       settings,
       update(partial) {
-        setSettings((prev) => ({ ...prev, ...partial }));
+        setSettings((prev) => mergeSettings(prev, partial));
       },
       reset() {
         setSettings(DEFAULT_UI_TWEAK);

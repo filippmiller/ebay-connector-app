@@ -447,7 +447,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                         fontSize: headerFontSizePx,
                         color: headerTextColor || undefined,
                       }}
-                      className="border-b border-r px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wide text-gray-600 sticky top-0 bg-gray-100 z-10 relative select-none"
+                      className="ui-table-header border-b border-r px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wide text-gray-600 sticky top-0 bg-gray-100 z-10 relative select-none"
                       onDragOver={(e) => handleDragOver(e, col.name)}
                       onDrop={(e) => handleDrop(e, col.name)}
                     >
@@ -526,7 +526,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                       return (
                         <td
                           key={col.name}
-                          className="px-3 py-2 border-t border-r whitespace-nowrap max-w-xs overflow-hidden text-ellipsis align-middle"
+                          className="ui-table-cell px-3 py-2 border-t border-r whitespace-nowrap max-w-xs overflow-hidden text-ellipsis align-middle"
                           style={{
                             width: col.width,
                             minWidth: col.width,
