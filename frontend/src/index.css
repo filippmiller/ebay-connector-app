@@ -112,6 +112,23 @@
     min-height: calc(2.25rem * var(--ui-nav-scale));
   }
 
+  /* AG Grid theme wired into our existing grid variables */
+  .ag-theme-sq {
+    --ag-font-size: var(--grid-font-size);
+    --ag-grid-size: 4px;
+    --ag-row-height: var(--grid-row-height);
+    --ag-header-height: var(--grid-header-height);
+    --ag-header-foreground-color: var(--grid-header-text-color);
+    --ag-header-background-color: var(--grid-header-bg);
+    --ag-odd-row-background-color: transparent;
+    --ag-row-hover-color: var(--grid-row-hover-bg);
+    --ag-selected-row-background-color: var(--grid-row-selected-bg);
+  }
+
+  .ag-theme-sq .ag-root-wrapper {
+    border-radius: 0.5rem;
+  }
+
   .app-grid {
     font-size: var(--grid-font-size);
   }

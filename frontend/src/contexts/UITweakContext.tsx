@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import api from '@/lib/apiClient';
 
 export type GridDensityPreset = 'compact' | 'normal' | 'comfortable';
 
@@ -40,6 +41,15 @@ export interface UiControlSizeSettings {
   buttonAndInputScale: number; // e.g. 0.8–1.4
 }
 
+export interface UiGridThemeSettings {
+  headerBg: string;
+  headerText: string;
+  rowBg: string;
+  rowAltBg: string;
+  rowHoverBg: string;
+  rowSelectedBg: string;
+}
+
 export interface UITweakSettings {
   /** Global multiplier for root font size; affects all rem-based Tailwind sizing. */
   fontScale: number; // e.g. 0.8 – 2.0
@@ -59,6 +69,8 @@ export interface UITweakSettings {
   colors: UiColorSettings;
   /** Extra control over button/input sizing. */
   controls: UiControlSizeSettings;
+  /** Global default grid theme (header/row colors). */
+  gridTheme: UiGridThemeSettings;
 }
 
 const DEFAULT_TYPOGRAPHY: UiTypographySettings = {
@@ -100,6 +112,15 @@ const DEFAULT_CONTROLS: UiControlSizeSettings = {
   buttonAndInputScale: 1,
 };
 
+const DEFAULT_GRID_THEME: UiGridThemeSettings = {
+  headerBg: '#f3f4f6', // gray-100
+  headerText: '#4b5563', // gray-600
+  rowBg: '#ffffff',
+  rowAltBg: '#f9fafb', // gray-50
+  rowHoverBg: '#eef2ff', // indigo-50
+  rowSelectedBg: '#e0f2fe', // sky-100
+};
+
 export const DEFAULT_UI_TWEAK: UITweakSettings = {
   fontScale: 1,
   navScale: 1,
@@ -111,6 +132,7 @@ export const DEFAULT_UI_TWEAK: UITweakSettings = {
   typography: DEFAULT_TYPOGRAPHY,
   colors: DEFAULT_COLORS,
   controls: DEFAULT_CONTROLS,
+  gridTheme: DEFAULT_GRID_THEME,
 };
 
 const STORAGE_KEY = 'ui_tweak_v1';
@@ -206,6 +228,15 @@ function applySettingsToDocument(settings: UITweakSettings) {
     root.style.setProperty('--grid-header-height', '32px');
     root.style.setProperty('--grid-font-size', '13px');
   }
+
+  // Grid theme colors
+  const g = settings.gridTheme;
+  root.style.setProperty('--grid-header-bg', g.headerBg);
+  root.style.setProperty('--grid-header-text-color', g.headerText);
+  root.style.setProperty('--grid-row-hover-bg', g.rowHoverBg);
+  root.style.setProperty('--grid-row-selected-bg', g.rowSelectedBg);
+  root.style.setProperty('--grid-row-bg', g.rowBg);
+  root.style.setProperty('--grid-row-alt-bg', g.rowAltBg);
 }
 
 function mergeSettings(base: UITweakSettings, partial?: Partial<UITweakSettings> | null): UITweakSettings {
@@ -253,10 +284,43 @@ function loadInitialSettings(): UITweakSettings {
   }
 }
 
+async function fetchServerSettings(): Promise<UITweakSettings | null> {
+  try {
+    const resp = await api.get<UITweakSettings>('/api/ui-tweak');
+    return mergeSettings(DEFAULT_UI_TWEAK, resp.data);
+  } catch (e) {
+    console.error('Failed to load UITweak settings from backend', e);
+    return null;
+  }
+}
+
+async function persistServerSettings(next: UITweakSettings): Promise<void> {
+  try {
+    await api.put<UITweakSettings>('/api/admin/ui-tweak', next);
+  } catch (e) {
+    // Non-admin users will typically receive 403 here; this is expected.
+    console.warn('Failed to persist UITweak settings to backend (likely non-admin user)', e);
+  }
+}
+
 export const UITweakProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [settings, setSettings] = useState<UITweakSettings>(() => loadInitialSettings());
 
-  // Apply on mount + whenever settings change
+  // On mount, reconcile local cache with server-backed settings.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const server = await fetchServerSettings();
+      if (!cancelled && server) {
+        setSettings(server);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Apply on mount + whenever settings change, and keep localStorage cache in sync.
   useEffect(() => {
     applySettingsToDocument(settings);
     try {
@@ -264,7 +328,7 @@ export const UITweakProvider: React.FC<{ children: React.ReactNode }> = ({ child
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
       }
     } catch (e) {
-      console.error('Failed to persist UITweak settings', e);
+      console.error('Failed to persist UITweak settings to localStorage', e);
     }
   }, [settings]);
 
@@ -272,10 +336,16 @@ export const UITweakProvider: React.FC<{ children: React.ReactNode }> = ({ child
     () => ({
       settings,
       update(partial) {
-        setSettings((prev) => mergeSettings(prev, partial));
+        setSettings((prev) => {
+          const next = mergeSettings(prev, partial);
+          void persistServerSettings(next);
+          return next;
+        });
       },
       reset() {
-        setSettings(DEFAULT_UI_TWEAK);
+        const next = DEFAULT_UI_TWEAK;
+        setSettings(next);
+        void persistServerSettings(next);
       },
     }),
     [settings],

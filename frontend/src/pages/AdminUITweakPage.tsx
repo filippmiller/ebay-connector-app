@@ -29,8 +29,8 @@ export default function AdminUITweakPage() {
         <h1 className="text-2xl font-bold mb-4">UI Tweak</h1>
         <p className="text-sm text-gray-600 mb-6">
           Adjust global UI scale, navigation size, grid density, and header colors to make the
-          application easier to read on your monitor. Changes are saved in this browser only and
-          take effect immediately.
+          application easier to read on your monitor. Changes are applied globally for your
+          account (admin-controlled) and take effect for all users after a page refresh.
         </p>
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -169,6 +169,114 @@ export default function AdminUITweakPage() {
             </div>
           </Card>
         </div>
+
+        <Card className="mt-4 p-4 space-y-4">
+          <h2 className="text-lg font-semibold">Data grid theme</h2>
+          <div className="grid grid-cols-2 gap-4 text-xs">
+            <div className="space-y-1">
+              <label className="block font-medium text-gray-600">Header background</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="h-8 w-10 rounded border border-gray-200 p-0"
+                  value={normalizeColorForPicker(settings.gridTheme.headerBg)}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, headerBg: e.target.value } })}
+                />
+                <Input
+                  type="text"
+                  value={settings.gridTheme.headerBg}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, headerBg: e.target.value } })}
+                  className="text-xs flex-1"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="block font-medium text-gray-600">Header text</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="h-8 w-10 rounded border border-gray-200 p-0"
+                  value={normalizeColorForPicker(settings.gridTheme.headerText)}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, headerText: e.target.value } })}
+                />
+                <Input
+                  type="text"
+                  value={settings.gridTheme.headerText}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, headerText: e.target.value } })}
+                  className="text-xs flex-1"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="block font-medium text-gray-600">Row background</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="h-8 w-10 rounded border border-gray-200 p-0"
+                  value={normalizeColorForPicker(settings.gridTheme.rowBg)}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowBg: e.target.value } })}
+                />
+                <Input
+                  type="text"
+                  value={settings.gridTheme.rowBg}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowBg: e.target.value } })}
+                  className="text-xs flex-1"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="block font-medium text-gray-600">Alternate row background</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="h-8 w-10 rounded border border-gray-200 p-0"
+                  value={normalizeColorForPicker(settings.gridTheme.rowAltBg)}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowAltBg: e.target.value } })}
+                />
+                <Input
+                  type="text"
+                  value={settings.gridTheme.rowAltBg}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowAltBg: e.target.value } })}
+                  className="text-xs flex-1"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="block font-medium text-gray-600">Row hover background</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="h-8 w-10 rounded border border-gray-200 p-0"
+                  value={normalizeColorForPicker(settings.gridTheme.rowHoverBg)}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowHoverBg: e.target.value } })}
+                />
+                <Input
+                  type="text"
+                  value={settings.gridTheme.rowHoverBg}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowHoverBg: e.target.value } })}
+                  className="text-xs flex-1"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="block font-medium text-gray-600">Selected row background</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  className="h-8 w-10 rounded border border-gray-200 p-0"
+                  value={normalizeColorForPicker(settings.gridTheme.rowSelectedBg)}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowSelectedBg: e.target.value } })}
+                />
+                <Input
+                  type="text"
+                  value={settings.gridTheme.rowSelectedBg}
+                  onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowSelectedBg: e.target.value } })}
+                  className="text-xs flex-1"
+                />
+              </div>
+            </div>
+          </div>
+        </Card>
 
         <Card className="mt-4 p-4 text-sm text-gray-600 space-y-2">
           <h2 className="text-base font-semibold">How this works</h2>

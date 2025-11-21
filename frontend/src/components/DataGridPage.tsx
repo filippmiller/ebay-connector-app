@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import api from '@/lib/apiClient';
 import { useGridPreferences } from '@/hooks/useGridPreferences';
+import { AppDataGrid } from '@/components/datagrid/AppDataGrid';
 
 export interface GridColumnMeta {
   name: string;
@@ -60,16 +61,6 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const [search, setSearch] = useState('');
 
   const gridPrefs = useGridPreferences(gridKey);
-
-  const resizingColRef = useRef<string | null>(null);
-  const startXRef = useRef<number>(0);
-  const startWidthRef = useRef<number>(0);
-  const draggingColRef = useRef<string | null>(null);
-  const columnsRef = useRef<ColumnState[]>([]);
-
-  useEffect(() => {
-    columnsRef.current = columns;
-  }, [columns]);
 
   const extraParamsKey = useMemo(() => {
     if (!extraParams) return '';
@@ -131,6 +122,21 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     setColumns(nextCols);
   }, [gridPrefs.columns, orderedVisibleColumns, availableColumnsMap]);
 
+  const handleGridLayoutChange = (order: string[], widths: Record<string, number>) => {
+    const cfg = gridPrefs.columns;
+    if (!cfg) return;
+
+    const nextOrder = order.filter((name) => cfg.order.includes(name));
+    const nextWidths: Record<string, number> = { ...cfg.widths, ...widths };
+
+    gridPrefs.setColumns({ order: nextOrder, widths: nextWidths });
+    void gridPrefs.save({
+      ...cfg,
+      order: nextOrder,
+      widths: nextWidths,
+    } as any);
+  };
+
   // Load data whenever preferences / pagination / filters change
   useEffect(() => {
     if (gridPrefs.loading) return;
@@ -175,17 +181,6 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     fetchData();
   }, [gridPrefs.loading, gridPrefs.columns, orderedVisibleColumns, limit, offset, gridKey, extraParamsKey, extraParams, search]);
 
-  const reorderColumns = (list: string[], fromName: string, toName: string): string[] => {
-    if (fromName === toName) return list;
-    const current = [...list];
-    const fromIndex = current.indexOf(fromName);
-    const toIndex = current.indexOf(toName);
-    if (fromIndex === -1 || toIndex === -1) return list;
-    current.splice(fromIndex, 1);
-    current.splice(toIndex, 0, fromName);
-    return current;
-  };
-
   const toggleColumnVisibility = (name: string) => {
     const cfg = gridPrefs.columns;
     if (!cfg) return;
@@ -219,83 +214,6 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     setShowColumnsPanel(false);
   };
 
-  const handleHeaderClick = (colName: string) => {
-    const meta = availableColumnsMap[colName];
-    if (!meta || !meta.sortable || !gridPrefs.columns) return;
-    const prevSort = gridPrefs.columns.sort;
-    let nextDirection: 'asc' | 'desc' = 'desc';
-    if (prevSort && prevSort.column === colName) {
-      nextDirection = prevSort.direction === 'asc' ? 'desc' : 'asc';
-    }
-    gridPrefs.setColumns({
-      sort: { column: colName, direction: nextDirection },
-    });
-  };
-
-  // Column resize handlers
-  const onMouseDownResize = (e: React.MouseEvent, colName: string, currentWidth: number) => {
-    e.preventDefault();
-    resizingColRef.current = colName;
-    startXRef.current = e.clientX;
-    startWidthRef.current = currentWidth;
-    window.addEventListener('mousemove', onMouseMoveResize);
-    window.addEventListener('mouseup', onMouseUpResize);
-  };
-
-  const handleDragStart = (e: React.DragEvent, colName: string) => {
-    draggingColRef.current = colName;
-    try {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', colName);
-    } catch {
-      // dataTransfer may not be available in some environments; ignore
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent, _colName: string) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e: React.DragEvent, targetColName: string) => {
-    e.preventDefault();
-    const sourceColName = draggingColRef.current;
-    draggingColRef.current = null;
-    if (!sourceColName || sourceColName === targetColName) return;
-    if (!gridPrefs.columns) return;
-
-    const currentOrder = gridPrefs.columns.order && gridPrefs.columns.order.length
-      ? gridPrefs.columns.order
-      : gridPrefs.columns.visible;
-    const nextOrder = reorderColumns(currentOrder, sourceColName, targetColName);
-    gridPrefs.setColumns({ order: nextOrder });
-  };
-
-  const onMouseMoveResize = (e: MouseEvent) => {
-    const colName = resizingColRef.current;
-    if (!colName) return;
-    const delta = e.clientX - startXRef.current;
-    const newWidth = Math.max(60, startWidthRef.current + delta);
-    setColumns((prev) => prev.map((c) => (c.name === colName ? { ...c, width: newWidth } : c)));
-  };
-
-  const onMouseUpResize = () => {
-    const colName = resizingColRef.current;
-    if (!colName) return;
-    resizingColRef.current = null;
-    window.removeEventListener('mousemove', onMouseMoveResize);
-    window.removeEventListener('mouseup', onMouseUpResize);
-    if (!gridPrefs.columns) return;
-    // Persist widths into preferences based on the *latest* rendered columns and
-    // immediately save to the backend so column sizes survive page reloads
-    // without requiring an explicit Save.
-    const widths: Record<string, number> = { ...gridPrefs.columns.widths };
-    columnsRef.current.forEach((c) => {
-      widths[c.name] = c.width;
-    });
-    gridPrefs.setColumns({ widths });
-    void gridPrefs.save();
-  };
-
   const gridTitle = title || gridKey;
 
   const density = gridPrefs.theme?.density || 'normal';
@@ -314,15 +232,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   // Map level 1-10 to a readable px size (~11px to 20px).
   const clampedBodyLevel = Math.min(10, Math.max(1, bodyFontSizeLevel));
   const bodyFontSizePx = 10 + clampedBodyLevel; // 11-20px
-  const bodyFontWeight =
-    (gridPrefs.theme?.bodyFontWeight as string | undefined) === 'bold' ? 'bold' : 'normal';
-  const bodyFontStyle =
-    (gridPrefs.theme?.bodyFontStyle as string | undefined) === 'italic' ? 'italic' : 'normal';
 
-  // Header font sizing & color
-  const headerFontSizeSetting = gridPrefs.theme?.headerFontSize || legacyBodyPreset;
-  const headerFontSizePx = headerFontSizeSetting === 'small' ? 11 : headerFontSizeSetting === 'large' ? 15 : 13;
-  const headerTextColor = gridPrefs.theme?.headerTextColor as string | undefined;
   const gridBackgroundColor = gridPrefs.theme?.backgroundColor as string | undefined;
 
   return (
@@ -424,127 +334,24 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       {error && <div className="mb-2 text-xs text-red-600">{error}</div>}
 
       <div
-        className="flex-1 min-h-0 border rounded-lg bg-white overflow-auto"
+        className="flex-1 min-h-0 border rounded-lg bg-white"
         style={gridBackgroundColor ? { backgroundColor: gridBackgroundColor } : undefined}
       >
         {gridPrefs.loading ? (
           <div className="p-4 text-sm text-gray-500">Loading layout…</div>
         ) : orderedVisibleColumns.length === 0 ? (
           <div className="p-4 text-sm text-gray-500">No columns configured.</div>
+        ) : rows.length === 0 ? (
+          <div className="p-4 text-sm text-gray-500">No data.</div>
         ) : (
-          <table className="min-w-full text-[13px] border-collapse">
-            <thead className="bg-gray-100">
-              <tr>
-                {columns.map((col) => {
-                  const isSorted = currentSort && currentSort.column === col.name;
-                  const meta = availableColumnsMap[col.name];
-                  return (
-                    <th
-                      key={col.name}
-                      style={{
-                        width: col.width,
-                        minWidth: col.width,
-                        fontSize: headerFontSizePx,
-                        color: headerTextColor || undefined,
-                      }}
-                      className="ui-table-header border-b border-r px-3 py-2 text-left font-mono text-[11px] uppercase tracking-wide text-gray-600 sticky top-0 bg-gray-100 z-10 relative select-none"
-                      onDragOver={(e) => handleDragOver(e, col.name)}
-                      onDrop={(e) => handleDrop(e, col.name)}
-                    >
-                      <div className="flex items-center gap-1">
-                        <span
-                          className="cursor-move select-none text-gray-400"
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, col.name)}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          ⋮⋮
-                        </span>
-                        <div
-                          className="flex items-center cursor-pointer flex-1"
-                          onClick={() => handleHeaderClick(col.name)}
-                        >
-                          <span>{meta?.label || col.label}</span>
-                          {isSorted && (
-                            <span className="ml-1 text-[9px]">
-                              {currentSort?.direction === 'asc' ? '▲' : '▼'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div
-                        className="absolute right-0 top-0 h-full w-1 cursor-col-resize"
-                        onMouseDown={(e) => onMouseDownResize(e, col.name, col.width)}
-                      />
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {loadingData ? (
-                <tr>
-                  <td colSpan={columns.length} className="p-4 text-center text-gray-500">
-                    Loading data…
-                  </td>
-                </tr>
-              ) : rows.length === 0 ? (
-                <tr>
-                  <td colSpan={columns.length} className="p-4 text-center text-gray-500">
-                    No data.
-                  </td>
-                </tr>
-              ) : (
-                rows.map((row, idx) => (
-                  <tr
-                    key={idx}
-                    className="border-t odd:bg-white even:bg-gray-50 hover:bg-indigo-50 transition-colors cursor-pointer"
-                    style={gridBackgroundColor ? { backgroundColor: gridBackgroundColor } : undefined}
-                    onClick={() => {
-                      if (onRowClick) {
-                        onRowClick(row);
-                      }
-                    }}
-                  >
-                    {columns.map((col) => {
-                      const raw = row[col.name];
-                      let value: any = raw;
-                      const type = availableColumnsMap[col.name]?.type || 'string';
-                      if (raw === null || raw === undefined) {
-                        value = '';
-                      } else if (type === 'datetime') {
-                        try {
-                          value = new Date(raw).toLocaleString();
-                        } catch {
-                          value = String(raw);
-                        }
-                      } else if (type === 'money' || type === 'number') {
-                        value = String(raw);
-                      } else if (typeof raw === 'object') {
-                        value = JSON.stringify(raw);
-                      }
-                      return (
-                        <td
-                          key={col.name}
-                          className="ui-table-cell px-3 py-2 border-t border-r whitespace-nowrap max-w-xs overflow-hidden text-ellipsis align-middle"
-                          style={{
-                            width: col.width,
-                            minWidth: col.width,
-                            fontSize: bodyFontSizePx,
-                            fontWeight: bodyFontWeight,
-                            fontStyle: bodyFontStyle,
-                            backgroundColor: gridBackgroundColor || undefined,
-                          }}
-                        >
-                          {value}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          <AppDataGrid
+            columns={columns}
+            rows={rows}
+            columnMetaByName={availableColumnsMap}
+            loading={loadingData}
+            onRowClick={onRowClick}
+            onLayoutChange={({ order, widths }) => handleGridLayoutChange(order, widths)}
+          />
         )}
       </div>
 

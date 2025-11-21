@@ -941,6 +941,24 @@ class UserGridLayout(Base):
     )
 
 
+class UiTweakSettings(Base):
+    """Global UI tweak settings persisted as a single JSON document.
+
+    This stores the UITweakSettings payload used by the frontend (fontScale,
+    navScale, gridDensity, nav colors, typography, colors, controls, etc.) so
+    that admin-chosen values apply to all users and browsers.
+    """
+
+    __tablename__ = "ui_tweak_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # Arbitrary JSON payload shaped like the frontend UITweakSettings model.
+    settings = Column(JSONB, nullable=False, default=dict)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class AccountingExpenseCategory(Base):
     __tablename__ = "accounting_expense_category"
 
