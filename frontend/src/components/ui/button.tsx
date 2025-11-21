@@ -21,10 +21,12 @@ const buttonVariants = cva(
         link: "text-zinc-900 underline-offset-4 hover:underline dark:text-zinc-50",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
+        // Slightly larger defaults to improve readability; combined with global fontScale this
+        // makes buttons significantly easier to click on high-resolution monitors.
+        default: "h-11 px-5",
+        sm: "h-9 rounded-md px-4 text-sm",
+        lg: "h-12 rounded-md px-8 text-base",
+        icon: "h-10 w-10",
       },
     },
     defaultVariants: {

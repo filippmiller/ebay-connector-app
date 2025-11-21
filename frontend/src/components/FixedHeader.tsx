@@ -63,10 +63,10 @@ export default function FixedHeader() {
               <button
                 key={tab.path}
                 onClick={() => navigate(tab.path)}
-                className={`px-4 py-2 text-sm font-semibold tracking-wide transition-colors rounded-t-md rounded-b-md border-b-2 ${
+                className={`ui-nav-tab font-semibold tracking-wide rounded-t-md rounded-b-md border-b-2 transition-colors ${
                   isActive
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                    : 'text-gray-700 border-transparent hover:bg-blue-50 hover:text-blue-700'
+                    ? 'ui-nav-tab--active border-blue-600 shadow-sm'
+                    : 'ui-nav-tab--inactive border-transparent hover:bg-blue-50 hover:text-blue-700'
                 }`}
               >
                 {tab.name}
