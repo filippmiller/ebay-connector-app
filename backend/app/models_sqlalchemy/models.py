@@ -1225,7 +1225,13 @@ class EbayHealthEvent(Base):
 
 
 class EbayEvent(Base):
-    """Unified inbox of all eBay-related events (webhooks, pollers, manual)."""
+    """Unified inbox of all eBay-related events (webhooks, pollers, manual).
+
+    This table is write-heavy and used as a shared inbox for both Notification
+    API webhooks and polling-based workers. Downstream processors mark events
+    as processed via ``processed_at`` and may record structured error details
+    in ``processing_error``.
+    """
 
     __tablename__ = "ebay_events"
 
@@ -1251,6 +1257,8 @@ class EbayEvent(Base):
     # Processing status on our side
     status = Column(Text, nullable=False, default="RECEIVED")
     error = Column(Text, nullable=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    processing_error = Column(JSONB, nullable=True)
 
     # Metadata & payload
     headers = Column(JSONB, nullable=False, default=dict)

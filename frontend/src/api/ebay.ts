@@ -79,6 +79,20 @@ export interface NotificationsStatus {
     [key: string]: any;
   } | null;
   account?: NotificationAccountInfo | null;
+  topics?: Array<{
+    topicId: string;
+    scope?: string | null;
+    destinationId?: string | null;
+    subscriptionId?: string | null;
+    destinationStatus?: string | null;
+    subscriptionStatus?: string | null;
+    verificationStatus?: string | null;
+    tokenType?: 'application' | 'user' | null;
+    recentEvents: {
+      count: number;
+      lastEventTime: string | null;
+    };
+  }>;
 }
 
 export interface TestNotificationResponse {
@@ -99,6 +113,8 @@ export interface TestNotificationResponse {
   error?: string;
   logs?: string[];
   account?: NotificationAccountInfo | null;
+  topicId?: string;
+  tokenType?: 'application' | 'user' | null;
 }
 
 export const ebayApi = {
@@ -262,6 +278,14 @@ export const ebayApi = {
     const response = await apiClient.post<TestNotificationResponse>(
       '/api/admin/notifications/test-marketplace-deletion',
       {},
+    );
+    return response.data;
+  },
+
+  async testNotificationTopic(topicId: string): Promise<TestNotificationResponse> {
+    const response = await apiClient.post<TestNotificationResponse>(
+      '/api/admin/notifications/test-topic',
+      { topicId },
     );
     return response.data;
   },

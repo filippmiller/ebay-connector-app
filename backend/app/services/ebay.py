@@ -459,6 +459,34 @@ class EbayService:
         existing["payload"] = payload_cfg
         return existing
 
+    async def get_notification_topic_metadata(
+        self,
+        access_token: str,
+        topic_id: str,
+        debug_log: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch Notification API topic metadata for a given topicId.
+
+        This is a small wrapper around ``GET /commerce/notification/v1/topic/{topicId}``
+        so that callers (e.g. admin diagnostics and test endpoints) can inspect
+        fields like ``scope`` and ``supportedSchemaVersions`` without duplicating
+        the raw HTTP call logic.
+        """
+
+        resp = await self._notification_api_request(
+            "GET",
+            f"/commerce/notification/v1/topic/{topic_id}",
+            access_token,
+            debug_log=debug_log,
+        )
+        try:
+            data = resp.json() or {}
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        return data
+
     async def test_notification_subscription(
         self,
         access_token: str,

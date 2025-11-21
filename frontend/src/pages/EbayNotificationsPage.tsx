@@ -60,6 +60,7 @@ export default function EbayNotificationsPage() {
   const [statusInfo, setStatusInfo] = useState<NotificationsStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [showRawStatus, setShowRawStatus] = useState(false);
+  const [selectedTestTopic, setSelectedTestTopic] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -132,6 +133,13 @@ export default function EbayNotificationsPage() {
     try {
       const s = await ebayApi.getNotificationsStatus();
       setStatusInfo(s);
+      // Default selected topic for tests: primary topic from backend (first in topics list),
+      // falling back to MARKETPLACE_ACCOUNT_DELETION if topics[] is absent.
+      if (s.topics && s.topics.length > 0) {
+        setSelectedTestTopic((prev) => prev || s.topics![0].topicId);
+      } else if (!selectedTestTopic) {
+        setSelectedTestTopic('MARKETPLACE_ACCOUNT_DELETION');
+      }
       const summary = s.errorSummary || `state=${s.state} reason=${s.reason || 'n/a'}`;
       appendDiag(`[status] ${summary}`);
     } catch (e: any) {
@@ -255,14 +263,43 @@ export default function EbayNotificationsPage() {
                   )}
                 </div>
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  try {
-                    const resp: TestNotificationResponse = await ebayApi.testMarketplaceDeletionNotification();
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 text-xs">
+                  <span className="text-gray-600">Test topic:</span>
+                  <select
+                    className="border rounded px-2 py-1 text-xs bg-white max-w-xs"
+                    value={selectedTestTopic || ''}
+                    onChange={(e) => setSelectedTestTopic(e.target.value || null)}
+                    disabled={statusLoading}
+                  >
+                    {(statusInfo?.topics && statusInfo.topics.length > 0
+                      ? statusInfo.topics
+                      : [{ topicId: 'MARKETPLACE_ACCOUNT_DELETION', scope: 'APPLICATION' }]
+                    ).map((t) => (
+                      <option key={t.topicId} value={t.topicId}>
+                        {t.topicId}
+                        {t.scope ? ` (${t.scope})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      let resp: TestNotificationResponse;
+                      const topicToTest = selectedTestTopic || 'MARKETPLACE_ACCOUNT_DELETION';
+                      if (topicToTest === 'MARKETPLACE_ACCOUNT_DELETION') {
+                        resp = await ebayApi.testMarketplaceDeletionNotification();
+                      } else {
+                        resp = await ebayApi.testNotificationTopic(topicToTest);
+                      }
                     if (resp.account) {
                       setTestAccount(resp.account);
+                    }
+                    if (resp.topicId && resp.topicId !== selectedTestTopic) {
+                      setSelectedTestTopic(resp.topicId);
                     }
                     if (Array.isArray(resp.logs)) {
                       setTestLogs(resp.logs);
@@ -354,6 +391,7 @@ export default function EbayNotificationsPage() {
               >
                 Test notification
               </Button>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
@@ -401,7 +439,8 @@ export default function EbayNotificationsPage() {
               <CardHeader className="py-2 px-4">
                 <CardTitle className="text-sm">Diagnostics</CardTitle>
                 <CardDescription className="text-xs text-gray-600">
-                  Environment and Notification API destination/subscription state for MARKETPLACE_ACCOUNT_DELETION.
+                  Environment and Notification API destination/subscription state for the primary webhook topic,
+                  plus per-topic diagnostics when available.
                 </CardDescription>
               </CardHeader>
               <CardContent className="px-4 pb-3 pt-1 text-xs text-gray-700 space-y-1">
@@ -421,6 +460,38 @@ export default function EbayNotificationsPage() {
                   <span className="font-semibold">SubscriptionId:</span>{' '}
                   <span className="font-mono text-[11px]">{statusInfo.subscriptionId || '—'}</span>
                 </div>
+                {statusInfo.topics && statusInfo.topics.length > 0 && (
+                  <div className="mt-2">
+                    <span className="font-semibold">Topics:</span>
+                    <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                      {statusInfo.topics.map((t) => (
+                        <li key={t.topicId} className="text-[11px] text-gray-700">
+                          <span className="font-mono text-[11px]">{t.topicId}</span>
+                          {t.scope && <span className="ml-1 text-gray-500">({t.scope})</span>}
+                          <span className="ml-2 text-gray-500">
+                            dest: <span className="font-mono text-[11px]">{t.destinationId || '—'}</span>
+                          </span>
+                          <span className="ml-2 text-gray-500">
+                            sub: <span className="font-mono text-[11px]">{t.subscriptionId || '—'}</span>
+                          </span>
+                          {t.subscriptionStatus && (
+                            <span className="ml-2">
+                              status: <span className="uppercase">{t.subscriptionStatus}</span>
+                            </span>
+                          )}
+                          {t.recentEvents && (
+                            <span className="ml-2 text-gray-500">
+                              events: {t.recentEvents.count}
+                              {t.recentEvents.lastEventTime && (
+                                <> (last at {formatDate(t.recentEvents.lastEventTime)})</>
+                              )}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div>
                   <span className="font-semibold">Recent events (24h):</span>{' '}
                   <span>
@@ -746,17 +817,25 @@ export default function EbayNotificationsPage() {
                   Full request/response conversation with eBay for the most recent Test notification.
                 </CardDescription>
               </div>
-              {testAccount && (
-                <div className="text-[11px] text-gray-600">
-                  Account:{' '}
-                  <span className="font-mono text-gray-900">
-                    {testAccount.username || testAccount.id}
-                  </span>
-                  {testAccount.environment && (
-                    <span className="ml-1 text-gray-500">({testAccount.environment})</span>
-                  )}
-                </div>
-              )}
+              <div className="flex flex-col items-end gap-1 text-[11px] text-gray-600">
+                {testAccount && (
+                  <div>
+                    Account:{' '}
+                    <span className="font-mono text-gray-900">
+                      {testAccount.username || testAccount.id}
+                    </span>
+                    {testAccount.environment && (
+                      <span className="ml-1 text-gray-500">({testAccount.environment})</span>
+                    )}
+                  </div>
+                )}
+                {selectedTestTopic && (
+                  <div>
+                    Topic:{' '}
+                    <span className="font-mono text-gray-900">{selectedTestTopic}</span>
+                  </div>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="pt-0 pb-3 px-4">
               <ScrollArea className="h-72 w-full rounded border bg-black text-gray-100 p-3 font-mono text-[11px]">

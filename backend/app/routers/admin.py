@@ -13,6 +13,7 @@ from ..models.user import User
 from ..utils.logger import logger
 from ..services.ebay import ebay_service
 from ..services.ebay_connect_logger import ebay_connect_logger
+from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
 from ..config import settings
 
 FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
@@ -587,7 +588,7 @@ async def get_notifications_status(
     """Return high-level health for the Notifications Center webhook.
 
     Status is derived from Notification API destination/subscription state and
-    the presence of recent MARKETPLACE_ACCOUNT_DELETION events.
+    the presence of recent events for the primary webhook topic.
     """
 
     from ..models_sqlalchemy.models import EbayAccount, EbayToken  # avoid cycles
@@ -608,6 +609,7 @@ async def get_notifications_status(
             "subscriptionId": None,
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
+            "topics": [],
         }
 
     # Pick first active account for this org
@@ -630,6 +632,7 @@ async def get_notifications_status(
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
             "account": None,
+            "topics": [],
         }
 
     account_info = {
@@ -657,14 +660,16 @@ async def get_notifications_status(
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
             "account": account_info,
+            "topics": [],
         }
 
     access_token = token.access_token
 
-    # Query Notification API for destination + subscription state
-    topic_id = "MARKETPLACE_ACCOUNT_DELETION"
+    # Primary topic used for overall webhook health (currently MARKETPLACE_ACCOUNT_DELETION).
+    primary_topic_id = PRIMARY_WEBHOOK_TOPIC_ID
+
     try:
-        dest, sub = await ebay_service.get_notification_status(access_token, endpoint_url, topic_id)
+        dest, sub = await ebay_service.get_notification_status(access_token, endpoint_url, primary_topic_id)
     except HTTPException as exc:
         # Surface Notification API error as misconfigured state with structured payload for UI diagnostics.
         logger.error(
@@ -718,13 +723,14 @@ async def get_notifications_status(
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
             "account": account_info,
+            "topics": [],
         }
 
-    # Recent events for this topic in the last 24h
+    # Recent events for the primary topic in the last 24h
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(hours=24)
 
-    recent_q = db.query(EbayEvent).filter(EbayEvent.topic == topic_id)
+    recent_q = db.query(EbayEvent).filter(EbayEvent.topic == primary_topic_id)
     recent_q = recent_q.filter(
         or_(
             and_(EbayEvent.event_time.isnot(None), EbayEvent.event_time >= window_start),
@@ -735,7 +741,7 @@ async def get_notifications_status(
 
     latest = (
         db.query(EbayEvent)
-        .filter(EbayEvent.topic == topic_id)
+        .filter(EbayEvent.topic == primary_topic_id)
         .order_by(
             EbayEvent.event_time.desc().nullslast(),
             EbayEvent.created_at.desc(),
@@ -783,6 +789,104 @@ async def get_notifications_status(
     dest_id = dest.get("destinationId") or dest.get("id") if dest else None
     sub_id = sub.get("subscriptionId") or sub.get("id") if sub else None
 
+    # Build per-topic status array for Diagnostics UI.
+    topics_payload: list[dict] = []
+    for topic_cfg in SUPPORTED_TOPICS:
+        topic_id = topic_cfg.topic_id
+        # Reuse primary topic data when possible; otherwise best-effort call.
+        if topic_id == primary_topic_id:
+            t_dest = dest
+            t_sub = sub
+        else:
+            try:
+                t_dest, t_sub = await ebay_service.get_notification_status(
+                    access_token,
+                    endpoint_url,
+                    topic_id,
+                )
+            except HTTPException:
+                t_dest, t_sub = None, None
+
+        t_dest_id = t_dest.get("destinationId") or t_dest.get("id") if t_dest else None
+        t_sub_id = t_sub.get("subscriptionId") or t_sub.get("id") if t_sub else None
+
+        t_dest_status: str | None = None
+        t_sub_status: str | None = None
+        t_verification_status: str | None = None
+        if t_dest is not None:
+            t_dest_status = (t_dest.get("status") or "").upper() or "UNKNOWN"
+            t_delivery_cfg = t_dest.get("deliveryConfig") or {}
+            t_raw_ver = t_delivery_cfg.get("verificationStatus")
+            if isinstance(t_raw_ver, str) and t_raw_ver:
+                t_verification_status = t_raw_ver.upper()
+            t_sub_status = (t_sub.get("status") or "").upper() if t_sub else None
+
+        # Topic metadata (scope) is best-effort; errors here do not affect core state.
+        topic_scope: str | None = None
+        try:
+            topic_meta = await ebay_service.get_notification_topic_metadata(
+                access_token,
+                topic_id,
+            )
+            raw_scope = topic_meta.get("scope")
+            if isinstance(raw_scope, str) and raw_scope:
+                topic_scope = raw_scope.upper()
+        except Exception:
+            topic_scope = None
+
+        token_type: str | None = None
+        if topic_scope == "APPLICATION":
+            token_type = "application"
+        elif topic_scope == "USER":
+            token_type = "user"
+
+        # Recent events per topic (24h window), independent of primary stats.
+        topic_recent_q = db.query(EbayEvent).filter(EbayEvent.topic == topic_id)
+        topic_recent_q = topic_recent_q.filter(
+            or_(
+                and_(
+                    EbayEvent.event_time.isnot(None),
+                    EbayEvent.event_time >= window_start,
+                ),
+                and_(
+                    EbayEvent.event_time.is_(None),
+                    EbayEvent.created_at >= window_start,
+                ),
+            )
+        )
+        topic_recent_count = topic_recent_q.count()
+
+        topic_latest = (
+            db.query(EbayEvent)
+            .filter(EbayEvent.topic == topic_id)
+            .order_by(
+                EbayEvent.event_time.desc().nullslast(),
+                EbayEvent.created_at.desc(),
+            )
+            .first()
+        )
+        topic_last_event_time: str | None = None
+        if topic_latest:
+            base_ts = topic_latest.event_time or topic_latest.created_at
+            topic_last_event_time = base_ts.isoformat() if base_ts else None
+
+        topics_payload.append(
+            {
+                "topicId": topic_id,
+                "scope": topic_scope,
+                "destinationId": t_dest_id,
+                "subscriptionId": t_sub_id,
+                "destinationStatus": t_dest_status,
+                "subscriptionStatus": t_sub_status,
+                "verificationStatus": t_verification_status,
+                "tokenType": token_type,
+                "recentEvents": {
+                    "count": topic_recent_count,
+                    "lastEventTime": topic_last_event_time,
+                },
+            }
+        )
+
     return {
         "environment": env,
         "webhookUrl": endpoint_url,
@@ -798,6 +902,7 @@ async def get_notifications_status(
         "recentEvents": {"count": recent_count, "lastEventTime": last_event_time},
         "checkedAt": checked_at,
         "account": account_info,
+        "topics": topics_payload,
     }
 
 
@@ -1003,4 +1108,290 @@ async def test_marketplace_account_deletion_notification(
         "notificationTest": test_result,
         "logs": debug_log,
         "account": account_info,
+    }
+
+
+@router.post("/notifications/test-topic")
+async def test_notification_topic(
+    body: dict,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Generic Notification API test endpoint for an arbitrary topicId.
+
+    For now this is effectively limited to the topics listed in
+    ``SUPPORTED_TOPICS`` (MARKETPLACE_ACCOUNT_DELETION in Phase 1), but the
+    wiring is generic so that future order/fulfillment/finances topics can be
+    added without changing this handler.
+    """
+
+    from ..models_sqlalchemy.models import EbayAccount, EbayToken  # avoid cycles
+
+    env = settings.EBAY_ENVIRONMENT
+    endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
+
+    topic_raw = body.get("topicId") or body.get("topic_id")
+    topic_id = str(topic_raw).strip() if topic_raw is not None else ""
+    supported_topic_ids = {cfg.topic_id for cfg in SUPPORTED_TOPICS}
+
+    if not topic_id:
+        payload = {
+            "ok": False,
+            "reason": "missing_topic_id",
+            "message": "Request body must include topicId.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
+    if topic_id not in supported_topic_ids:
+        payload = {
+            "ok": False,
+            "reason": "unsupported_topic",
+            "message": f"TopicId {topic_id!r} is not configured for this application.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
+    logger.info(
+        "[notifications:test] Starting generic notification test topic=%s env=%s endpoint_url=%s user_id=%s",
+        topic_id,
+        env,
+        endpoint_url,
+        current_user.id,
+    )
+
+    if not endpoint_url:
+        payload = {
+            "ok": False,
+            "reason": "no_destination_url",
+            "message": "EBAY_NOTIFICATION_DESTINATION_URL is not configured on the backend.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.org_id == current_user.id, EbayAccount.is_active == True)  # noqa: E712
+        .order_by(desc(EbayAccount.connected_at))
+        .first()
+    )
+    if not account:
+        payload = {
+            "ok": False,
+            "reason": "no_account",
+            "message": "No active eBay account found for this organization.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
+    token: Optional[EbayToken] = (
+        db.query(EbayToken)
+        .filter(EbayToken.ebay_account_id == account.id)
+        .order_by(desc(EbayToken.updated_at))
+        .first()
+    )
+    if not token or not token.access_token:
+        payload = {
+            "ok": False,
+            "reason": "no_access_token",
+            "message": "No eBay access token available for the selected account.",
+            "environment": env,
+            "account": {
+                "id": str(account.id),
+                "username": account.username or account.ebay_user_id,
+                "environment": env,
+            },
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
+    access_token = token.access_token
+    verification_token = settings.EBAY_NOTIFICATION_VERIFICATION_TOKEN
+    if not verification_token:
+        payload = {
+            "ok": False,
+            "reason": "no_verification_token",
+            "message": "EBAY_NOTIFICATION_VERIFICATION_TOKEN is required to create a destination.",
+            "environment": env,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
+    debug_log: list[str] = []
+    account_info = {
+        "id": str(account.id),
+        "username": account.username or account.ebay_user_id,
+        "environment": env,
+    }
+
+    try:
+        logger.info(
+            "[notifications:test] Ensuring destination for account_id=%s username=%s topic=%s",
+            account.id,
+            account.username,
+            topic_id,
+        )
+        dest = await ebay_service.ensure_notification_destination(
+            access_token,
+            endpoint_url,
+            verification_token=verification_token,
+            debug_log=debug_log,
+        )
+        dest_id = dest.get("destinationId") or dest.get("id")
+        logger.info("[notifications:test] Destination ready id=%s", dest_id)
+
+        sub = await ebay_service.ensure_notification_subscription(
+            access_token,
+            dest_id,
+            topic_id,
+            debug_log=debug_log,
+        )
+        sub_id = sub.get("subscriptionId") or sub.get("id")
+        logger.info(
+            "[notifications:test] Subscription ready id=%s status=%s topic=%s",
+            sub_id,
+            sub.get("status"),
+            topic_id,
+        )
+
+        if not sub_id:
+            msg = (
+                "Subscription was created or retrieved but subscriptionId is missing; "
+                f"cannot invoke Notification API test for topic {topic_id}."
+            )
+            logger.error("[notifications:test] %s", msg)
+            debug_log.append(f"[subscription] ERROR: {msg}")
+            payload = {
+                "ok": False,
+                "reason": "no_subscription_id",
+                "message": msg,
+                "environment": env,
+                "webhookUrl": endpoint_url,
+                "logs": debug_log,
+                "account": account_info,
+                "topicId": topic_id,
+            }
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+
+        # Decide which token type to use for the test call based on topic scope.
+        topic_meta = await ebay_service.get_notification_topic_metadata(
+            access_token,
+            topic_id,
+            debug_log=debug_log,
+        )
+        raw_scope = topic_meta.get("scope") if isinstance(topic_meta, dict) else None
+        scope_upper = raw_scope.upper() if isinstance(raw_scope, str) else None
+
+        if scope_upper == "APPLICATION":
+            app_access_token = await ebay_service.get_app_access_token()
+            test_access_token = app_access_token
+            debug_log.append(
+                "[token] Using eBay application access token (client_credentials) for subscription + test",
+            )
+            token_type = "application"
+        else:
+            test_access_token = access_token
+            debug_log.append("[token] Using eBay user access token for subscription + test")
+            token_type = "user"
+
+        test_result = await ebay_service.test_notification_subscription(
+            test_access_token,
+            sub_id,
+            debug_log=debug_log,
+        )
+        logger.info(
+            "[notifications:test] Test notification call completed status_code=%s topic=%s",
+            test_result.get("status_code"),
+            topic_id,
+        )
+
+        # Optional: process recently received events so that [event] lines can
+        # be surfaced in the debug log for this test. This is best-effort and
+        # will be a no-op until the ingestion helper is implemented.
+        try:
+            from ..services.ebay_event_processor import process_pending_events  # type: ignore[attr-defined]
+
+            summary = process_pending_events(limit=50, debug_log=debug_log)
+            logger.info(
+                "[notifications:test] Processed pending events after test topic=%s summary=%s",
+                topic_id,
+                summary,
+            )
+        except Exception:
+            # Ingestion failures must not break the Notification API test flow.
+            logger.warning(
+                "[notifications:test] Failed to process pending events after test for topic=%s",
+                topic_id,
+                exc_info=True,
+            )
+
+    except HTTPException as exc:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            notification_error = {
+                "status_code": detail.get("status_code", exc.status_code),
+                "message": detail.get("message") or str(detail),
+                "body": detail.get("body"),
+            }
+        else:
+            notification_error = {
+                "status_code": exc.status_code,
+                "message": str(detail),
+            }
+
+        body_preview = notification_error.get("body")
+        if isinstance(body_preview, (dict, list)):
+            body_preview = str(body_preview)[:300]
+        error_summary = f"Notification API HTTP {notification_error.get('status_code')} - {notification_error.get('message')}"
+        if body_preview:
+            error_summary += f" | body: {body_preview}"
+
+        logger.error(
+            "[notifications:test] Notification API error during generic test topic=%s error=%s",
+            topic_id,
+            notification_error,
+        )
+        payload = {
+            "ok": False,
+            "reason": "notification_api_error",
+            "message": "Notification API returned an error while creating destination/subscription or sending the test notification.",
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "notificationError": notification_error,
+            "errorSummary": error_summary,
+            "logs": debug_log,
+            "account": account_info,
+            "topicId": topic_id,
+            "error": error_summary,
+            "tokenType": token_type if 'token_type' in locals() else None,
+        }
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=payload)
+    except Exception as exc:  # pragma: no cover - defensive catch-all
+        logger.error(
+            "[notifications:test] Unexpected error during generic notification test topic=%s",
+            topic_id,
+            exc_info=True,
+        )
+        message = f"Unexpected error: {type(exc).__name__}: {exc}"
+        payload = {
+            "ok": False,
+            "reason": "unexpected_error",
+            "message": message,
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "account": account_info,
+            "topicId": topic_id,
+            "error": message,
+        }
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=payload)
+
+    return {
+        "ok": True,
+        "environment": env,
+        "destinationId": dest_id,
+        "subscriptionId": sub_id,
+        "message": "Test notification requested; check ebay_events and Notifications UI.",
+        "notificationTest": test_result,
+        "logs": debug_log,
+        "account": account_info,
+        "topicId": topic_id,
+        "tokenType": token_type,
     }
