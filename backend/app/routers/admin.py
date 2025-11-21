@@ -589,6 +589,10 @@ async def get_notifications_status(
 
     Status is derived from Notification API destination/subscription state and
     the presence of recent events for the primary webhook topic.
+
+    This handler should *not* raise uncaught exceptions for normal
+    misconfigurations or Notification API errors. Instead, it always returns
+    HTTP 200 with an `ok` flag and structured error information.
     """
 
     from ..models_sqlalchemy.models import EbayAccount, EbayToken  # avoid cycles
@@ -597,12 +601,85 @@ async def get_notifications_status(
     endpoint_url = settings.EBAY_NOTIFICATION_DESTINATION_URL
     checked_at = datetime.now(timezone.utc).isoformat()
 
+    def _build_topics_payload_for_error(error_reason: str, error_summary: str | None) -> list[dict]:
+        """Best-effort per-topic diagnostics when Notification API calls fail.
+
+        We still include recent event counts from the local database so the
+        UI can show whether events have ever flowed for a topic.
+        """
+
+        topics_payload: list[dict] = []
+        now_local = datetime.now(timezone.utc)
+        window_start_local = now_local - timedelta(hours=24)
+
+        for topic_cfg in SUPPORTED_TOPICS:
+            topic_id = topic_cfg.topic_id
+            recent_count = 0
+            last_event_time: str | None = None
+
+            try:
+                topic_recent_q = db.query(EbayEvent).filter(EbayEvent.topic == topic_id)
+                topic_recent_q = topic_recent_q.filter(
+                    or_(
+                        and_(
+                            EbayEvent.event_time.isnot(None),
+                            EbayEvent.event_time >= window_start_local,
+                        ),
+                        and_(
+                            EbayEvent.event_time.is_(None),
+                            EbayEvent.created_at >= window_start_local,
+                        ),
+                    )
+                )
+                recent_count = topic_recent_q.count()
+
+                topic_latest = (
+                    db.query(EbayEvent)
+                    .filter(EbayEvent.topic == topic_id)
+                    .order_by(
+                        EbayEvent.event_time.desc().nullslast(),
+                        EbayEvent.created_at.desc(),
+                    )
+                    .first()
+                )
+                if topic_latest:
+                    base_ts = topic_latest.event_time or topic_latest.created_at
+                    last_event_time = base_ts.isoformat() if base_ts else None
+            except Exception:
+                # DB diagnostics are best-effort; ignore failures here so we
+                # still return structured status instead of HTTP 500.
+                pass
+
+            topics_payload.append(
+                {
+                    "topicId": topic_id,
+                    "scope": None,
+                    "destinationId": None,
+                    "subscriptionId": None,
+                    "destinationStatus": None,
+                    "subscriptionStatus": None,
+                    "verificationStatus": None,
+                    "tokenType": None,
+                    "status": "ERROR",
+                    "error": error_summary or error_reason,
+                    "recentEvents": {
+                        "count": recent_count,
+                        "lastEventTime": last_event_time,
+                    },
+                }
+            )
+
+        return topics_payload
+
     if not endpoint_url:
+        error_summary = "EBAY_NOTIFICATION_DESTINATION_URL is not configured on the backend."
         return {
+            "ok": False,
             "environment": env,
             "webhookUrl": None,
             "state": "misconfigured",
             "reason": "missing_destination_url",
+            "errorSummary": error_summary,
             "destination": None,
             "subscription": None,
             "destinationId": None,
@@ -620,11 +697,14 @@ async def get_notifications_status(
         .first()
     )
     if not account:
+        error_summary = "No active eBay account found for this organization. Connect an account first."
         return {
+            "ok": False,
             "environment": env,
             "webhookUrl": endpoint_url,
             "state": "misconfigured",
             "reason": "no_account",
+            "errorSummary": error_summary,
             "destination": None,
             "subscription": None,
             "destinationId": None,
@@ -648,11 +728,17 @@ async def get_notifications_status(
         .first()
     )
     if not token or not token.access_token:
+        error_summary = (
+            "No eBay access token found for the active account; reconnect eBay "
+            "for this organization."
+        )
         return {
+            "ok": False,
             "environment": env,
             "webhookUrl": endpoint_url,
             "state": "misconfigured",
             "reason": "no_access_token",
+            "errorSummary": error_summary,
             "destination": None,
             "subscription": None,
             "destinationId": None,
@@ -669,7 +755,11 @@ async def get_notifications_status(
     primary_topic_id = PRIMARY_WEBHOOK_TOPIC_ID
 
     try:
-        dest, sub = await ebay_service.get_notification_status(access_token, endpoint_url, primary_topic_id)
+        dest, sub = await ebay_service.get_notification_status(
+            access_token,
+            endpoint_url,
+            primary_topic_id,
+        )
     except HTTPException as exc:
         # Surface Notification API error as misconfigured state with structured payload for UI diagnostics.
         logger.error(
@@ -709,7 +799,10 @@ async def get_notifications_status(
         if body_preview:
             error_summary += f" | body: {body_preview}"
 
+        topics_payload = _build_topics_payload_for_error(reason, error_summary)
+
         return {
+            "ok": False,
             "environment": env,
             "webhookUrl": endpoint_url,
             "state": "misconfigured",
@@ -723,7 +816,30 @@ async def get_notifications_status(
             "recentEvents": {"count": 0, "lastEventTime": None},
             "checkedAt": checked_at,
             "account": account_info,
-            "topics": [],
+            "topics": topics_payload,
+        }
+    except Exception as exc:  # pragma: no cover - defensive; should be rare
+        logger.exception(
+            "Unexpected error while checking Notification API status for primary topic %s",
+            primary_topic_id,
+        )
+        error_summary = f"Unexpected error while checking Notification API status: {exc}"
+        topics_payload = _build_topics_payload_for_error("internal_error", error_summary)
+        return {
+            "ok": False,
+            "environment": env,
+            "webhookUrl": endpoint_url,
+            "state": "misconfigured",
+            "reason": "internal_error",
+            "errorSummary": error_summary,
+            "destination": None,
+            "subscription": None,
+            "destinationId": None,
+            "subscriptionId": None,
+            "recentEvents": {"count": 0, "lastEventTime": None},
+            "checkedAt": checked_at,
+            "account": account_info,
+            "topics": topics_payload,
         }
 
     # Recent events for the primary topic in the last 24h
@@ -755,7 +871,7 @@ async def get_notifications_status(
         ) else None
 
     state = "misconfigured"
-    reason = None
+    reason: str | None = None
     dest_status: str | None = None
     sub_status: str | None = None
     verification_status: str | None = None
@@ -793,6 +909,9 @@ async def get_notifications_status(
     topics_payload: list[dict] = []
     for topic_cfg in SUPPORTED_TOPICS:
         topic_id = topic_cfg.topic_id
+        topic_error_reason: str | None = None
+        topic_error_summary: str | None = None
+
         # Reuse primary topic data when possible; otherwise best-effort call.
         if topic_id == primary_topic_id:
             t_dest = dest
@@ -804,7 +923,40 @@ async def get_notifications_status(
                     endpoint_url,
                     topic_id,
                 )
-            except HTTPException:
+            except HTTPException as exc:
+                logger.error(
+                    "Notification status check failed for topic %s via Notification API: status=%s detail=%s",
+                    topic_id,
+                    exc.status_code,
+                    exc.detail,
+                )
+                detail = exc.detail
+                if isinstance(detail, dict):
+                    nerr = {
+                        "status_code": detail.get("status_code", exc.status_code),
+                        "message": detail.get("message") or str(detail),
+                        "body": detail.get("body"),
+                    }
+                else:
+                    nerr = {"status_code": exc.status_code, "message": str(detail)}
+
+                topic_error_reason = "notification_api_error"
+                body_obj = nerr.get("body")
+                body_preview = body_obj
+                if isinstance(body_preview, (dict, list)):
+                    body_preview = str(body_preview)[:300]
+                topic_error_summary = f"Notification API HTTP {nerr.get('status_code')} - {nerr.get('message')}"
+                if body_preview:
+                    topic_error_summary += f" | body: {body_preview}"
+
+                t_dest, t_sub = None, None
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception(
+                    "Unexpected error while checking Notification API status for topic %s",
+                    topic_id,
+                )
+                topic_error_reason = "internal_error"
+                topic_error_summary = str(exc)
                 t_dest, t_sub = None, None
 
         t_dest_id = t_dest.get("destinationId") or t_dest.get("id") if t_dest else None
@@ -870,6 +1022,14 @@ async def get_notifications_status(
             base_ts = topic_latest.event_time or topic_latest.created_at
             topic_last_event_time = base_ts.isoformat() if base_ts else None
 
+        topic_status_flag: str | None = None
+        if topic_error_reason is not None:
+            topic_status_flag = "ERROR"
+        elif t_dest_status == "ENABLED" and (
+            not t_verification_status or t_verification_status in ("CONFIRMED", "VERIFIED")
+        ) and t_sub_status == "ENABLED":
+            topic_status_flag = "OK"
+
         topics_payload.append(
             {
                 "topicId": topic_id,
@@ -880,6 +1040,8 @@ async def get_notifications_status(
                 "subscriptionStatus": t_sub_status,
                 "verificationStatus": t_verification_status,
                 "tokenType": token_type,
+                "status": topic_status_flag,
+                "error": topic_error_summary,
                 "recentEvents": {
                     "count": topic_recent_count,
                     "lastEventTime": topic_last_event_time,
@@ -887,7 +1049,27 @@ async def get_notifications_status(
             }
         )
 
+    # Derive a concise error summary for non-OK states so the UI does not have
+    # to guess based on `state`/`reason`.
+    error_summary: str | None = None
+    if state == "no_events":
+        error_summary = "No recent events received for the primary webhook topic in the last 24 hours."
+    elif state == "misconfigured":
+        if reason == "no_destination":
+            error_summary = "Notification destination does not exist for the configured webhook URL."
+        elif reason == "destination_disabled":
+            error_summary = "Notification destination is not ENABLED."
+        elif reason == "verification_pending":
+            error_summary = "Notification destination verification is not yet CONFIRMED/VERIFIED."
+        elif reason == "no_subscription":
+            error_summary = "No subscription exists for the primary webhook topic."
+        elif reason == "subscription_not_enabled":
+            error_summary = "Subscription for the primary webhook topic is not ENABLED."
+
+    ok = state == "ok"
+
     return {
+        "ok": ok,
         "environment": env,
         "webhookUrl": endpoint_url,
         "state": state,
@@ -903,6 +1085,7 @@ async def get_notifications_status(
         "checkedAt": checked_at,
         "account": account_info,
         "topics": topics_payload,
+        "errorSummary": error_summary,
     }
 
 

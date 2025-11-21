@@ -59,8 +59,10 @@ export default function EbayNotificationsPage() {
   // Webhook / Notification API status
   const [statusInfo, setStatusInfo] = useState<NotificationsStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [statusRequestError, setStatusRequestError] = useState<string | null>(null);
   const [showRawStatus, setShowRawStatus] = useState(false);
   const [selectedTestTopic, setSelectedTestTopic] = useState<string | null>(null);
+  const [lastTestOk, setLastTestOk] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -130,6 +132,7 @@ export default function EbayNotificationsPage() {
 
   const loadStatus = async () => {
     setStatusLoading(true);
+    setStatusRequestError(null);
     try {
       const s = await ebayApi.getNotificationsStatus();
       setStatusInfo(s);
@@ -142,10 +145,24 @@ export default function EbayNotificationsPage() {
       }
       const summary = s.errorSummary || `state=${s.state} reason=${s.reason || 'n/a'}`;
       appendDiag(`[status] ${summary}`);
+      if (!s.ok && s.errorSummary) {
+        setStatusRequestError(`Notifications status error: ${s.errorSummary}`);
+      } else {
+        setStatusRequestError(null);
+      }
     } catch (e: any) {
       // eslint-disable-next-line no-console
       console.error('Failed to load notifications status', e);
       appendDiag(`[status] FAILED ${e?.message || 'Unknown error'}`);
+      const data = e?.response?.data as Partial<NotificationsStatus> | undefined;
+      const backendSummary = (data && data.errorSummary) || undefined;
+      if (backendSummary) {
+        setStatusRequestError(`Notifications status error: ${backendSummary}`);
+      } else {
+        setStatusRequestError(
+          `Failed to load notifications status: ${e?.message || 'Unknown error'}`,
+        );
+      }
     } finally {
       setStatusLoading(false);
     }
@@ -227,23 +244,33 @@ export default function EbayNotificationsPage() {
                 <div className="flex flex-col items-end gap-1">
                   <span
                     className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      statusInfo.state === 'ok'
-                        ? 'bg-green-100 text-green-800'
-                        : statusInfo.state === 'no_events'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-red-100 text-red-800'
+                      statusInfo.ok ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                     }`}
                   >
-                    Webhook:{' '}
-                    {statusInfo.state === 'ok'
-                      ? 'OK'
-                      : statusInfo.state === 'no_events'
-                      ? 'No events yet'
-                      : 'Misconfigured'}
-                    {statusInfo.reason && (
-                      <span className="ml-1 text-[10px] opacity-80">({statusInfo.reason})</span>
-                    )}
+                    <span
+                      className={`mr-1 inline-block w-2 h-2 rounded-full ${
+                        statusInfo.ok ? 'bg-green-500' : 'bg-red-500'
+                      }`}
+                    />
+                    {statusInfo.ok ? 'Webhook: OK' : 'Webhook: ERROR'}
                   </span>
+                  {statusInfo.reason && (
+                    <div className="text-[11px] text-gray-600">
+                      State:{' '}
+                      <span className="font-mono">{statusInfo.state}</span>
+                      {statusInfo.reason && (
+                        <>
+                          {' '}
+                          · <span className="font-mono">{statusInfo.reason}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {statusInfo.errorSummary && (
+                    <div className="text-[11px] text-red-700 max-w-xs text-right">
+                      {statusInfo.errorSummary}
+                    </div>
+                  )}
                   {statusInfo.account && (
                     <div className="text-[11px] text-gray-600">
                       Using eBay account: <span className="font-mono text-gray-900">{statusInfo.account.username || statusInfo.account.id}</span>
@@ -306,6 +333,7 @@ export default function EbayNotificationsPage() {
                     } else {
                       setTestLogs([]);
                     }
+                    setLastTestOk(resp.ok);
                     if (!resp.ok) {
                       const nErr = resp.notificationError;
                       const nErrText = resp.errorSummary
@@ -363,6 +391,11 @@ export default function EbayNotificationsPage() {
                       setTestLogs(data.logs!);
                     }
                     const dataAny = data as any;
+                    if (typeof dataAny?.ok === 'boolean') {
+                      setLastTestOk(dataAny.ok);
+                    } else {
+                      setLastTestOk(false);
+                    }
                     const nErr = dataAny?.notificationError;
                     const nErrText = dataAny?.errorSummary
                       || (nErr?.message
@@ -430,6 +463,12 @@ export default function EbayNotificationsPage() {
           {error && (
             <Alert variant="destructive">
               <AlertDescription className="text-sm">{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {statusRequestError && (
+            <Alert variant="destructive">
+              <AlertDescription className="text-xs">{statusRequestError}</AlertDescription>
             </Alert>
           )}
 
@@ -818,6 +857,17 @@ export default function EbayNotificationsPage() {
                 </CardDescription>
               </div>
               <div className="flex flex-col items-end gap-1 text-[11px] text-gray-600">
+                {lastTestOk != null && (
+                  <div>
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                        lastTestOk ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      [{lastTestOk ? 'OK' : 'ERROR'}]
+                    </span>
+                  </div>
+                )}
                 {testAccount && (
                   <div>
                     Account:{' '}

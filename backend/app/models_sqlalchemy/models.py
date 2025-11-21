@@ -433,6 +433,21 @@ except NoSuchTableError:
     tbl_parts_models_table = None
 
 
+# Optional reflection of legacy internal categories table used for the
+# Internal category dropdown when available (tbl_parts_category).
+try:
+    tbl_parts_category_table = Table(
+        "tbl_parts_category",  # REAL table name in Postgres
+        Base.metadata,
+        autoload_with=engine,
+    )
+except NoSuchTableError:
+    logger.warning(
+        "tbl_parts_category not found; falling back to sq_internal_categories for internal category list",
+    )
+    tbl_parts_category_table = None
+
+
 class SqItem(Base):
     """SQ catalog item mapped to the canonical `SKU_catalog` table.
 

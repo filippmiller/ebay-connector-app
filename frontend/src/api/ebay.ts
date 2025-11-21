@@ -57,6 +57,12 @@ export interface NotificationAccountInfo {
 export interface NotificationsStatus {
   environment: string;
   webhookUrl: string | null;
+  /**
+   * True when the primary webhook topic has a healthy destination/subscription and
+   * we have seen at least one recent event. False for misconfig, no events, or
+   * Notification API errors.
+   */
+  ok: boolean;
   state: 'ok' | 'no_events' | 'misconfigured';
   reason: string | null;
   destination: any | null;
@@ -88,6 +94,10 @@ export interface NotificationsStatus {
     subscriptionStatus?: string | null;
     verificationStatus?: string | null;
     tokenType?: 'application' | 'user' | null;
+    /** Per-topic derived status flag: 'OK' when dest/sub are enabled, 'ERROR' on Notification API errors. */
+    status?: string | null;
+    /** Optional human-readable error summary for this topic. */
+    error?: string | null;
     recentEvents: {
       count: number;
       lastEventTime: string | null;

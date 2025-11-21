@@ -16,6 +16,7 @@ from app.models_sqlalchemy.models import (
     ItemCondition,
     Warehouse,
     tbl_parts_models_table,
+    tbl_parts_category_table,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -82,11 +83,13 @@ async def search_models(
     if id_col is None:
         id_col = columns[0]
 
-    like = f"%{q}%"
+    # Prefix search ("L500" → models starting with L500). This keeps the
+    # result focused while still being fast for large tables.
+    like = f"{q}%"
     stmt = (
         select(id_col, label_col)
         .where(label_col.ilike(like))
-        .order_by(label_col)
+        .order_by(label_col.asc())
         .limit(limit)
     )
 
@@ -370,11 +373,42 @@ async def get_sq_dictionaries(
     - Static listing types / durations / sites
     """
 
-    categories = (
-        db.query(SqInternalCategory)
-        .order_by(asc(SqInternalCategory.sort_order.nulls_last()), asc(SqInternalCategory.code))
-        .all()
-    )
+    # Internal categories: prefer real legacy table tbl_parts_category when
+    # available so that codes/labels match the old system exactly. Fallback
+    # to sq_internal_categories otherwise.
+    internal_categories: list[dict]
+    if tbl_parts_category_table is not None:
+        table = tbl_parts_category_table
+        col_id = table.c.get("CategoryID") or list(table.columns)[0]
+        col_descr = table.c.get("CategoryDescr") or table.c.get("CategoryDesc")
+        col_ebay_name = table.c.get("ebayCategoryName")
+
+        stmt = select(col_id, col_descr, col_ebay_name).order_by(col_id)
+        rows = db.execute(stmt).fetchall()
+
+        internal_categories = []
+        for row in rows:
+            cat_id = row[0]
+            descr = (row[1] or "").strip() if len(row) > 1 else ""
+            ebay_name = (row[2] or "").strip() if len(row) > 2 else ""
+            parts = [str(cat_id)]
+            if descr:
+                parts.append(descr)
+            if ebay_name:
+                parts.append(ebay_name)
+            label = " — ".join(parts)
+            internal_categories.append({"id": cat_id, "code": str(cat_id), "label": label})
+    else:
+        categories = (
+            db.query(SqInternalCategory)
+            .order_by(asc(SqInternalCategory.sort_order.nulls_last()), asc(SqInternalCategory.code))
+            .all()
+        )
+        internal_categories = [
+            {"id": c.id, "code": c.code, "label": c.label}
+            for c in categories
+        ]
+
     shipping_groups = (
         db.query(SqShippingGroup)
         .order_by(asc(SqShippingGroup.sort_order.nulls_last()), asc(SqShippingGroup.code))
@@ -403,10 +437,7 @@ async def get_sq_dictionaries(
     ]
 
     return {
-        "internal_categories": [
-            {"id": c.id, "code": c.code, "label": c.label}
-            for c in categories
-        ],
+        "internal_categories": internal_categories,
         "shipping_groups": [
             {"id": g.id, "code": g.code, "label": g.label}
             for g in shipping_groups

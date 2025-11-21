@@ -707,12 +707,15 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           {/* Images */}
           <section className="border rounded-md p-2 space-y-1.5">
             <h3 className="font-semibold text-base">Images (Pic#1–Pic#12)</h3>
-            <div className="space-y-1">
+            {/* On wide screens this becomes 2 rows × 6 columns so images only
+                take two lines of space. On smaller screens they wrap
+                naturally. */}
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-1">
               {form.pics.map((value, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-sm">
-                  <span className="w-16 text-right text-xs text-gray-600">Pic#{idx + 1}</span>
+                <div key={idx} className="flex items-center gap-1 text-xs">
+                  <span className="text-gray-600 whitespace-nowrap">Pic#{idx + 1}</span>
                   <Input
-                    className="h-8 text-xs font-mono flex-1 min-w-0"
+                    className="h-7 text-[11px] font-mono flex-1 min-w-0"
                     placeholder="https://…"
                     value={value}
                     onChange={(e) => handlePicChange(idx, e.target.value)}
@@ -721,7 +724,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="whitespace-nowrap text-xs h-7 px-2"
+                    className="whitespace-nowrap px-1 text-[11px]"
                     onClick={() => handlePreviewPic(idx)}
                   >
                     Preview
