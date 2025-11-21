@@ -304,9 +304,23 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const currentSort = gridPrefs.columns?.sort || null;
 
   // Theme-driven visual customisation
-  const bodyFontSizeSetting = gridPrefs.theme?.fontSize || 'medium';
-  const bodyFontSizePx = bodyFontSizeSetting === 'small' ? 11 : bodyFontSizeSetting === 'large' ? 15 : 13;
-  const headerFontSizeSetting = gridPrefs.theme?.headerFontSize || bodyFontSizeSetting;
+  // Body font sizing: use numeric level 1-10 if present, otherwise map legacy preset.
+  const legacyBodyPreset = gridPrefs.theme?.fontSize || 'medium';
+  const bodyLevelFromPreset = legacyBodyPreset === 'small' ? 3 : legacyBodyPreset === 'large' ? 8 : 5;
+  const bodyFontSizeLevel =
+    typeof gridPrefs.theme?.bodyFontSizeLevel === 'number'
+      ? gridPrefs.theme.bodyFontSizeLevel
+      : bodyLevelFromPreset;
+  // Map level 1-10 to a readable px size (~11px to 20px).
+  const clampedBodyLevel = Math.min(10, Math.max(1, bodyFontSizeLevel));
+  const bodyFontSizePx = 10 + clampedBodyLevel; // 11-20px
+  const bodyFontWeight =
+    (gridPrefs.theme?.bodyFontWeight as string | undefined) === 'bold' ? 'bold' : 'normal';
+  const bodyFontStyle =
+    (gridPrefs.theme?.bodyFontStyle as string | undefined) === 'italic' ? 'italic' : 'normal';
+
+  // Header font sizing & color
+  const headerFontSizeSetting = gridPrefs.theme?.headerFontSize || legacyBodyPreset;
   const headerFontSizePx = headerFontSizeSetting === 'small' ? 11 : headerFontSizeSetting === 'large' ? 15 : 13;
   const headerTextColor = gridPrefs.theme?.headerTextColor as string | undefined;
   const gridBackgroundColor = gridPrefs.theme?.backgroundColor as string | undefined;
@@ -485,6 +499,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                   <tr
                     key={idx}
                     className="border-t odd:bg-white even:bg-gray-50 hover:bg-indigo-50 transition-colors cursor-pointer"
+                    style={gridBackgroundColor ? { backgroundColor: gridBackgroundColor } : undefined}
                     onClick={() => {
                       if (onRowClick) {
                         onRowClick(row);
@@ -512,7 +527,14 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                         <td
                           key={col.name}
                           className="px-3 py-2 border-t border-r whitespace-nowrap max-w-xs overflow-hidden text-ellipsis align-middle"
-                          style={{ width: col.width, minWidth: col.width }}
+                          style={{
+                            width: col.width,
+                            minWidth: col.width,
+                            fontSize: bodyFontSizePx,
+                            fontWeight: bodyFontWeight,
+                            fontStyle: bodyFontStyle,
+                            backgroundColor: gridBackgroundColor || undefined,
+                          }}
                         >
                           {value}
                         </td>
@@ -604,15 +626,23 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                     </select>
                   </label>
                   <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-gray-600">Font size</span>
+                    <span className="text-[11px] text-gray-600">Body font size</span>
                     <select
                       className="border rounded px-2 py-1 text-[11px] bg-white"
-                      value={gridPrefs.theme.fontSize}
-                      onChange={(e) => gridPrefs.setTheme({ fontSize: e.target.value as any })}
+                      value={
+                        typeof gridPrefs.theme.bodyFontSizeLevel === 'number'
+                          ? (gridPrefs.theme.bodyFontSizeLevel as number)
+                          : 5
+                      }
+                      onChange={(e) =>
+                        gridPrefs.setTheme({ bodyFontSizeLevel: Number(e.target.value) || 5 })
+                      }
                     >
-                      <option value="small">Small</option>
-                      <option value="medium">Medium</option>
-                      <option value="large">Large</option>
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((lvl) => (
+                        <option key={lvl} value={lvl}>
+                          Size {lvl}
+                        </option>
+                      ))}
                     </select>
                   </label>
                   <label className="flex flex-col gap-1">
@@ -663,6 +693,28 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                       <option value="small">Small</option>
                       <option value="medium">Medium</option>
                       <option value="large">Large</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Body font weight</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px] bg-white"
+                      value={(gridPrefs.theme.bodyFontWeight as any) || 'normal'}
+                      onChange={(e) => gridPrefs.setTheme({ bodyFontWeight: e.target.value as any })}
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="bold">Bold</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-gray-600">Body font style</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px] bg-white"
+                      value={(gridPrefs.theme.bodyFontStyle as any) || 'normal'}
+                      onChange={(e) => gridPrefs.setTheme({ bodyFontStyle: e.target.value as any })}
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="italic">Italic (cursive)</option>
                     </select>
                   </label>
                   <label className="flex flex-col gap-1 col-span-2">

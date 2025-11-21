@@ -10,12 +10,19 @@ export type GridButtonLayout = 'left' | 'right' | 'split';
 
 export interface GridThemeConfig {
   density: GridDensity;
+  /** Legacy body font size preset (small/medium/large). Still used as a fallback. */
   fontSize: GridFontSize;
   headerStyle: GridHeaderStyle;
   colorScheme: GridColorScheme;
   buttonLayout: GridButtonLayout;
   /** Optional custom background color for the grid body (e.g. #ffffff). */
   backgroundColor?: string;
+  /** Optional numeric body font size level (1-10). */
+  bodyFontSizeLevel?: number;
+  /** Optional font weight for body cells. */
+  bodyFontWeight?: 'normal' | 'bold';
+  /** Optional font style for body cells (normal or italic/cursive). */
+  bodyFontStyle?: 'normal' | 'italic';
   /** Optional font size override specifically for column headers. */
   headerFontSize?: GridFontSize;
   /** Optional text color for column headers (e.g. #111827). */
