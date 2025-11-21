@@ -420,9 +420,10 @@ async def get_sq_dictionaries(
     internal_categories = []
     try:
         # Try querying with explicit "tbl_parts_category" first (no schema).
+        # Use correct casing and aliases for label construction.
         rows = db.execute(
             text(
-                'SELECT "CategoryID", "CategoryDescr", "eBayCategoryName" '
+                'SELECT "CategoryID" as id, "CategoryDescr" as descr, "eBayCategoryName" as ebay_name '
                 'FROM "tbl_parts_category" ORDER BY "CategoryID"'
             )
         ).fetchall()
@@ -431,22 +432,28 @@ async def get_sq_dictionaries(
         try:
             rows = db.execute(
                 text(
-                    'SELECT "CategoryID", "CategoryDescr", "eBayCategoryName" '
+                    'SELECT "CategoryID" as id, "CategoryDescr" as descr, "eBayCategoryName" as ebay_name '
                     'FROM public."tbl_parts_category" ORDER BY "CategoryID"'
                 )
             ).fetchall()
         except Exception as exc2:
-            logger.warning(f"Failed to load internal categories from tbl_parts_category: {exc2}")
+            logger.exception("Failed to load internal categories from tbl_parts_category", exc_info=exc2)
             rows = []
 
     if rows:
-        for cat_id, descr, ebay_name in rows:
+        for row in rows:
+            # Use indices or attribute access depending on driver; row mappings support key access.
+            cat_id = row.id
+            descr = str(row.descr or "").strip()
+            ebay_name = str(row.ebay_name or "").strip()
+            
             parts = [str(cat_id)]
             if descr:
-                parts.append(str(descr).strip())
+                parts.append(descr)
             if ebay_name:
-                parts.append(str(ebay_name).strip())
+                parts.append(ebay_name)
             label = " — ".join(parts)
+            
             internal_categories.append(
                 {"id": cat_id, "code": str(cat_id), "label": label, "category_id": cat_id, "category_descr": descr, "ebay_category_name": ebay_name}
             )
@@ -463,7 +470,7 @@ async def get_sq_dictionaries(
         # Try without schema first
         rows = db.execute(
             text(
-                'SELECT "ID", "Name", "Active" '
+                'SELECT "ID" as id, "Name" as name, "Active" as active '
                 'FROM "tbl_internalshippinggroups" '
                 'WHERE "Active" = true '
                 'ORDER BY "ID"'
@@ -474,21 +481,21 @@ async def get_sq_dictionaries(
             # Fallback to public schema
             rows = db.execute(
                 text(
-                    'SELECT "ID", "Name", "Active" '
+                    'SELECT "ID" as id, "Name" as name, "Active" as active '
                     'FROM public."tbl_internalshippinggroups" '
                     'WHERE "Active" = true '
                     'ORDER BY "ID"'
                 )
             ).fetchall()
         except Exception as exc:
-            logger.warning(f"Failed to load shipping groups from tbl_internalshippinggroups: {exc}")
+            logger.exception("Failed to load shipping groups from tbl_internalshippinggroups", exc_info=exc)
             rows = []
 
     if rows:
         for row in rows:
-            s_id = row[0]
-            s_name = row[1]
-            s_active = row[2]
+            s_id = row.id
+            s_name = str(row.name or "").strip()
+            s_active = row.active
             label = f"{s_id}: {s_name}"
             shipping_groups.append({
                 "id": s_id,

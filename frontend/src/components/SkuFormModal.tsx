@@ -666,9 +666,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                       <SelectContent>
                         {dictionaries?.internal_categories && dictionaries.internal_categories.length > 0 ? (
                           dictionaries.internal_categories.map((c) => (
-                            <SelectItem key={c.id} value={c.code}>
-                              {c.label}
-                            </SelectItem>
+                        <SelectItem key={c.id} value={c.code}>
+                          {c.label}
+                        </SelectItem>
                           ))
                         ) : (
                           <SelectItem value="__empty" disabled>
@@ -758,9 +758,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   <SelectContent>
                     {dictionaries?.shipping_groups && dictionaries.shipping_groups.length > 0 ? (
                       dictionaries.shipping_groups.map((g) => (
-                        <SelectItem key={g.id} value={g.code}>
-                          {g.label}
-                        </SelectItem>
+                      <SelectItem key={g.id} value={g.code}>
+                        {g.label}
+                      </SelectItem>
                       ))
                     ) : (
                       <SelectItem value="__empty" disabled>
