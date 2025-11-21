@@ -1,3 +1,24 @@
+from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import desc, or_, and_
+from typing import Optional, Any
+import os
+from datetime import datetime, timezone, timedelta
+
+from ..models_sqlalchemy import get_db
+from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
+from ..services.auth import admin_required
+from ..models.user import User
+from ..utils.logger import logger
+from ..services.ebay import ebay_service
+from ..services.ebay_connect_logger import ebay_connect_logger
+from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
+from ..config import settings
+
+FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 @router.get("/notifications/status")
@@ -69,29 +90,6 @@ async def get_notifications_status(
             "account": None,
             "topics": [],
         }
-
-from fastapi import APIRouter, Depends, Query, HTTPException, status
-from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, or_, and_
-from typing import Optional, Any
-import os
-from datetime import datetime, timezone, timedelta
-
-from ..models_sqlalchemy import get_db
-from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
-from ..services.auth import admin_required
-from ..models.user import User
-from ..utils.logger import logger
-from ..services.ebay import ebay_service
-from ..services.ebay_connect_logger import ebay_connect_logger
-from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
-from ..config import settings
-
-FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
-
-router = APIRouter(prefix="/api/admin", tags=["admin"])
-
 
 @router.get("/sync-jobs")
 async def get_sync_jobs(

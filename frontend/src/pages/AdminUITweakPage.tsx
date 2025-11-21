@@ -4,6 +4,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useUITweak } from '@/contexts/UITweakContext';
 
+const normalizeColorForPicker = (value: string) => {
+  const trimmed = value.trim();
+  // <input type="color"> only accepts full #rrggbb values.
+  if (/^#([0-9a-fA-F]{6})$/.test(trimmed)) return trimmed;
+  // Fallback to white for non-hex values like "transparent" so the picker still works.
+  return '#ffffff';
+};
+
 export default function AdminUITweakPage() {
   const { settings, update, reset } = useUITweak();
 
@@ -83,39 +91,71 @@ export default function AdminUITweakPage() {
             <div className="grid grid-cols-2 gap-4 text-xs">
               <div className="space-y-1">
                 <label className="block font-medium text-gray-600">Active background</label>
-                <Input
-                  type="text"
-                  value={settings.navActiveBg}
-                  onChange={(e) => update({ navActiveBg: e.target.value })}
-                  className="text-xs"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    className="h-8 w-10 rounded border border-gray-200 p-0"
+                    value={normalizeColorForPicker(settings.navActiveBg)}
+                    onChange={(e) => update({ navActiveBg: e.target.value })}
+                  />
+                  <Input
+                    type="text"
+                    value={settings.navActiveBg}
+                    onChange={(e) => update({ navActiveBg: e.target.value })}
+                    className="text-xs flex-1"
+                  />
+                </div>
               </div>
               <div className="space-y-1">
                 <label className="block font-medium text-gray-600">Active text</label>
-                <Input
-                  type="text"
-                  value={settings.navActiveText}
-                  onChange={(e) => update({ navActiveText: e.target.value })}
-                  className="text-xs"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    className="h-8 w-10 rounded border border-gray-200 p-0"
+                    value={normalizeColorForPicker(settings.navActiveText)}
+                    onChange={(e) => update({ navActiveText: e.target.value })}
+                  />
+                  <Input
+                    type="text"
+                    value={settings.navActiveText}
+                    onChange={(e) => update({ navActiveText: e.target.value })}
+                    className="text-xs flex-1"
+                  />
+                </div>
               </div>
               <div className="space-y-1">
                 <label className="block font-medium text-gray-600">Inactive background</label>
-                <Input
-                  type="text"
-                  value={settings.navInactiveBg}
-                  onChange={(e) => update({ navInactiveBg: e.target.value })}
-                  className="text-xs"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    className="h-8 w-10 rounded border border-gray-200 p-0"
+                    value={normalizeColorForPicker(settings.navInactiveBg)}
+                    onChange={(e) => update({ navInactiveBg: e.target.value })}
+                  />
+                  <Input
+                    type="text"
+                    value={settings.navInactiveBg}
+                    onChange={(e) => update({ navInactiveBg: e.target.value })}
+                    className="text-xs flex-1"
+                  />
+                </div>
               </div>
               <div className="space-y-1">
                 <label className="block font-medium text-gray-600">Inactive text</label>
-                <Input
-                  type="text"
-                  value={settings.navInactiveText}
-                  onChange={(e) => update({ navInactiveText: e.target.value })}
-                  className="text-xs"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    className="h-8 w-10 rounded border border-gray-200 p-0"
+                    value={normalizeColorForPicker(settings.navInactiveText)}
+                    onChange={(e) => update({ navInactiveText: e.target.value })}
+                  />
+                  <Input
+                    type="text"
+                    value={settings.navInactiveText}
+                    onChange={(e) => update({ navInactiveText: e.target.value })}
+                    className="text-xs flex-1"
+                  />
+                </div>
               </div>
             </div>
 
