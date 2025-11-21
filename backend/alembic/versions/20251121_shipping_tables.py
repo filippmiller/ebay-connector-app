@@ -36,33 +36,31 @@ def upgrade() -> None:
 
     existing_tables = set(inspector.get_table_names())
 
-    # Create enums if they do not exist yet
-    if not inspector.dialect.has_type(conn, SHIPPING_JOB_STATUS_ENUM):  # type: ignore[attr-defined]
-        sa.Enum(
-            "NEW",
-            "PICKING",
-            "PACKED",
-            "SHIPPED",
-            "CANCELLED",
-            "ERROR",
-            name=SHIPPING_JOB_STATUS_ENUM,
-        ).create(conn, checkfirst=True)
+    # Create enums; checkfirst makes these calls idempotent even if the
+    # types already exist in the target database.
+    sa.Enum(
+        "NEW",
+        "PICKING",
+        "PACKED",
+        "SHIPPED",
+        "CANCELLED",
+        "ERROR",
+        name=SHIPPING_JOB_STATUS_ENUM,
+    ).create(conn, checkfirst=True)
 
-    if not inspector.dialect.has_type(conn, SHIPPING_LABEL_PROVIDER_ENUM):  # type: ignore[attr-defined]
-        sa.Enum(
-            "EBAY_LOGISTICS",
-            "EXTERNAL",
-            "MANUAL",
-            name=SHIPPING_LABEL_PROVIDER_ENUM,
-        ).create(conn, checkfirst=True)
+    sa.Enum(
+        "EBAY_LOGISTICS",
+        "EXTERNAL",
+        "MANUAL",
+        name=SHIPPING_LABEL_PROVIDER_ENUM,
+    ).create(conn, checkfirst=True)
 
-    if not inspector.dialect.has_type(conn, SHIPPING_STATUS_SOURCE_ENUM):  # type: ignore[attr-defined]
-        sa.Enum(
-            "WAREHOUSE_SCAN",
-            "API",
-            "MANUAL",
-            name=SHIPPING_STATUS_SOURCE_ENUM,
-        ).create(conn, checkfirst=True)
+    sa.Enum(
+        "WAREHOUSE_SCAN",
+        "API",
+        "MANUAL",
+        name=SHIPPING_STATUS_SOURCE_ENUM,
+    ).create(conn, checkfirst=True)
 
     # shipping_jobs
     if "shipping_jobs" not in existing_tables:
