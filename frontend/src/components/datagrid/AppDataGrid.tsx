@@ -1,9 +1,16 @@
 import React, { useMemo, useRef } from 'react';
 import { AgGridReact } from 'ag-grid-react';
+import {
+  ModuleRegistry,
+  AllCommunityModule,
+} from 'ag-grid-community';
 import type {
   ColDef,
   ColumnState,
 } from 'ag-grid-community';
+
+// Register AG Grid modules
+ModuleRegistry.registerModules([AllCommunityModule]);
 import type { GridColumnMeta } from '@/components/DataGridPage';
 
 export interface AppDataGridColumnState {
