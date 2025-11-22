@@ -293,5 +293,5 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       reload,
       clearServerPreferences,
     };
-  }, [loading, error]);
+  }, [loading, error, availableColumns.length, columns?.visible.length]);
 }
