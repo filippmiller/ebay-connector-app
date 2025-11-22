@@ -94,6 +94,11 @@ async def get_grid_data(
     storage_id: Optional[str] = Query(None, alias="storageID"),
     # Inventory-specific filters
     ebay_status: Optional[str] = Query(None),
+    # SKU Catalog specific filters
+    model: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    part_number: Optional[str] = Query(None),
+    title: Optional[str] = Query(None),
     search: Optional[str] = None,
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -292,6 +297,11 @@ async def get_grid_data(
                 sort_column,
                 sort_dir,
                 search=search,
+                sku=sku,
+                model=model,
+                category=category,
+                part_number=part_number,
+                title=title,
             )
         finally:
             db_sqla.close()
@@ -533,6 +543,11 @@ def _get_sku_catalog_data(
     sort_column: Optional[str],
     sort_dir: str,
     search: Optional[str] = None,
+    sku: Optional[str] = None,
+    model: Optional[str] = None,
+    category: Optional[str] = None,
+    part_number: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> Dict[str, Any]:
     """SKU catalog grid backed by the SQ catalog table (sq_items).
 
@@ -558,6 +573,17 @@ def _get_sku_catalog_data(
                 SqItem.part.ilike(like),
             )
         )
+
+    if sku:
+        query = query.filter(SqItem.sku.ilike(f"%{sku}%"))
+    if model:
+        query = query.filter(SqItem.model.ilike(f"%{model}%"))
+    if category:
+        query = query.filter(SqItem.category.ilike(f"%{category}%"))
+    if part_number:
+        query = query.filter(SqItem.part_number.ilike(f"%{part_number}%"))
+    if title:
+        query = query.filter(SqItem.title.ilike(f"%{title}%"))
 
     total = query.count()
 
