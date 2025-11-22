@@ -292,5 +292,5 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       reload,
       clearServerPreferences,
     };
-  }, [loading, error, theme, setColumns, setTheme, save, reload, clearServerPreferences]);
+  }, [loading, error]);
 }
