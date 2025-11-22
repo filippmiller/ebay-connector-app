@@ -468,7 +468,7 @@ async def get_sq_dictionaries(
         # Try without schema first
         rows = db.execute(
             text(
-                'SELECT "ID", "Name", "Active" '
+                'SELECT DISTINCT "ID", "Name", "Active" '
                 'FROM "tbl_internalshippinggroups" '
                 'WHERE "Active" = true '
                 'ORDER BY "ID"'
@@ -479,7 +479,7 @@ async def get_sq_dictionaries(
             # Fallback to public schema
             rows = db.execute(
                 text(
-                    'SELECT "ID", "Name", "Active" '
+                    'SELECT DISTINCT "ID", "Name", "Active" '
                     'FROM public."tbl_internalshippinggroups" '
                     'WHERE "Active" = true '
                     'ORDER BY "ID"'
@@ -510,7 +510,7 @@ async def get_sq_dictionaries(
 
     conditions = (
         db.query(ItemCondition)
-        .order_by(asc(ItemCondition.sort_order.nulls_last()), asc(ItemCondition.code))
+        .order_by(ItemCondition.sort_order.asc(), ItemCondition.code.asc())
         .all()
     )
     warehouses = db.query(Warehouse).order_by(asc(Warehouse.id)).all()
