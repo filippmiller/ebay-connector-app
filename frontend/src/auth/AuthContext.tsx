@@ -57,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       console.log("[Auth] Login successful, token received");
       localStorage.setItem("auth_token", token);
-      
+
       // Await refreshMe to ensure user is set before login completes
       console.log("[Auth] Fetching user data...");
       await refreshMe();
@@ -110,3 +110,4 @@ export const useAuth = () => {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 };
+

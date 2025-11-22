@@ -393,13 +393,20 @@ async def _get_orders_data(
     def _serialize(li: OrderLineItem) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = getattr(li, col, None)
-            if isinstance(value, dt_type):
-                row[col] = value.isoformat()
-            elif isinstance(value, Decimal):
-                row[col] = float(value)
-            else:
-                row[col] = value
+            try:
+                value = getattr(li, col, None)
+                if value is None:
+                    # Column doesn't exist or is None - skip it
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                # Skip columns that cause errors
+                continue
         return row
 
     rows = [_serialize(li) for li in rows_db]
@@ -488,12 +495,22 @@ def _get_buying_data(
             "comment": buyer.comment,
         }
 
+        row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = base_values.get(col)
-            if isinstance(value, dt_type):
-                row[col] = value.isoformat()
-            else:
-                row[col] = value
+            try:
+                value = base_values.get(col)
+                if value is None:
+                    # Column not in base_values - skip it
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                # Skip columns that cause errors
+                continue
         return row
 
     rows = [_serialize(b, s) for (b, s) in rows_db]
@@ -626,11 +643,17 @@ def _get_sku_catalog_data(
             "record_created": item.record_created,
             "record_updated_by": item.record_updated_by,
             "record_updated": item.record_updated,
+            # Aliases for metadata column names (rec_created/rec_updated)
+            "rec_created": item.record_created,
+            "rec_updated": item.record_updated,
         }
 
         row: Dict[str, Any] = {}
         for col in selected_cols:
             value = base_values.get(col)
+            if value is None:
+                # Column not in base_values - skip it
+                continue
             if isinstance(value, dt_type):
                 row[col] = value.isoformat()
             elif isinstance(value, Decimal):
@@ -764,16 +787,23 @@ def _get_inventory_data(
         mapping = getattr(row_, "_mapping", row_)
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            # mapping keys are column keys (names) when querying *table.c
-            value = mapping.get(col)
-            if isinstance(value, dt_type):
-                row[col] = value.isoformat()
-            elif isinstance(value, Decimal):
-                row[col] = float(value)
-            elif isinstance(value, enum.Enum):
-                row[col] = value.value
-            else:
-                row[col] = value
+            try:
+                # mapping keys are column keys (names) when querying *table.c
+                value = mapping.get(col)
+                if value is None:
+                    # Column not in mapping - skip it
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                elif isinstance(value, enum.Enum):
+                    row[col] = value.value
+                else:
+                    row[col] = value
+            except Exception:
+                # Skip columns that cause errors
+                continue
         return row
 
     rows = [_serialize(item) for item in rows_db]
@@ -828,13 +858,18 @@ def _get_transactions_data(
     def _serialize(t: EbayLegacyTransaction) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = getattr(t, col, None)
-            if isinstance(value, dt_type):
-                row[col] = value.isoformat()
-            elif isinstance(value, Decimal):
-                row[col] = float(value)
-            else:
-                row[col] = value
+            try:
+                value = getattr(t, col, None)
+                if value is None:
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                continue
         return row
 
     rows = [_serialize(t) for t in rows_db]
@@ -1003,15 +1038,20 @@ def _get_offers_data(
     def _serialize(o: OfferModel) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = getattr(o, col, None)
-            if isinstance(value, dt_type):
-                row[col] = value.isoformat()
-            elif isinstance(value, Decimal):
-                row[col] = float(value)
-            elif isinstance(value, enum.Enum):
-                row[col] = value.value
-            else:
-                row[col] = value
+            try:
+                value = getattr(o, col, None)
+                if value is None:
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                elif isinstance(value, enum.Enum):
+                    row[col] = value.value
+                else:
+                    row[col] = value
+            except Exception:
+                continue
         return row
 
     rows = [_serialize(o) for o in rows_db]
@@ -1646,13 +1686,18 @@ def _get_active_inventory_data(
     def _serialize(ai: ActiveInventory) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = getattr(ai, col, None)
-            if isinstance(value, dt_type):
-                row[col] = value.isoformat()
-            elif isinstance(value, Decimal):
-                row[col] = float(value)
-            else:
-                row[col] = value
+            try:
+                value = getattr(ai, col, None)
+                if value is None:
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                continue
         return row
 
     rows = [_serialize(ai) for ai in rows_db]
