@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import api from '@/lib/apiClient';
 import type { GridColumnMeta, GridLayoutResponse, GridDataResponse } from '@/components/DataGridPage';
 
@@ -269,24 +269,28 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     clearServerPreferences,
   };
 
-  // DEBUG: Log what we're actually returning
-  console.log(`[useGridPreferences] ${gridKey}: Returning state`, {
-    loading,
-    availableColumnsCount: availableColumns.length,
-    hasColumns: !!columns,
-    columnsVisibleCount: columns?.visible.length || 0
-  });
+  // Memoize the return object to prevent infinite re-renders
+  // Only create a new object when the actual state values change
+  return useMemo(() => {
+    // DEBUG: Log what we're actually returning
+    console.log(`[useGridPreferences] ${gridKey}: Returning state`, {
+      loading,
+      availableColumnsCount: availableColumns.length,
+      hasColumns: !!columns,
+      columnsVisibleCount: columns?.visible.length || 0
+    });
 
-  return {
-    loading,
-    error,
-    availableColumns,
-    columns,
-    theme,
-    setColumns,
-    setTheme,
-    save,
-    reload,
-    clearServerPreferences,
-  };
+    return {
+      loading,
+      error,
+      availableColumns,
+      columns,
+      theme,
+      setColumns,
+      setTheme,
+      save,
+      reload,
+      clearServerPreferences,
+    };
+  }, [loading, error, availableColumns, columns, theme, setColumns, setTheme, save, reload, clearServerPreferences, gridKey]);
 }
