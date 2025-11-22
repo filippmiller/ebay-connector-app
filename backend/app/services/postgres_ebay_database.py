@@ -1327,55 +1327,83 @@ class PostgresEbayDatabase:
             session.close()
     
     def get_analytics_summary(self, user_id: str) -> Dict[str, Any]:
-        """Get analytics summary for a user"""
+        """Get analytics summary for a user.
+
+        In some Postgres environments the legacy ``ebay_orders`` table may not
+        exist yet. In that case we return an empty summary instead of raising
+        an internal error so that the Analytics dashboard and Orders stats
+        widgets can still render without crashing the UI.
+        """
         session = self._get_session()
         
         try:
-            total_query = text("SELECT COUNT(*) as total FROM ebay_orders WHERE user_id = :user_id")
-            total_orders = session.execute(total_query, {'user_id': user_id}).scalar() or 0
-            
-            sales_query = text("""
-                SELECT SUM(total_amount) as total_sales, total_currency 
-                FROM ebay_orders 
-                WHERE user_id = :user_id AND total_amount IS NOT NULL
-                GROUP BY total_currency
-            """)
-            sales_data = [dict(row._mapping) for row in session.execute(sales_query, {'user_id': user_id})]
-            
-            payment_query = text("""
-                SELECT order_payment_status, COUNT(*) as count 
-                FROM ebay_orders 
-                WHERE user_id = :user_id
-                GROUP BY order_payment_status
-            """)
-            payment_status_counts = {row.order_payment_status: row.count for row in session.execute(payment_query, {'user_id': user_id})}
-            
-            fulfillment_query = text("""
-                SELECT order_fulfillment_status, COUNT(*) as count 
-                FROM ebay_orders 
-                WHERE user_id = :user_id
-                GROUP BY order_fulfillment_status
-            """)
-            fulfillment_status_counts = {row.order_fulfillment_status: row.count for row in session.execute(fulfillment_query, {'user_id': user_id})}
-            
-            daily_query = text("""
-                SELECT DATE(creation_date) as date, COUNT(*) as count 
-                FROM ebay_orders 
-                WHERE user_id = :user_id AND creation_date IS NOT NULL
-                GROUP BY DATE(creation_date)
-                ORDER BY date DESC
-                LIMIT 30
-            """)
-            daily_orders = [dict(row._mapping) for row in session.execute(daily_query, {'user_id': user_id})]
-            
-            return {
-                "total_orders": total_orders,
-                "sales_by_currency": sales_data,
-                "payment_status_breakdown": payment_status_counts,
-                "fulfillment_status_breakdown": fulfillment_status_counts,
-                "daily_orders_last_30_days": daily_orders
-            }
-            
+            try:
+                total_query = text("SELECT COUNT(*) as total FROM ebay_orders WHERE user_id = :user_id")
+                total_orders = session.execute(total_query, {'user_id': user_id}).scalar() or 0
+                
+                sales_query = text("""
+                    SELECT SUM(total_amount) as total_sales, total_currency 
+                    FROM ebay_orders 
+                    WHERE user_id = :user_id AND total_amount IS NOT NULL
+                    GROUP BY total_currency
+                """)
+                sales_data = [dict(row._mapping) for row in session.execute(sales_query, {'user_id': user_id})]
+                
+                payment_query = text("""
+                    SELECT order_payment_status, COUNT(*) as count 
+                    FROM ebay_orders 
+                    WHERE user_id = :user_id
+                    GROUP BY order_payment_status
+                """)
+                payment_status_counts = {
+                    row.order_payment_status: row.count
+                    for row in session.execute(payment_query, {'user_id': user_id})
+                }
+                
+                fulfillment_query = text("""
+                    SELECT order_fulfillment_status, COUNT(*) as count 
+                    FROM ebay_orders 
+                    WHERE user_id = :user_id
+                    GROUP BY order_fulfillment_status
+                """)
+                fulfillment_status_counts = {
+                    row.order_fulfillment_status: row.count
+                    for row in session.execute(fulfillment_query, {'user_id': user_id})
+                }
+                
+                daily_query = text("""
+                    SELECT DATE(creation_date) as date, COUNT(*) as count 
+                    FROM ebay_orders 
+                    WHERE user_id = :user_id AND creation_date IS NOT NULL
+                    GROUP BY DATE(creation_date)
+                    ORDER BY date DESC
+                    LIMIT 30
+                """)
+                daily_orders = [
+                    dict(row._mapping)
+                    for row in session.execute(daily_query, {'user_id': user_id})
+                ]
+                
+                return {
+                    "total_orders": total_orders,
+                    "sales_by_currency": sales_data,
+                    "payment_status_breakdown": payment_status_counts,
+                    "fulfillment_status_breakdown": fulfillment_status_counts,
+                    "daily_orders_last_30_days": daily_orders,
+                }
+            except Exception as e:  # pragma: no cover - defensive fallback
+                logger.warning(
+                    "get_analytics_summary failed (likely missing ebay_orders table); "
+                    "returning empty analytics summary: %s",
+                    e,
+                )
+                return {
+                    "total_orders": 0,
+                    "sales_by_currency": [],
+                    "payment_status_breakdown": {},
+                    "fulfillment_status_breakdown": {},
+                    "daily_orders_last_30_days": [],
+                }
         finally:
             session.close()
     
