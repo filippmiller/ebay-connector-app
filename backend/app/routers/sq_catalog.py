@@ -418,10 +418,10 @@ async def get_sq_dictionaries(
     internal_categories = []
     try:
         # Try querying with explicit "tbl_parts_category" first (no schema).
-        # Use correct casing and aliases for label construction.
+        # Use correct casing.
         rows = db.execute(
             text(
-                'SELECT "CategoryID" as id, "CategoryDescr" as descr, "eBayCategoryName" as ebay_name '
+                'SELECT "CategoryID", "CategoryDescr", "eBayCategoryName" '
                 'FROM "tbl_parts_category" ORDER BY "CategoryID"'
             )
         ).fetchall()
@@ -430,7 +430,7 @@ async def get_sq_dictionaries(
         try:
             rows = db.execute(
                 text(
-                    'SELECT "CategoryID" as id, "CategoryDescr" as descr, "eBayCategoryName" as ebay_name '
+                    'SELECT "CategoryID", "CategoryDescr", "eBayCategoryName" '
                     'FROM public."tbl_parts_category" ORDER BY "CategoryID"'
                 )
             ).fetchall()
@@ -440,10 +440,10 @@ async def get_sq_dictionaries(
 
     if rows:
         for row in rows:
-            # Use indices or attribute access depending on driver; row mappings support key access.
-            cat_id = row.id
-            descr = str(row.descr or "").strip()
-            ebay_name = str(row.ebay_name or "").strip()
+            # Use index-based access to avoid column name ambiguity
+            cat_id = row[0]
+            descr = str(row[1] or "").strip()
+            ebay_name = str(row[2] or "").strip()
             
             parts = [str(cat_id)]
             if descr:
@@ -468,7 +468,7 @@ async def get_sq_dictionaries(
         # Try without schema first
         rows = db.execute(
             text(
-                'SELECT "ID" as id, "Name" as name, "Active" as active '
+                'SELECT "ID", "Name", "Active" '
                 'FROM "tbl_internalshippinggroups" '
                 'WHERE "Active" = true '
                 'ORDER BY "ID"'
@@ -479,7 +479,7 @@ async def get_sq_dictionaries(
             # Fallback to public schema
             rows = db.execute(
                 text(
-                    'SELECT "ID" as id, "Name" as name, "Active" as active '
+                    'SELECT "ID", "Name", "Active" '
                     'FROM public."tbl_internalshippinggroups" '
                     'WHERE "Active" = true '
                     'ORDER BY "ID"'
@@ -491,9 +491,10 @@ async def get_sq_dictionaries(
 
     if rows:
         for row in rows:
-            s_id = row.id
-            s_name = str(row.name or "").strip()
-            s_active = row.active
+            # Use index-based access
+            s_id = row[0]
+            s_name = str(row[1] or "").strip()
+            s_active = row[2]
             label = f"{s_id}: {s_name}"
             shipping_groups.append({
                 "id": s_id,
