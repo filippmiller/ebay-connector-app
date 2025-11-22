@@ -82,6 +82,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
   const [theme, setThemeState] = useState<GridThemeConfig>(DEFAULT_THEME);
 
   const fetchPrefs = useCallback(async (): Promise<void> => {
+    console.log(`[useGridPreferences] ${gridKey}: fetchPrefs called, setting loading=true`);
     setLoading(true);
     setError(null);
     try {
@@ -91,7 +92,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       });
       const availableCols = resp.data.available_columns || [];
       const colsCfg = resp.data.columns || null;
-      
+
       // Ensure we have at least some columns
       if (availableCols.length === 0) {
         console.warn(`Grid ${gridKey}: available_columns is empty from /api/grid/preferences`);
@@ -101,6 +102,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         setColumnsState(colsCfg);
         setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
         setError(null);
+        console.log(`[useGridPreferences] ${gridKey}: SUCCESS - ${availableCols.length} columns loaded`);
         return; // Success, exit early
       }
     } catch (e: any) {
@@ -113,12 +115,12 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       const legacyResp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
       const layout = legacyResp.data;
       const colsMeta = layout.available_columns || [];
-      
+
       if (colsMeta.length === 0) {
         console.warn(`Grid ${gridKey}: available_columns is empty from legacy layout endpoint`);
         throw new Error('Empty columns from legacy endpoint');
       }
-      
+
       const allowedNames = colsMeta.map((c) => c.name);
       const visible = (layout.visible_columns || allowedNames).filter((name) => allowedNames.includes(name));
       const colsCfg: GridColumnsConfig = {
@@ -182,6 +184,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         setThemeState(DEFAULT_THEME);
       }
     } finally {
+      console.log(`[useGridPreferences] ${gridKey}: finally block - setting loading=false`);
       setLoading(false);
     }
   }, [gridKey]);
