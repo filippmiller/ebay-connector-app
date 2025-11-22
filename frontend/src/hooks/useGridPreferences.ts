@@ -103,6 +103,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
         setError(null);
         console.log(`[useGridPreferences] ${gridKey}: SUCCESS - ${availableCols.length} columns loaded`);
+        setLoading(false);
         return; // Success, exit early
       }
     } catch (e: any) {
