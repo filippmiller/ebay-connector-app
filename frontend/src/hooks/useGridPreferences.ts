@@ -270,25 +270,4 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     reload,
     clearServerPreferences,
   };
-
-  // DEBUG: Log what we're actually returning
-  console.log(`[useGridPreferences] ${gridKey}: Returning state`, {
-    loading,
-    availableColumnsCount: availableColumns.length,
-    hasColumns: !!columns,
-    columnsVisibleCount: columns?.visible.length || 0
-  });
-
-  return {
-    loading,
-    error,
-    availableColumns,
-    columns,
-    theme,
-    setColumns,
-    setTheme,
-    save,
-    reload,
-    clearServerPreferences,
-  };
 }

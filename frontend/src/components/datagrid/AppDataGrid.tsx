@@ -150,7 +150,7 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
   }
 
   return (
-    <div className="w-full h-full ag-theme-sq" style={{ position: 'relative' }}>
+    <div className="w-full h-full ag-theme-quartz" style={{ position: 'relative' }}>
       {columnDefs.length === 0 ? (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">
           No columns configured
