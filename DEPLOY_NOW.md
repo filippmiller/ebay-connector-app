@@ -11,7 +11,7 @@
 ## What Changed
 
 ### Modified Files: 2
-- `frontend/src/components/datagrid/AppDataGrid.tsx` (Fix TS error)
+- `frontend/src/components/datagrid/AppDataGrid.tsx` (Fix TS error in debug logging & event types)
 - `frontend/src/auth/AuthContext.tsx` (Fix unused import)
 
 ### Documentation
@@ -25,9 +25,9 @@
 # Add fixes
 git add frontend/src/components/datagrid/AppDataGrid.tsx frontend/src/auth/AuthContext.tsx docs/DEPLOYMENT_CHECKLIST_GRID_FIX.md
 
-git commit -m "fix: resolve typescript build errors causing deploy failure
+git commit -m "fix: resolve typescript build errors
 
-- Fix TS2345 in AppDataGrid.tsx (event type mismatch)
+- Fix TS2345 in AppDataGrid.tsx (type narrowing in debug logging)
 - Fix TS6133 in AuthContext.tsx (unused useRef)
 "
 

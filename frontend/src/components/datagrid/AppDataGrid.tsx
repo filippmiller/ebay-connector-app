@@ -132,7 +132,7 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
     }
     if (rows.length > 0 && columnDefs.length > 0) {
       const firstRowKeys = Object.keys(rows[0] || {});
-      const columnFields = columnDefs.map((d) => d.field).filter(Boolean);
+      const columnFields = columnDefs.map((d) => d.field).filter((f): f is string => !!f);
       const missingFields = columnFields.filter((f) => !firstRowKeys.includes(f));
       if (missingFields.length > 0) {
         console.warn('[AppDataGrid] Column fields not in row data:', missingFields);
