@@ -46,8 +46,24 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const upstream = new URL(apiBase);
 
-  // Do NOT strip /api prefix, as backend routes are mounted at /api
-  upstream.pathname = url.pathname;
+  // Backend has mixed route prefixes:
+  // - /auth, /ebay, /orders, /messages, /offers, /migration, /ebay-accounts, /webhooks - NO /api prefix
+  // - /api/grid, /api/grids, /api/admin, /api/orders, /api/transactions, etc. - WITH /api prefix
+  // 
+  // Routes WITH /api prefix: keep the path as-is
+  // Routes WITHOUT /api prefix: strip /api from the path
+
+  const pathWithoutApi = url.pathname.replace(/^\/api/, '') || '/';
+
+  // Check if this is a route that expects /api prefix (newer routes)
+  const apiPrefixRoutes = ['/api/grid', '/api/grids', '/api/admin', '/api/orders', '/api/transactions',
+    '/api/financials', '/api/inventory', '/api/offers', '/api/buying',
+    '/api/listing', '/api/sq', '/api/shipping', '/api/timesheets', '/api/tasks',
+    '/api/ai', '/api/accounting'];
+
+  const needsApiPrefix = apiPrefixRoutes.some(route => url.pathname.startsWith(route));
+
+  upstream.pathname = needsApiPrefix ? url.pathname : pathWithoutApi;
   upstream.search = url.search;
 
   const headers = new Headers(request.headers);
