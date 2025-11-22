@@ -191,7 +191,8 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
 
   useEffect(() => {
     void fetchPrefs();
-  }, [fetchPrefs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setColumns = useCallback((partial: Partial<GridColumnsConfig>) => {
     setColumnsState((prev) => {
