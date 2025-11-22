@@ -78,25 +78,30 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
   onLayoutChange,
 }) => {
   const layoutDebounceRef = useRef<number | null>(null);
-  const columnDefs = useMemo<ColDef[]>(
-    () =>
-      columns.map((col) => {
-        const meta = columnMetaByName[col.name];
-        const type = meta?.type;
+  const columnDefs = useMemo<ColDef[]>(() => {
+    if (!columns || columns.length === 0) {
+      return [];
+    }
+    
+    return columns.map((col) => {
+      const meta = columnMetaByName[col.name];
+      const type = meta?.type;
 
-        return {
-          field: col.name,
-          headerName: meta?.label || col.label || col.name,
-          width: col.width,
-          resizable: false,
-          sortable: false,
-          filter: false,
-          suppressMenu: true,
-          valueFormatter: (params) => formatCellValue(params.value, type),
-        } as ColDef;
-      }),
-    [columns, columnMetaByName],
-  );
+      return {
+        colId: col.name, // Explicit colId for AG Grid
+        field: col.name, // Field name must match row data keys
+        headerName: meta?.label || col.label || col.name,
+        width: col.width,
+        resizable: true, // Enable resizing
+        sortable: false, // Sorting handled by backend
+        filter: false,
+        suppressMenu: true,
+        valueFormatter: (params) => formatCellValue(params.value, type),
+        // Ensure column is visible
+        hide: false,
+      } as ColDef;
+    });
+  }, [columns, columnMetaByName]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
@@ -124,32 +129,55 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
     }, 500);
   };
 
+  // Debug logging (remove in production)
+  if (process.env.NODE_ENV === 'development') {
+    if (columnDefs.length === 0 && columns.length > 0) {
+      console.warn('[AppDataGrid] columnDefs is empty but columns prop has', columns.length, 'items');
+    }
+    if (rows.length > 0 && columnDefs.length > 0) {
+      const firstRowKeys = Object.keys(rows[0] || {});
+      const columnFields = columnDefs.map((d) => d.field).filter(Boolean);
+      const missingFields = columnFields.filter((f) => !firstRowKeys.includes(f));
+      if (missingFields.length > 0) {
+        console.warn('[AppDataGrid] Column fields not in row data:', missingFields);
+        console.warn('[AppDataGrid] Row data keys:', firstRowKeys.slice(0, 10));
+        console.warn('[AppDataGrid] Column fields:', columnFields.slice(0, 10));
+      }
+    }
+  }
+
   return (
-    <div className="w-full h-full ag-theme-sq">
-      <AgGridReact
-        columnDefs={columnDefs}
-        defaultColDef={defaultColDef}
-        rowData={rows}
-        rowSelection="single"
-        suppressMultiSort
-        suppressScrollOnNewData
-        suppressAggFuncInHeader
-        animateRows
-        onColumnResized={handleColumnEvent}
-        onColumnMoved={handleColumnEvent}
-        onColumnVisible={handleColumnEvent}
-        onRowClicked={
-          onRowClick
-            ? (event) => {
-                if (event.data) {
-                  onRowClick(event.data as Record<string, any>);
+    <div className="w-full h-full ag-theme-sq" style={{ position: 'relative' }}>
+      {columnDefs.length === 0 ? (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">
+          No columns configured
+        </div>
+      ) : (
+        <AgGridReact
+          columnDefs={columnDefs}
+          defaultColDef={defaultColDef}
+          rowData={rows}
+          rowSelection="single"
+          suppressMultiSort
+          suppressScrollOnNewData
+          suppressAggFuncInHeader
+          animateRows
+          onColumnResized={handleColumnEvent}
+          onColumnMoved={handleColumnEvent}
+          onColumnVisible={handleColumnEvent}
+          onRowClicked={
+            onRowClick
+              ? (event) => {
+                  if (event.data) {
+                    onRowClick(event.data as Record<string, any>);
+                  }
                 }
-              }
-            : undefined
-        }
-      />
-      {loading && rows.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500 bg-white/60">
+              : undefined
+          }
+        />
+      )}
+      {loading && rows.length === 0 && columnDefs.length > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500 bg-white/60 z-10">
           Loading data…
         </div>
       )}

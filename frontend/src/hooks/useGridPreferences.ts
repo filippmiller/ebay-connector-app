@@ -89,74 +89,97 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       const resp = await api.get<GridPreferencesResponse>('/api/grid/preferences', {
         params: { grid_key: gridKey },
       });
-      setAvailableColumns(resp.data.available_columns || []);
-      setColumnsState(resp.data.columns || null);
-      setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
+      const availableCols = resp.data.available_columns || [];
+      const colsCfg = resp.data.columns || null;
+      
+      // Ensure we have at least some columns
+      if (availableCols.length === 0) {
+        console.warn(`Grid ${gridKey}: available_columns is empty from /api/grid/preferences`);
+        // Don't set error yet - try fallbacks
+      } else {
+        setAvailableColumns(availableCols);
+        setColumnsState(colsCfg);
+        setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
+        setError(null);
+        return; // Success, exit early
+      }
     } catch (e: any) {
       console.error('Failed to load grid preferences', e);
+      // Continue to fallbacks
+    }
 
-      // Fallback: try legacy /api/grids/{gridKey}/layout to keep existing grids working
+    // Fallback: try legacy /api/grids/{gridKey}/layout to keep existing grids working
+    try {
+      const legacyResp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
+      const layout = legacyResp.data;
+      const colsMeta = layout.available_columns || [];
+      
+      if (colsMeta.length === 0) {
+        console.warn(`Grid ${gridKey}: available_columns is empty from legacy layout endpoint`);
+        throw new Error('Empty columns from legacy endpoint');
+      }
+      
+      const allowedNames = colsMeta.map((c) => c.name);
+      const visible = (layout.visible_columns || allowedNames).filter((name) => allowedNames.includes(name));
+      const colsCfg: GridColumnsConfig = {
+        visible,
+        order: visible,
+        widths: layout.column_widths || {},
+        sort: layout.sort || null,
+      };
+      setAvailableColumns(colsMeta);
+      setColumnsState(colsCfg);
+      // Legacy layout has no theme concept – use default theme locally
+      setThemeState(DEFAULT_THEME);
+      setError(null);
+      return; // Success, exit early
+    } catch (fallbackErr: any) {
+      console.error('Fallback to legacy grid layout failed', fallbackErr);
+
+      // Last-resort fallback: try to infer columns from a sample of grid data.
       try {
-        const legacyResp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
-        const layout = legacyResp.data;
-        const colsMeta = layout.available_columns || [];
-        const allowedNames = colsMeta.map((c) => c.name);
-        const visible = (layout.visible_columns || allowedNames).filter((name) => allowedNames.includes(name));
-        const colsCfg: GridColumnsConfig = {
-          visible,
-          order: visible,
-          widths: layout.column_widths || {},
-          sort: layout.sort || null,
-        };
-        setAvailableColumns(colsMeta);
-        setColumnsState(colsCfg);
-        // Legacy layout has no theme concept – use default theme locally
-        setThemeState(DEFAULT_THEME);
-        setError(null);
-      } catch (fallbackErr: any) {
-        console.error('Fallback to legacy grid layout failed', fallbackErr);
+        const dataResp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data`, {
+          params: { limit: 1, offset: 0 },
+        });
+        const data = dataResp.data;
+        const firstRow = (data.rows && data.rows[0]) || {};
+        const keys = Object.keys(firstRow);
 
-        // Last-resort fallback: try to infer columns from a sample of grid data.
-        try {
-          const dataResp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data`, {
-            params: { limit: 1, offset: 0 },
-          });
-          const data = dataResp.data;
-          const firstRow = (data.rows && data.rows[0]) || {};
-          const keys = Object.keys(firstRow);
-
-          if (keys.length > 0) {
-            const colsMeta: GridColumnMeta[] = keys.map((name) => ({
-              name,
-              label: name,
-              type: 'string',
-              width_default: 150,
-              sortable: true,
-            }));
-            const colsCfg: GridColumnsConfig = {
-              visible: keys,
-              order: keys,
-              widths: {},
-              sort: data.sort || null,
-            };
-            setAvailableColumns(colsMeta);
-            setColumnsState(colsCfg);
-            setThemeState(DEFAULT_THEME);
-            setError(null);
-          } else {
-            setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
-            setAvailableColumns([]);
-            setColumnsState(null);
-            setThemeState(DEFAULT_THEME);
-          }
-        } catch (dataErr: any) {
-          console.error('Fallback to sample grid data failed', dataErr);
-          setError(e?.response?.data?.detail || e.message || 'Failed to load grid preferences');
-          // On error, fall back to defaults but keep going so the grid still renders.
+        if (keys.length > 0) {
+          const colsMeta: GridColumnMeta[] = keys.map((name) => ({
+            name,
+            label: name,
+            type: 'string',
+            width_default: 150,
+            sortable: true,
+          }));
+          const colsCfg: GridColumnsConfig = {
+            visible: keys,
+            order: keys,
+            widths: {},
+            sort: data.sort || null,
+          };
+          setAvailableColumns(colsMeta);
+          setColumnsState(colsCfg);
+          setThemeState(DEFAULT_THEME);
+          setError(null);
+          return; // Success, exit early
+        } else {
+          // No data rows - this might be OK if table is empty, but we still need columns
+          console.warn(`Grid ${gridKey}: data endpoint returned no rows, cannot infer columns`);
+          setError('Grid has no data and no column metadata available');
           setAvailableColumns([]);
           setColumnsState(null);
           setThemeState(DEFAULT_THEME);
         }
+      } catch (dataErr: any) {
+        console.error('Fallback to sample grid data failed', dataErr);
+        const errorMsg = dataErr?.response?.data?.detail || dataErr.message || 'Failed to load grid preferences';
+        setError(errorMsg);
+        // On error, set empty state but don't block - let DataGridPage handle it
+        setAvailableColumns([]);
+        setColumnsState(null);
+        setThemeState(DEFAULT_THEME);
       }
     } finally {
       setLoading(false);

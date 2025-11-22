@@ -87,8 +87,12 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   // Ensure we have a columns config once preferences are loaded.
   useEffect(() => {
     if (gridPrefs.loading) return;
-    if (gridPrefs.columns || gridPrefs.availableColumns.length === 0) return;
+    // If we already have a columns config, don't override it
+    if (gridPrefs.columns) return;
+    // If we have no available columns, we can't create a config
+    if (gridPrefs.availableColumns.length === 0) return;
 
+    // Initialize columns config with all available columns
     const allNames = gridPrefs.availableColumns.map((c) => c.name);
     gridPrefs.setColumns({
       visible: allNames,
@@ -145,19 +149,25 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
   // Recompute renderable columns whenever preferences or metadata change
   useEffect(() => {
-    const cfg = gridPrefs.columns;
-    if (!cfg || orderedVisibleColumns.length === 0) {
-      setColumns([]);
+    // If we have no columns to show, clear the state
+    if (orderedVisibleColumns.length === 0) {
+      // But only if we also have no available columns metadata
+      // (otherwise we're just waiting for config to initialize)
+      if (gridPrefs.availableColumns.length === 0) {
+        setColumns([]);
+      }
       return;
     }
 
+    const cfg = gridPrefs.columns;
     const nextCols: ColumnState[] = orderedVisibleColumns.map((name) => {
       const meta = availableColumnsMap[name];
-      const width = cfg.widths[name] || meta?.width_default || 150;
+      // Use config widths if available, otherwise metadata default, otherwise 150
+      const width = cfg?.widths[name] || meta?.width_default || 150;
       return { name, label: meta?.label || name, width };
     });
     setColumns(nextCols);
-  }, [gridPrefs.columns, orderedVisibleColumns, availableColumnsMap]);
+  }, [gridPrefs.columns, gridPrefs.availableColumns, orderedVisibleColumns, availableColumnsMap]);
 
   const handleGridLayoutChange = (order: string[], widths: Record<string, number>) => {
     const cfg = gridPrefs.columns;
@@ -177,8 +187,17 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   // Load data whenever preferences / pagination / filters change
   useEffect(() => {
     if (gridPrefs.loading) return;
-    const cfg = gridPrefs.columns;
-    if (!cfg || orderedVisibleColumns.length === 0) {
+    
+    // If we have available columns but no config yet, try to fetch with all available columns
+    // This allows data to load even if preferences haven't been fully initialized
+    const columnsToFetch = orderedVisibleColumns.length > 0 
+      ? orderedVisibleColumns 
+      : gridPrefs.availableColumns.length > 0
+        ? gridPrefs.availableColumns.map((c) => c.name)
+        : [];
+    
+    // Only block if we truly have no columns at all (not even metadata)
+    if (columnsToFetch.length === 0) {
       setRows([]);
       setTotal(0);
       return;
@@ -188,15 +207,16 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       setLoadingData(true);
       setError(null);
       try {
+        const cfg = gridPrefs.columns;
         const params: any = {
           limit,
           offset,
-          columns: orderedVisibleColumns.join(','),
+          columns: columnsToFetch.join(','),
         };
         if (search && search.trim()) {
           params.search = search.trim();
         }
-        if (cfg.sort && cfg.sort.column) {
+        if (cfg?.sort && cfg.sort.column) {
           params.sort_by = cfg.sort.column;
           params.sort_dir = cfg.sort.direction;
         }
@@ -210,13 +230,15 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       } catch (e: any) {
         console.error('Failed to load grid data', e);
         setError(e?.response?.data?.detail || e.message || 'Failed to load grid data');
+        setRows([]);
+        setTotal(0);
       } finally {
         setLoadingData(false);
       }
     };
 
     fetchData();
-  }, [gridPrefs.loading, gridPrefs.columns, orderedVisibleColumns, limit, offset, gridKey, extraParamsKey, extraParams, search]);
+  }, [gridPrefs.loading, gridPrefs.columns, gridPrefs.availableColumns, orderedVisibleColumns, limit, offset, gridKey, extraParamsKey, extraParams, search]);
 
   const toggleColumnVisibility = (name: string) => {
     const cfg = gridPrefs.columns;
@@ -376,9 +398,11 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       >
         {gridPrefs.loading ? (
           <div className="p-4 text-sm text-gray-500">Loading layout…</div>
-        ) : orderedVisibleColumns.length === 0 ? (
+        ) : columns.length === 0 && gridPrefs.availableColumns.length === 0 ? (
           <div className="p-4 text-sm text-gray-500">No columns configured.</div>
-        ) : rows.length === 0 ? (
+        ) : columns.length === 0 ? (
+          <div className="p-4 text-sm text-gray-500">Initializing columns…</div>
+        ) : rows.length === 0 && !loadingData ? (
           <div className="p-4 text-sm text-gray-500">No data.</div>
         ) : (
           <AppDataGrid
