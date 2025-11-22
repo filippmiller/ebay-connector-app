@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import api from '@/lib/apiClient';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -41,7 +42,7 @@ export default function InventoryPageV2() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detailItem, setDetailItem] = useState<InventoryItem | null>(null);
-  
+
   const [filters, setFilters] = useState({
     q: '',
     status: '',
@@ -59,9 +60,8 @@ export default function InventoryPageV2() {
     date_from: '',
     date_to: ''
   });
-  
+
   const { toast } = useToast();
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
     fetchInventory();
@@ -76,23 +76,17 @@ export default function InventoryPageV2() {
   const fetchInventory = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const params = new URLSearchParams();
-      
+
       Object.entries(filters).forEach(([key, value]) => {
         if (value && value !== '__all__') params.append(key, value);
       });
       params.append('limit', '100');
-      
-      const response = await fetch(`${API_URL}/api/inventory/search?${params}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setItems(data.rows || []);
-        setTotal(data.total || 0);
-      }
+
+      const response = await api.get(`/inventory/search`, { params });
+
+      setItems(response.data.rows || []);
+      setTotal(response.data.total || 0);
     } catch (error) {
       console.error('Failed to fetch inventory:', error);
     } finally {
@@ -102,15 +96,8 @@ export default function InventoryPageV2() {
 
   const fetchDetail = async (id: number) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/inventory/${id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setDetailItem(data);
-      }
+      const response = await api.get(`/inventory/${id}`);
+      setDetailItem(response.data);
     } catch (error) {
       console.error('Failed to fetch detail:', error);
     }
@@ -123,28 +110,17 @@ export default function InventoryPageV2() {
     }
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/inventory/admin/bulk`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          ids: Array.from(selected),
-          action
-        })
+      const response = await api.post('/inventory/admin/bulk', {
+        ids: Array.from(selected),
+        action
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        toast({
-          title: "Bulk Action Complete",
-          description: `Updated ${data.updated} items`
-        });
-        setSelected(new Set());
-        fetchInventory();
-      }
+      toast({
+        title: "Bulk Action Complete",
+        description: `Updated ${response.data.updated} items`
+      });
+      setSelected(new Set());
+      fetchInventory();
     } catch (error) {
       toast({ title: "Bulk action failed", variant: "destructive" });
     }
@@ -156,7 +132,9 @@ export default function InventoryPageV2() {
     Object.entries(filters).forEach(([key, value]) => {
       if (value) params.append(key, value);
     });
-    window.open(`${API_URL}/api/inventory/export.csv?${params}&token=${token}`, '_blank');
+    // Construct URL using api base URL (which is /api by default)
+    const baseUrl = api.defaults.baseURL || '/api';
+    window.open(`${baseUrl}/inventory/export.csv?${params}&token=${token}`, '_blank');
   };
 
   const clearFilters = () => {
@@ -250,7 +228,7 @@ export default function InventoryPageV2() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <Select value={filters.status} onValueChange={(v) => setFilters({...filters, status: v})}>
+          <Select value={filters.status} onValueChange={(v) => setFilters({ ...filters, status: v })}>
             <SelectTrigger className="h-9">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
@@ -265,7 +243,7 @@ export default function InventoryPageV2() {
             </SelectContent>
           </Select>
 
-          <Select value={filters.ebay_status} onValueChange={(v) => setFilters({...filters, ebay_status: v})}>
+          <Select value={filters.ebay_status} onValueChange={(v) => setFilters({ ...filters, ebay_status: v })}>
             <SelectTrigger className="h-9">
               <SelectValue placeholder="eBay Status" />
             </SelectTrigger>
@@ -281,49 +259,49 @@ export default function InventoryPageV2() {
           <Input
             placeholder="Storage ID"
             value={filters.storage}
-            onChange={(e) => setFilters({...filters, storage: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, storage: e.target.value })}
             className="h-9"
           />
 
           <Input
             placeholder="SKU"
             value={filters.sku_code}
-            onChange={(e) => setFilters({...filters, sku_code: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, sku_code: e.target.value })}
             className="h-9"
           />
 
           <Input
             placeholder="ItemID / eBay ID"
             value={filters.ebay_listing_id}
-            onChange={(e) => setFilters({...filters, ebay_listing_id: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, ebay_listing_id: e.target.value })}
             className="h-9"
           />
 
           <Input
             placeholder="Part Number"
             value={filters.part_number}
-            onChange={(e) => setFilters({...filters, part_number: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, part_number: e.target.value })}
             className="h-9"
           />
 
           <Input
             placeholder="Title Search"
             value={filters.q}
-            onChange={(e) => setFilters({...filters, q: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, q: e.target.value })}
             className="h-9 col-span-2"
           />
 
           <Input
             placeholder="Author"
             value={filters.author}
-            onChange={(e) => setFilters({...filters, author: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, author: e.target.value })}
             className="h-9"
           />
 
           <Input
             placeholder="Tracking #"
             value={filters.tracking_number}
-            onChange={(e) => setFilters({...filters, tracking_number: e.target.value})}
+            onChange={(e) => setFilters({ ...filters, tracking_number: e.target.value })}
             className="h-9"
           />
         </div>
@@ -427,7 +405,7 @@ export default function InventoryPageV2() {
           <SheetHeader>
             <SheetTitle>Inventory Item Detail</SheetTitle>
           </SheetHeader>
-          
+
           {detailItem && (
             <div className="mt-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">

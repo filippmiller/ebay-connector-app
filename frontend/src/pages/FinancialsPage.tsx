@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2 } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
+import api from '@/lib/apiClient';
 
 interface FinancialSummaryData {
   gross_sales: number;
@@ -29,23 +30,14 @@ export default function FinancialsPage() {
   const [transactionType, setTransactionType] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
   useEffect(() => {
     fetchSummary();
   }, []);
 
   const fetchSummary = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/financials/summary`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setSummary(data);
-      }
+      const response = await api.get<FinancialSummaryData>('/api/financials/summary');
+      setSummary(response.data);
     } catch (error) {
       console.error('Failed to fetch financials:', error);
     } finally {
@@ -82,7 +74,7 @@ export default function FinancialsPage() {
                 <TabsTrigger value="fees">Fees</TabsTrigger>
                 <TabsTrigger value="payouts">Payouts</TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="summary">
                 <FinancialSummaryCards summary={summary} />
               </TabsContent>
@@ -144,7 +136,7 @@ export default function FinancialsPage() {
                   </div>
                 </div>
               </TabsContent>
-              
+
               <TabsContent value="fees" className="flex-1 flex flex-col">
                 <div className="mt-4 flex-1 min-h-0">
                   <DataGridPage
@@ -154,7 +146,7 @@ export default function FinancialsPage() {
                   />
                 </div>
               </TabsContent>
-              
+
               <TabsContent value="payouts">
                 <Card className="p-6 mt-4">
                   <p className="text-gray-600">Payouts module ready</p>
@@ -163,7 +155,7 @@ export default function FinancialsPage() {
             </Tabs>
           )}
         </div>
-    </div>
+      </div>
     </div>
   );
 }
