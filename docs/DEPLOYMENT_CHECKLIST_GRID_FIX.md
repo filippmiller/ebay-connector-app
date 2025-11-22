@@ -1,43 +1,49 @@
-# DEPLOYMENT CHECKLIST - Grid Build Fix
+# DEPLOYMENT CHECKLIST - Grid Build & Proxy Fix
 
 **Date**: 2025-11-22
 **Status**: ✅ READY FOR DEPLOYMENT
 
 ## 🚨 Critical Fixes
 
-### 1. Build Failure (TypeScript Errors)
+### 1. Build Failure (TypeScript Errors) - ALREADY PUSHED
 **Fixed**: `src/components/datagrid/AppDataGrid.tsx`
-- **Issue 1**: `Argument of type 'string | undefined' is not assignable to parameter of type 'string'` in debug logging block.
-  - **Root Cause**: `columnDefs.map(d => d.field).filter(Boolean)` does not automatically narrow the type from `string | undefined` to `string` in TypeScript, causing `includes()` to fail.
-  - **Fix**: Added type predicate `filter((f): f is string => !!f)`.
-- **Issue 2**: Potential event type mismatch in `handleColumnEvent`.
-  - **Fix**: Relaxed event type to `any`.
-- **Restored**: Event listeners (`onColumnResized`, etc.) are enabled again.
+- Fixed `TS2345` error in debug logging.
+- Restored event listeners.
 
-**Fixed**: `src/auth/AuthContext.tsx`
-- **Issue**: Unused `useRef` import causing build failure.
-- **Fix**: Removed `useRef` from imports.
+### 2. Cloudflare Proxy 404 (Grid Loading Stuck) - NEW
+**Fixed**: `frontend/functions/api/[[path]].ts`
+- **Issue**: The proxy was stripping the `/api` prefix from requests (e.g., `/api/grid/preferences` -> `/grid/preferences`).
+- **Root Cause**: The backend routes are mounted with `/api` prefix (e.g., `prefix="/api/grid"`). So the backend expects `/api/grid/preferences`.
+- **Result**: Backend returned 404, causing the frontend to hang on "Loading layout...".
+- **Fix**: Removed the logic that strips `/api` from the path. The proxy now forwards the full path.
 
 ## 🚀 Deployment Steps
 
-1. **Commit the fixes**:
+1. **Commit the proxy fix**:
    ```bash
-   git add frontend/src/components/datagrid/AppDataGrid.tsx frontend/src/auth/AuthContext.tsx
-   git commit -m "fix: resolve typescript build errors in AppDataGrid (debug logging type narrowing)"
+   git add frontend/functions/api/[[path]].ts
+   git commit -m "fix: cloudflare proxy should not strip /api prefix
+
+   - Fixes 404 error on /api/grid/preferences
+   - Backend expects /api prefix in routes
+   - Resolves 'Loading layout...' hanging issue
+   "
    git push origin main
    ```
 
 2. **Monitor Build**:
-   - Watch the build logs. The error `TS2345` should be gone.
+   - Watch Cloudflare Pages build.
 
 3. **Verify Grids**:
-   - Check Orders, Transactions, etc.
-   - Verify column resizing/moving saves the layout (since listeners are restored).
+   - Hard refresh the page.
+   - "Loading layout..." should disappear and columns should load.
 
 ## 📝 File Changes
 
-### `frontend/src/components/datagrid/AppDataGrid.tsx`
+### `frontend/functions/api/[[path]].ts`
 ```diff
--      const columnFields = columnDefs.map((d) => d.field).filter(Boolean);
-+      const columnFields = columnDefs.map((d) => d.field).filter((f): f is string => !!f);
+-  const strippedPath = url.pathname.replace(/^\/api/, '') || '/';
+-  upstream.pathname = strippedPath;
++  // Do NOT strip /api prefix, as backend routes are mounted at /api
++  upstream.pathname = url.pathname;
 ```

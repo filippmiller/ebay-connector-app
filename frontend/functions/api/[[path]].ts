@@ -10,7 +10,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     pathname: new URL(request.url).pathname,
     hasApiBase: !!env.API_PUBLIC_BASE_URL
   });
-  
+
   // Handle CORS preflight
   if (request.method === 'OPTIONS') {
     return new Response(null, {
@@ -23,36 +23,36 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       },
     });
   }
-  
+
   const apiBase = env.API_PUBLIC_BASE_URL;
-  
+
   if (!apiBase) {
     console.error('[CF Proxy] API_PUBLIC_BASE_URL not configured!');
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         error: 'API_PUBLIC_BASE_URL not configured',
         message: 'The API_PUBLIC_BASE_URL environment variable must be set in Cloudflare Pages settings'
       }),
-      { 
+      {
         status: 500,
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
         }
       }
     );
   }
-  
+
   const url = new URL(request.url);
   const upstream = new URL(apiBase);
-  
-  const strippedPath = url.pathname.replace(/^\/api/, '') || '/';
-  upstream.pathname = strippedPath;
+
+  // Do NOT strip /api prefix, as backend routes are mounted at /api
+  upstream.pathname = url.pathname;
   upstream.search = url.search;
-  
+
   const headers = new Headers(request.headers);
   headers.delete('host'); // avoid passing CF host upstream
-  
+
   const init: RequestInit = {
     method: request.method,
     headers,
@@ -60,7 +60,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     // Increase timeout for Cloudflare Functions (max 30s for free tier)
     signal: AbortSignal.timeout(25000)
   };
-  
+
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     // For POST/PUT/PATCH, we need to read the body
     const contentType = request.headers.get('content-type') || '';
@@ -71,7 +71,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       init.body = await request.arrayBuffer();
     }
   }
-  
+
   try {
     console.log('[CF Proxy] Proxying to:', upstream.toString());
     const response = await fetch(upstream.toString(), init);
@@ -80,13 +80,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       statusText: response.statusText,
       url: upstream.toString()
     });
-    
+
     // Clone response to modify headers
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set('Access-Control-Allow-Origin', url.origin);
     responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     responseHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    
+
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -99,13 +99,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       error: error.message,
       errorName: error.name,
       apiBase: apiBase,
-      path: strippedPath
+      path: url.pathname
     };
-    
+
     console.error('[CF Proxy] Error proxying request:', errorDetails);
-    
+
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         error: 'Backend request failed',
         message: error.message,
         details: errorDetails,
@@ -114,9 +114,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
           expectedFormat: 'https://your-backend-url.up.railway.app'
         }
       }),
-      { 
+      {
         status: 502,
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': url.origin
         }
