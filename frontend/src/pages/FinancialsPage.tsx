@@ -57,7 +57,7 @@ export default function FinancialsPage() {
               </div>
             </div>
 
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-[400px] h-[600px]">
               <DataGridPage
                 gridKey="finances_fees"
                 title="Finances fees"
