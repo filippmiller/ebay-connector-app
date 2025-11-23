@@ -266,12 +266,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
           <div className="p-4 text-sm text-gray-500">No columns configured.</div>
         ) : columns.length === 0 ? (
           <div className="p-4 text-sm text-gray-500">Initializing columns…</div>
-        ) : rows.length === 0 && !loadingData ? (
-          <div className="p-4 text-sm text-gray-500">No data.</div>
         ) : (
           <AppDataGrid
             columns={columns}
-            rows={rows}
+            rows={rows ?? []}
             columnMetaByName={availableColumnsMap}
             loading={loadingData}
             onRowClick={onRowClick}

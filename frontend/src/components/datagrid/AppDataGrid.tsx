@@ -98,7 +98,6 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
         resizable: true, // Enable resizing
         sortable: false, // Sorting handled by backend
         filter: false,
-        suppressMenu: true,
         valueFormatter: (params) => formatCellValue(params.value, type),
         // Ensure column is visible
         hide: false,
@@ -157,10 +156,11 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
         </div>
       ) : (
         <AgGridReact
+          theme="legacy"
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           rowData={rows}
-          rowSelection="single"
+          rowSelection={{ mode: 'single' }}
           suppressMultiSort
           suppressScrollOnNewData
           suppressAggFuncInHeader
