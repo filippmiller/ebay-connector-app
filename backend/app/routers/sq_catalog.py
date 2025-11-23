@@ -104,6 +104,221 @@ async def search_models(
     return {"items": items, "total": len(items)}
 
 
+@router.get("/parts-models")
+async def list_parts_models(
+    search: Optional[str] = Query(None, description="Search term for model name"),
+    brand_id: Optional[int] = Query(None, description="Filter by brand ID"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> dict:
+    """List/search parts models from tbl_parts_models table.
+    
+    Returns full model records including all condition scores for the Models modal grid.
+    """
+    
+    table = tbl_parts_models_table
+    if table is None:
+        return {"items": [], "total": 0}
+    
+    # Build query dynamically using raw SQL for maximum compatibility
+    where_clauses = []
+    params = {}
+    
+    if search:
+        where_clauses.append('LOWER("Model") LIKE :search')
+        params['search'] = f'%{search.lower()}%'
+    
+    if brand_id is not None:
+        where_clauses.append('"Brand_ID" = :brand_id')
+        params['brand_id'] = brand_id
+    
+    where_clause = ' AND '.join(where_clauses) if where_clauses else '1=1'
+    
+    # Count total
+    count_query = text(f'SELECT COUNT(*) FROM "tbl_parts_models" WHERE {where_clause}')
+    total = db.execute(count_query, params).scalar() or 0
+    
+    # Fetch paginated results
+    fetch_query = text(f'''
+        SELECT 
+            "ID" as id,
+            "Model_ID" as model_id,
+            "Brand_ID" as brand_id,
+            "Model" as model,
+            "oc_filter_Model_ID" as oc_filter_model_id,
+            "oc_filter_Model_ID2" as oc_filter_model_id2,
+            "BuyingPrice" as buying_price,
+            "working",
+            "motherboard",
+            "battery",
+            "hdd",
+            "keyboard",
+            "memory",
+            "screen",
+            "casing",
+            "drive",
+            "damage",
+            "cd",
+            "adapter",
+            "record_created",
+            "do_not_buy"
+        FROM "tbl_parts_models"
+        WHERE {where_clause}
+        ORDER BY "Model" ASC
+        LIMIT :limit OFFSET :offset
+    ''')
+    
+    params['limit'] = limit
+    params['offset'] = offset
+    
+    rows = db.execute(fetch_query, params).fetchall()
+    
+    items = []
+    for row in rows:
+        items.append({
+            'id': row.id,
+            'model_id': row.model_id,
+            'brand_id': row.brand_id,
+            'model': row.model or '',
+            'oc_filter_model_id': row.oc_filter_model_id,
+            'oc_filter_model_id2': row.oc_filter_model_id2,
+            'buying_price': row.buying_price or 0,
+            'working': row.working or 0,
+            'motherboard': row.motherboard or 0,
+            'battery': row.battery or 0,
+            'hdd': row.hdd or 0,
+            'keyboard': row.keyboard or 0,
+            'memory': row.memory or 0,
+            'screen': row.screen or 0,
+            'casing': row.casing or 0,
+            'drive': row.drive or 0,
+            'damage': row.damage or 0,
+            'cd': row.cd or 0,
+            'adapter': row.adapter or 0,
+            'record_created': row.record_created.isoformat() if row.record_created else None,
+            'do_not_buy': row.do_not_buy or False,
+        })
+    
+    return {"items": items, "total": total}
+
+
+@router.post("/parts-models")
+async def create_parts_model(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> dict:
+    """Create a new parts model in tbl_parts_models.
+    
+    All NOT NULL integer fields default to 0 if not provided.
+    record_created is set to NOW() by the database.
+    """
+    
+    table = tbl_parts_models_table
+    if table is None:
+        raise HTTPException(
+            status_code=503,
+            detail="tbl_parts_models table not available in this environment"
+        )
+    
+    # Validate required field
+    model_name = (payload.get('model') or '').strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="Model name is required")
+    
+    # Prepare insert with safe defaults for all NOT NULL fields
+    insert_data = {
+        'Model_ID': payload.get('model_id'),
+        'Brand_ID': payload.get('brand_id'),
+        'Model': model_name,
+        'oc_filter_Model_ID': payload.get('oc_filter_model_id'),
+        'oc_filter_Model_ID2': payload.get('oc_filter_model_id2'),
+        'BuyingPrice': payload.get('buying_price', 0),
+        'working': payload.get('working', 0),
+        'motherboard': payload.get('motherboard', 0),
+        'battery': payload.get('battery', 0),
+        'hdd': payload.get('hdd', 0),
+        'keyboard': payload.get('keyboard', 0),
+        'memory': payload.get('memory', 0),
+        'screen': payload.get('screen', 0),
+        'casing': payload.get('casing', 0),
+        'drive': payload.get('drive', 0),
+        'damage': payload.get('damage', 0),
+        'cd': payload.get('cd', 0),
+        'adapter': payload.get('adapter', 0),
+        'do_not_buy': payload.get('do_not_buy', False),
+    }
+    
+    # Build INSERT statement with RETURNING to get the created record
+    columns = ', '.join(f'"{k}"' for k in insert_data.keys())
+    placeholders = ', '.join(f':{k}' for k in insert_data.keys())
+    
+    insert_query = text(f'''
+        INSERT INTO "tbl_parts_models" ({columns}, "record_created")
+        VALUES ({placeholders}, NOW())
+        RETURNING 
+            "ID" as id,
+            "Model_ID" as model_id,
+            "Brand_ID" as brand_id,
+            "Model" as model,
+            "oc_filter_Model_ID" as oc_filter_model_id,
+            "oc_filter_Model_ID2" as oc_filter_model_id2,
+            "BuyingPrice" as buying_price,
+            "working",
+            "motherboard",
+            "battery",
+            "hdd",
+            "keyboard",
+            "memory",
+            "screen",
+            "casing",
+            "drive",
+            "damage",
+            "cd",
+            "adapter",
+            "record_created",
+            "do_not_buy"
+    ''')
+    
+    try:
+        result = db.execute(insert_query, insert_data)
+        db.commit()
+        row = result.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=500, detail="Failed to create model")
+        
+        return {
+            'id': row.id,
+            'model_id': row.model_id,
+            'brand_id': row.brand_id,
+            'model': row.model or '',
+            'oc_filter_model_id': row.oc_filter_model_id,
+            'oc_filter_model_id2': row.oc_filter_model_id2,
+            'buying_price': row.buying_price or 0,
+            'working': row.working or 0,
+            'motherboard': row.motherboard or 0,
+            'battery': row.battery or 0,
+            'hdd': row.hdd or 0,
+            'keyboard': row.keyboard or 0,
+            'memory': row.memory or 0,
+            'screen': row.screen or 0,
+            'casing': row.casing or 0,
+            'drive': row.drive or 0,
+            'damage': row.damage or 0,
+            'cd': row.cd or 0,
+            'adapter': row.adapter or 0,
+            'record_created': row.record_created.isoformat() if row.record_created else None,
+            'do_not_buy': row.do_not_buy or False,
+        }
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to create parts model", exc_info=e)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
 @router.get("/items", response_model=SqItemListResponse)
 async def list_sq_items(
     page: int = Query(1, ge=1),
