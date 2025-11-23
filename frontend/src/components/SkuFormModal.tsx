@@ -208,7 +208,6 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
   // Models modal state for browsing/creating models
   const [showModelsModal, setShowModelsModal] = useState(false);
-  const [selectedPartsModel, setSelectedPartsModel] = useState<PartsModel | null>(null);
 
   // Derived counters
   const titleRemaining = useMemo(() => 80 - (form.title?.length ?? 0), [form.title]);
@@ -393,7 +392,6 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
   const handlePartsModelSelected = (partsModel: PartsModel) => {
     // When a model is selected from ModelsModal, update the form
-    setSelectedPartsModel(partsModel);
     setForm((prev) => ({
       ...prev,
       model: partsModel.model,
