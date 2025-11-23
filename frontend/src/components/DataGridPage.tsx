@@ -295,7 +295,48 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                     <button className="px-2 py-1 border rounded text-[11px] bg-gray-50 hover:bg-gray-100" onClick={handleClearAllColumns}>Clear all</button>
                   </div>
                 </div>
-                {/* List of columns with checkboxes could be added here */}
+                <div className="space-y-1">
+                  {gridPrefs.availableColumns.map((col) => {
+                    const isVisible = !gridPrefs.columns?.visible || gridPrefs.columns.visible.includes(col.name);
+                    return (
+                      <label key={col.name} className="flex items-center gap-2 p-1 hover:bg-gray-50 rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={isVisible}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            const currentVisible = gridPrefs.columns?.visible || gridPrefs.availableColumns.map(c => c.name);
+                            let nextVisible: string[];
+                            if (checked) {
+                              // Add to visible if not present, preserving original order if possible or appending
+                              if (!currentVisible.includes(col.name)) {
+                                // To preserve order, we can filter availableColumns
+                                const allNames = gridPrefs.availableColumns.map(c => c.name);
+                                const newSet = new Set([...currentVisible, col.name]);
+                                nextVisible = allNames.filter(n => newSet.has(n));
+                              } else {
+                                nextVisible = currentVisible;
+                              }
+                            } else {
+                              // Remove from visible
+                              nextVisible = currentVisible.filter(n => n !== col.name);
+                            }
+
+                            const cfg = gridPrefs.columns;
+                            gridPrefs.setColumns({
+                              visible: nextVisible,
+                              order: cfg?.order || nextVisible, // Update order to match visible if needed, or keep existing
+                              widths: cfg?.widths || {},
+                              sort: cfg?.sort || null
+                            });
+                          }}
+                        />
+                        <span className="text-sm text-gray-700">{col.label || col.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button className="px-2 py-1 border rounded bg-gray-100" onClick={handleResetToDefaults}>Reset to defaults</button>
