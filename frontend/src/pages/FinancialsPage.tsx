@@ -18,14 +18,14 @@ export default function FinancialsPage() {
   }, [fromDate, toDate, searchQuery]);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen flex flex-col bg-gray-50">
       <FixedHeader />
-      {/* Content area below fixed header fills remaining viewport height */}
-      <div className="flex-1 pt-16 px-4 pb-4">
-        <div className="h-full w-full flex flex-col">
+      {/* Main content area under fixed header: full width, grid fills all available space */}
+      <div className="pt-16 flex-1 px-4 py-6 overflow-hidden">
+        <div className="w-full h-full flex flex-col">
           <h1 className="text-3xl font-bold mb-4">Finances</h1>
 
-          <div className="flex-1 flex flex-col">
+          <div className="flex-1 min-h-0 flex flex-col gap-3">
             <div className="flex flex-wrap items-end gap-4 mb-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
@@ -57,7 +57,7 @@ export default function FinancialsPage() {
               </div>
             </div>
 
-            <div className="flex-1 min-h-[400px] h-[600px]">
+            <div className="flex-1 min-h-0">
               <DataGridPage
                 gridKey="finances_fees"
                 title="Finances fees"
