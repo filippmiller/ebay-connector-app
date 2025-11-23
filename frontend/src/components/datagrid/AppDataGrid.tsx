@@ -160,7 +160,7 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           rowData={rows}
-          rowSelection={{ mode: 'single' }}
+          rowSelection={{ mode: 'singleRow' }}
           suppressMultiSort
           suppressScrollOnNewData
           suppressAggFuncInHeader
