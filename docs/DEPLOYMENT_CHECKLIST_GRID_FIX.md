@@ -1,49 +1,55 @@
 # DEPLOYMENT CHECKLIST - Grid Build & Proxy Fix
 
-**Date**: 2025-11-22
+**Date**: 2025-11-23
 **Status**: ✅ READY FOR DEPLOYMENT
 
 ## 🚨 Critical Fixes
 
-### 1. Build Failure (TypeScript Errors) - ALREADY PUSHED
+### 1. Build Failure (TypeScript Errors)
 **Fixed**: `src/components/datagrid/AppDataGrid.tsx`
 - Fixed `TS2345` error in debug logging.
 - Restored event listeners.
 
-### 2. Cloudflare Proxy 404 (Grid Loading Stuck) - NEW
+### 2. Cloudflare Proxy Routing
 **Fixed**: `frontend/functions/api/[[path]].ts`
-- **Issue**: The proxy was stripping the `/api` prefix from requests (e.g., `/api/grid/preferences` -> `/grid/preferences`).
-- **Root Cause**: The backend routes are mounted with `/api` prefix (e.g., `prefix="/api/grid"`). So the backend expects `/api/grid/preferences`.
-- **Result**: Backend returned 404, causing the frontend to hang on "Loading layout...".
-- **Fix**: Removed the logic that strips `/api` from the path. The proxy now forwards the full path.
+- **Issue**: Proxy was stripping `/api` prefix for `/api/ui-tweak`.
+- **Fix**: Added `/api/ui-tweak` to `apiPrefixRoutes` allowlist.
+
+### 3. DataGridPage Structure Fix
+**Fixed**: `frontend/src/components/DataGridPage.tsx`
+- **Issue**: Component was structurally broken (misplaced return, nested hooks).
+- **Fix**: Rewrote the component to correctly scope hooks and helper functions.
+
+### 4. AdminJobsPage Refactor
+**Fixed**: `frontend/src/pages/AdminJobsPage.tsx`
+- **Issue**: Hardcoded `localhost` URLs and manual `fetch`.
+- **Fix**: Refactored to use `apiClient`.
+
+### 5. UI Tweak 500 Error
+**Fixed**: Database Migration
+- **Issue**: `ui_tweak_settings` table missing, multiple alembic heads.
+- **Fix**: Merged heads (`47a2e7eb9e6f_merge_heads.py`) and applied `ui_tweak_settings_20251121`.
 
 ## 🚀 Deployment Steps
 
-1. **Commit the proxy fix**:
+1. **Commit the fixes**:
    ```bash
-   git add frontend/functions/api/[[path]].ts
-   git commit -m "fix: cloudflare proxy should not strip /api prefix
+   git add frontend/functions/api/[[path]].ts frontend/src/components/DataGridPage.tsx frontend/src/pages/AdminJobsPage.tsx frontend/src/components/datagrid/AppDataGrid.tsx
+   git commit -m "fix: resolve grid issues and proxy routing
 
-   - Fixes 404 error on /api/grid/preferences
-   - Backend expects /api prefix in routes
-   - Resolves 'Loading layout...' hanging issue
+   - Fix DataGridPage structure
+   - Fix AdminJobsPage apiClient usage
+   - Add /api/ui-tweak to proxy allowlist
    "
    git push origin main
    ```
 
-2. **Monitor Build**:
-   - Watch Cloudflare Pages build.
+2. **Run Migrations**:
+   ```bash
+   railway run alembic upgrade head
+   ```
 
-3. **Verify Grids**:
-   - Hard refresh the page.
-   - "Loading layout..." should disappear and columns should load.
-
-## 📝 File Changes
-
-### `frontend/functions/api/[[path]].ts`
-```diff
--  const strippedPath = url.pathname.replace(/^\/api/, '') || '/';
--  upstream.pathname = strippedPath;
-+  // Do NOT strip /api prefix, as backend routes are mounted at /api
-+  upstream.pathname = url.pathname;
-```
+3. **Verify**:
+   - Check Grids (Finances, Inventory).
+   - Check Admin Jobs.
+   - Check UI Tweak settings.

@@ -22,7 +22,7 @@ export default defineConfig({
       "/api": {
         target: backendTarget,
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api/, ""),
+        // DO NOT strip /api prefix - backend routes are mounted at /api/*
       },
     },
   },
