@@ -103,6 +103,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
         setError(null);
         console.log(`[useGridPreferences] ${gridKey}: SUCCESS - ${availableCols.length} columns loaded`);
+        console.log(`[useGridPreferences] ${gridKey}: Loaded columns config:`, JSON.stringify(colsCfg, null, 2));
         setLoading(false);
         return; // Success, exit early
       }
@@ -232,12 +233,15 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     async (columnsOverride?: GridColumnsConfig) => {
       if (!columns && !columnsOverride) return;
       const cols = columnsOverride || columns!;
+      const payload = {
+        grid_key: gridKey,
+        columns: cols,
+        theme,
+      };
+      console.log('[useGridPreferences] save() called with payload:', JSON.stringify(payload, null, 2));
       try {
-        await api.post<GridPreferencesResponse>('/api/grid/preferences', {
-          grid_key: gridKey,
-          columns: cols,
-          theme,
-        });
+        const response = await api.post<GridPreferencesResponse>('/api/grid/preferences', payload);
+        console.log('[useGridPreferences] save() response:', response.data);
       } catch (e) {
         console.error('Failed to save grid preferences', e);
       }
