@@ -163,29 +163,6 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     const nextCols: ColumnState[] = orderedVisibleColumns.map((name) => {
       const meta = availableColumnsMap[name];
       // Use config widths if available, otherwise metadata default, otherwise 150
-      const width = cfg?.widths[name] || meta?.width_default || 150;
-      return { name, label: meta?.label || name, width };
-    });
-    setColumns(nextCols);
-  }, [gridPrefs.columns, gridPrefs.availableColumns, orderedVisibleColumns, availableColumnsMap]);
-
-  const handleGridLayoutChange = (order: string[], widths: Record<string, number>) => {
-    const cfg = gridPrefs.columns;
-    if (!cfg) return;
-
-    const nextOrder = order.filter((name) => cfg.order.includes(name));
-    const nextWidths: Record<string, number> = { ...cfg.widths, ...widths };
-
-    gridPrefs.setColumns({ order: nextOrder, widths: nextWidths });
-    void gridPrefs.save({
-      const nextVisible = alreadyVisible
-        ? cfg.visible.filter((c) => c !== name)
-        : [...cfg.visible, name];
-
-      // Ensure newly visible columns are added to the order list
-      let nextOrder = cfg.order;
-      if(!alreadyVisible && !nextOrder.includes(name)) {
-      nextOrder = [...nextOrder, name];
     }
 
     gridPrefs.setColumns({ visible: nextVisible, order: nextOrder });
