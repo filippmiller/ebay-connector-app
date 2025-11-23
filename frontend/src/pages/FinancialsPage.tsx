@@ -36,7 +36,7 @@ export default function FinancialsPage() {
 
   const fetchSummary = async () => {
     try {
-      const response = await api.get<FinancialSummaryData>('/api/financials/summary');
+      const response = await api.get<FinancialSummaryData>('/financials/summary');
       setSummary(response.data);
     } catch (error) {
       console.error('Failed to fetch financials:', error);
