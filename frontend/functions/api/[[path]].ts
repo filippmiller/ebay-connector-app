@@ -59,7 +59,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const apiPrefixRoutes = ['/api/grid', '/api/grids', '/api/admin', '/api/orders', '/api/transactions',
     '/api/financials', '/api/inventory', '/api/offers', '/api/buying',
     '/api/listing', '/api/sq', '/api/shipping', '/api/timesheets', '/api/tasks',
-    '/api/ai', '/api/accounting'];
+    '/api/ai', '/api/accounting', '/api/ui-tweak'];
 
   const needsApiPrefix = apiPrefixRoutes.some(route => url.pathname.startsWith(route));
 

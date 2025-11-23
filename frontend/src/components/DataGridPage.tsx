@@ -187,15 +187,15 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   // Load data whenever preferences / pagination / filters change
   useEffect(() => {
     if (gridPrefs.loading) return;
-    
+
     // If we have available columns but no config yet, try to fetch with all available columns
     // This allows data to load even if preferences haven't been fully initialized
-    const columnsToFetch = orderedVisibleColumns.length > 0 
-      ? orderedVisibleColumns 
+    const columnsToFetch = orderedVisibleColumns.length > 0
+      ? orderedVisibleColumns
       : gridPrefs.availableColumns.length > 0
         ? gridPrefs.availableColumns.map((c) => c.name)
         : [];
-    
+
     // Only block if we truly have no columns at all (not even metadata)
     if (columnsToFetch.length === 0) {
       setRows([]);
@@ -247,7 +247,14 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     const nextVisible = alreadyVisible
       ? cfg.visible.filter((c) => c !== name)
       : [...cfg.visible, name];
-    gridPrefs.setColumns({ visible: nextVisible });
+
+    // Ensure newly visible columns are added to the order list
+    let nextOrder = cfg.order;
+    if (!alreadyVisible && !nextOrder.includes(name)) {
+      nextOrder = [...nextOrder, name];
+    }
+
+    gridPrefs.setColumns({ visible: nextVisible, order: nextOrder });
   };
 
   const handleSelectAllColumns = () => {
@@ -617,7 +624,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                 className="px-3 py-1 border rounded bg-blue-600 text-white hover:bg-blue-700"
                 onClick={handleSaveColumns}
               >
-                Save
+                Save Layout
               </button>
             </div>
           </div>
