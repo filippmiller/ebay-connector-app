@@ -191,6 +191,7 @@ async def upsert_grid_preferences(
 
     The combination (user_id, grid_key) is unique so this behaves as an upsert.
     """
+    logger.info("upsert_grid_preferences: user_id=%s grid_key=%s payload=%s", current_user.id, payload.grid_key, payload.json())
 
     grid_key = payload.grid_key
     allowed_cols = _allowed_columns_for_grid(grid_key)

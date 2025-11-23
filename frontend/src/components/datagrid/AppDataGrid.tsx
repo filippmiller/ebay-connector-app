@@ -127,6 +127,7 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
       const model = (event.api as any).getColumnState?.() as ColumnState[] | undefined;
       if (!model) return;
       const { order, widths } = extractLayout(model);
+      console.log('[AppDataGrid] Layout changed:', { order, widths });
       onLayoutChange({ order, widths });
     }, 500);
   };
