@@ -150,8 +150,17 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const handleGridLayoutChange = (order: string[], widths: Record<string, number>) => {
     const cfg = gridPrefs.columns;
     if (!cfg) return;
-    const nextOrder = order.filter(name => cfg.order.includes(name) || cfg.visible.includes(name));
+
+    // 'order' contains only visible columns (from AG Grid).
+    // We want to update cfg.order to match 'order' for the visible items,
+    // but keep hidden items in their relative places or at least present.
+    const visibleSet = new Set(cfg.visible);
+    const hiddenColumns = cfg.order.filter(c => !visibleSet.has(c));
+
+    // New order is the visible order from grid + any hidden columns we had.
+    const nextOrder = [...order, ...hiddenColumns];
     const nextWidths = { ...cfg.widths, ...widths };
+
     gridPrefs.setColumns({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
     void gridPrefs.save({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
   };
@@ -160,23 +169,27 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     const allNames = gridPrefs.availableColumns.map(c => c.name);
     if (!allNames.length) return;
     const cfg = gridPrefs.columns;
-    gridPrefs.setColumns({
+    const nextConfig = {
       visible: allNames,
       order: cfg?.order || allNames,
       widths: cfg?.widths || {},
       sort: cfg?.sort || null
-    });
+    };
+    gridPrefs.setColumns(nextConfig);
+    void gridPrefs.save(nextConfig);
   };
 
   const handleClearAllColumns = () => {
     if (!gridPrefs.columns) return;
     const cfg = gridPrefs.columns;
-    gridPrefs.setColumns({
+    const nextConfig = {
       visible: [],
       order: cfg.order,
       widths: cfg.widths,
       sort: cfg.sort
-    });
+    };
+    gridPrefs.setColumns(nextConfig);
+    void gridPrefs.save(nextConfig);
   };
 
   const handleResetToDefaults = async () => {
@@ -307,29 +320,31 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                           onChange={(e) => {
                             const checked = e.target.checked;
                             const currentVisible = gridPrefs.columns?.visible || gridPrefs.availableColumns.map(c => c.name);
-                            let nextVisible: string[];
+                            const currentOrder = gridPrefs.columns?.order || gridPrefs.availableColumns.map(c => c.name);
+
+                            let nextVisible = [...currentVisible];
+                            let nextOrder = [...currentOrder];
+
                             if (checked) {
-                              // Add to visible if not present, preserving original order if possible or appending
-                              if (!currentVisible.includes(col.name)) {
-                                // To preserve order, we can filter availableColumns
-                                const allNames = gridPrefs.availableColumns.map(c => c.name);
-                                const newSet = new Set([...currentVisible, col.name]);
-                                nextVisible = allNames.filter(n => newSet.has(n));
-                              } else {
-                                nextVisible = currentVisible;
+                              if (!nextVisible.includes(col.name)) {
+                                nextVisible.push(col.name);
+                                if (!nextOrder.includes(col.name)) {
+                                  nextOrder.push(col.name);
+                                }
                               }
                             } else {
-                              // Remove from visible
-                              nextVisible = currentVisible.filter(n => n !== col.name);
+                              nextVisible = nextVisible.filter(n => n !== col.name);
                             }
 
                             const cfg = gridPrefs.columns;
-                            gridPrefs.setColumns({
+                            const nextConfig = {
                               visible: nextVisible,
-                              order: cfg?.order || nextVisible, // Update order to match visible if needed, or keep existing
+                              order: nextOrder,
                               widths: cfg?.widths || {},
                               sort: cfg?.sort || null
-                            });
+                            };
+                            gridPrefs.setColumns(nextConfig);
+                            void gridPrefs.save(nextConfig);
                           }}
                         />
                         <span className="text-sm text-gray-700">{col.label || col.name}</span>
