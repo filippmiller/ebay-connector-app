@@ -178,79 +178,13 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
     gridPrefs.setColumns({ order: nextOrder, widths: nextWidths });
     void gridPrefs.save({
-      ...cfg,
-      order: nextOrder,
-      widths: nextWidths,
-    } as any);
-  };
+      const nextVisible = alreadyVisible
+        ? cfg.visible.filter((c) => c !== name)
+        : [...cfg.visible, name];
 
-  // Load data whenever preferences / pagination / filters change
-  useEffect(() => {
-    if (gridPrefs.loading) return;
-
-    // If we have available columns but no config yet, try to fetch with all available columns
-    // This allows data to load even if preferences haven't been fully initialized
-    const columnsToFetch = orderedVisibleColumns.length > 0
-      ? orderedVisibleColumns
-      : gridPrefs.availableColumns.length > 0
-        ? gridPrefs.availableColumns.map((c) => c.name)
-        : [];
-
-    // Only block if we truly have no columns at all (not even metadata)
-    if (columnsToFetch.length === 0) {
-      setRows([]);
-      setTotal(0);
-      return;
-    }
-
-    const fetchData = async () => {
-      setLoadingData(true);
-      setError(null);
-      try {
-        const cfg = gridPrefs.columns;
-        const params: any = {
-          limit,
-          offset,
-          columns: columnsToFetch.join(','),
-        };
-        if (search && search.trim()) {
-          params.search = search.trim();
-        }
-        if (cfg?.sort && cfg.sort.column) {
-          params.sort_by = cfg.sort.column;
-          params.sort_dir = cfg.sort.direction;
-        }
-        if (extraParams) {
-          Object.assign(params, extraParams);
-        }
-        const resp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data`, { params });
-        const data = resp.data;
-        setRows(data.rows || []);
-        setTotal(data.total || 0);
-      } catch (e: any) {
-        console.error('Failed to load grid data', e);
-        setError(e?.response?.data?.detail || e.message || 'Failed to load grid data');
-        setRows([]);
-        setTotal(0);
-      } finally {
-        setLoadingData(false);
-      }
-    };
-
-    fetchData();
-  }, [gridPrefs.loading, gridPrefs.columns, gridPrefs.availableColumns, orderedVisibleColumns, limit, offset, gridKey, extraParamsKey, extraParams, search]);
-
-  const toggleColumnVisibility = (name: string) => {
-    const cfg = gridPrefs.columns;
-    if (!cfg) return;
-    const alreadyVisible = cfg.visible.includes(name);
-    const nextVisible = alreadyVisible
-      ? cfg.visible.filter((c) => c !== name)
-      : [...cfg.visible, name];
-
-    // Ensure newly visible columns are added to the order list
-    let nextOrder = cfg.order;
-    if (!alreadyVisible && !nextOrder.includes(name)) {
+      // Ensure newly visible columns are added to the order list
+      let nextOrder = cfg.order;
+      if(!alreadyVisible && !nextOrder.includes(name)) {
       nextOrder = [...nextOrder, name];
     }
 
