@@ -152,19 +152,31 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     if (!cfg) return;
     const nextOrder = order.filter(name => cfg.order.includes(name) || cfg.visible.includes(name));
     const nextWidths = { ...cfg.widths, ...widths };
-    gridPrefs.setColumns({ order: nextOrder, widths: nextWidths });
-    void gridPrefs.save({ visible: cfg.visible, order: nextOrder, widths: nextWidths });
+    gridPrefs.setColumns({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
+    void gridPrefs.save({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
   };
 
   const handleSelectAllColumns = () => {
     const allNames = gridPrefs.availableColumns.map(c => c.name);
     if (!allNames.length) return;
-    gridPrefs.setColumns({ visible: allNames, order: allNames });
+    const cfg = gridPrefs.columns;
+    gridPrefs.setColumns({
+      visible: allNames,
+      order: cfg?.order || allNames,
+      widths: cfg?.widths || {},
+      sort: cfg?.sort || null
+    });
   };
 
   const handleClearAllColumns = () => {
     if (!gridPrefs.columns) return;
-    gridPrefs.setColumns({ visible: [] });
+    const cfg = gridPrefs.columns;
+    gridPrefs.setColumns({
+      visible: [],
+      order: cfg.order,
+      widths: cfg.widths,
+      sort: cfg.sort
+    });
   };
 
   const handleResetToDefaults = async () => {
@@ -207,10 +219,15 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
             <span>Sort:</span>
             <select className="px-2 py-1 border rounded-md bg-white" value={currentSort?.column || ''} onChange={e => {
               const newCol = e.target.value;
-              if (!newCol) { gridPrefs.setColumns({ sort: null }); return; }
+              if (!newCol) {
+                const cfg = gridPrefs.columns;
+                if (cfg) gridPrefs.setColumns({ sort: null, visible: cfg.visible, order: cfg.order, widths: cfg.widths });
+                return;
+              }
               const prev = gridPrefs.columns?.sort;
               const dir: 'asc' | 'desc' = prev && prev.column === newCol ? prev.direction : 'desc';
-              gridPrefs.setColumns({ sort: { column: newCol, direction: dir } });
+              const cfg = gridPrefs.columns;
+              if (cfg) gridPrefs.setColumns({ sort: { column: newCol, direction: dir }, visible: cfg.visible, order: cfg.order, widths: cfg.widths });
             }}>
               <option value="">Default</option>
               {orderedVisibleColumns.filter(name => availableColumnsMap[name]?.sortable !== false).map(name => (
@@ -219,7 +236,8 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
             </select>
             <button type="button" className="px-2 py-1 border rounded-md bg-white disabled:opacity-50" disabled={!currentSort} onClick={() => {
               if (!currentSort) return;
-              gridPrefs.setColumns({ sort: { column: currentSort.column, direction: currentSort.direction === 'asc' ? 'desc' : 'asc' } });
+              const cfg = gridPrefs.columns;
+              if (cfg) gridPrefs.setColumns({ sort: { column: currentSort.column, direction: currentSort.direction === 'asc' ? 'desc' : 'asc' }, visible: cfg.visible, order: cfg.order, widths: cfg.widths });
             }}>
               {currentSort?.direction === 'asc' ? 'Asc ▲' : 'Desc ▼'}
             </button>
