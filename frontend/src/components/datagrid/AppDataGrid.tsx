@@ -63,6 +63,12 @@ function extractLayout(columnStates: ColumnState[]): { order: string[]; widths: 
   columnStates.forEach((col: ColumnState) => {
     const id = (col.colId as string) || '';
     if (!id) return;
+
+    // Filter out AG Grid's internal columns (checkbox selection, etc.)
+    if (id.startsWith('ag-Grid-')) {
+      return;
+    }
+
     order.push(id);
     if (typeof col.width === 'number') {
       widths[id] = col.width;
