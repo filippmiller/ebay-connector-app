@@ -237,8 +237,22 @@ async def upsert_grid_preferences(
 
     theme_payload = payload.theme.dict()
 
+    # Compute effective visible columns:
+    # 1. Start with 'order', but filter to only include those in 'visible'.
+    # 2. Append any in 'visible' that are not in 'order'.
+    visible_set = set(payload.columns.visible)
+    ordered_visible = [c for c in payload.columns.order if c in visible_set]
+
+    existing_in_order = set(ordered_visible)
+    for c in payload.columns.visible:
+        if c not in existing_in_order:
+            ordered_visible.append(c)
+
+    # Validate against allowed_cols just in case
+    final_visible = [c for c in ordered_visible if c in allowed_cols]
+
     if layout:
-        layout.visible_columns = payload.columns.order
+        layout.visible_columns = final_visible
         layout.column_widths = cleaned_widths
         layout.sort = sort_dict
         layout.theme = theme_payload
@@ -248,7 +262,7 @@ async def upsert_grid_preferences(
             id=str(uuid.uuid4()),
             user_id=current_user.id,
             grid_key=grid_key,
-            visible_columns=payload.columns.order,
+            visible_columns=final_visible,
             column_widths=cleaned_widths,
             sort=sort_dict,
             theme=theme_payload,
