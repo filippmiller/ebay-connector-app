@@ -153,6 +153,21 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
     // 'order' contains only visible columns (from AG Grid).
     // We want to update cfg.order to match 'order' for the visible items,
+    // but keep hidden items in their relative places or at least present.
+    const visibleSet = new Set(cfg.visible);
+    const hiddenColumns = cfg.order.filter(c => !visibleSet.has(c));
+
+    // New order is the visible order from grid + any hidden columns we had.
+    const nextOrder = [...order, ...hiddenColumns];
+    const nextWidths = { ...cfg.widths, ...widths };
+
+    console.log('[DataGridPage] Saving layout:', { visible: cfg.visible, order: nextOrder, widths: nextWidths });
+    gridPrefs.setColumns({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
+    void gridPrefs.save({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
+  };
+
+  const handleSelectAllColumns = () => {
+    const allNames = gridPrefs.availableColumns.map(c => c.name);
     if (!allNames.length) return;
     const cfg = gridPrefs.columns;
     const nextConfig = {
