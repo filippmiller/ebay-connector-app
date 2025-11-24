@@ -230,11 +230,11 @@ async def create_parts_model(
     
     # Prepare insert with safe defaults for all NOT NULL fields
     insert_data = {
-        'Model_ID': payload.get('model_id'),
-        'Brand_ID': payload.get('brand_id'),
+        'Model_ID': payload.get('model_id') or 0,
+        'Brand_ID': payload.get('brand_id') or 0,
         'Model': model_name,
-        'oc_filter_Model_ID': payload.get('oc_filter_model_id'),
-        'oc_filter_Model_ID2': payload.get('oc_filter_model_id2'),
+        'oc_filter_Model_ID': payload.get('oc_filter_model_id') or 0,
+        'oc_filter_Model_ID2': payload.get('oc_filter_model_id2') or 0,
         'BuyingPrice': payload.get('buying_price', 0),
         'working': payload.get('working', 0),
         'motherboard': payload.get('motherboard', 0),
