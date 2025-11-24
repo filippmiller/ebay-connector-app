@@ -483,6 +483,15 @@ async def create_sq_item(
     category = payload.get("category")
     model_id = payload.get("model_id")
 
+    # Canonical mapping: the legacy SKU_catalog table uses the ``Part``
+    # column for the short human-friendly title. Ensure we always copy
+    # the validated ``title`` into ``part`` when the client does not
+    # provide an explicit part value, so that an empty Internal part
+    # name field in the form cannot wipe out the title.
+    existing_part = (payload.get("part") or "").strip()
+    if title and not existing_part:
+        payload["part"] = title
+
     # --- High-level validation mirroring the UI rules ----------------------
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
@@ -652,6 +661,16 @@ async def update_sq_item(
     old_price = item.price
 
     data = payload.model_dump(exclude_unset=True)
+
+    # Same Part/Title semantics as in create_sq_item: if the client
+    # sends a non-empty title but leaves part empty/unspecified, treat
+    # the title as the canonical Part value on SKU_catalog.
+    if "title" in data:
+        title_val = (data.get("title") or "").strip()
+        existing_part = (data.get("part") or "").strip()
+        if title_val and not existing_part:
+            data["part"] = title_val
+
     for key, value in data.items():
         setattr(item, key, value)
 
