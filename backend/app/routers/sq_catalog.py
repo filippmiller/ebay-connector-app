@@ -502,7 +502,10 @@ async def create_sq_item(
         else:
             raise ValueError(f"Unsupported price type: {type(raw_price)!r}")
     except Exception:
-        raise HTTPException(status_code=400, detail="Price must be a valid number")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Price must be a valid number (got {raw_price!r} of type {type(raw_price).__name__})",
+        )
 
     if price_val is None or price_val <= 0:
         raise HTTPException(status_code=400, detail="Price must be greater than 0")
