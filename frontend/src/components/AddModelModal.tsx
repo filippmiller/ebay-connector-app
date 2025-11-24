@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { DialogContent } from '@/components/ui/dialog';
 import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -153,16 +152,12 @@ export function AddModelModal({ isOpen, onClose, onCreated }: AddModelModalProps
 
     return (
         <DraggableResizableDialog
-      open={isOpen}
-      onOpenChange={(open) => !open && handleCancel()}
-      title="Add Model"
-      defaultWidth={700}
-      defaultHeight={650}
-      minWidth={500}
-      minHeight={400}
-    >
-            <DialogContent className="max-w-2xl w-full max-h-[85vh] overflow-y-auto top-[5%] translate-y-0">
-                
+            open={isOpen}
+            onOpenChange={(open) => !open && handleCancel()}
+            title="Add Model"
+        >
+            <div className="flex flex-col h-full p-4 overflow-y-auto">
+
 
                 <div className="space-y-4 py-4">
                     {/* Basic Info */}
@@ -400,7 +395,7 @@ export function AddModelModal({ isOpen, onClose, onCreated }: AddModelModalProps
                         {saving ? 'Saving...' : 'Save'}
                     </Button>
                 </div>
-            </DialogContent>
+            </div>
         </DraggableResizableDialog>
     );
 }

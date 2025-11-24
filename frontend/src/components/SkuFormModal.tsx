@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DialogContent } from '@/components/ui/dialog';
 import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -535,13 +534,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           if (!nextOpen) onClose();
         }}
         title={mode === 'create' ? 'Create SKU' : 'Edit SKU'}
-        defaultWidth={1100}
-        defaultHeight={800}
-        minWidth={720}
-        minHeight={420}
       >
-        <DialogContent className="max-w-5xl max-w-[95vw] w-full max-h-[90vh] min-w-[720px] min-h-[420px] flex flex-col resize-both overflow-auto text-sm">
-          
+        <div className="flex flex-col h-full text-sm p-4">
+
 
           <div className="flex-1 overflow-y-auto pr-1 space-y-2 text-sm">
             {/* Title & Model */}
@@ -1131,7 +1126,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
               {saving ? 'Saving…' : 'Save'}
             </Button>
           </div>
-        </DialogContent>
+        </div>
       </DraggableResizableDialog>
 
       {/* Models Browse/Create Modal */}
