@@ -4,9 +4,25 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import func
+from sqlalchemy.sql.sqltypes import (
+    String,
+    Text,
+    CHAR,
+    VARCHAR,
+    Unicode,
+    UnicodeText,
+    Integer,
+    BigInteger,
+    Numeric,
+    Float,
+    Boolean as SA_Boolean,
+    DateTime as SA_DateTime,
+    Date as SA_Date,
+)
 
 from app.models_sqlalchemy import get_db
-from app.models_sqlalchemy.models import Inventory, InventoryStatus, SqItem, SKU
+from app.models_sqlalchemy.models import Inventory, InventoryStatus, SqItem, SKU, TblPartsInventory
 from app.services.auth import get_current_user
 from app.models.user import User
 from app.utils.logger import logger
@@ -82,6 +98,9 @@ class ListingCommitResponse(BaseModel):
     items: List[ListingCommitItemResponse]
 
 
+from datetime import datetime
+
+
 def _get_or_create_simple_sku(db: Session, sq: SqItem) -> int:
     """Return ID from simplified SKU table for a given SqItem.
 
@@ -144,6 +163,160 @@ def _get_or_create_simple_sku(db: Session, sq: SqItem) -> int:
     return simple_sku.id
 
 
+def _insert_legacy_inventory_row(
+    db: Session,
+    sq: SqItem,
+    storage_value: str,
+    status_key: str,
+    username: str,
+    next_id: int,
+    item_payload: DraftListingItemPayload,
+) -> int:
+    """Insert a row into legacy tbl_parts_inventory with explicit ID.
+
+    ID is computed outside as MAX(ID)+1, then incremented per-row within the
+    same commit batch so that new rows appear at the end of tbl_parts_inventory
+    exactly as in the legacy flow.
+    """
+
+    table = TblPartsInventory.__table__
+
+    insert_data: Dict[str, Any] = {"ID": next_id}
+
+    # Case-insensitive column lookup
+    cols_by_lower = {c.name.lower(): c for c in table.columns}
+
+    # SKU
+    sku_val = None
+    if sq.sku is not None:
+        try:
+            sku_val = int(sq.sku)
+        except Exception:
+            try:
+                sku_val = int(str(sq.sku))
+            except Exception:
+                sku_val = None
+    if sku_val is not None:
+        for key in ["sku", "skucode", "overstocksku"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = sku_val
+                break
+
+    # Quantity
+    qty = item_payload.quantity or 1
+    for key in ["quantity", "qty", "overstockqty"]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = qty
+            break
+
+    # Storage ID
+    for key in [
+        "storageid",
+        "storage_id",
+        "storage",
+        "alternativestorage",
+        "alternative_storage",
+        "storagealias",
+        "storage_alias",
+    ]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = storage_value
+            break
+
+    # Title / overview title
+    title_val = (item_payload.title or sq.part or sq.description or "").strip()
+    if title_val:
+        for key in ["overviewtitle", "title", "part", "itemtitle"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = title_val
+                break
+
+    # Description
+    desc_val = (sq.description or "").strip()
+    if desc_val:
+        for key in ["overviewdescription", "description", "overdescription", "overdescription1"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = desc_val
+                break
+
+    # Category
+    if sq.category is not None:
+        try:
+            cat_val: Any = int(sq.category)
+        except Exception:
+            cat_val = sq.category
+        for key in ["categoryid", "category", "overstockcategoryid"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = cat_val
+                break
+
+    # Price
+    price_val = None
+    if item_payload.price is not None:
+        price_val = float(item_payload.price)
+    elif sq.price is not None:
+        try:
+            price_val = float(sq.price)
+        except Exception:
+            price_val = None
+    if price_val is not None:
+        for key in ["price", "overstockprice", "buyprice"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = price_val
+                break
+
+    # Author
+    for key in ["author", "user", "overstockuser"]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = username
+            break
+
+    # Rec created
+    now = datetime.utcnow()
+    for key in ["reccreated", "record_created", "created", "overstockcreated"]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = now
+            break
+
+    # Fill NOT NULL columns without defaults with safe placeholders
+    string_types = (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)
+
+    for col in table.columns:
+        if col.name in insert_data:
+            continue
+        if col.nullable:
+            continue
+        if col.default is not None or col.server_default is not None:
+            continue
+
+        t = col.type
+        if isinstance(t, (Integer, BigInteger, Numeric, Float)):
+            insert_data[col.name] = 0
+        elif isinstance(t, string_types):
+            insert_data[col.name] = ""
+        elif isinstance(t, SA_Boolean):
+            insert_data[col.name] = False
+        elif isinstance(t, SA_DateTime):
+            insert_data[col.name] = now
+        elif isinstance(t, SA_Date):
+            insert_data[col.name] = now.date()
+        else:
+            insert_data[col.name] = None
+
+    stmt = table.insert().values(**insert_data)
+    db.execute(stmt)
+    return next_id
+
+
 @router.post("/commit", response_model=ListingCommitResponse)
 async def commit_listing_items(
     payload: ListingCommitRequest,
@@ -193,6 +366,14 @@ async def commit_listing_items(
     created_items: List[ListingCommitItemResponse] = []
 
     try:
+        # Compute starting legacy inventory ID once (MAX(ID)+1)
+        legacy_table = TblPartsInventory.__table__
+        try:
+            max_id = db.query(func.max(legacy_table.c.ID)).scalar()
+        except Exception:
+            max_id = None
+        next_legacy_id = int(max_id or 0) + 1
+
         for item in payload.items:
             key = str(int(item.sku_code))
             sq = sq_by_code[key]
@@ -232,6 +413,18 @@ async def commit_listing_items(
 
             db.add(inv)
             db.flush()  # assign ID
+
+            # Also mirror into legacy tbl_parts_inventory
+            _insert_legacy_inventory_row(
+                db=db,
+                sq=sq,
+                storage_value=storage_value,
+                status_key=status_key,
+                username=current_user.username,
+                next_id=next_legacy_id,
+                item_payload=item,
+            )
+            next_legacy_id += 1
 
             created_items.append(
                 ListingCommitItemResponse(
