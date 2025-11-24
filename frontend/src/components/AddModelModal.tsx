@@ -158,7 +158,7 @@ export function AddModelModal({ isOpen, onClose, onCreated }: AddModelModalProps
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && handleCancel()}>
-            <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-2xl w-full max-h-[85vh] overflow-y-auto top-[5%] translate-y-0">
                 <DialogHeader>
                     <DialogTitle>Add Model</DialogTitle>
                     <DialogDescription>

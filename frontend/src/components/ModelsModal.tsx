@@ -105,7 +105,7 @@ export function ModelsModal({ isOpen, onClose, onModelSelected }: ModelsModalPro
     return (
         <>
             <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-                <DialogContent className="max-w-[95vw] w-full max-h-[90vh] flex flex-col">
+                <DialogContent className="max-w-[50vw] min-w-[600px] w-full max-h-[85vh] flex flex-col top-[5%] translate-y-0">
                     <DialogHeader>
                         <DialogTitle>Models</DialogTitle>
                         <DialogDescription>
