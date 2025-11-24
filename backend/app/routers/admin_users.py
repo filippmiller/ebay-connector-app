@@ -79,8 +79,9 @@ async def create_user_admin(payload: dict, _: UserResponse = Depends(admin_requi
 
     hashed = get_password_hash(temp_password)
 
+    import uuid
     user = UserDB(
-        id=None,  # SQLAlchemy will handle UUID if configured, otherwise we must set manually; here we assume DB default.
+        id=str(uuid.uuid4()),
         email=email,
         username=username,
         hashed_password=hashed,
