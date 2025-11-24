@@ -1469,16 +1469,45 @@ class Message(Base):
     subject = Column(Text, nullable=True)
     body = Column(Text, nullable=True)
     message_type = Column(String(50), nullable=True)
+
+    # Flags and direction
     is_read = Column(Boolean, default=False)
     is_flagged = Column(Boolean, default=False)
     is_archived = Column(Boolean, default=False)
     direction = Column(String(20), nullable=True)
+
+    # Timestamps
     message_date = Column(DateTime(timezone=True), nullable=True)
+    # Optional canonical timestamptz used by new code paths when present.
+    message_at = Column(DateTime(timezone=True), nullable=True)
     read_date = Column(DateTime(timezone=True), nullable=True)
+
+    # Order / item linkage
     order_id = Column(String(100), nullable=True)
     listing_id = Column(String(100), nullable=True)
+
+    # Case / dispute linkage
+    case_id = Column(Text, nullable=True)
+    case_type = Column(Text, nullable=True)
+    inquiry_id = Column(Text, nullable=True)
+    return_id = Column(Text, nullable=True)
+    payment_dispute_id = Column(Text, nullable=True)
+    transaction_id = Column(Text, nullable=True)
+
+    # Classification and topic
+    is_case_related = Column(Boolean, nullable=False, default=False)
+    message_topic = Column(Text, nullable=True)
+    case_event_type = Column(Text, nullable=True)
+
+    # Raw + parsed representations
     raw_data = Column(Text, nullable=True)
     parsed_body = Column(JSONB, nullable=True)
+
+    # Attachments and preview
+    has_attachments = Column(Boolean, nullable=False, default=False)
+    attachments_meta = Column(JSONB, nullable=False, default=list)
+    preview_text = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     

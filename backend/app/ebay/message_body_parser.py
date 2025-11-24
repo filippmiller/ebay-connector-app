@@ -88,6 +88,37 @@ def parse_ebay_message_body(html: str, *, our_account_username: str) -> Dict[str
     stable ids / patterns (PrimaryMessage, MessageHistory*, UserInputtedText*,
     area7Container, ReferenceId). All user-supplied content is converted to
     plain text with newlines.
+
+    The returned dict keeps existing top-level keys (buyer, currentMessage,
+    history, order, meta) and adds a "normalized" block that surfaces fields
+    useful for matching against orders / cases / disputes and for driving
+    the Messages grid:
+
+        {
+          "normalized": {
+            "source": "EBAY_EMAIL",
+            "topic": "CASE" | "RETURN" | ...,
+            "subtype": "INR" | "SNAD" | ...,
+            "caseId": str | None,
+            "inquiryId": str | None,
+            "returnId": str | None,
+            "paymentDisputeId": str | None,
+            "caseType": str | None,
+            "caseStatus": str | None,
+            "orderId": str | None,
+            "orderLineItemId": str | None,
+            "itemId": str | None,
+            "transactionId": str | None,
+            "buyerUsername": str | None,
+            "sellerUsername": str | None,
+            "respondBy": str | None,
+            "amount": float | None,
+            "currency": str | None,
+            "summaryHtml": str | None,
+            "summaryText": str | None,
+            "attachments": [...]
+          }
+        }
     """
 
     soup = BeautifulSoup(html or "", "html.parser")
@@ -98,6 +129,8 @@ def parse_ebay_message_body(html: str, *, our_account_username: str) -> Dict[str
         "history": [],
         "order": {},
         "meta": {},
+        # New normalized block is optional and populated best-effort.
+        "normalized": {},
     }
 
     # --- Primary block / buyer info ---
@@ -182,6 +215,10 @@ def parse_ebay_message_body(html: str, *, our_account_username: str) -> Dict[str
 
     result["history"] = history_entries
 
+    normalized: Dict[str, Any] = {
+        "source": "EBAY_EMAIL",
+    }
+
     # --- Order / item info ---
     area7 = soup.find(id="area7Container")
     if area7:
@@ -216,6 +253,11 @@ def parse_ebay_message_body(html: str, *, our_account_username: str) -> Dict[str
 
         result["order"] = order
 
+        # Feed key identifiers into normalized view as well.
+        normalized["orderId"] = order.get("orderNumber")
+        normalized["itemId"] = order.get("itemId")
+        normalized["transactionId"] = order.get("transactionId")
+
     # --- Meta ---
     ref_div = soup.find(id="ReferenceId")
     if ref_div:
@@ -224,4 +266,46 @@ def parse_ebay_message_body(html: str, *, our_account_username: str) -> Dict[str
             ref = text.split("Email reference id:", 1)[1].strip()
             result["meta"]["emailReferenceId"] = ref
 
+    # --- Heuristic topic / subtype classification ---
+    subject = (result.get("currentMessage", {}).get("text") or "").lower()
+    body_text = subject
+    if result.get("history"):
+        try:
+            body_text = "\n".join(
+                [entry.get("text", "") or "" for entry in result["history"]]
+            ).lower()
+        except Exception:
+            body_text = subject
+
+    topic = "OTHER"
+    subtype = None
+
+    if any(k in body_text for k in ["payment dispute", "chargeback"]):
+        topic = "PAYMENT_DISPUTE"
+    elif any(k in body_text for k in ["item not received", "inr inquiry", "non-received item"]):
+        topic = "INQUIRY"
+        subtype = "INR"
+    elif any(k in body_text for k in ["return request", "return case"]):
+        topic = "RETURN"
+    elif "case" in body_text or "dispute" in body_text:
+        topic = "CASE"
+    elif any(k in body_text for k in ["offer", "best offer"]):
+        topic = "OFFER"
+    elif any(k in body_text for k in ["order", "shipped", "tracking number"]):
+        topic = "ORDER"
+
+    normalized["topic"] = topic
+    if subtype:
+        normalized["subtype"] = subtype
+
+    # Buyer/seller usernames
+    if result.get("buyer") and result["buyer"].get("username"):
+        normalized["buyerUsername"] = result["buyer"]["username"]
+    normalized.setdefault("sellerUsername", our_account_username)
+
+    # Summary text: use current message text as lightweight preview
+    if result.get("currentMessage") and result["currentMessage"].get("text"):
+        normalized["summaryText"] = result["currentMessage"]["text"]
+
+    result["normalized"] = normalized
     return result
