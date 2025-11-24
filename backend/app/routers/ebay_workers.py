@@ -387,7 +387,8 @@ async def get_worker_schedule(
         "cases": 60,
         "inquiries": 60,
         "offers": 360,
-        "messages": 360,
+        # Messages worker uses a 60-minute overlap between runs.
+        "messages": 60,
     }
     backfill_by_api: Dict[str, int] = {
         "orders": 90,
