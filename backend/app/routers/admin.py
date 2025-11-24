@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 
 from ..models_sqlalchemy import get_db
 from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
+from ..models_sqlalchemy.ebay_workers import EbayWorkerRun
 from ..services.auth import admin_required
 from ..models.user import User
 from ..utils.logger import logger
@@ -90,6 +91,50 @@ async def get_notifications_status(
             "account": None,
             "topics": [],
         }
+
+@router.post("/cases/sync")
+async def admin_run_cases_sync_for_account(
+    account_id: str = Query(..., description="eBay account id"),
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Run the Post-Order cases worker once for an account (admin-only).
+
+    This wraps ``run_cases_worker_for_account`` so admins can trigger a cases
+    sync directly from the Admin area and immediately see the resulting
+    worker-run summary, including normalization statistics.
+    """
+
+    # Ensure the account belongs to the current org.
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.id == account_id, EbayAccount.org_id == current_user.id)
+        .first()
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    # Import here to avoid circular imports at module load time.
+    from app.services.ebay_workers.cases_worker import run_cases_worker_for_account
+
+    run_id = await run_cases_worker_for_account(account_id)
+    if not run_id:
+        # Worker may be disabled or a run lock could not be acquired.
+        return {"status": "skipped", "reason": "not_started"}
+
+    worker_run: Optional[EbayWorkerRun] = db.query(EbayWorkerRun).filter(EbayWorkerRun.id == run_id).first()
+    if not worker_run:
+        return {"status": "started", "run_id": run_id, "summary": None}
+
+    return {
+        "status": worker_run.status,
+        "run_id": worker_run.id,
+        "api_family": worker_run.api_family,
+        "started_at": worker_run.started_at.isoformat() if worker_run.started_at else None,
+        "finished_at": worker_run.finished_at.isoformat() if worker_run.finished_at else None,
+        "summary": worker_run.summary_json or {},
+    }
+
 
 @router.get("/sync-jobs")
 async def get_sync_jobs(

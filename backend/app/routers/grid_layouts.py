@@ -199,6 +199,12 @@ CASES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
   ColumnMeta(name="respond_by_date", label="Respond by", type="datetime", width_default=180),
   ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  # Normalized Post-Order case fields (ebay_cases)
+  ColumnMeta(name="item_id", label="Item ID", type="string", width_default=200),
+  ColumnMeta(name="transaction_id", label="Transaction ID", type="string", width_default=220),
+  ColumnMeta(name="case_status_enum", label="Case status (API)", type="string", width_default=160),
+  ColumnMeta(name="creation_date_api", label="Created (API)", type="datetime", width_default=200),
+  ColumnMeta(name="last_modified_date_api", label="Updated (API)", type="datetime", width_default=200),
 ]
 
 FINANCES_COLUMNS_META: List[ColumnMeta] = [
