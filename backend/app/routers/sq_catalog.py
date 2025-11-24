@@ -446,42 +446,83 @@ async def get_sq_item(
 
 @router.post("/items", response_model=SqItemRead)
 async def create_sq_item(
-    payload: SqItemCreate,
+    payload: dict,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> SqItemRead:
     """Create a new SQ catalog item for the SKU popup form.
 
-    The implementation mirrors the legacy semantics as closely as possible:
+    Вместо строгой Pydantic-модели на вход (``SqItemCreate``) мы принимаем
+    произвольный словарь и валидируем только те поля, которые действительно
+    обязательны для формы SKU. Это устраняет HTTP 422 из FastAPI при
+    неидеальном типе/значении и делает валидацию полностью управляемой
+    приложением.
 
-    * If ``sku`` is empty, the next numeric SKU is generated as ``MAX(SKU) + 1``.
-    * ``Title`` is required and limited to 80 characters.
-    * ``Price`` must be positive.
-    * An internal category is required unless ``external_category_flag`` is set
-      ("eBay category" mode).
-    * Audit / status fields are initialised with sensible defaults.
+    Правила:
+    * ``title`` обязателен, не более 80 символов.
+    * ``model`` обязателен (но текстово, без связи с tbl_parts_models).
+    * ``price`` > 0.
+    * ``condition_id`` обязателен.
+    * ``shipping_group`` обязателен.
+    * При внутренней категории (``external_category_flag`` == False)
+      ``category`` также обязательна.
+    * Остальные поля опциональны и прокидываются как есть.
     """
 
     now = datetime.now(timezone.utc)
 
+    # Normalise payload keys for easier access
+    # NOTE: payload уже JSON-словарь из FastAPI, без дополнительной модели.
+    title = (payload.get("title") or "").strip()
+    model = (payload.get("model") or "").strip()
+    price = payload.get("price")
+    condition_id = payload.get("condition_id")
+    shipping_group = (payload.get("shipping_group") or "").strip()
+    external_category_flag = bool(payload.get("external_category_flag"))
+    category = payload.get("category")
+
     # --- High-level validation mirroring the UI rules ----------------------
-    title = (payload.title or "").strip() if payload.title is not None else ""
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
     if len(title) > 80:
         raise HTTPException(status_code=400, detail="Title must be at most 80 characters")
 
-    if payload.price is None or payload.price <= 0:
+    if not model:
+        raise HTTPException(status_code=400, detail="Model is required")
+
+    try:
+        price_val = Decimal(str(price)) if price is not None else None
+    except Exception:
+        raise HTTPException(status_code=400, detail="Price must be a valid number")
+
+    if price_val is None or price_val <= 0:
         raise HTTPException(status_code=400, detail="Price must be greater than 0")
 
+    if not shipping_group:
+        raise HTTPException(status_code=400, detail="Shipping group is required")
+
+    if condition_id is None:
+        raise HTTPException(status_code=400, detail="Condition is required")
+
     # When not using external/eBay category, internal category is required.
-    if not payload.external_category_flag:
-        if payload.category is None or str(payload.category).strip() == "":
+    if not external_category_flag:
+        if category is None or str(category).strip() == "":
             raise HTTPException(status_code=400, detail="Internal category is required")
 
-    data = payload.model_dump(exclude_unset=True)
+    # Patch back the normalised / converted values into payload
+    payload = dict(payload)
+    payload["title"] = title
+    payload["model"] = model
+    payload["price"] = price_val
+    payload["shipping_group"] = shipping_group
+    payload["condition_id"] = int(condition_id)
+    if not external_category_flag:
+        payload["category"] = str(category).strip()
+
     item = SqItem()
-    for key, value in data.items():
+    for key, value in payload.items():
+        # SQLAlchemy / Postgres спокойно проигнорируют неизвестные атрибуты
+        # (они просто не будут замаплены на колонки), поэтому сетим всё как есть.
         setattr(item, key, value)
 
     # --- Auto-generated numeric SKU ----------------------------------------
