@@ -1138,7 +1138,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
             </Button>
           </div>
         </DialogContent>
-      </Dialog>
+      </DraggableResizableDialog>
 
       {/* Models Browse/Create Modal */}
       <ModelsModal
