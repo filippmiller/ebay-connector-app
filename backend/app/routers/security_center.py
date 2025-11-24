@@ -171,7 +171,7 @@ async def update_security_settings(
             user_agent=None,
             event_type="settings_changed",
             description="Security settings updated via admin UI",
-            metadata={"changes": changes},
+            metadata_json={"changes": changes},
             created_at=now,
         )
         db.add(ev)
@@ -267,7 +267,7 @@ async def list_security_events(
                 "user_agent": ev.user_agent,
                 "event_type": ev.event_type,
                 "description": ev.description,
-                "metadata": ev.metadata or {},
+                "metadata": ev.metadata_json or {},
             }
         )
 
@@ -339,7 +339,7 @@ async def export_security_events(
                 "user_agent": ev.user_agent,
                 "event_type": ev.event_type,
                 "description": ev.description,
-                "metadata": ev.metadata or {},
+                "metadata": ev.metadata_json or {},
             }
         )
 

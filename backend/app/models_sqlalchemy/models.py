@@ -761,8 +761,8 @@ class SecurityEvent(Base):
     event_type = Column(String(50), nullable=False, index=True)
     description = Column(Text, nullable=True)
 
-    # Flexible metadata payload; must never contain raw passwords or tokens.
-    metadata = Column(JSONB, nullable=True)
+    # Flexible metadata payload stored in the "metadata" column; must never contain raw passwords or tokens.
+    metadata_json = Column("metadata", JSONB, nullable=True)
 
     user = relationship("User", backref="security_events")
 
@@ -800,7 +800,7 @@ class LoginAttempt(Base):
     block_applied = Column(Boolean, nullable=False, default=False)
     block_until = Column(DateTime(timezone=True), nullable=True)
 
-    metadata = Column(JSONB, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=True)
 
     user = relationship("User", backref="login_attempts")
 

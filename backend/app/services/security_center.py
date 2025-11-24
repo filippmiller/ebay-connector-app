@@ -115,7 +115,7 @@ def _create_security_event(
         event_type=event_type,
         description=description,
         created_at=now,
-        metadata=metadata or {},
+        metadata_json=metadata or {},
     )
     db.add(ev)
     return ev
@@ -283,7 +283,7 @@ def record_login_attempt_and_events(
         reason=reason,
         block_applied=block_applied,
         block_until=block_until,
-        metadata={},
+        metadata_json={},
     )
     db.add(attempt)
 
