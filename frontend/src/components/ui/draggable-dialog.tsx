@@ -1,6 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { Rnd } from 'react-rnd';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog } from '@/components/ui/dialog';
 import { X } from 'lucide-react';
 
 interface DraggableResizableDialogProps {
@@ -45,10 +45,10 @@ export function DraggableResizableDialog({
             <Rnd
                 size={{ width: size.width, height: size.height }}
                 position={{ x: position.x, y: position.y }}
-                onDragStop={(e, d) => {
+                onDragStop={(_, d) => {
                     setPosition({ x: d.x, y: d.y });
                 }}
-                onResizeStop={(e, direction, ref, delta, position) => {
+                onResizeStop={(_, __, ref, ___, position) => {
                     setSize({
                         width: ref.offsetWidth,
                         height: ref.offsetHeight,
