@@ -469,6 +469,10 @@ function TransactionsTab() {
   const [sourceType, setSourceType] = useState('');
   const [storageId, setStorageId] = useState('');
   const [categoryId, setCategoryId] = useState('');
+  const [direction, setDirection] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+  const [accountName, setAccountName] = useState('');
   const [isPersonal, setIsPersonal] = useState<boolean | null>(null);
   const [isInternal, setIsInternal] = useState<boolean | null>(null);
   const [categories, setCategories] = useState<AccountingCategory[]>([]);
@@ -491,10 +495,14 @@ function TransactionsTab() {
     if (sourceType) params.source_type = sourceType;
     if (storageId) params.storage_id = storageId;
     if (categoryId) params.category_id = Number(categoryId);
+    if (direction) params.direction = direction;
+    if (minAmount) params.min_amount = Number(minAmount);
+    if (maxAmount) params.max_amount = Number(maxAmount);
+    if (accountName) params.account_name = accountName;
     if (isPersonal !== null) params.is_personal = isPersonal;
     if (isInternal !== null) params.is_internal_transfer = isInternal;
     return params;
-  }, [dateFrom, dateTo, sourceType, storageId, categoryId, isPersonal, isInternal, refreshKey]);
+  }, [dateFrom, dateTo, sourceType, storageId, categoryId, direction, minAmount, maxAmount, accountName, isPersonal, isInternal, refreshKey]);
 
   // Fetch aggregated totals for the current filter so the tab behaves like a Ledger view.
   useEffect(() => {
@@ -561,6 +569,43 @@ function TransactionsTab() {
           <div>
             <Label className="block text-xs mb-1">Storage ID</Label>
             <Input value={storageId} onChange={(e) => setStorageId(e.target.value)} />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Direction</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={direction}
+              onChange={(e) => setDirection(e.target.value)}
+            >
+              <option value="">All</option>
+              <option value="in">In</option>
+              <option value="out">Out</option>
+            </select>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Amount range</Label>
+            <div className="flex gap-1">
+              <Input
+                className="w-1/2"
+                type="number"
+                step="0.01"
+                placeholder="Min"
+                value={minAmount}
+                onChange={(e) => setMinAmount(e.target.value)}
+              />
+              <Input
+                className="w-1/2"
+                type="number"
+                step="0.01"
+                placeholder="Max"
+                value={maxAmount}
+                onChange={(e) => setMaxAmount(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Account</Label>
+            <Input value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder="Account name contains..." />
           </div>
           <div>
             <Label className="block text-xs mb-1">Category</Label>
@@ -653,8 +698,8 @@ function TransactionsTab() {
 
       <div className="flex-1 min-h-0">
         <DataGridPage
-          gridKey="accounting_transactions"
-          title="Accounting Transactions"
+          gridKey="ledger_transactions"
+          title="Ledger Transactions"
           extraParams={extraParams}
           onRowClick={(row) => setSelectedRow(row)}
         />

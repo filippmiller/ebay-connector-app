@@ -526,6 +526,27 @@ async def get_grid_data(
             )
         finally:
             db_sqla.close()
+    elif grid_key == "ledger_transactions":
+        # Ledger grid is a thin wrapper over accounting_transactions, but wired
+        # as a separate grid_key so that it can evolve independently in the UI
+        # (columns, layout, etc.).
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_accounting_transactions_grid_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                date_from=from_date,
+                date_to=to_date,
+                source_type=source_type,
+                storage_id=storage_id,
+            )
+        finally:
+            db_sqla.close()
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Grid not implemented yet")
 
@@ -1891,7 +1912,15 @@ def _get_accounting_transactions_grid_data(
     def _serialize(txn: AccountingTxn) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = getattr(txn, col, None)
+            if col == "signed_amount":
+                # Synthetic signed amount: positive for direction="in",
+                # negative for direction="out". This powers Ledger coloring
+                # without changing the underlying schema.
+                base = txn.amount or Decimal("0")
+                sign = 1 if txn.direction == "in" else -1
+                value = base * sign
+            else:
+                value = getattr(txn, col, None)
             if isinstance(value, dt_type):
                 row[col] = value.isoformat()
             elif isinstance(value, Decimal):

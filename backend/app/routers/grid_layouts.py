@@ -177,6 +177,7 @@ ACCOUNTING_TRANSACTIONS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="date", label="Date", type="date", width_default=140),
   ColumnMeta(name="direction", label="Direction", type="string", width_default=100),
   ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
+  ColumnMeta(name="signed_amount", label="Amount (±)", type="money", width_default=120),
   ColumnMeta(name="account_name", label="Account", type="string", width_default=180),
   ColumnMeta(name="counterparty", label="Counterparty", type="string", width_default=200),
   ColumnMeta(name="expense_category_id", label="Category", type="string", width_default=140),
@@ -485,6 +486,25 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "date", "direction": "desc"},
     },
+    "ledger_transactions": {
+        # Ledger grid reuses the same projection as accounting_transactions but
+        # is conceptually the central money-movement view used by the
+        # Accounting → Ledger tab.
+        "visible_columns": [
+            "date",
+            "direction",
+            "signed_amount",
+            "account_name",
+            "counterparty",
+            "expense_category_id",
+            "storage_id",
+            "source_type",
+            "is_personal",
+            "is_internal_transfer",
+            "description",
+        ],
+        "sort": {"column": "date", "direction": "desc"},
+    },
 }
 
 
@@ -578,6 +598,12 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
     if grid_key == "accounting_cash_expenses":
         return ACCOUNTING_CASH_EXPENSES_COLUMNS_META
     if grid_key == "accounting_transactions":
+        return ACCOUNTING_TRANSACTIONS_COLUMNS_META
+    if grid_key == "ledger_transactions":
+        # For now the Ledger grid uses the same column set as
+        # accounting_transactions. If we later extend AccountingTransaction with
+        # more ledger-specific fields (e.g. tags or bank account mapping), this
+        # alias makes it easy to add a dedicated ColumnMeta list.
         return ACCOUNTING_TRANSACTIONS_COLUMNS_META
     return []
 

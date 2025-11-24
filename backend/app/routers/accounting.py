@@ -243,10 +243,23 @@ async def upload_bank_statement(
     db.add(stmt_file)
 
     ext = (file.filename or "").lower()
+    content_type = (file.content_type or "").lower()
     is_csv_like = ext.endswith(".csv") or ext.endswith(".txt")
     is_xlsx_like = ext.endswith(".xlsx") or ext.endswith(".xls")
+    is_pdf_like = ext.endswith(".pdf") or "pdf" in content_type
 
-    if is_csv_like or is_xlsx_like:
+    if is_pdf_like:
+        # Explicitly mark PDF statements as not yet supported for parsing so the
+        # UI can distinguish them from generic "uploaded" files. Real parsing
+        # will be implemented in a future iteration using
+        # app.services.accounting_parsers.pdf_parser.
+        logger.warning(
+            "Bank statement %s uploaded as PDF; parsing is not implemented yet, "
+            "use CSV/XLSX export for now",
+            stmt.id,
+        )
+        stmt.status = "error_pdf_not_supported"
+    elif is_csv_like or is_xlsx_like:
         try:
             parsed = _parse_xlsx_rows(file_bytes) if is_xlsx_like else _parse_csv_rows(file_bytes)
             for row in parsed:
@@ -879,6 +892,10 @@ async def list_transactions(
     storage_id: Optional[str] = None,
     is_personal: Optional[bool] = None,
     is_internal_transfer: Optional[bool] = None,
+    direction_filter: Optional[str] = Query(None, alias="direction"),
+    min_amount: Optional[Decimal] = None,
+    max_amount: Optional[Decimal] = None,
+    account_name: Optional[str] = None,
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db_sqla),
@@ -900,6 +917,15 @@ async def list_transactions(
         query = query.filter(AccountingTransaction.is_personal == is_personal)
     if is_internal_transfer is not None:
         query = query.filter(AccountingTransaction.is_internal_transfer == is_internal_transfer)
+    if direction_filter in {"in", "out"}:
+        query = query.filter(AccountingTransaction.direction == direction_filter)
+    if min_amount is not None:
+        query = query.filter(AccountingTransaction.amount >= min_amount)
+    if max_amount is not None:
+        query = query.filter(AccountingTransaction.amount <= max_amount)
+    if account_name:
+        like = f"%{account_name}%"
+        query = query.filter(AccountingTransaction.account_name.ilike(like))
 
     total = query.count()
 
