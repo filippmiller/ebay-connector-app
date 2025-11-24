@@ -595,6 +595,23 @@ async def create_sq_item(
     if item.listing_duration_in_days is None:
         item.listing_duration_in_days = None
 
+    # --- Ensure ID for legacy SKU_catalog table -----------------------------
+    # В прод-таблице "SKU_catalog" колонка "ID" помечена NOT NULL, но в некоторых
+    # средах для неё нет sequence/identity. SQLAlchemy ожидает, что БД сама
+    # сгенерирует ID, но Postgres выбрасывает NotNullViolation. Чтобы не
+    # трогать схему в проде, мы эмитируем старое поведение: ID = MAX(ID) + 1.
+    if item.id is None:
+        try:
+            max_id = db.query(func.max(SqItem.id)).scalar()
+            next_id = int(max_id or 0) + 1
+            item.id = next_id
+        except Exception as exc:  # pragma: no cover - защитный лог только для прод
+            logger.exception("Failed to compute next ID for SKU_catalog", exc_info=exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database error: failed to compute next ID for SKU_catalog: {exc}",
+            )
+
     db.add(item)
     db.commit()
     db.refresh(item)
