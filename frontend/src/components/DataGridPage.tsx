@@ -146,7 +146,9 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     fetchData();
   }, [gridKey, limit, offset, search, extraParams]);
 
-  // Handle layout changes from the grid (order & widths)
+  // Handle layout changes from the grid (order & widths).
+  // IMPORTANT: this only updates local in-memory preferences; persistence now
+  // happens exclusively when the user clicks the Save button in the Columns panel.
   const handleGridLayoutChange = (order: string[], widths: Record<string, number>) => {
     const cfg = gridPrefs.columns;
     if (!cfg) return;
@@ -161,9 +163,12 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
     const nextOrder = [...order, ...hiddenColumns];
     const nextWidths = { ...cfg.widths, ...widths };
 
-    console.log('[DataGridPage] Saving layout:', { visible: cfg.visible, order: nextOrder, widths: nextWidths });
-    gridPrefs.setColumns({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
-    void gridPrefs.save({ visible: cfg.visible, order: nextOrder, widths: nextWidths, sort: cfg.sort });
+    gridPrefs.setColumns({
+      visible: cfg.visible,
+      order: nextOrder,
+      widths: nextWidths,
+      sort: cfg.sort,
+    });
   };
 
   const handleSelectAllColumns = () => {
@@ -174,10 +179,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       visible: allNames,
       order: cfg?.order || allNames,
       widths: cfg?.widths || {},
-      sort: cfg?.sort || null
+      sort: cfg?.sort || null,
     };
+    // Update in-memory layout; persistence happens via the Columns panel Save button.
     gridPrefs.setColumns(nextConfig);
-    void gridPrefs.save(nextConfig);
   };
 
   const handleClearAllColumns = () => {
@@ -187,10 +192,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       visible: [],
       order: cfg.order,
       widths: cfg.widths,
-      sort: cfg.sort
+      sort: cfg.sort,
     };
+    // Update in-memory layout; persistence happens via the Columns panel Save button.
     gridPrefs.setColumns(nextConfig);
-    void gridPrefs.save(nextConfig);
   };
 
   const handleResetToDefaults = async () => {
@@ -342,10 +347,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                               visible: nextVisible,
                               order: nextOrder,
                               widths: cfg?.widths || {},
-                              sort: cfg?.sort || null
+                              sort: cfg?.sort || null,
                             };
+                            // Update in-memory layout; persistence happens via the Columns panel Save button.
                             gridPrefs.setColumns(nextConfig);
-                            void gridPrefs.save(nextConfig);
                           }}
                         />
                         <span className="text-sm text-gray-700">{col.label || col.name}</span>
