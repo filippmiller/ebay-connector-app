@@ -42,7 +42,7 @@ The new `timesheets` table stores per-user time entries:
 
 Constraints and indexes:
 
-- `timesheets_consistent_time_chk` – ensures either both `start_time`/`end_time` are null, or both non-null with `end_time > start_time`.
+- `timesheets_consistent_time_chk` – ensures either both `start_time`/`end_time` are null, or `start_time` is set with `end_time` still null (open timer), or both non-null with `end_time > start_time`.
 - `idx_timesheets_user_start` on `(user_id, start_time DESC)`.
 - `idx_timesheets_delete_flag` on `delete_flag`.
 - Trigger `trg_timesheets_set_record_updated` keeps `record_updated` in sync on updates.
