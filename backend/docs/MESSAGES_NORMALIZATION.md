@@ -222,8 +222,9 @@ We have two complementary parsers for eBay message HTML:
 This parser does **not** know about cases/returns/disputes; it is mainly for
 building a readable message thread and preview for UI.
 
-The result is converted to JSON via `.dict(exclude_none=True)` and stored in
-`parsed_body` when available.
+The result is converted to JSON via Pydantic's `.json()` (to safely serialize
+types like `HttpUrl`) and then loaded back into a plain `dict` via
+`json.loads(...)` before being stored in `parsed_body`.
 
 ### 3.2. message_body_parser.parse_ebay_message_body (normalized view)
 
@@ -292,7 +293,7 @@ The Trading API worker is implemented in `backend/app/services/ebay.py` as
    - For each batch, call `get_message_bodies(access_token, batch_ids)`.
    - For each returned message dict, build a `SqlMessage` row in `ebay_messages`.
 
-6. **Idempotence**:
+6. **Idempotence and duplicate safety**:
    - For each message, check if a row already exists:
 
      ```python
@@ -308,6 +309,10 @@ The Trading API worker is implemented in `backend/app/services/ebay.py` as
      if existing:
          continue
      ```
+
+   - On insert, we also catch `IntegrityError` (unique constraint
+     `uq_ebay_messages_account_user_msgid`) and treat it as "duplicate, skip"
+     to guarantee that re-runs are fully idempotent even under race conditions.
 
 7. **Finalization**:
    - On success: marks job as `completed`, logs summary.
@@ -330,7 +335,7 @@ if receive_date_str:
         pass
 ```
 
-**Step 2 — run rich parser**
+**Step 2 — run rich parser (safe JSON serialization)**
 
 ```python
 body_html = msg.get("text", "") or ""
@@ -352,9 +357,11 @@ try:
             body_html,
             our_account_username=ebay_user_id or "seller",
         )
-        parsed_body = parsed.dict(exclude_none=True)
-        preview_text = parsed.previewText or None
-except Exception as parse_err:
+        # IMPORTANT: use Pydantic's JSON serialization to avoid HttpUrl
+        # objects leaking into parsed_body (Postgres JSONB cannot store them
+        # directly).
+        parsed_body = json.loads(parsed.json(exclude_none=True))
+        preview_text = parsed.previewText or Nonen360|except Exception as parse_err:
     logger.warning(
         f"Failed to parse eBay message body for {message_id} via rich parser: {parse_err}"
     )
@@ -466,6 +473,7 @@ python scripts/backfill_parsed_ebay_messages.py
 The script:
 
 1. Reads `DATABASE_URL` (must point at the Supabase/Postgres instance).
+   - If `DATABASE_URL` is missing, it fails fast with a clear error message.
 2. Computes how many rows need work (based on `parsed_body`/`case_id`/
    `transaction_id`/`message_topic`/`preview_text` being `NULL`).
 3. Batches over messages by `created_at` (size `BATCH_SIZE = 500`).
@@ -476,12 +484,7 @@ The script:
    - Logs warnings for parse errors but continues.
 5. Logs per-batch progress and a final summary.
 
-Use this script after changing parsers or adding new normalized fields to
-retrofit history.
-
----
-
-## 6. How to use this for cross-linking
+Use this script after## 7. How to use this for cross-linking
 
 With the new schema and worker behavior, Messages can be cross-linked with
 cases/returns/disputes and finances as follows:
@@ -511,7 +514,7 @@ ORDER BY COALESCE(m.message_at, m.message_date);
 
 ---
 
-## 7. Things to keep in mind when extending
+## 8. Things to keep in mind when extending
 
 1. **There are two message stacks**:
    - **SQLite** stack (`app.db_models.Message`, `app/routers/messages.py`): powers
