@@ -1128,7 +1128,15 @@ def _get_cases_data(
             d.respond_by_date AS respond_by_date,
             d.dispute_data    AS raw_payload,
             d.ebay_account_id AS ebay_account_id,
-            d.ebay_user_id    AS ebay_user_id
+            d.ebay_user_id    AS ebay_user_id,
+            NULL::text        AS buyer_username,
+            NULL::numeric     AS amount_value,
+            NULL::text        AS amount_currency,
+            NULL::timestamptz AS creation_date_api,
+            NULL::timestamptz AS last_modified_date_api,
+            NULL::text        AS case_status_enum,
+            NULL::text        AS item_id,
+            NULL::text        AS transaction_id
         FROM ebay_disputes d
         WHERE d.user_id = :user_id
         UNION ALL
@@ -1138,11 +1146,19 @@ def _get_cases_data(
             c.order_id        AS order_id,
             c.case_type       AS reason,
             c.case_status     AS status,
-            c.open_date       AS open_date,
-            c.close_date      AS respond_by_date,
+            COALESCE(c.creation_date_api::text, c.open_date)  AS open_date,
+            COALESCE(c.respond_by::text, c.close_date)        AS respond_by_date,
             c.case_data       AS raw_payload,
             c.ebay_account_id AS ebay_account_id,
-            c.ebay_user_id    AS ebay_user_id
+            c.ebay_user_id    AS ebay_user_id,
+            c.buyer_username  AS buyer_username,
+            c.claim_amount_value    AS amount_value,
+            c.claim_amount_currency AS amount_currency,
+            c.creation_date_api     AS creation_date_api,
+            c.last_modified_date_api AS last_modified_date_api,
+            c.case_status_enum      AS case_status_enum,
+            c.item_id          AS item_id,
+            c.transaction_id   AS transaction_id
         FROM ebay_cases c
         WHERE c.user_id = :user_id
         """
@@ -1164,47 +1180,59 @@ def _get_cases_data(
     for row in result:
         issue = _issue_type(row.reason)
 
+        # Prefer normalized columns from ebay_cases for Post-Order cases, but
+        # fall back to parsing raw_payload for legacy rows or disputes where
+        # those fields are not available.
+        buyer_username = getattr(row, "buyer_username", None)
+        amount = getattr(row, "amount_value", None)
+        currency = getattr(row, "amount_currency", None)
+        creation_date_api = getattr(row, "creation_date_api", None)
+        last_modified_date_api = getattr(row, "last_modified_date_api", None)
+        case_status_enum = getattr(row, "case_status_enum", None)
+        item_id = getattr(row, "item_id", None)
+        transaction_id = getattr(row, "transaction_id", None)
+
         raw_payload = row.raw_payload
-        try:
-            payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload or {}
-        except Exception:
-            payload = {}
+        payload: Dict[str, Any] = {}
+        if buyer_username is None or amount is None or currency is None:
+            try:
+                payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload or {}
+            except Exception:
+                payload = {}
 
-        # Some legacy rows may store a primitive JSON value (e.g. a string) in
-        # the JSONB column. In that case json.loads(raw_payload) returns a
-        # plain str instead of a dict, and downstream .get calls would fail
-        # with AttributeError. Normalize to a dict so grid rendering is
-        # resilient to those rows.
-        if not isinstance(payload, dict):
-            payload = {}
+            # Some legacy rows may store a primitive JSON value (e.g. a string)
+            # in the JSONB column. Normalize to a dict so grid rendering is
+            # resilient to those rows.
+            if not isinstance(payload, dict):
+                payload = {}
 
-        # Buyer username – tolerate various shapes for the "buyer" field.
-        buyer_field = payload.get("buyer") if isinstance(payload, dict) else None
-        if isinstance(buyer_field, dict):
-            buyer_obj = buyer_field
-        else:
-            buyer_obj = {}
+        if buyer_username is None and isinstance(payload, dict):
+            # Buyer username – tolerate various shapes for the "buyer" field.
+            buyer_field = payload.get("buyer")
+            if isinstance(buyer_field, dict):
+                buyer_obj = buyer_field
+            else:
+                buyer_obj = {}
 
-        buyer_username = (
-            payload.get("buyerUsername")
-            or buyer_obj.get("username")
-            or buyer_obj.get("userId")
-        )
+            buyer_username = (
+                payload.get("buyerUsername")
+                or buyer_obj.get("username")
+                or buyer_obj.get("userId")
+            )
 
-        amount = None
-        currency = None
-        try:
-            mt_list = payload.get("monetaryTransactions") if isinstance(payload, dict) else None
-            if isinstance(mt_list, list) and mt_list:
-                first_txn = mt_list[0] or {}
-                if isinstance(first_txn, dict):
-                    total_price = first_txn.get("totalPrice") or {}
-                    if isinstance(total_price, dict):
-                        amount = total_price.get("value")
-                        currency = total_price.get("currency")
-        except Exception:
-            # If the payload shape is unexpected, just leave amount/currency as None.
-            pass
+        if amount is None and isinstance(payload, dict):
+            try:
+                mt_list = payload.get("monetaryTransactions")
+                if isinstance(mt_list, list) and mt_list:
+                    first_txn = mt_list[0] or {}
+                    if isinstance(first_txn, dict):
+                        total_price = first_txn.get("totalPrice") or {}
+                        if isinstance(total_price, dict):
+                            amount = total_price.get("value")
+                            currency = total_price.get("currency") or currency
+            except Exception:
+                # If the payload shape is unexpected, just leave amount/currency as None.
+                pass
 
         if amount is None and isinstance(payload, dict):
             claim = payload.get("claimAmount") or payload.get("disputeAmount") or {}
@@ -1228,6 +1256,8 @@ def _get_cases_data(
 
         open_date = _normalize_dt(row.open_date)
         respond_by_date = _normalize_dt(row.respond_by_date)
+        creation_date_api_str = _normalize_dt(creation_date_api)
+        last_modified_date_api_str = _normalize_dt(last_modified_date_api)
 
         rows_all.append(
             {
@@ -1242,8 +1272,15 @@ def _get_cases_data(
                 "currency": currency,
                 "open_date": open_date,
                 "respond_by_date": respond_by_date,
+                # Also expose normalized fields for API consumers that need
+                # richer joins (messages, finances, etc.).
                 "ebay_account_id": row.ebay_account_id,
                 "ebay_user_id": row.ebay_user_id,
+                "item_id": item_id,
+                "transaction_id": transaction_id,
+                "case_status_enum": case_status_enum,
+                "creation_date_api": creation_date_api_str,
+                "last_modified_date_api": last_modified_date_api_str,
             }
         )
 

@@ -684,7 +684,16 @@ class PostgresEbayDatabase:
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
     ) -> bool:
-        """Insert or update a Post-Order case in ebay_cases."""
+        """Insert or update a Post-Order case in ebay_cases.
+
+        Pipeline overview (Post-Order cases only): the cases worker calls
+        ``EbayService.sync_postorder_cases``, which fetches cases from
+        ``GET /post-order/v2/casemanagement/search`` and passes each payload
+        here. This helper normalizes identifiers, buyer/seller usernames,
+        monetary amounts and key timestamps into explicit ebay_cases columns
+        while also storing the full raw JSON payload in ``case_data`` for
+        archival/debugging.
+        """
         session = self._get_session()
 
         try:
@@ -700,6 +709,46 @@ class PostgresEbayDatabase:
             case_status = case_data.get("status") or case_data.get("caseStatus")
             open_date = case_data.get("openDate") or case_data.get("open_date")
             close_date = case_data.get("closeDate") or case_data.get("close_date")
+
+            # Normalized identifiers and denormalized API fields.
+            item_id = case_data.get("itemId") or case_data.get("item_id")
+            if item_id is not None:
+                item_id = str(item_id)
+
+            transaction_id = case_data.get("transactionId") or case_data.get("transaction_id")
+            if transaction_id is not None:
+                transaction_id = str(transaction_id)
+
+            buyer_username = case_data.get("buyer") or case_data.get("buyer_username")
+            seller_username = case_data.get("seller") or case_data.get("seller_username")
+
+            case_status_enum = case_data.get("caseStatusEnum") or case_data.get("case_status_enum")
+
+            claim_amount_obj = case_data.get("claimAmount") or case_data.get("claim_amount")
+            if isinstance(claim_amount_obj, dict):
+                claim_amount_value, claim_amount_currency = self._parse_money(claim_amount_obj)
+            else:
+                claim_amount_value, claim_amount_currency = (None, None)
+
+            respond_by_raw = self._safe_get(case_data, "respondByDate", "value") or case_data.get("respondByDate")
+            creation_raw = self._safe_get(case_data, "creationDate", "value") or case_data.get("creationDate")
+            last_modified_raw = self._safe_get(case_data, "lastModifiedDate", "value") or case_data.get(
+                "lastModifiedDate",
+            )
+
+            respond_by = self._parse_datetime(respond_by_raw if isinstance(respond_by_raw, str) else None)
+            creation_date_api = self._parse_datetime(creation_raw if isinstance(creation_raw, str) else None)
+            last_modified_date_api = self._parse_datetime(
+                last_modified_raw if isinstance(last_modified_raw, str) else None,
+            )
+
+            if item_id is None or transaction_id is None:
+                logger.warning(
+                    "Post-Order case %s missing itemId or transactionId (item_id=%r, transaction_id=%r)",
+                    case_id,
+                    item_id,
+                    transaction_id,
+                )
 
             # Log into unified ebay_events inbox (best-effort, never fail on error).
             try:
@@ -731,10 +780,20 @@ class PostgresEbayDatabase:
                 (case_id, user_id, ebay_account_id, ebay_user_id,
                  order_id, case_type, case_status,
                  open_date, close_date, case_data,
+                 item_id, transaction_id,
+                 buyer_username, seller_username,
+                 case_status_enum,
+                 claim_amount_value, claim_amount_currency,
+                 respond_by, creation_date_api, last_modified_date_api,
                  created_at, updated_at)
                 VALUES (:case_id, :user_id, :ebay_account_id, :ebay_user_id,
                         :order_id, :case_type, :case_status,
                         :open_date, :close_date, :case_data,
+                        :item_id, :transaction_id,
+                        :buyer_username, :seller_username,
+                        :case_status_enum,
+                        :claim_amount_value, :claim_amount_currency,
+                        :respond_by, :creation_date_api, :last_modified_date_api,
                         :created_at, :updated_at)
                 ON CONFLICT (case_id, user_id)
                 DO UPDATE SET
@@ -744,6 +803,16 @@ class PostgresEbayDatabase:
                     open_date = EXCLUDED.open_date,
                     close_date = EXCLUDED.close_date,
                     case_data = EXCLUDED.case_data,
+                    item_id = EXCLUDED.item_id,
+                    transaction_id = EXCLUDED.transaction_id,
+                    buyer_username = EXCLUDED.buyer_username,
+                    seller_username = EXCLUDED.seller_username,
+                    case_status_enum = EXCLUDED.case_status_enum,
+                    claim_amount_value = EXCLUDED.claim_amount_value,
+                    claim_amount_currency = EXCLUDED.claim_amount_currency,
+                    respond_by = EXCLUDED.respond_by,
+                    creation_date_api = EXCLUDED.creation_date_api,
+                    last_modified_date_api = EXCLUDED.last_modified_date_api,
                     ebay_account_id = EXCLUDED.ebay_account_id,
                     ebay_user_id = EXCLUDED.ebay_user_id,
                     updated_at = EXCLUDED.updated_at
@@ -763,6 +832,16 @@ class PostgresEbayDatabase:
                     "open_date": open_date,
                     "close_date": close_date,
                     "case_data": json.dumps(case_data),
+                    "item_id": item_id,
+                    "transaction_id": transaction_id,
+                    "buyer_username": buyer_username,
+                    "seller_username": seller_username,
+                    "case_status_enum": case_status_enum,
+                    "claim_amount_value": claim_amount_value,
+                    "claim_amount_currency": claim_amount_currency,
+                    "respond_by": respond_by,
+                    "creation_date_api": creation_date_api,
+                    "last_modified_date_api": last_modified_date_api,
                     "created_at": now,
                     "updated_at": now,
                 },

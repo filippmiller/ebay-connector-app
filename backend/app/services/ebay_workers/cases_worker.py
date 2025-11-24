@@ -117,6 +117,9 @@ async def run_cases_worker_for_account(ebay_account_id: str) -> Optional[str]:
 
             total_fetched = int(result.get("total_fetched", 0))
             total_stored = int(result.get("total_stored", 0))
+            normalized_full = int(result.get("normalized_full", 0))
+            normalized_partial = int(result.get("normalized_partial", 0))
+            normalization_errors = int(result.get("normalization_errors", 0))
 
             log_page(
                 db,
@@ -155,6 +158,9 @@ async def run_cases_worker_for_account(ebay_account_id: str) -> Optional[str]:
                     "window_from": from_iso,
                     "window_to": to_iso,
                     "sync_run_id": sync_run_id,
+                    "normalized_full": normalized_full,
+                    "normalized_partial": normalized_partial,
+                    "normalization_errors": normalization_errors,
                 },
             )
 

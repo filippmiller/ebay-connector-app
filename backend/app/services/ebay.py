@@ -3279,6 +3279,9 @@ class EbayService:
         try:
             total_fetched = 0
             total_stored = 0
+            normalized_full = 0
+            normalized_partial = 0
+            normalization_errors = 0
 
             event_logger.log_start(
                 f"Starting Post-Order cases sync from eBay ({settings.EBAY_ENVIRONMENT})",
@@ -3376,32 +3379,64 @@ class EbayService:
                     }
 
                 # Store all Post-Order cases (no filtering by issue type)
-                if ebay_db.upsert_case(  # type: ignore[attr-defined]
-                    user_id,
-                    c,
-                    ebay_account_id=ebay_account_id,
-                    ebay_user_id=ebay_user_id,
-                ):
+                try:
+                    ok = ebay_db.upsert_case(  # type: ignore[attr-defined]
+                        user_id,
+                        c,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=ebay_user_id,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    normalization_errors += 1
+                    logger.warning(
+                        "Cases sync: failed to upsert case payload (case data error): %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    ok = False
+
+                if ok:
                     stored += 1
+                    # Heuristic: treat rows with both itemId and transactionId
+                    # present as "fully" normalized; otherwise partial.
+                    item_id = c.get("itemId") or c.get("item_id")
+                    txn_id = c.get("transactionId") or c.get("transaction_id")
+                    if item_id and txn_id:
+                        normalized_full += 1
+                    else:
+                        normalized_partial += 1
+                else:
+                    normalization_errors += 1
 
             total_stored = stored
             duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
 
             event_logger.log_done(
-                f"Cases sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                f"Cases sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms"
+                f" (normalized_full={normalized_full}, normalized_partial={normalized_partial}, "
+                f"normalization_errors={normalization_errors})",
                 total_fetched,
                 total_stored,
                 duration_ms,
             )
             logger.info(
-                f"Cases sync completed: fetched={total_fetched}, stored={total_stored}",
+                "Cases sync completed: fetched=%s, stored=%s, normalized_full=%s, "
+                "normalized_partial=%s, normalization_errors=%s",
+                total_fetched,
+                total_stored,
+                normalized_full,
+                normalized_partial,
+                normalization_errors,
             )
 
             return {
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
+                "normalized_full": normalized_full,
+                "normalized_partial": normalized_partial,
+                "normalization_errors": normalization_errors,
                 "job_id": job_id,
                 "run_id": event_logger.run_id,
             }
