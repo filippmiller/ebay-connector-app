@@ -198,7 +198,7 @@ CASES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
   ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
   ColumnMeta(name="respond_by_date", label="Respond by", type="datetime", width_default=180),
-  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  ColumnMeta(name="ebay_user_id", label="eBay user ID", type="string", width_default=220),
   # Normalized Post-Order case fields (ebay_cases)
   ColumnMeta(name="item_id", label="Item ID", type="string", width_default=200),
   ColumnMeta(name="transaction_id", label="Transaction ID", type="string", width_default=220),
@@ -361,7 +361,7 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "amount",
             "currency",
             "respond_by_date",
-            "ebay_account_id",
+            "ebay_user_id",
         ],
         "sort": {"column": "open_date", "direction": "desc"},
     },
