@@ -230,8 +230,22 @@ async def create_parts_model(
     if not model_name:
         raise HTTPException(status_code=400, detail="Model name is required")
 
+    # Compute the next numeric ID explicitly. The legacy tbl_parts_models table
+    # has a NOT NULL "ID" column without a PostgreSQL sequence/identity in some
+    # environments, so we emulate the old behaviour with MAX(ID) + 1.
+    try:
+        max_id = db.execute(select(func.max(table.c.ID))).scalar()
+        next_id = int(max_id or 0) + 1
+    except Exception as e:  # pragma: no cover - defensive logging in prod
+        logger.exception("Failed to compute next ID for tbl_parts_models", exc_info=e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: failed to compute next ID for tbl_parts_models: {e}",
+        )
+
     # Prepare insert with safe defaults for all NOT NULL fields.
     insert_data = {
+        "ID": next_id,
         "Model_ID": payload.get("model_id") or 0,
         "Brand_ID": payload.get("brand_id") or 0,
         "Model": model_name,
