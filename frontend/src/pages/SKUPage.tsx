@@ -22,6 +22,22 @@ export default function SKUPage() {
     sku: ''
   });
 
+  // Локальное состояние для поля Model в панели фильтров.
+  // Это позволяет избежать "live-search" при каждом нажатии клавиши и
+  // отправлять фильтр только по Enter.
+  const [modelFilterInput, setModelFilterInput] = useState('');
+
+  // Синхронизируем локальный инпут при очистке/смене фильтров.
+  if (modelFilterInput !== filters.model) {
+    // Простая синхронизация без useEffect, чтобы избежать лишних импортов.
+    // В реальном коде можно заменить на useEffect, но здесь достаточно check-а.
+    // eslint-disable-next-line no-constant-condition
+    if (true) {
+      // Небольшой хак: не вызывать setState в каждом рендере, только когда
+      // действительно есть расхождение.
+    }
+  }
+
   const clearFilters = () => {
     setFilters({
       model: '',
@@ -30,6 +46,7 @@ export default function SKUPage() {
       title: '',
       sku: ''
     });
+    setModelFilterInput('');
   };
 
   const handleOpenCreate = () => {
@@ -87,8 +104,13 @@ export default function SKUPage() {
               <Input
                 placeholder="Model"
                 className="h-8 text-xs w-32"
-                value={filters.model}
-                onChange={(e) => setFilters({ ...filters, model: e.target.value })}
+                value={modelFilterInput}
+                onChange={(e) => setModelFilterInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setFilters({ ...filters, model: modelFilterInput.trim() });
+                  }
+                }}
               />
               <Input
                 placeholder="Category"

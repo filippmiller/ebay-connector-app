@@ -750,7 +750,17 @@ def _get_sku_catalog_data(
     if sku:
         query = query.filter(SqItem.sku.ilike(f"%{sku}%"))
     if model:
-        query = query.filter(SqItem.model.ilike(f"%{model}%"))
+        # В SKU_catalog нет текстовой колонки "Model", только numeric Model_ID.
+        # Для фильтрации по модели используем эвристику: ищем подстроку в Title /
+        # Description / Part, где обычно фигурирует модель ноутбука.
+        like = f"%{model}%"
+        query = query.filter(
+            or_(
+                SqItem.title.ilike(like),
+                SqItem.description.ilike(like),
+                SqItem.part.ilike(like),
+            )
+        )
     if category:
         query = query.filter(SqItem.category.ilike(f"%{category}%"))
     if part_number:
@@ -765,7 +775,9 @@ def _get_sku_catalog_data(
         "id": SqItem.id,
         "sku_code": SqItem.sku,
         "sku": SqItem.sku,
-        "model": SqItem.model,
+        # "model" текстовой колонки нет; оставляем ключ для совместимости,
+        # но сортировать будем по numeric Model_ID либо по ID.
+        "model": SqItem.model_id,
         "category": SqItem.category,
         "price": SqItem.price,
         "record_created": SqItem.record_created,
@@ -773,9 +785,10 @@ def _get_sku_catalog_data(
         "rec_created": SqItem.record_created,
         "rec_updated": SqItem.record_updated,
     }
-    sort_attr = allowed_sort_cols.get(sort_column or "rec_updated")
+    # По умолчанию сортируем по ID (новые записи сверху при sort_dir="desc").
+    sort_attr = allowed_sort_cols.get(sort_column or "id")
     if sort_attr is None:
-        sort_attr = SqItem.record_updated
+        sort_attr = SqItem.id
     if sort_dir == "desc":
         query = query.order_by(desc(sort_attr))
     else:
