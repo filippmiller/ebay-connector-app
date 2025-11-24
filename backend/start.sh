@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Backend startup script for Railway
-# Notes:
-# - Pure LF line endings so bash inside the container does not see stray CR characters
-# - Use bash-safe strict mode with pipefail now that we ensure bash is used
-set -Eeuo pipefail
+# DEBUG MODE
+
+# set -Eeuo pipefail  <-- Disabled for debugging
+
+echo "=========================================="
+echo "   STARTING BACKEND START.SH (DEBUG)      "
+echo "=========================================="
+echo "Date: $(date)"
+echo "User: $(whoami)"
+echo "PWD: $(pwd)"
 
 # Resolve ROOT_DIR based on this script's location.
 # In the container this should typically resolve to /app/backend.
@@ -194,9 +200,11 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   echo "[entry] alembic heads:"
   run_alembic heads || echo "[entry] Unable to list Alembic heads"
   echo "[entry] Running migrations with retry logic (upgrade heads)..."
-  run_migrations_with_retry || {
-    echo "[entry] WARNING: Migrations failed after retries, continuing anyway..."
-  }
+  if run_migrations_with_retry; then
+      echo "[entry] Migrations SUCCESS"
+  else
+      echo "[entry] ERROR: Migrations FAILED but continuing for debug..."
+  fi
 fi
 
 # 2) Start the application (exec so the process stays attached to container lifecycle).
