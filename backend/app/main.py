@@ -5,7 +5,7 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers, admin_db, grid_layouts, orders_api, grids_data, admin_mssql, ai_messages, timesheets, grid_preferences, admin_migration, admin_db_migration_console, tasks, listing, sq_catalog, ebay_notifications, shipping, ui_tweak
+from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers, admin_db, grid_layouts, orders_api, grids_data, admin_mssql, ai_messages, timesheets, grid_preferences, admin_migration, admin_db_migration_console, tasks, listing, sq_catalog, ebay_notifications, shipping, ui_tweak, security_center
 from app.utils.logger import logger
 import os
 import asyncio
@@ -92,6 +92,7 @@ app.include_router(listing.router)
 app.include_router(sq_catalog.router)
 app.include_router(shipping.router)
 app.include_router(ui_tweak.router)
+app.include_router(security_center.router)
 
 @app.on_event("startup")
 async def startup_event():

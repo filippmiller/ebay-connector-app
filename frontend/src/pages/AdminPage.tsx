@@ -47,6 +47,11 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">View eBay notification inbox & webhook events</p>
           </Card>
           
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/security')}>
+            <h2 className="text-lg font-semibold">Security Center</h2>
+            <p className="text-sm text-gray-600 mt-1">Login protection, security events, and policies</p>
+          </Card>
+          
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ui-tweak')}>
             <h2 className="text-lg font-semibold">UI Tweak</h2>
             <p className="text-sm text-gray-600 mt-1">Adjust navigation, text size, and grid density</p>

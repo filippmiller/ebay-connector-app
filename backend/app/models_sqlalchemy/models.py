@@ -469,16 +469,12 @@ class SqItem(Base):
     part_id = Column("Part_ID", BigInteger, nullable=True)  # [Part_ID]
     sku = Column("SKU", Numeric(18, 0), nullable=True)  # [SKU]
     sku2 = Column("SKU2", Text, nullable=True)  # [SKU2]
+    # Legacy schema stores only the numeric Model_ID on SKU_catalog.
+    # The human-readable model label lives in tbl_parts_models and is
+    # surfaced via higher-level joins; there is no "Model" text column
+    # on SKU_catalog itself.
     model_id = Column("Model_ID", BigInteger, nullable=True)  # [Model_ID]
-    # Legacy table does not expose a textual model field; we keep a synthetic
-    # attribute so downstream code can access `item.model`, but it is not
-    # backed by a real column on SKU_catalog.
-    model = None  # Convenience display field for model name/code (no backing column)
-    part = Column("Part", Text, nullable=True)  # [Part]
-    # Optional short human-readable title for the listing (added by modern app).
-    # The underlying column is created via Alembic migration using
-    # `ALTER TABLE "SKU_catalog" ADD COLUMN IF NOT EXISTS "Title" text`.
-    title = Column("Title", Text, nullable=True)  # [Title]
+    part = Column("Part", Text, nullable=True)  # [Part] – legacy text field used as logical "title"
 
     # Pricing
     price = Column("Price", Numeric(12, 2), nullable=True)  # [Price]
@@ -579,16 +575,29 @@ class SqItem(Base):
     clone_sku_updated = Column("CloneSKU_updated", DateTime(timezone=True), nullable=True)  # [CloneSKU_updated]
     clone_sku_updated_by = Column("CloneSKU_updated_by", Text, nullable=True)  # [CloneSKU_updated_by]
 
-    # Synthetic fields for the modern app that are not present in legacy
-    # SKU_catalog schema. They are kept as plain attributes so Pydantic
-    # models and business logic can still access them but they do not
-    # generate invalid SQL against the legacy table.
-    title = None
+    # Synthetic / convenience attributes that do not correspond 1:1 to legacy
+    # SKU_catalog columns.
+    #
+    # - ``title`` is exposed as a property alias over the legacy ``Part``
+    #   column so the modern UI can talk in terms of "Title" while the
+    #   database continues to use ``Part`` as the canonical text field.
+    # - ``model`` is populated by higher-level code (joins to
+    #   ``tbl_parts_models``) and is *not* stored on SKU_catalog; only
+    #   ``model_id`` is persisted.
+    model = None
     brand = None
     warehouse_id = None
     storage_alias = None
 
     warehouse = None
+
+    @property
+    def title(self):  # type: ignore[override]
+        return self.part
+
+    @title.setter
+    def title(self, value):  # type: ignore[override]
+        self.part = value
 
     # Legacy SKU_catalog already has its own indexes at the database level.
     # Declaring ORM Index objects with lower-case logical names (e.g. 'sku')
@@ -725,6 +734,117 @@ class EbayConnectLog(Base):
         Index('idx_ebay_connect_logs_user_env', 'user_id', 'environment'),
         Index('idx_ebay_connect_logs_action', 'action'),
         Index('idx_ebay_connect_logs_created', 'created_at'),
+    )
+
+
+class SecurityEvent(Base):
+    """Append-only log of security-relevant events (auth, settings, alerts).
+
+    Examples of event_type values:
+    - login_success
+    - login_failed
+    - login_blocked
+    - session_invalidated
+    - settings_changed
+    - security_alert
+    """
+
+    __tablename__ = "security_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=True, index=True)
+    ip_address = Column(String(64), nullable=True, index=True)
+    user_agent = Column(Text, nullable=True)
+
+    event_type = Column(String(50), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+
+    # Flexible metadata payload; must never contain raw passwords or tokens.
+    metadata = Column(JSONB, nullable=True)
+
+    user = relationship("User", backref="security_events")
+
+    __table_args__ = (
+        Index('idx_security_events_user_time', 'user_id', 'created_at'),
+        Index('idx_security_events_ip_time', 'ip_address', 'created_at'),
+    )
+
+
+class LoginAttempt(Base):
+    """Canonical record of each login attempt and block decision.
+
+    Rows are written for both successful and failed login attempts, and can
+    be queried by email+IP to compute progressive delays.
+    """
+
+    __tablename__ = "login_attempts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    # Identifier used at login time; may or may not correspond to a real user.
+    email = Column(String(255), nullable=False, index=True)
+
+    # Optional linkage to the canonical user row when available.
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=True, index=True)
+
+    ip_address = Column(String(64), nullable=True, index=True)
+    user_agent = Column(Text, nullable=True)
+
+    success = Column(Boolean, nullable=False, default=False, index=True)
+    reason = Column(String(100), nullable=True)
+
+    # Whether a block was applied as a result of this attempt and until when.
+    block_applied = Column(Boolean, nullable=False, default=False)
+    block_until = Column(DateTime(timezone=True), nullable=True)
+
+    metadata = Column(JSONB, nullable=True)
+
+    user = relationship("User", backref="login_attempts")
+
+    __table_args__ = (
+        Index('idx_login_attempts_email_ip_time', 'email', 'ip_address', 'created_at'),
+    )
+
+
+class SecuritySettings(Base):
+    """Singleton row storing brute-force and session security parameters.
+
+    The application should treat this table as a single-record configuration
+    store, loading row id=1 (or creating it with defaults when absent).
+    """
+
+    __tablename__ = "security_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Brute-force / login protections
+    max_failed_attempts = Column(Integer, nullable=False, default=3)
+    initial_block_minutes = Column(Integer, nullable=False, default=1)
+    progressive_delay_step_minutes = Column(Integer, nullable=False, default=2)
+    max_delay_minutes = Column(Integer, nullable=False, default=30)
+
+    enable_captcha = Column(Boolean, nullable=False, default=False)
+    captcha_after_failures = Column(Integer, nullable=False, default=3)
+
+    # Session lifetime and idle timeout (applied to JWT expiry and middleware).
+    session_ttl_minutes = Column(Integer, nullable=False, default=60 * 12)  # 12 hours
+    session_idle_timeout_minutes = Column(Integer, nullable=False, default=60)  # 1 hour
+
+    # Simple alert thresholds; used by future anomaly detection/alerting.
+    bruteforce_alert_threshold_per_ip = Column(Integer, nullable=False, default=50)
+    bruteforce_alert_threshold_per_user = Column(Integer, nullable=False, default=50)
+
+    alert_email_enabled = Column(Boolean, nullable=False, default=False)
+    alert_channel = Column(String(50), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_security_settings_updated_at', 'updated_at'),
     )
 
 

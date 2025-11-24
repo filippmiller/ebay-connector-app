@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 from app.models.user import UserCreate, UserLogin, UserResponse, Token, PasswordResetRequest, PasswordReset
 from app.services.auth import (
     register_user, 
@@ -12,6 +13,13 @@ from app.services.auth import (
 from app.services.database import db
 from app.config import settings
 from app.utils.logger import logger
+from app.models_sqlalchemy import get_db
+from app.services.security_center import (
+    get_or_create_security_settings,
+    get_effective_session_ttl_minutes,
+    check_pre_login_block,
+    record_login_attempt_and_events,
+)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -32,43 +40,147 @@ async def register(user_data: UserCreate):
 
 
 @router.post("/login", response_model=Token)
-async def login(user_credentials: UserLogin, request: Request):
+async def login(
+    user_credentials: UserLogin,
+    request: Request,
+    db_session: Session = Depends(get_db),
+):
     rid = getattr(request.state, "rid", "unknown")
     logger.info(f"Login attempt email={user_credentials.email} rid={rid}")
-    
+
+    # Derive basic request context for security logging.
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    # Use UTC timestamps for all security-related records.
+    now = datetime.now(timezone.utc)
+
     try:
+        # Load or create security settings once per request.
+        sec_settings = get_or_create_security_settings(db_session)
+
+        # Pre-check for an active block window on this identity+IP.
+        is_blocked, block_until = check_pre_login_block(
+            db_session,
+            email=user_credentials.email,
+            ip_address=client_ip,
+            now=now,
+        )
+        if is_blocked:
+            # Record a blocked attempt without even checking the password.
+            record_login_attempt_and_events(
+                db_session,
+                email=user_credentials.email,
+                user=None,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                success=False,
+                reason="blocked",
+                settings=sec_settings,
+                now=now,
+                preblocked=True,
+            )
+            db_session.commit()
+
+            retry_after = int((block_until - now).total_seconds()) if block_until else None
+            headers = {"X-Request-ID": rid}
+            if retry_after is not None and retry_after > 0:
+                headers["Retry-After"] = str(retry_after)
+
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed login attempts. Please wait before trying again.",
+                headers=headers,
+            )
+
+        # Perform the actual authentication using the existing database service.
         user = authenticate_user(user_credentials.email, user_credentials.password)
         if not user:
             logger.warning(f"Failed login attempt for: {user_credentials.email} rid={rid}")
+
+            # Record failed attempt and possibly start a new block window.
+            record_login_attempt_and_events(
+                db_session,
+                email=user_credentials.email,
+                user=None,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                success=False,
+                reason="invalid_credentials",
+                settings=sec_settings,
+                now=now,
+            )
+            db_session.commit()
+
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer", "X-Request-ID": rid},
             )
-        
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+        # Authentication succeeded: record success and compute effective TTL.
+        record_login_attempt_and_events(
+            db_session,
+            email=user_credentials.email,
+            user=None,  # legacy user object is from the old DB; we only log email here.
+            ip_address=client_ip,
+            user_agent=user_agent,
+            success=True,
+            reason="ok",
+            settings=sec_settings,
+            now=now,
+        )
+
+        # Determine access-token TTL using security settings as the primary source.
+        effective_ttl_minutes = get_effective_session_ttl_minutes(
+            sec_settings,
+            fallback_minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+        )
+        access_token_expires = timedelta(minutes=effective_ttl_minutes)
+
         access_token = create_access_token(
             data={"sub": user.id}, expires_delta=access_token_expires
         )
-        
+
+        db_session.commit()
+
         logger.info(f"✅ User logged in successfully: {user.email} (role: {user.role})")
         return {"access_token": access_token, "token_type": "bearer"}
-    
+
     except HTTPException as e:
-        # Re-raise HTTP exceptions (like 401) as-is, but add RID to headers if not present
-        if "X-Request-ID" not in e.headers:
+        # Ensure SQLAlchemy session is not left in a broken state.
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        # Re-raise HTTP exceptions (like 401/429) as-is, but add RID to headers if not present.
+        if not getattr(e, "headers", None):
+            e.headers = {"X-Request-ID": rid}
+        elif "X-Request-ID" not in e.headers:
             e.headers["X-Request-ID"] = rid
         raise
     except SQLAlchemyError as e:
-        logger.error(f"Database error during login for {user_credentials.email} rid={rid}: {type(e).__name__}: {str(e)}")
+        logger.error(
+            f"Database error during login for {user_credentials.email} rid={rid}: {type(e).__name__}: {str(e)}"
+        )
         logger.exception("Full database error traceback:")
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
             headers={"X-Request-ID": rid},
         )
     except Exception as e:
-        logger.exception(f"Unexpected error during login for {user_credentials.email} rid={rid}: {type(e).__name__}: {str(e)}")
+        logger.exception(
+            f"Unexpected error during login for {user_credentials.email} rid={rid}: {type(e).__name__}: {str(e)}"
+        )
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {type(e).__name__}: {str(e)}",

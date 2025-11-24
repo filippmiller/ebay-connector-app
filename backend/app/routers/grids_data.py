@@ -733,19 +733,6 @@ def _get_sku_catalog_data(
 
     query = db.query(SqItem)
 
-    if search:
-        like = f"%{search}%"
-        query = query.filter(
-            or_(
-                SqItem.sku.ilike(like),
-                SqItem.title.ilike(like),
-                SqItem.description.ilike(like),
-                SqItem.part_number.ilike(like),
-                SqItem.mpn.ilike(like),
-                SqItem.upc.ilike(like),
-                SqItem.part.ilike(like),
-            )
-        )
 
     if sku:
         query = query.filter(SqItem.sku.ilike(f"%{sku}%"))
