@@ -149,6 +149,8 @@ const AdminDbExplorerPage: React.FC = () => {
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
   const [truncateLoading, setTruncateLoading] = useState(false);
   const [mssqlDatabase, setMssqlDatabase] = useState('DB_A28F26_parts');
+  // Per-column pixel widths for the DB Explorer data grid only.
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
 
   // Migration console state
   const [migrationCommandText, setMigrationCommandText] = useState('');
@@ -339,6 +341,33 @@ const AdminDbExplorerPage: React.FC = () => {
       setDataSortDirection('asc');
       return column;
     });
+  };
+
+  /**
+   * Start a simple mouse-driven column resize interaction for the DB Explorer data grid.
+   * This only affects the in-memory layout of this page and does not touch any shared grid code.
+   */
+  const beginColumnResize = (columnName: string, clientX: number) => {
+    const MIN_WIDTH = 80;
+    const MAX_WIDTH = 600;
+
+    // Start from the last saved width (if any); otherwise fall back to a reasonable default.
+    const startWidth = columnWidths[columnName] ?? 160;
+    const startX = clientX;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const delta = event.clientX - startX;
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + delta));
+      setColumnWidths((prev) => ({ ...prev, [columnName]: next }));
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   };
 
   useEffect(() => {
@@ -612,38 +641,62 @@ const AdminDbExplorerPage: React.FC = () => {
           </div>
         </div>
         <div className="overflow-auto border rounded max-h-[60vh]">
-          <table className="min-w-full text-xs table-fixed">
-            <thead className="bg-gray-100">
+          <table
+            id="db-explorer-data-table"
+            className="min-w-full text-xs table-auto"
+          >
+            <thead className="bg-gray-100 sticky top-0 z-10">
               <tr>
-                {columns.map((col) => (
-                  <th
-                    key={col}
-                    className="px-2 py-1 border text-left font-mono text-[11px] cursor-pointer select-none"
-                    onClick={() => handleDataHeaderClick(col)}
-                  >
-                    {col}
-                    {dataSortColumn === col && (dataSortDirection === 'asc' ? ' ▲' : ' ▼')}
-                  </th>
-                ))}
+                {columns.map((col) => {
+                  const width = columnWidths[col];
+                  return (
+                    <th
+                      key={col}
+                      data-column-name={col}
+                      className="relative px-2 py-1 border text-left font-mono text-[11px] cursor-pointer select-none bg-gray-100"
+                      style={width ? { width } : undefined}
+                      onClick={() => handleDataHeaderClick(col)}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate">
+                          {col}
+                          {dataSortColumn === col && (dataSortDirection === 'asc' ? ' ▲' : ' ▼')}
+                        </span>
+                        <span
+                          className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize select-none"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            beginColumnResize(col, e.clientX);
+                          }}
+                        />
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
               {sortedRows.map((row, idx) => (
                 <tr key={idx} className="border-t">
-                  {columns.map((col) => (
-                    <td
-                      key={col}
-                      className="px-2 py-1 border whitespace-nowrap max-w-xs overflow-x-auto text-[11px] font-mono"
-                    >
-                      <div className="inline-block whitespace-pre select-text">
-                        {row[col] === null || row[col] === undefined
-                          ? ''
-                          : typeof row[col] === 'object'
-                          ? JSON.stringify(row[col], null, 2)
-                          : String(row[col])}
-                      </div>
-                    </td>
-                  ))}
+                  {columns.map((col) => {
+                    const width = columnWidths[col];
+                    return (
+                      <td
+                        key={col}
+                        className="px-2 py-1 border whitespace-nowrap max-w-xs overflow-x-auto text-[11px] font-mono"
+                        style={width ? { width } : undefined}
+                      >
+                        <div className="inline-block whitespace-pre select-text">
+                          {row[col] === null || row[col] === undefined
+                            ? ''
+                            : typeof row[col] === 'object'
+                            ? JSON.stringify(row[col], null, 2)
+                            : String(row[col])}
+                        </div>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
