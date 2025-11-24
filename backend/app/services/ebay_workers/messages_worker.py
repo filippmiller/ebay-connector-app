@@ -18,7 +18,8 @@ from .logger import log_start, log_page, log_done, log_error
 
 
 MESSAGES_LIMIT = 200
-OVERLAP_MINUTES_DEFAULT = 360
+# 60-minute overlap between runs to avoid gaps while keeping the window small.
+OVERLAP_MINUTES_DEFAULT = 60
 INITIAL_BACKFILL_DAYS_DEFAULT = 90
 
 

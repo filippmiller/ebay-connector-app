@@ -5490,6 +5490,7 @@ class EbayService:
         from app.models_sqlalchemy import SessionLocal
         from app.models_sqlalchemy.models import Message as SqlMessage
         from app.services.message_parser import parse_ebay_message_html
+        from sqlalchemy.exc import IntegrityError
         import time
 
         event_logger = SyncEventLogger(user_id, "messages", run_id=run_id)
@@ -5802,117 +5803,138 @@ class EbayService:
                                 except Exception:
                                     pass
 
-                        body_html = msg.get("text", "") or ""
-                        parsed_body = None
-                        normalized = {}
-                        preview_text = None
-                        listing_id = msg.get("itemid")
-                        order_id = None
-                        transaction_id = None
-                        is_case_related = False
-                        message_topic = None
-                        case_event_type = None
-                        has_attachments = False
-                        attachments_meta = []
+                            body_html = msg.get("text", "") or ""
+                            parsed_body: Optional[Dict[str, Any]] = None
+                            normalized: Dict[str, Any] = {}
+                            preview_text: Optional[str] = None
+                            listing_id = msg.get("itemid")
+                            order_id: Optional[str] = None
+                            transaction_id: Optional[str] = None
+                            is_case_related = False
+                            message_topic: Optional[str] = None
+                            case_event_type: Optional[str] = None
+                            has_attachments = False
+                            attachments_meta: List[Any] = []
 
-                        try:
-                            if body_html:
-                                # Primary rich parser used by the legacy /messages grid.
-                                parsed = parse_ebay_message_html(
+                            try:
+                                if body_html:
+                                    # Primary rich parser used by the legacy /messages grid.
+                                    parsed = parse_ebay_message_html(
+                                        body_html,
+                                        our_account_username=ebay_user_id or "seller",
+                                    )
+                                    # Use pydantic JSON serialization to avoid HttpUrl issues.
+                                    parsed_body = json.loads(parsed.json(exclude_none=True))
+                                    # Use preview from the rich parser when available.
+                                    preview_text = parsed.previewText or None
+                            except Exception as parse_err:
+                                # Parsing errors should never break ingestion; log and continue.
+                                logger.warning(
+                                    f"Failed to parse eBay message body for {message_id} via rich parser: {parse_err}"
+                                )
+
+                            # Best-effort normalized view on top of the same HTML, reusing
+                            # the lighter-weight message_body_parser.
+                            try:
+                                from app.ebay.message_body_parser import parse_ebay_message_body
+
+                                normalized_body = parse_ebay_message_body(
                                     body_html,
                                     our_account_username=ebay_user_id or "seller",
                                 )
-                                parsed_body = parsed.dict(exclude_none=True)
-                                # Use preview from the rich parser when available.
-                                preview_text = parsed.previewText or None
-                        except Exception as parse_err:
-                            # Parsing errors should never break ingestion; log and continue.
-                            logger.warning(
-                                f"Failed to parse eBay message body for {message_id} via rich parser: {parse_err}"
+                                if parsed_body is None:
+                                    # normalized_body already JSON-serializable
+                                    parsed_body = normalized_body
+                                else:
+                                    # Merge normalized block into existing parsed_body
+                                    if normalized_body.get("normalized"):
+                                        parsed_body["normalized"] = normalized_body["normalized"]
+
+                                norm = normalized_body.get("normalized") or {}
+                                normalized = norm
+                                # Map normalized fields into dedicated columns when present.
+                                order_id = norm.get("orderId") or order_id
+                                listing_id = norm.get("itemId") or listing_id
+                                transaction_id = norm.get("transactionId") or transaction_id
+
+                                message_topic = norm.get("topic") or None
+                                case_event_type = norm.get("caseEventType") or None
+                                # Simple heuristic: CASE/RETURN/INQUIRY/PAYMENT_DISPUTE
+                                if message_topic in {"CASE", "RETURN", "INQUIRY", "PAYMENT_DISPUTE"}:
+                                    is_case_related = True
+
+                                # Attachments: outer attachments list can be synced into
+                                # attachments_meta if present and well-formed.
+                                attachments = norm.get("attachments") or []
+                                if isinstance(attachments, list) and attachments:
+                                    has_attachments = True
+                                    # Store as-is; structure is documented in the spec.
+                                    attachments_meta = attachments
+
+                                # Prefer normalized summaryText as preview when available.
+                                if norm.get("summaryText"):
+                                    preview_text = norm.get("summaryText")
+                            except Exception as parse_err:
+                                logger.warning(
+                                    f"Failed to build normalized view for eBay message {message_id}: {parse_err}"
+                                )
+
+                            db_message = SqlMessage(
+                                ebay_account_id=ebay_account_id,
+                                user_id=user_id,
+                                message_id=message_id,
+                                thread_id=msg.get("externalmessageid") or message_id,
+                                sender_username=sender,
+                                recipient_username=recipient,
+                                subject=msg.get("subject", ""),
+                                body=body_html,
+                                message_type="MEMBER_MESSAGE",
+                                is_read=msg.get("read", False),
+                                is_flagged=msg.get("flagged", False),
+                                is_archived=msg.get("folderid") == "2",
+                                direction=direction,
+                                message_date=message_date,
+                                message_at=message_date,
+                                order_id=order_id,
+                                listing_id=listing_id,
+                                case_id=normalized.get("caseId"),
+                                case_type=normalized.get("caseType"),
+                                inquiry_id=normalized.get("inquiryId"),
+                                return_id=normalized.get("ReturnId"),
+                                payment_dispute_id=normalized.get("paymentDisputeId"),
+                                transaction_id=transaction_id,
+                                is_case_related=is_case_related,
+                                message_topic=message_topic,
+                                case_event_type=case_event_type,
+                                raw_data=str(msg),
+                                parsed_body=parsed_body,
+                                has_attachments=has_attachments,
+                                attachments_meta=attachments_meta,
+                                preview_text=preview_text,
                             )
 
-                        # Best-effort normalized view on top of the same HTML, reusing
-                        # the lighter-weight message_body_parser.
-                        try:
-                            from app.ebay.message_body_parser import parse_ebay_message_body
-
-                            normalized_body = parse_ebay_message_body(
-                                body_html,
-                                our_account_username=ebay_user_id or "seller",
-                            )
-                            if parsed_body is None:
-                                parsed_body = normalized_body
-                            else:
-                                # Merge normalized block into existing parsed_body
-                                if normalized_body.get("normalized"):
-                                    parsed_body["normalized"] = normalized_body["normalized"]
-
-                            norm = normalized_body.get("normalized") or {}
-                            normalized = norm
-                            # Map normalized fields into dedicated columns when present.
-                            order_id = norm.get("orderId") or order_id
-                            listing_id = norm.get("itemId") or listing_id
-                            transaction_id = norm.get("transactionId") or transaction_id
-
-                            message_topic = norm.get("topic") or None
-                            case_event_type = norm.get("caseEventType") or None
-                            # Simple heuristic: CASE/RETURN/INQUIRY/PAYMENT_DISPUTE
-                            if message_topic in {"CASE", "RETURN", "INQUIRY", "PAYMENT_DISPUTE"}:
-                                is_case_related = True
-
-                            # Attachments: outer attachments list can be synced into
-                            # attachments_meta if present and well-formed.
-                            attachments = norm.get("attachments") or []
-                            if isinstance(attachments, list) and attachments:
-                                has_attachments = True
-                                # Store as-is; structure is documented in the spec.
-                                attachments_meta = attachments
-
-                            # Prefer normalized summaryText as preview when available.
-                            if norm.get("summaryText"):
-                                preview_text = norm.get("summaryText")
-                        except Exception as parse_err:
-                            logger.warning(
-                                f"Failed to build normalized view for eBay message {message_id}: {parse_err}"
-                            )
-
-                        db_message = SqlMessage(
-                            ebay_account_id=ebay_account_id,
-                            user_id=user_id,
-                            message_id=message_id,
-                            thread_id=msg.get("externalmessageid") or message_id,
-                            sender_username=sender,
-                            recipient_username=recipient,
-                            subject=msg.get("subject", ""),
-                            body=body_html,
-                            message_type="MEMBER_MESSAGE",
-                            is_read=msg.get("read", False),
-                            is_flagged=msg.get("flagged", False),
-                            is_archived=msg.get("folderid") == "2",
-                            direction=direction,
-                            message_date=message_date,
-                            message_at=message_date,
-                            order_id=order_id,
-                            listing_id=listing_id,
-                            case_id=normalized.get("caseId"),
-                            case_type=normalized.get("caseType"),
-                            inquiry_id=normalized.get("inquiryId"),
-                            return_id=normalized.get("ReturnId"),
-                            payment_dispute_id=normalized.get("paymentDisputeId"),
-                            transaction_id=transaction_id,
-                            is_case_related=is_case_related,
-                            message_topic=message_topic,
-                            case_event_type=case_event_type,
-                            raw_data=str(msg),
-                            parsed_body=parsed_body,
-                            has_attachments=has_attachments,
-                            attachments_meta=attachments_meta,
-                            preview_text=preview_text,
-                        )
-                        db_session.add(db_message)
-                        total_stored += 1
-
-                        db_session.commit()
+                            try:
+                                db_session.add(db_message)
+                                db_session.commit()
+                                total_stored += 1
+                            except IntegrityError as ie:
+                                # Duplicate per (ebay_account_id, user_id, message_id) – safe to ignore.
+                                db_session.rollback()
+                                logger.info(
+                                    "Duplicate ebay_message skipped (account=%s, user=%s, message_id=%s): %s",
+                                    ebay_account_id,
+                                    user_id,
+                                    message_id,
+                                    str(ie),
+                                )
+                            except Exception as e:
+                                db_session.rollback()
+                                error_msg = (
+                                    f"Error inserting ebay_message {message_id} in batch {batch_index} for folder {folder_name}: {str(e)}"
+                                )
+                                event_logger.log_error(error_msg, e)
+                                await asyncio.sleep(0.5)
+                                continue
 
                     except Exception as e:
                         db_session.rollback()
