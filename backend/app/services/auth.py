@@ -174,7 +174,7 @@ async def get_current_active_user(current_user: UserModel = Depends(get_current_
     return current_user
 
 
-async def admin_required(current_user: UserModel = Depends(get_current_user)) -> UserModel:
+async def admin_required(current_user: UserModel = Depends(get_current_active_user)) -> UserModel:
     from app.models.user import UserRole
     if current_user.role != UserRole.ADMIN:
         logger.warning(f"Non-admin user attempted admin action: {current_user.email}")

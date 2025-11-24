@@ -22,6 +22,8 @@ class PostgresDatabase:
                 username=user_data.username,
                 hashed_password=hashed_password,
                 role=user_data.role.value,
+                is_active=True,
+                must_change_password=False,
                 created_at=created_at,
                 updated_at=created_at,
                 ebay_connected=False,

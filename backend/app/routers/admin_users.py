@@ -35,6 +35,7 @@ async def list_users(_: UserResponse = Depends(admin_required), db: Session = De
                 username=u.username,
                 role=u.role,
                 is_active=getattr(u, "is_active", True),
+                must_change_password=getattr(u, "must_change_password", False),
                 created_at=u.created_at,
                 ebay_connected=u.ebay_connected,
             )
