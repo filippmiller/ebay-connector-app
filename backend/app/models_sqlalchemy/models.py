@@ -144,14 +144,16 @@ class User(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     ebay_connected = Column(Boolean, default=False)
-    ebay_access_token = Column(Text, nullable=True)  # Production token
-    ebay_refresh_token = Column(Text, nullable=True)  # Production refresh token
+    # Underlying columns store encrypted values when written through the
+    # properties below; the physical column names remain unchanged.
+    _ebay_access_token = Column("ebay_access_token", Text, nullable=True)
+    _ebay_refresh_token = Column("ebay_refresh_token", Text, nullable=True)
     ebay_token_expires_at = Column(DateTime, nullable=True)  # Production token expires
     ebay_environment = Column(String(20), default="sandbox")
     
     # Sandbox tokens (separate from production)
-    ebay_sandbox_access_token = Column(Text, nullable=True)
-    ebay_sandbox_refresh_token = Column(Text, nullable=True)
+    _ebay_sandbox_access_token = Column("ebay_sandbox_access_token", Text, nullable=True)
+    _ebay_sandbox_refresh_token = Column("ebay_sandbox_refresh_token", Text, nullable=True)
     ebay_sandbox_token_expires_at = Column(DateTime, nullable=True)
     
     sync_logs = relationship("SyncLog", back_populates="user")
@@ -161,6 +163,81 @@ class User(Base):
         Index('idx_user_email', 'email'),
         Index('idx_user_role', 'role'),
     )
+
+    # ------------------------------------------------------------------
+    # Encrypted eBay token accessors (per-user legacy tokens)
+    # ------------------------------------------------------------------
+    @property
+    def ebay_access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_access_token.setter
+    def ebay_access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_access_token = None
+        else:
+            self._ebay_access_token = crypto.encrypt(value)
+
+    @property
+    def ebay_refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_refresh_token.setter
+    def ebay_refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_refresh_token = None
+        else:
+            self._ebay_refresh_token = crypto.encrypt(value)
+
+    @property
+    def ebay_sandbox_access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_sandbox_access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_sandbox_access_token.setter
+    def ebay_sandbox_access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_sandbox_access_token = None
+        else:
+            self._ebay_sandbox_access_token = crypto.encrypt(value)
+
+    @property
+    def ebay_sandbox_refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_sandbox_refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_sandbox_refresh_token.setter
+    def ebay_sandbox_refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_sandbox_refresh_token = None
+        else:
+            self._ebay_sandbox_refresh_token = crypto.encrypt(value)
 
 
 class Buying(Base):
@@ -1320,8 +1397,9 @@ class EbayToken(Base):
     
     id = Column(String(36), primary_key=True)
     ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
-    access_token = Column(Text, nullable=True)
-    refresh_token = Column(Text, nullable=True)
+    # Physical columns holding encrypted blobs when written via properties.
+    _access_token = Column("access_token", Text, nullable=True)
+    _refresh_token = Column("refresh_token", Text, nullable=True)
     token_type = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     refresh_expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -1336,6 +1414,45 @@ class EbayToken(Base):
         Index('idx_ebay_tokens_account_id', 'ebay_account_id'),
         Index('idx_ebay_tokens_expires_at', 'expires_at'),
     )
+
+    # ------------------------------------------------------------------
+    # Encrypted token accessors (per-account tokens in ebay_tokens)
+    # ------------------------------------------------------------------
+    @property
+    def access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @access_token.setter
+    def access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._access_token = None
+        else:
+            self._access_token = crypto.encrypt(value)
+
+    @property
+    def refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @refresh_token.setter
+    def refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._refresh_token = None
+        else:
+            self._refresh_token = crypto.encrypt(value)
 
 
 class EbayAuthorization(Base):

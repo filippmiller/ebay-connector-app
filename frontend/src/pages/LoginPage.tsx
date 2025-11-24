@@ -28,30 +28,70 @@ export const LoginPage: React.FC = () => {
       let errorMessage = 'Login failed';
 
       const hasResponse = !!err?.response;
+      const status = err?.response?.status;
+      const data = err?.response?.data;
+      const headers = err?.response?.headers || {};
+
       if (!hasResponse) {
         // Network-level error: backend is likely down or unreachable.
         errorMessage = 'Backend temporarily unavailable. Please check backend status/logs and try again.';
-      } else if (err.response.status === 401) {
-        errorMessage = 'Incorrect email or password';
-      } else if (err.response.data?.detail) {
-        errorMessage = err.response.data.detail;
-      } else if (err.response.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (err.response.data?.error) {
-        errorMessage = err.response.data.error;
+      } else if (status === 401) {
+        // Incorrect credentials. Try to use progression headers when available.
+        const attemptsLeftRaw = headers['x-attempts-left'] ?? headers['X-Attempts-Left'];
+        const blockMinutesRaw = headers['x-block-minutes-next'] ?? headers['X-Block-Minutes-Next'];
+        const attemptsLeft = attemptsLeftRaw != null ? Number(attemptsLeftRaw) : NaN;
+        const blockMinutesNext = blockMinutesRaw != null ? Number(blockMinutesRaw) : NaN;
+
+        if (!Number.isNaN(attemptsLeft) && !Number.isNaN(blockMinutesNext)) {
+          if (attemptsLeft > 0) {
+            errorMessage = `Incorrect email or password. You have ${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} left before a ${blockMinutesNext}-minute lockout.`;
+          } else if (attemptsLeft === 0) {
+            errorMessage = `Incorrect email or password. The next failed attempt will result in a ${blockMinutesNext}-minute lockout.`;
+          } else {
+            errorMessage = 'Incorrect email or password';
+          }
+        } else if (data?.detail) {
+          errorMessage = typeof data.detail === 'string' ? data.detail : 'Incorrect email or password';
+        } else {
+          errorMessage = 'Incorrect email or password';
+        }
+      } else if (status === 429) {
+        // Too many attempts; show remaining wait time using Retry-After when present.
+        const retryAfterRaw = headers['retry-after'] ?? headers['Retry-After'];
+        const retryAfter = retryAfterRaw != null ? Number(retryAfterRaw) : NaN;
+        if (!Number.isNaN(retryAfter) && retryAfter > 0) {
+          const minutes = Math.floor(retryAfter / 60);
+          const seconds = retryAfter % 60;
+          if (minutes > 0) {
+            errorMessage = `Too many failed login attempts. Your account is temporarily locked. Please wait ${minutes} minute(s) and ${seconds} second(s) before trying again.`;
+          } else {
+            errorMessage = `Too many failed login attempts. Your account is temporarily locked. Please wait ${seconds} second(s) before trying again.`;
+          }
+        } else if (data?.detail) {
+          errorMessage = typeof data.detail === 'string' ? data.detail : 'Too many failed login attempts. Please wait before trying again.';
+        } else {
+          errorMessage = 'Too many failed login attempts. Please wait before trying again.';
+        }
+      } else if (data?.detail) {
+        errorMessage = data.detail;
+      } else if (data?.message) {
+        errorMessage = data.message;
+      } else if (data?.error) {
+        errorMessage = data.error;
       } else if (err.message) {
         errorMessage = err.message;
       }
       
       // Add request ID if available
-      if (err?.response?.data?.rid) {
-        errorMessage += ` (Request ID: ${err.response.data.rid})`;
+      if (data?.rid) {
+        errorMessage += ` (Request ID: ${data.rid})`;
       }
       
       setError(errorMessage);
       console.error('[LoginPage] Login error details:', {
-        status: err?.response?.status,
-        data: err?.response?.data,
+        status,
+        data,
+        headers,
         message: errorMessage
       });
     }

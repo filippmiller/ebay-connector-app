@@ -98,11 +98,33 @@ async def commit_listing_items(
     _ = ALLOWED_LISTING_STATUS_MAP[payload.default_status]
 
     # Fetch all referenced SQ catalog rows in one query using sku (logical sku_code).
-    sku_codes = {item.sku_code for item in payload.items}
-    sq_rows = db.query(SqItem).filter(SqItem.sku.in_(sku_codes)).all()
-    sq_by_code: Dict[str, SqItem] = {s.sku: s for s in sq_rows if s.sku}
+    # SqItem.sku is stored as a NUMERIC column, but the API contract exposes
+    # sku_code as a string. Normalise everything to a canonical string key
+    # based on the integer SKU value so lookups are robust.
+    normalised_codes: Dict[str, str] = {}
+    for item in payload.items:
+        try:
+            key = str(int(item.sku_code))
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "invalid_sku_code", "sku_code": item.sku_code},
+            )
+        normalised_codes[key] = item.sku_code
 
-    missing = [code for code in sku_codes if code not in sq_by_code]
+    sq_rows = db.query(SqItem).filter(SqItem.sku.in_([int(k) for k in normalised_codes.keys()])).all()
+
+    sq_by_code: Dict[str, SqItem] = {}
+    for s in sq_rows:
+        if s.sku is None:
+            continue
+        try:
+            key = str(int(s.sku))
+        except (TypeError, ValueError):
+            continue
+        sq_by_code[key] = s
+
+    missing = [orig for key, orig in normalised_codes.items() if key not in sq_by_code]
     if missing:
         raise HTTPException(status_code=400, detail={"error": "unknown_sku_codes", "codes": missing})
 
@@ -110,7 +132,8 @@ async def commit_listing_items(
 
     try:
         for item in payload.items:
-            sq = sq_by_code[item.sku_code]
+            key = str(int(item.sku_code))
+            sq = sq_by_code[key]
 
             # Resolve storage: per-row overrides global
             storage_value: Optional[str] = item.storage or payload.storage
@@ -152,7 +175,7 @@ async def commit_listing_items(
             created_items.append(
                 ListingCommitItemResponse(
                     inventory_id=inv.id,
-                    sku_code=sq.sku,
+                    sku_code=str(int(sq.sku)) if sq.sku is not None else "",
                     storage=inv.storage,
                     status=inv.status.value if inv.status else "",
                 )

@@ -43,7 +43,8 @@ export default function ListingPage() {
     if (!row || typeof row.id !== 'number') return;
 
     const skuId = row.id as number;
-    const skuCode = (row.sku_code || row.skuCode || '') as string;
+    const rawSku = row.sku_code ?? row.skuCode ?? '';
+    const skuCode = rawSku !== null && rawSku !== undefined ? String(rawSku) : '';
     const model = (row.model || null) as string | null;
     const category = (row.category || null) as string | null;
     const price = typeof row.price === 'number' ? row.price : Number(row.price || 0) || 0;

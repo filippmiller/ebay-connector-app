@@ -166,7 +166,7 @@ def record_login_attempt_and_events(
     settings: SecuritySettings,
     now: Optional[datetime] = None,
     preblocked: bool = False,
-) -> tuple[LoginAttempt, Optional[SecurityEvent], Optional[SecurityEvent]]:
+) -> tuple[LoginAttempt, Optional[SecurityEvent], Optional[SecurityEvent], dict[str, Any]]:
     """Insert a LoginAttempt row and corresponding SecurityEvent(s).
 
     Returns (login_attempt, primary_event, optional_block_event).
@@ -189,6 +189,16 @@ def record_login_attempt_and_events(
     # Default: no new block window
     block_applied = False
     block_until: Optional[datetime] = None
+
+    # Progress info for callers (login endpoint) to inform the user.
+    # These values are best-effort hints and should not be relied upon for
+    # security enforcement (the DB state is the source of truth).
+    progress: dict[str, Any] = {
+        "max_failed_attempts": getattr(settings, "max_failed_attempts", None) or 3,
+        "current_streak": None,
+        "attempts_left": None,
+        "block_minutes_next": None,
+    }
 
     if success:
         primary_event = _create_security_event(
@@ -223,6 +233,7 @@ def record_login_attempt_and_events(
         if not preblocked:
             # Compute whether this new failure should start a new block window.
             max_failed = settings.max_failed_attempts or 3
+            progress["max_failed_attempts"] = max_failed
             # Fetch a bounded history for this identity+IP to keep the query cheap.
             history_q = db.query(LoginAttempt).filter(LoginAttempt.email == email)
             if ip_address:
@@ -240,6 +251,14 @@ def record_login_attempt_and_events(
 
             # Incorporate this new failure into the streak.
             new_streak = current_streak + 1
+            progress["current_streak"] = new_streak
+
+            # How many more failures before the next block window is triggered?
+            attempts_left = max_failed - new_streak
+            if attempts_left < 0:
+                attempts_left = 0
+            progress["attempts_left"] = attempts_left
+
             if new_streak >= max_failed:
                 # This failure completes another series.
                 series_index = series_count + 1
@@ -253,6 +272,19 @@ def record_login_attempt_and_events(
 
                 block_applied = True
                 block_until = now + timedelta(minutes=block_minutes)
+                progress["block_minutes_next"] = block_minutes
+            else:
+                # Next series would have the same index if the user keeps failing.
+                # We expose the prospective block duration so the UI can say
+                # "before we block you for N minutes".
+                series_index = series_count + 1
+                initial = settings.initial_block_minutes or 1
+                step = settings.progressive_delay_step_minutes or 2
+                max_delay = settings.max_delay_minutes or 30
+                block_minutes = initial + (series_index - 1) * step
+                if block_minutes > max_delay:
+                    block_minutes = max_delay
+                progress["block_minutes_next"] = block_minutes
 
                 block_event = _create_security_event(
                     db,
@@ -290,4 +322,4 @@ def record_login_attempt_and_events(
     # Flush so that attempt.id and event ids are populated if needed by callers.
     db.flush()
 
-    return attempt, primary_event, block_event
+    return attempt, primary_event, block_event, progress

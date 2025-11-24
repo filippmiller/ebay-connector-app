@@ -68,7 +68,7 @@ async def login(
         )
         if is_blocked:
             # Record a blocked attempt without even checking the password.
-            record_login_attempt_and_events(
+            _, _, _, progress = record_login_attempt_and_events(
                 db_session,
                 email=user_credentials.email,
                 user=None,
@@ -87,9 +87,26 @@ async def login(
             if retry_after is not None and retry_after > 0:
                 headers["Retry-After"] = str(retry_after)
 
+            # Human-friendly message with remaining wait time if known.
+            if retry_after is not None and retry_after > 0:
+                minutes = retry_after // 60
+                seconds = retry_after % 60
+                if minutes > 0:
+                    detail_msg = (
+                        f"Too many failed login attempts. Your account is temporarily locked. "
+                        f"Please wait {minutes} minute(s) and {seconds} second(s) before trying again."
+                    )
+                else:
+                    detail_msg = (
+                        f"Too many failed login attempts. Your account is temporarily locked. "
+                        f"Please wait {seconds} second(s) before trying again."
+                    )
+            else:
+                detail_msg = "Too many failed login attempts. Please wait before trying again."
+
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many failed login attempts. Please wait before trying again.",
+                detail=detail_msg,
                 headers=headers,
             )
 
@@ -99,7 +116,7 @@ async def login(
             logger.warning(f"Failed login attempt for: {user_credentials.email} rid={rid}")
 
             # Record failed attempt and possibly start a new block window.
-            record_login_attempt_and_events(
+            _, _, _, progress = record_login_attempt_and_events(
                 db_session,
                 email=user_credentials.email,
                 user=None,
@@ -112,10 +129,43 @@ async def login(
             )
             db_session.commit()
 
+            # Build headers with progression info so the frontend can show a
+            # precise message about remaining attempts.
+            headers = {"WWW-Authenticate": "Bearer", "X-Request-ID": rid}
+            attempts_left = progress.get("attempts_left")
+            max_failed = progress.get("max_failed_attempts")
+            block_minutes_next = progress.get("block_minutes_next")
+
+            if isinstance(attempts_left, int):
+                headers["X-Attempts-Left"] = str(attempts_left)
+            if isinstance(max_failed, int):
+                headers["X-Max-Failed-Attempts"] = str(max_failed)
+            if isinstance(block_minutes_next, (int, float)):
+                headers["X-Block-Minutes-Next"] = str(int(block_minutes_next))
+
+            # Human-readable error message including attempts left when available.
+            base_msg = "Incorrect email or password."
+            try:
+                if isinstance(attempts_left, int) and isinstance(block_minutes_next, (int, float)):
+                    if attempts_left > 0:
+                        base_msg = (
+                            f"Incorrect email or password. You have {attempts_left} "
+                            f"attempt(s) left before a {int(block_minutes_next)}-minute lockout."
+                        )
+                    elif attempts_left == 0:
+                        base_msg = (
+                            f"Incorrect email or password. The next failed attempt will "
+                            f"result in a {int(block_minutes_next)}-minute lockout."
+                        )
+            except Exception:
+                # If anything goes wrong building the extended message, fall back
+                # to the simple text.
+                base_msg = "Incorrect email or password."
+
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer", "X-Request-ID": rid},
+                detail=base_msg,
+                headers=headers,
             )
 
         # Authentication succeeded: record success and compute effective TTL.
