@@ -42,6 +42,7 @@ interface HtmlEditorProps {
 interface SkuFormState {
   title: string;
   model: string;
+  modelId: number | null;
   // SKU & category
   autoSku: boolean;
   sku: string;
@@ -88,6 +89,7 @@ interface SkuFormState {
 const EMPTY_FORM: SkuFormState = {
   title: '',
   model: '',
+  modelId: null,
   autoSku: true,
   sku: '',
   categoryType: 'internal',
@@ -254,6 +256,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
         setForm({
           title: item.title || '',
           model: item.model || '',
+          modelId: item.model_id != null ? Number(item.model_id) : null,
           autoSku: !item.sku,
           sku: item.sku != null ? String(item.sku) : '',
           categoryType: external ? 'ebay' : 'internal',
@@ -346,6 +349,10 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
   const handleModelInputChange = (value: string) => {
     handleChange('model', value);
+    // Когда пользователь вручную меняет текст модели, сбрасываем связанный modelId
+    // до тех пор, пока он не выберет конкретную модель из выпадающего списка
+    // или модалки Models.
+    handleChange('modelId', null as unknown as number | null);
     if (!value.trim()) {
       setModelOptions([]);
       setModelDropdownOpen(false);
@@ -377,9 +384,11 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
   };
 
   const handleSelectModel = (option: ModelOption) => {
+    const numericId = typeof option.id === 'number' ? option.id : Number(option.id);
     setForm((prev) => ({
       ...prev,
       model: option.label,
+      modelId: Number.isNaN(numericId) ? null : numericId,
     }));
     setModelDropdownOpen(false);
   };
@@ -389,6 +398,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     setForm((prev) => ({
       ...prev,
       model: partsModel.model,
+      modelId: partsModel.id,
     }));
     setShowModelsModal(false);
   };
@@ -404,6 +414,8 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
     if (!form.model.trim()) {
       nextErrors.model = 'Model is required';
+    } else if (form.modelId == null) {
+      nextErrors.model = 'Select model from catalog';
     }
 
     if (!form.autoSku && !form.sku.trim()) {
@@ -449,6 +461,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     const payload: any = {
       title: form.title.trim(),
       model: form.model.trim(),
+      model_id: form.modelId != null ? form.modelId : undefined,
       // SKU: omit when autoSku is enabled so backend generates next number.
       sku: form.autoSku ? undefined : form.sku.trim() || undefined,
       // Internal category uses the numeric/string code stored in SqInternalCategory.code

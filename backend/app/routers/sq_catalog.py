@@ -481,6 +481,7 @@ async def create_sq_item(
     shipping_group = (payload.get("shipping_group") or "").strip()
     external_category_flag = bool(payload.get("external_category_flag"))
     category = payload.get("category")
+    model_id = payload.get("model_id")
 
     # --- High-level validation mirroring the UI rules ----------------------
     if not title:
@@ -529,6 +530,16 @@ async def create_sq_item(
     payload["price"] = price_val
     payload["shipping_group"] = shipping_group
     payload["condition_id"] = int(condition_id)
+
+    # Model_ID is NOT NULL in the legacy SKU_catalog table и должен ссылаться
+    # на реальную запись в tbl_parts_models. Если model_id отсутствует или не
+    # парсится в число – это ошибка клиента.
+    if model_id is None:
+        raise HTTPException(status_code=400, detail="Model ID is required (select model from catalog)")
+    try:
+        payload["model_id"] = int(model_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Model ID must be numeric")
     if not external_category_flag:
         payload["category"] = str(category).strip()
 
