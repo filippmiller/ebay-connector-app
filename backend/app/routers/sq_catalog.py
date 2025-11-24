@@ -210,110 +210,115 @@ async def create_parts_model(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> dict:
-    """Create a new parts model in tbl_parts_models.
-    
-    All NOT NULL integer fields default to 0 if not provided.
-    record_created is set to NOW() by the database.
+    """Create a new parts model in ``tbl_parts_models``.
+
+    This endpoint is used by the SKU → Models → Add Model flow. It inserts a
+    single row into the legacy laptop models dictionary table and returns the
+    fully-populated row so the UI can immediately select it.
     """
-    
+
     table = tbl_parts_models_table
     if table is None:
         raise HTTPException(
             status_code=503,
-            detail="tbl_parts_models table not available in this environment"
+            detail="tbl_parts_models table not available in this environment",
         )
-    
-    # Validate required field
-    model_name = (payload.get('model') or '').strip()
+
+    # Validate required field – model name is the only strictly required
+    # attribute today. All scoring/price fields are optional and default to 0.
+    model_name = (payload.get("model") or "").strip()
     if not model_name:
         raise HTTPException(status_code=400, detail="Model name is required")
-    
-    # Prepare insert with safe defaults for all NOT NULL fields (redeploy trigger)
+
+    # Prepare insert with safe defaults for all NOT NULL fields.
     insert_data = {
-        'Model_ID': payload.get('model_id') or 0,
-        'Brand_ID': payload.get('brand_id') or 0,
-        'Model': model_name,
-        'oc_filter_Model_ID': payload.get('oc_filter_model_id') or 0,
-        'oc_filter_Model_ID2': payload.get('oc_filter_model_id2') or 0,
-        'BuyingPrice': payload.get('buying_price', 0),
-        'working': payload.get('working', 0),
-        'motherboard': payload.get('motherboard', 0),
-        'battery': payload.get('battery', 0),
-        'hdd': payload.get('hdd', 0),
-        'keyboard': payload.get('keyboard', 0),
-        'memory': payload.get('memory', 0),
-        'screen': payload.get('screen', 0),
-        'casing': payload.get('casing', 0),
-        'drive': payload.get('drive', 0),
-        'damage': payload.get('damage', 0),
-        'cd': payload.get('cd', 0),
-        'adapter': payload.get('adapter', 0),
-        'do_not_buy': payload.get('do_not_buy', False),
+        "Model_ID": payload.get("model_id") or 0,
+        "Brand_ID": payload.get("brand_id") or 0,
+        "Model": model_name,
+        "oc_filter_Model_ID": payload.get("oc_filter_model_id") or 0,
+        "oc_filter_Model_ID2": payload.get("oc_filter_model_id2") or 0,
+        "BuyingPrice": payload.get("buying_price", 0) or 0,
+        "working": payload.get("working", 0) or 0,
+        "motherboard": payload.get("motherboard", 0) or 0,
+        "battery": payload.get("battery", 0) or 0,
+        "hdd": payload.get("hdd", 0) or 0,
+        "keyboard": payload.get("keyboard", 0) or 0,
+        "memory": payload.get("memory", 0) or 0,
+        "screen": payload.get("screen", 0) or 0,
+        "casing": payload.get("casing", 0) or 0,
+        "drive": payload.get("drive", 0) or 0,
+        "damage": payload.get("damage", 0) or 0,
+        "cd": payload.get("cd", 0) or 0,
+        "adapter": payload.get("adapter", 0) or 0,
+        "do_not_buy": bool(payload.get("do_not_buy", False)),
     }
-    
-    # Build INSERT statement with RETURNING to get the created record
-    columns = ', '.join(f'"{k}"' for k in insert_data.keys())
-    placeholders = ', '.join(f':{k}' for k in insert_data.keys())
-    
-    insert_query = text(f'''
-        INSERT INTO "tbl_parts_models" ({columns}, "record_created")
-        VALUES ({placeholders}, NOW())
-        RETURNING 
-            "ID" as id,
-            "Model_ID" as model_id,
-            "Brand_ID" as brand_id,
-            "Model" as model,
-            "oc_filter_Model_ID" as oc_filter_model_id,
-            "oc_filter_Model_ID2" as oc_filter_model_id2,
-            "BuyingPrice" as buying_price,
-            "working",
-            "motherboard",
-            "battery",
-            "hdd",
-            "keyboard",
-            "memory",
-            "screen",
-            "casing",
-            "drive",
-            "damage",
-            "cd",
-            "adapter",
-            "record_created",
-            "do_not_buy"
-    ''')
-    
+
+    # Use SQLAlchemy Core against the reflected legacy table instead of
+    # hand-written SQL to avoid quoting/RETURNING issues across environments.
+    insert_stmt = (
+        table.insert()
+        .values(**insert_data)
+        .returning(
+            table.c.ID.label("id"),
+            table.c.Model_ID.label("model_id"),
+            table.c.Brand_ID.label("brand_id"),
+            table.c.Model.label("model"),
+            table.c.oc_filter_Model_ID.label("oc_filter_model_id"),
+            table.c.oc_filter_Model_ID2.label("oc_filter_model_id2"),
+            table.c.BuyingPrice.label("buying_price"),
+            table.c.working,
+            table.c.motherboard,
+            table.c.battery,
+            table.c.hdd,
+            table.c.keyboard,
+            table.c.memory,
+            table.c.screen,
+            table.c.casing,
+            table.c.drive,
+            table.c.damage,
+            table.c.cd,
+            table.c.adapter,
+            table.c.record_created,
+            table.c.do_not_buy,
+        )
+    )
+
     try:
-        result = db.execute(insert_query, insert_data)
-        db.commit()
+        result = db.execute(insert_stmt)
         row = result.fetchone()
-        
+        db.commit()
+
         if not row:
             raise HTTPException(status_code=500, detail="Failed to create model")
-        
+
         return {
-            'id': row.id,
-            'model_id': row.model_id,
-            'brand_id': row.brand_id,
-            'model': row.model or '',
-            'oc_filter_model_id': row.oc_filter_model_id,
-            'oc_filter_model_id2': row.oc_filter_model_id2,
-            'buying_price': row.buying_price or 0,
-            'working': row.working or 0,
-            'motherboard': row.motherboard or 0,
-            'battery': row.battery or 0,
-            'hdd': row.hdd or 0,
-            'keyboard': row.keyboard or 0,
-            'memory': row.memory or 0,
-            'screen': row.screen or 0,
-            'casing': row.casing or 0,
-            'drive': row.drive or 0,
-            'damage': row.damage or 0,
-            'cd': row.cd or 0,
-            'adapter': row.adapter or 0,
-            'record_created': row.record_created.isoformat() if row.record_created else None,
-            'do_not_buy': row.do_not_buy or False,
+            "id": row.id,
+            "model_id": row.model_id,
+            "brand_id": row.brand_id,
+            "model": row.model or "",
+            "oc_filter_model_id": row.oc_filter_model_id,
+            "oc_filter_model_id2": row.oc_filter_model_id2,
+            "buying_price": row.buying_price or 0,
+            "working": row.working or 0,
+            "motherboard": row.motherboard or 0,
+            "battery": row.battery or 0,
+            "hdd": row.hdd or 0,
+            "keyboard": row.keyboard or 0,
+            "memory": row.memory or 0,
+            "screen": row.screen or 0,
+            "casing": row.casing or 0,
+            "drive": row.drive or 0,
+            "damage": row.damage or 0,
+            "cd": row.cd or 0,
+            "adapter": row.adapter or 0,
+            "record_created": row.record_created.isoformat() if row.record_created else None,
+            "do_not_buy": bool(row.do_not_buy),
         }
-    except Exception as e:
+    except HTTPException:
+        # Preserve explicit HTTP errors (validation, missing table, etc.).
+        db.rollback()
+        raise
+    except Exception as e:  # pragma: no cover - defensive logging for prod only
         db.rollback()
         logger.exception("Failed to create parts model", exc_info=e)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
