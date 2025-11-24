@@ -147,7 +147,10 @@ echo "[entry] Database configured: ${DATABASE_URL:+yes}"
 # 1) Alembic migrations (can be disabled with RUN_MIGRATIONS=0 in Railway Variables).
 if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
   echo "[entry] Checking Alembic state..."
-  cd /app
+  echo "[entry] Current directory: $(pwd)"
+  echo "[entry] ROOT_DIR: $ROOT_DIR"
+  cd "$ROOT_DIR"
+  ls -la
 
   # Helper to run Alembic either via CLI or python -m
   run_alembic() {
