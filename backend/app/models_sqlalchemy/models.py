@@ -139,6 +139,9 @@ class User(Base):
     username = Column(String(100), nullable=False)
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.user)
+
+    # When True, the user is forced to pick a new password on next login.
+    must_change_password = Column(Boolean, nullable=False, default=False)
     
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

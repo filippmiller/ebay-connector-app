@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models_sqlalchemy import get_db
-from app.models_sqlalchemy.models import Inventory, InventoryStatus, SqItem
+from app.models_sqlalchemy.models import Inventory, InventoryStatus, SqItem, SKU
 from app.services.auth import get_current_user
 from app.models.user import User
 from app.utils.logger import logger
@@ -82,6 +82,68 @@ class ListingCommitResponse(BaseModel):
     items: List[ListingCommitItemResponse]
 
 
+def _get_or_create_simple_sku(db: Session, sq: SqItem) -> int:
+    """Return ID from simplified SKU table for a given SqItem.
+
+    The Supabase `inventory` table uses a foreign key to the modern `sku`
+    table (SKU model). Historically we tried to leave `sku_id` NULL when
+    committing listings directly from the legacy SQ catalog, but the real
+    production schema has a NOT NULL constraint on `inventory.sku_id`.
+
+    To keep referential integrity without changing the DB schema, we lazily
+    create a minimal `SKU` row for any SqItem that does not yet have a
+    corresponding simplified SKU entry, keyed by the numeric SKU value.
+    """
+    from decimal import Decimal
+
+    if sq.sku is None:
+        raise HTTPException(status_code=400, detail={"error": "sq_item_missing_sku", "id": sq.id})
+
+    try:
+        sku_code_str = str(int(sq.sku))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail={"error": "sq_item_invalid_sku", "id": sq.id, "sku": str(sq.sku)})
+
+    existing = db.query(SKU).filter(SKU.sku_code == sku_code_str).first()
+    if existing:
+        return existing.id
+
+    # Derive a minimal but useful simplified SKU from the SQ catalog row.
+    price_val: float = 0.0
+    if sq.price is not None:
+        if isinstance(sq.price, Decimal):
+            price_val = float(sq.price)
+        else:
+            try:
+                price_val = float(sq.price)
+            except Exception:
+                price_val = 0.0
+
+    category_str = None
+    if sq.category is not None:
+        try:
+            category_str = str(int(sq.category))
+        except Exception:
+            category_str = str(sq.category)
+
+    simple_sku = SKU(
+        sku_code=sku_code_str,
+        model=None,
+        category=category_str,
+        condition=None,
+        part_number=sq.part_number,
+        price=price_val,
+        title=sq.part,
+        description=sq.description,
+        brand=getattr(sq, "brand", None),
+        image_url=sq.pic_url1,
+    )
+
+    db.add(simple_sku)
+    db.flush()  # assign ID
+    return simple_sku.id
+
+
 @router.post("/commit", response_model=ListingCommitResponse)
 async def commit_listing_items(
     payload: ListingCommitRequest,
@@ -147,12 +209,11 @@ async def commit_listing_items(
             status_key = (item.status or payload.default_status)
             status_enum = ALLOWED_LISTING_STATUS_MAP[status_key]
 
-            # Map SQ catalog row  inventory logical fields.
-            # Note: Inventory.sku_id points to the simplified SKU table and is
-            # left NULL here because we are sourcing from sq_items instead.
+            # Map SQ catalog row → inventory logical fields.
+            # Ensure we always have a valid inventory.sku_id by resolving or
+            # creating a corresponding simplified SKU row.
             inv = Inventory(
-                sku_id=None,
-                sku_code=sq.sku,
+                sku_id=_get_or_create_simple_sku(db, sq),
                 model=sq.model,
                 category=sq.category,
                 condition=None,

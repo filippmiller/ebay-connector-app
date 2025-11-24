@@ -7,7 +7,7 @@ import { Badge } from '../components/ui/badge';
 import { ScrollArea } from '../components/ui/scroll-area';
 import FixedHeader from '@/components/FixedHeader';
 import apiClient from '../api/client';
-import DOMPurify from 'dompurify';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 
 type Direction = 'inbound' | 'outbound' | 'system';
 
@@ -1008,7 +1008,7 @@ export const MessagesPage = () => {
 
                             const content = (() => {
                               if (viewMode === 'formatted' && entry.html) {
-                                const safe = DOMPurify.sanitize(entry.html);
+                                const safe = sanitizeHtml(entry.html);
                                 return (
                                   <div
                                     className="prose prose-sm max-w-none"
@@ -1313,7 +1313,7 @@ export const MessagesPage = () => {
 
                           const content = (() => {
                             if (viewMode === 'formatted' && entry.html) {
-                              const safe = DOMPurify.sanitize(entry.html);
+                              const safe = sanitizeHtml(entry.html);
                               return (
                                 <div
                                   className="prose prose-sm max-w-none"

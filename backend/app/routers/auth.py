@@ -2,13 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from datetime import timedelta, datetime, timezone
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from app.models.user import UserCreate, UserLogin, UserResponse, Token, PasswordResetRequest, PasswordReset
+from app.models.user import UserCreate, UserLogin, UserResponse, Token, PasswordResetRequest, PasswordReset, ChangePasswordRequest
 from app.services.auth import (
     register_user, 
     authenticate_user, 
     create_access_token, 
     get_current_active_user,
-    get_password_hash
+    get_password_hash,
+    verify_password,
 )
 from app.services.database import db
 from app.config import settings
@@ -246,8 +247,9 @@ async def get_current_user_info(current_user = Depends(get_current_active_user))
         username=current_user.username,
         role=current_user.role,
         is_active=current_user.is_active,
+        must_change_password=getattr(current_user, "must_change_password", False),
         created_at=current_user.created_at,
-        ebay_connected=current_user.ebay_connected
+        ebay_connected=current_user.ebay_connected,
     )
 
 
@@ -297,3 +299,46 @@ async def reset_password(reset_data: PasswordReset):
     logger.info(f"Password reset successful for: {reset_data.email}")
     
     return {"message": "Password reset successful"}
+
+
+@router.post("/change-password")
+async def change_password(payload: ChangePasswordRequest, current_user = Depends(get_current_active_user)):
+    """Allow an authenticated user to change their own password.
+
+    This endpoint is used both for first-login temporary passwords
+    (must_change_password=True) and for normal voluntary password
+    changes. It always requires the current password.
+    """
+    logger.info(f"Password change requested for user: {current_user.email}")
+
+    # Basic validation of new password
+    if payload.new_password != payload.confirm_new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New passwords do not match",
+        )
+    if len(payload.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 8 characters long",
+        )
+
+    # Verify current password using the same logic as login
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        logger.warning(f"Password change failed: invalid current password for {current_user.email}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+
+    # Hash and update
+    new_hash = get_password_hash(payload.new_password)
+    updates = {
+        "hashed_password": new_hash,
+        # Clear the forced-change flag once a new password is set
+        "must_change_password": False,
+    }
+    db.update_user(current_user.id, updates)
+
+    logger.info(f"Password changed successfully for user: {current_user.email}")
+    return {"message": "Password changed successfully"}

@@ -27,7 +27,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create security_events, login_attempts, and security_settings tables."""
+    """Create security_events, login_attempts, and security_settings tables.
+
+    Also adds the must_change_password flag to users to support temporary
+    passwords and forced change on first login.
+    """
+
+    # Add must_change_password flag to users
+    op.add_column(
+        "users",
+        sa.Column("must_change_password", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    )
+    # Drop default after backfill; new rows will rely on ORM default.
+    op.alter_column("users", "must_change_password", server_default=None)
 
     # security_events: append-only security log
     op.create_table(

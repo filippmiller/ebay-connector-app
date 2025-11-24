@@ -1,7 +1,16 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import api from "@/lib/apiClient";
 
-type User = { id: string; email: string; username: string; role: string; is_active: boolean; created_at: string; ebay_connected: boolean };
+type User = {
+  id: string;
+  email: string;
+  username: string;
+  role: string;
+  is_active: boolean;
+  must_change_password?: boolean;
+  created_at: string;
+  ebay_connected: boolean;
+};
 type AuthContextShape = {
   user: User | null;
   loading: boolean;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -150,18 +150,8 @@ export const LoginPage: React.FC = () => {
               {loading ? 'Signing in...' : 'Sign In'}
             </Button>
 
-            <div className="text-center text-sm text-gray-600">
-              Don't have an account?{' '}
-              <Link to="/register" className="text-blue-600 hover:underline">
-                Sign up
-              </Link>
-            </div>
-
-            <div className="text-center text-sm">
-              <Link to="/password-reset" className="text-blue-600 hover:underline">
-                Forgot password?
-              </Link>
-            </div>
+            {/* Self-registration and self-service password reset are disabled.
+                Accounts and password resets are managed by administrators. */}
           </form>
         </CardContent>
       </Card>

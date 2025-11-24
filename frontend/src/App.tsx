@@ -1,12 +1,12 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { LoginPage } from './pages/LoginPage';
-import { RegisterPage } from './pages/RegisterPage';
+// import { RegisterPage } from './pages/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EbayCallbackPage } from './pages/EbayCallbackPage';
 import { EbayConnectionPage } from './pages/EbayConnectionPage';
-import { PasswordResetPage } from './pages/PasswordResetPage';
+// import { PasswordResetPage } from './pages/PasswordResetPage';
 import { MessagesPage } from './pages/MessagesPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { EbayTestPage } from './pages/EbayTestPage';
@@ -34,10 +34,13 @@ import TasksPage from './pages/TasksPage';
 import AccountingPage from './pages/AccountingPage';
 import AdminUITweakPage from './pages/AdminUITweakPage';
 import SecurityCenterPage from './pages/SecurityCenterPage';
+import AdminUsersPage from './pages/AdminUsersPage';
+import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -49,6 +52,12 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // If backend marks that user must change password, force them onto
+  // the change-password screen before accessing the rest of the app.
+  if (user.must_change_password && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
   }
 
   return <>{children}</>;
@@ -86,20 +95,15 @@ function App() {
               </PublicRoute>
             }
           />
+          {/* Public self-registration and self-service password reset are disabled.
+              All user accounts and password resets are managed by administrators
+              via the Admin → Users page. */}
           <Route
-            path="/register"
+            path="/change-password"
             element={
-              <PublicRoute>
-                <RegisterPage />
-              </PublicRoute>
-            }
-          />
-          <Route
-            path="/password-reset"
-            element={
-              <PublicRoute>
-                <PasswordResetPage />
-              </PublicRoute>
+              <ProtectedRoute>
+                <ChangePasswordPage />
+              </ProtectedRoute>
             }
           />
           <Route
@@ -121,6 +125,7 @@ function App() {
           <Route path="/messages" element={<ProtectedRoute><MessagesPage /></ProtectedRoute>} />
           <Route path="/offers" element={<ProtectedRoute><OffersPageV2 /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="/admin/users" element={<ProtectedRoute><AdminUsersPage /></ProtectedRoute>} />
           <Route path="/admin/ui-tweak" element={<ProtectedRoute><AdminUITweakPage /></ProtectedRoute>} />
           <Route path="/admin/security" element={<ProtectedRoute><SecurityCenterPage /></ProtectedRoute>} />
           <Route path="/admin/ebay-connection" element={<ProtectedRoute><EbayConnectionPage /></ProtectedRoute>} />
