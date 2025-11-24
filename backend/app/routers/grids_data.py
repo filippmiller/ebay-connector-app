@@ -30,6 +30,179 @@ from app.routers.grid_layouts import _allowed_columns_for_grid
 router = APIRouter(prefix="/api/grids", tags=["grids_data"])
 
 
+@router.get("/cases/detail")
+async def get_case_detail(
+    kind: str = Query(..., description="Entity kind: inquiry | postorder_case | payment_dispute"),
+    external_id: str = Query(..., alias="id", description="External id: inquiryId / caseId / disputeId"),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Return a single unified case/dispute/inquiry row plus messages and events.
+
+    This endpoint reuses the unified Cases grid projection so that the
+    "entity" payload matches a row from the /api/grids/cases grid. It then
+    augments it with related ebay_messages and ebay_events rows.
+    """
+    db_sqla = next(get_db_sqla())
+    try:
+        # 1) Fetch unified entity row via the same projection as the Cases grid.
+        from app.models_sqlalchemy.models import Message as EbayMessage, EbayEvent
+
+        selected_cols = _allowed_columns_for_grid("cases")
+        data = _get_cases_data(
+            db_sqla,
+            current_user,
+            selected_cols,
+            limit=1,
+            offset=0,
+            sort_column=None,
+            sort_dir="desc",
+            state=None,
+            buyer=None,
+            from_date=None,
+            to_date=None,
+            kind_filter=kind,
+            external_id_filter=external_id,
+        )
+        rows = data.get("rows") or []
+        if not rows:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case/inquiry/dispute not found")
+
+        entity = rows[0]
+
+        # 2) Load related messages from ebay_messages.
+        messages: List[Dict[str, Any]] = []
+        try:
+            from datetime import datetime as dt_type
+            from decimal import Decimal
+
+            q = db_sqla.query(EbayMessage).filter(EbayMessage.user_id == current_user.id)
+
+            if kind == "inquiry":
+                q = q.filter(
+                    or_(
+                        EbayMessage.inquiry_id == external_id,
+                        EbayMessage.order_id == entity.get("order_id"),
+                    )
+                )
+            elif kind == "postorder_case":
+                q = q.filter(
+                    or_(
+                        EbayMessage.case_id == external_id,
+                        EbayMessage.order_id == entity.get("order_id"),
+                    )
+                )
+            elif kind == "payment_dispute":
+                q = q.filter(
+                    or_(
+                        EbayMessage.payment_dispute_id == external_id,
+                        EbayMessage.order_id == entity.get("order_id"),
+                    )
+                )
+
+            q = q.order_by(EbayMessage.message_date.desc())
+            rows_msg: List[EbayMessage] = q.limit(500).all()
+
+            def _ser_msg(m: EbayMessage) -> Dict[str, Any]:
+                out: Dict[str, Any] = {}
+                for attr in [
+                    "id",
+                    "message_id",
+                    "thread_id",
+                    "sender_username",
+                    "recipient_username",
+                    "subject",
+                    "body",
+                    "message_type",
+                    "direction",
+                    "is_read",
+                    "is_flagged",
+                    "is_archived",
+                    "order_id",
+                    "listing_id",
+                    "case_id",
+                    "inquiry_id",
+                    "return_id",
+                    "payment_dispute_id",
+                    "transaction_id",
+                    "message_topic",
+                    "case_event_type",
+                    "preview_text",
+                ]:
+                    val = getattr(m, attr, None)
+                    if isinstance(val, dt_type):
+                        out[attr] = val.isoformat()
+                    elif isinstance(val, Decimal):
+                        out[attr] = float(val)
+                    else:
+                        out[attr] = val
+                out["message_date"] = m.message_date.isoformat() if m.message_date else None
+                out["message_at"] = m.message_at.isoformat() if getattr(m, "message_at", None) else None
+                out["has_attachments"] = bool(getattr(m, "has_attachments", False))
+                out["attachments_meta"] = getattr(m, "attachments_meta", None)
+                return out
+
+            messages = [_ser_msg(m) for m in rows_msg]
+        except Exception:
+            messages = []
+
+        # 3) Load related events from ebay_events.
+        events: List[Dict[str, Any]] = []
+        try:
+            from datetime import datetime as dt_type
+
+            entity_type = None
+            if kind == "inquiry":
+                entity_type = "INQUIRY"
+            elif kind == "postorder_case":
+                entity_type = "CASE"
+            elif kind == "payment_dispute":
+                entity_type = "DISPUTE"
+
+            ev_q = db_sqla.query(EbayEvent)
+            if entity_type:
+                ev_q = ev_q.filter(EbayEvent.entity_type == entity_type)
+            ev_q = ev_q.filter(EbayEvent.entity_id == external_id)
+
+            account_key = entity.get("ebay_user_id") or entity.get("ebay_account_id")
+            if account_key:
+                ev_q = ev_q.filter(EbayEvent.ebay_account == account_key)
+
+            ev_q = ev_q.order_by(EbayEvent.event_time.asc().nulls_last(), EbayEvent.created_at.asc())
+            rows_ev: List[EbayEvent] = ev_q.limit(500).all()
+
+            for ev in rows_ev:
+                item: Dict[str, Any] = {
+                    "id": ev.id,
+                    "source": ev.source,
+                    "channel": ev.channel,
+                    "topic": ev.topic,
+                    "entity_type": ev.entity_type,
+                    "entity_id": ev.entity_id,
+                    "ebay_account": ev.ebay_account,
+                }
+                for fn in ["event_time", "publish_time", "created_at", "processed_at"]:
+                    dtv = getattr(ev, fn, None)
+                    if isinstance(dtv, dt_type):
+                        item[fn] = dtv.isoformat()
+                    else:
+                        item[fn] = None
+                item["status"] = ev.status
+                item["error"] = ev.error
+                item["headers"] = ev.headers
+                item["payload"] = ev.payload
+                events.append(item)
+        except Exception:
+            events = []
+
+        return {
+            "entity": entity,
+            "messages": messages,
+            "events": events,
+        }
+    finally:
+        db_sqla.close()
+
+
 @router.get("/buying/rows")
 async def get_buying_rows(
     page: int = Query(1, ge=1),
@@ -1105,6 +1278,8 @@ def _get_cases_data(
     buyer: Optional[str],
     from_date: Optional[str],
     to_date: Optional[str],
+    kind_filter: Optional[str] = None,
+    external_id_filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Unified Cases & Disputes grid backed by ebay_disputes + ebay_cases.
 
@@ -1139,6 +1314,28 @@ def _get_cases_data(
             NULL::text        AS transaction_id
         FROM ebay_disputes d
         WHERE d.user_id = :user_id
+        UNION ALL
+        SELECT
+            'inquiry'         AS kind,
+            i.inquiry_id      AS external_id,
+            i.order_id        AS order_id,
+            i.issue_type      AS reason,
+            i.status          AS status,
+            i.opened_at::text AS open_date,
+            i.last_update_at::text AS respond_by_date,
+            i.raw_json        AS raw_payload,
+            i.ebay_account_id AS ebay_account_id,
+            i.ebay_user_id    AS ebay_user_id,
+            i.buyer_username  AS buyer_username,
+            i.claim_amount_value    AS amount_value,
+            i.claim_amount_currency AS amount_currency,
+            NULL::timestamptz AS creation_date_api,
+            NULL::timestamptz AS last_modified_date_api,
+            NULL::text        AS case_status_enum,
+            i.item_id         AS item_id,
+            i.transaction_id  AS transaction_id
+        FROM ebay_inquiries i
+        WHERE i.user_id = :user_id
         UNION ALL
         SELECT
             'postorder_case'  AS kind,
@@ -1285,6 +1482,12 @@ def _get_cases_data(
         )
 
     # Simple filters
+    if kind_filter:
+        rows_all = [r for r in rows_all if (r.get("kind") or "") == kind_filter]
+
+    if external_id_filter:
+        rows_all = [r for r in rows_all if (r.get("external_id") or "") == external_id_filter]
+
     if state:
         rows_all = [r for r in rows_all if (r.get("status") or "").lower() == state.lower()]
     if buyer:

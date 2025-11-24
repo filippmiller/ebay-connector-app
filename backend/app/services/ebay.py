@@ -1935,6 +1935,279 @@ class EbayService:
                 detail=error_msg,
             )
 
+    async def fetch_inquiries(
+        self,
+        access_token: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch buyer inquiries from the Post-Order Inquiry API.
+
+        This mirrors fetch_postorder_cases but targets /post-order/v2/inquiry/search
+        so workers can ingest the pre-case buyer disputes.
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        api_url = f"{settings.ebay_api_base_url}/post-order/v2/inquiry/search"
+        timeout_seconds = 30.0
+
+        headers = {
+            # Post-Order API expects OAuth user tokens in the IAF scheme, not Bearer.
+            "Authorization": f"IAF {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        }
+
+        params = filter_params or {}
+
+        ebay_logger.log_ebay_event(
+            "fetch_postorder_inquiries_request",
+            f"Fetching Post-Order inquiries from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "method": "GET",
+                "params": params,
+            },
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.get(api_url, headers=headers, params=params)
+
+            if response.status_code != 200:
+                correlation_id = (
+                    response.headers.get("X-EBAY-CORRELATION-ID")
+                    or response.headers.get("x-ebay-correlation-id")
+                )
+                try:
+                    error_body: Any = response.json()
+                except Exception:
+                    error_body = response.text
+
+                body_snippet = (
+                    str(error_body)[:2000]
+                    if not isinstance(error_body, (dict, list))
+                    else error_body
+                )
+
+                message = (
+                    f"EBAY Post-Order error {response.status_code} on GET "
+                    f"/post-order/v2/inquiry/search; "
+                    f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
+                )
+
+                ebay_logger.log_ebay_event(
+                    "fetch_postorder_inquiries_failed",
+                    "Failed to fetch Post-Order inquiries from eBay",
+                    response_data={
+                        "status_code": response.status_code,
+                        "correlation_id": correlation_id,
+                        "headers": dict(response.headers),
+                        "body": body_snippet,
+                    },
+                    status="error",
+                    error=message,
+                )
+                logger.error(message)
+                raise HTTPException(status_code=response.status_code, detail=message)
+
+            inquiries_data = response.json()
+
+            total = inquiries_data.get("total")
+            items = (
+                inquiries_data.get("inquiries")
+                or inquiries_data.get("inquirySummaries")
+                or inquiries_data.get("members")
+                or []
+            )
+
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiries_success",
+                "Successfully fetched Post-Order inquiries",
+                response_data={
+                    "total_inquiries": total if total is not None else len(items),
+                },
+                status="success",
+            )
+            logger.info("Successfully fetched Post-Order inquiries from eBay")
+            return inquiries_data
+
+        except httpx.TimeoutException as e:
+            message = (
+                f"Timeout calling EBAY Post-Order GET /post-order/v2/inquiry/search "
+                f"after {timeout_seconds}s: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiries_timeout",
+                "Timeout during Post-Order inquiries fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=message,
+            )
+        except httpx.RequestError as e:
+            message = (
+                "Network error calling EBAY Post-Order GET "
+                "/post-order/v2/inquiry/search: "
+                f"{str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiries_error",
+                "HTTP request error during Post-Order inquiries fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
+            )
+
+    async def fetch_inquiry_detail(
+        self,
+        access_token: str,
+        inquiry_id: str,
+    ) -> Dict[str, Any]:
+        """Fetch a single Post-Order inquiry by id.
+
+        This calls ``GET /post-order/v2/inquiry/{inquiryId}`` so that we can
+        store the full detailed object (including history, responses, etc.) in
+        ``ebay_inquiries.raw_json`` instead of only the search summary row.
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+        if not inquiry_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="inquiry_id is required",
+            )
+
+        api_url = f"{settings.ebay_api_base_url}/post-order/v2/inquiry/{inquiry_id}"
+        timeout_seconds = 30.0
+
+        headers = {
+            "Authorization": f"IAF {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        }
+
+        ebay_logger.log_ebay_event(
+            "fetch_postorder_inquiry_detail_request",
+            "Fetching Post-Order inquiry detail from eBay",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "method": "GET",
+                "inquiry_id": inquiry_id,
+            },
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.get(api_url, headers=headers)
+
+            if response.status_code != 200:
+                correlation_id = (
+                    response.headers.get("X-EBAY-CORRELATION-ID")
+                    or response.headers.get("x-ebay-correlation-id")
+                )
+                try:
+                    error_body: Any = response.json()
+                except Exception:
+                    error_body = response.text
+
+                body_snippet = (
+                    str(error_body)[:2000]
+                    if not isinstance(error_body, (dict, list))
+                    else error_body
+                )
+
+                message = (
+                    f"EBAY Post-Order error {response.status_code} on GET "
+                    f"/post-order/v2/inquiry/{inquiry_id}; "
+                    f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
+                )
+
+                ebay_logger.log_ebay_event(
+                    "fetch_postorder_inquiry_detail_failed",
+                    "Failed to fetch Post-Order inquiry detail from eBay",
+                    response_data={
+                        "status_code": response.status_code,
+                        "correlation_id": correlation_id,
+                        "headers": dict(response.headers),
+                        "body": body_snippet,
+                    },
+                    status="error",
+                    error=message,
+                )
+                logger.error(message)
+                raise HTTPException(status_code=response.status_code, detail=message)
+
+            data: Any
+            try:
+                data = response.json() or {}
+            except Exception:
+                data = {}
+
+            if not isinstance(data, dict):
+                data = {"raw": data}
+
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiry_detail_success",
+                "Successfully fetched Post-Order inquiry detail",
+                response_data={
+                    "inquiry_id": inquiry_id,
+                },
+                status="success",
+            )
+            logger.info("Successfully fetched Post-Order inquiry detail from eBay")
+            return data
+
+        except httpx.TimeoutException as e:
+            message = (
+                f"Timeout calling EBAY Post-Order GET /post-order/v2/inquiry/{inquiry_id} "
+                f"after {timeout_seconds}s: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiry_detail_timeout",
+                "Timeout during Post-Order inquiry detail fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=message,
+            )
+        except httpx.RequestError as e:
+            message = (
+                "Network error calling EBAY Post-Order GET "
+                f"/post-order/v2/inquiry/{inquiry_id}: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiry_detail_error",
+                "HTTP request error during Post-Order inquiry detail fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
+            )
+
     async def fetch_postorder_cases(
         self,
         access_token: str,
@@ -3246,6 +3519,214 @@ class EbayService:
             event_logger.log_error(f"Disputes sync failed: {error_msg}", e)
             logger.error(f"Disputes sync failed: {error_msg}")
             ebay_db.update_sync_job(job_id, 'failed', error_message=error_msg)
+            raise
+        finally:
+            event_logger.close()
+
+    async def sync_postorder_inquiries(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Sync Post-Order inquiries into ebay_inquiries.
+
+        Similar to sync_postorder_cases, this currently treats the time window as
+        metadata for logging and the worker cursor while the API call itself
+        fetches the latest inquiries available.
+        """
+        from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
+
+        event_logger = SyncEventLogger(user_id, "inquiries", run_id=run_id)
+        job_id = ebay_db.create_sync_job(user_id, "inquiries")
+        start_time = time.time()
+
+        try:
+            total_fetched = 0
+            total_stored = 0
+
+            event_logger.log_start(
+                f"Starting Post-Order inquiries sync from eBay ({settings.EBAY_ENVIRONMENT})",
+            )
+            logger.info(f"Starting Post-Order inquiries sync for user {user_id}")
+
+            await asyncio.sleep(0.3)
+
+            from app.services.sync_event_logger import is_cancelled
+
+            if is_cancelled(event_logger.run_id):
+                logger.info(
+                    f"Inquiries sync cancelled for run_id {event_logger.run_id} (before API request)",
+                )
+                event_logger.log_warning("Sync operation cancelled by user")
+                duration_ms = int((time.time() - start_time) * 1000)
+                event_logger.log_done(
+                    "Inquiries sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    duration_ms,
+                )
+                ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id,
+                }
+
+            event_logger.log_info("→ Requesting: GET /post-order/v2/inquiry/search")
+            request_start = time.time()
+            try:
+                inquiries_response = await self.fetch_inquiries(access_token)
+            except Exception:
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        f"Inquiries sync cancelled for run_id {event_logger.run_id} (after API error)",
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        "Inquiries sync cancelled: 0 fetched, 0 stored",
+                        0,
+                        0,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": 0,
+                        "total_stored": 0,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+                raise
+
+            request_duration = int((time.time() - request_start) * 1000)
+
+            inquiries = (
+                inquiries_response.get("inquiries")
+                or inquiries_response.get("inquirySummaries")
+                or inquiries_response.get("members")
+                or []
+            )
+            total_fetched = len(inquiries)
+
+            event_logger.log_http_request(
+                "GET",
+                "/post-order/v2/inquiry/search",
+                200,
+                request_duration,
+                total_fetched,
+            )
+            event_logger.log_info(
+                f"← Response: 200 OK ({request_duration}ms) - Received {total_fetched} inquiries",
+            )
+
+            await asyncio.sleep(0.2)
+
+            stored = 0
+            for inquiry in inquiries:
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        f"Inquiries sync cancelled for run_id {event_logger.run_id} (during storage)",
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        f"Inquiries sync cancelled: {total_fetched} fetched, {stored} stored",
+                        total_fetched,
+                        stored,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", total_fetched, stored)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                # Prefer detailed inquiry payload when available so raw_json carries
+                # the full timeline/state from the Post-Order API.
+                detail_payload: Dict[str, Any] = inquiry
+                inquiry_id = (
+                    inquiry.get("inquiryId")
+                    or inquiry.get("inquiry_id")
+                )
+                if inquiry_id:
+                    try:
+                        detail_payload = await self.fetch_inquiry_detail(access_token, inquiry_id)
+                    except HTTPException as http_exc:  # pragma: no cover - defensive
+                        # Log a warning but fall back to the summary row so the
+                        # grid remains populated.
+                        try:
+                            detail = http_exc.detail  # type: ignore[assignment]
+                        except Exception:
+                            detail = str(http_exc)
+                        event_logger.log_warning(
+                            f"Failed to fetch inquiry detail for {inquiry_id}: {detail}",
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        event_logger.log_warning(
+                            f"Unexpected error fetching inquiry detail for {inquiry_id}: {exc}",
+                        )
+
+                try:
+                    ok = ebay_db.upsert_inquiry(  # type: ignore[attr-defined]
+                        user_id,
+                        detail_payload,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=ebay_user_id,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Inquiries sync: failed to upsert inquiry payload: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    ok = False
+
+                if ok:
+                    stored += 1
+
+            total_stored = stored
+            duration_ms = int((time.time() - start_time) * 1000)
+            ebay_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
+
+            event_logger.log_done(
+                f"Inquiries sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms,
+            )
+
+            logger.info(
+                "Inquiries sync completed: fetched=%s, stored=%s",
+                total_fetched,
+                total_stored,
+            )
+
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "job_id": job_id,
+                "run_id": event_logger.run_id,
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            event_logger.log_error(f"Inquiries sync failed: {error_msg}", e)
+            logger.error(f"Inquiries sync failed: {error_msg}")
+            ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
             raise
         finally:
             event_logger.close()

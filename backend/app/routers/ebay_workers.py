@@ -27,6 +27,7 @@ from app.services.ebay_workers.active_inventory_worker import run_active_invento
 from app.services.ebay_workers.cases_worker import run_cases_worker_for_account
 from app.services.ebay_workers.finances_worker import run_finances_worker_for_account
 from app.services.ebay_workers.purchases_worker import run_purchases_worker_for_account
+from app.services.ebay_workers.inquiries_worker import run_inquiries_worker_for_account
 from app.services.ebay_workers.runs import get_active_run
 
 
@@ -106,8 +107,9 @@ async def get_worker_config(
     states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
 
     # Ensure we have at least Orders / Transactions / Offers / Messages /
-    # Active Inventory / Cases / Finances / Buyer workers configured so they
-    # always appear in the Workers control UI for this account.
+    # Active Inventory / Cases / Inquiries / Finances / Buyer workers
+    # configured so they always appear in the Workers control UI for this
+    # account.
     ensured_families = [
         "orders",
         "transactions",
@@ -115,6 +117,7 @@ async def get_worker_config(
         "messages",
         "active_inventory",
         "cases",
+        "inquiries",
         "finances",
         "buyer",
     ]
@@ -232,7 +235,7 @@ async def run_worker_once(
     if not are_workers_globally_enabled(db):
         return {"status": "skipped", "reason": "workers_disabled"}
 
-    if api not in {"orders", "transactions", "offers", "messages", "active_inventory", "cases", "finances", "buyer"}:
+    if api not in {"orders", "transactions", "offers", "messages", "active_inventory", "cases", "inquiries", "finances", "buyer"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
 
     account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
@@ -260,6 +263,9 @@ async def run_worker_once(
         elif api == "cases":
             run_id = await run_cases_worker_for_account(account_id)
             api_family = "cases"
+        elif api == "inquiries":
+            run_id = await run_inquiries_worker_for_account(account_id)
+            api_family = "inquiries"
         elif api == "finances":
             run_id = await run_finances_worker_for_account(account_id)
             api_family = "finances"
@@ -351,6 +357,7 @@ async def get_worker_schedule(
         "messages",
         "active_inventory",
         "cases",
+        "inquiries",
         "finances",
         "buyer",
     ]
@@ -378,6 +385,7 @@ async def get_worker_schedule(
         "transactions": 60,
         "finances": 60,
         "cases": 60,
+        "inquiries": 60,
         "offers": 360,
         "messages": 360,
     }
@@ -386,6 +394,7 @@ async def get_worker_schedule(
         "transactions": 90,
         "finances": 90,
         "cases": 90,
+        "inquiries": 90,
         "offers": 90,
         "messages": 90,
     }
