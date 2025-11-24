@@ -228,7 +228,7 @@ async def create_parts_model(
     if not model_name:
         raise HTTPException(status_code=400, detail="Model name is required")
     
-    # Prepare insert with safe defaults for all NOT NULL fields
+    # Prepare insert with safe defaults for all NOT NULL fields (redeploy trigger)
     insert_data = {
         'Model_ID': payload.get('model_id') or 0,
         'Brand_ID': payload.get('brand_id') or 0,
