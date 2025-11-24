@@ -475,7 +475,7 @@ async def create_sq_item(
     # NOTE: payload уже JSON-словарь из FastAPI, без дополнительной модели.
     title = (payload.get("title") or "").strip()
     model = (payload.get("model") or "").strip()
-    price = payload.get("price")
+    raw_price = payload.get("price")
     condition_id = payload.get("condition_id")
     shipping_group = (payload.get("shipping_group") or "").strip()
     external_category_flag = bool(payload.get("external_category_flag"))
@@ -490,8 +490,17 @@ async def create_sq_item(
     if not model:
         raise HTTPException(status_code=400, detail="Model is required")
 
+    # Robust parsing of price: поддерживаем числа и строки вида "123.45" или "123,45".
     try:
-        price_val = Decimal(str(price)) if price is not None else None
+        if raw_price is None:
+            price_val = None
+        elif isinstance(raw_price, (int, float, Decimal)):
+            price_val = Decimal(str(raw_price))
+        elif isinstance(raw_price, str):
+            cleaned = raw_price.strip().replace(",", ".")
+            price_val = Decimal(cleaned)
+        else:
+            raise ValueError(f"Unsupported price type: {type(raw_price)!r}")
     except Exception:
         raise HTTPException(status_code=400, detail="Price must be a valid number")
 
