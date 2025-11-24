@@ -235,6 +235,22 @@ FINANCES_FEES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="raw_payload", label="Raw payload", type="string", width_default=400),
 ]
 
+SNIPER_SNIPES_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="status", label="Status", type="string", width_default=120),
+  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  ColumnMeta(name="item_id", label="Item ID", type="string", width_default=180),
+  ColumnMeta(name="title", label="Title", type="string", width_default=260),
+  ColumnMeta(name="max_bid_amount", label="Max bid", type="money", width_default=120),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="end_time", label="End time", type="datetime", width_default=180),
+  ColumnMeta(name="seconds_before_end", label="Seconds before end", type="number", width_default=140),
+  ColumnMeta(name="current_bid_at_creation", label="Current bid at creation", type="money", width_default=150),
+  ColumnMeta(name="result_price", label="Result price", type="money", width_default=120),
+  ColumnMeta(name="result_message", label="Result message", type="string", width_default=260),
+  ColumnMeta(name="created_at", label="Created at", type="datetime", width_default=180),
+  ColumnMeta(name="updated_at", label="Updated at", type="datetime", width_default=180),
+]
+
 # Buying grid: logical view over ebay_buyer (legacy tbl_ebay_buyer equivalent).
 BUYING_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=80),
@@ -394,6 +410,20 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "created_at", "direction": "desc"},
     },
+    "sniper_snipes": {
+        "visible_columns": [
+            "status",
+            "ebay_account_id",
+            "item_id",
+            "title",
+            "max_bid_amount",
+            "currency",
+            "end_time",
+            "seconds_before_end",
+            "created_at",
+        ],
+        "sort": {"column": "created_at", "direction": "desc"},
+    },
     "buying": {
         "visible_columns": [
             "id",
@@ -539,6 +569,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return FINANCES_COLUMNS_META
     if grid_key == "finances_fees":
         return FINANCES_FEES_COLUMNS_META
+    if grid_key == "sniper_snipes":
+        return SNIPER_SNIPES_COLUMNS_META
     if grid_key == "buying":
         return BUYING_COLUMNS_META
     if grid_key == "accounting_bank_statements":

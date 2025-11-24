@@ -36,6 +36,7 @@ import AdminUITweakPage from './pages/AdminUITweakPage';
 import SecurityCenterPage from './pages/SecurityCenterPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
+import SniperPage from './pages/SniperPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -269,6 +270,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <FinancialsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/sniper"
+            element={
+              <ProtectedRoute>
+                <SniperPage />
               </ProtectedRoute>
             }
           />

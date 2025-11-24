@@ -1697,6 +1697,54 @@ class EbayBuyerLog(Base):
     )
 
 
+class EbaySnipeStatus(str, enum.Enum):
+    pending = "pending"
+    scheduled = "scheduled"
+    executed_stub = "executed_stub"
+    won = "won"
+    lost = "lost"
+    error = "error"
+    cancelled = "cancelled"
+
+
+class EbaySnipe(Base):
+    """Internal Bidnapper-like sniper entry.
+
+    Stores a scheduled last-second bid for an eBay auction along with cached
+    item metadata and execution result fields.
+    """
+
+    __tablename__ = "ebay_snipes"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False, index=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=True, index=True)
+
+    item_id = Column(String(100), nullable=False, index=True)
+    title = Column(Text, nullable=True)
+    image_url = Column(Text, nullable=True)
+
+    end_time = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    max_bid_amount = Column(Numeric(14, 2), nullable=False)
+    currency = Column(CHAR(3), nullable=False, default="USD")
+    seconds_before_end = Column(Integer, nullable=False, default=5)
+
+    status = Column(String(32), nullable=False, default=EbaySnipeStatus.pending.value, index=True)
+
+    current_bid_at_creation = Column(Numeric(14, 2), nullable=True)
+    result_price = Column(Numeric(14, 2), nullable=True)
+    result_message = Column(Text, nullable=True)
+
+    contingency_group_id = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="ebay_snipes")
+    ebay_account = relationship("EbayAccount", backref="snipes")
+
+
 class Message(Base):
     __tablename__ = "ebay_messages"
     

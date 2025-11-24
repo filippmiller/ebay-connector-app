@@ -474,6 +474,7 @@ function TransactionsTab() {
   const [categories, setCategories] = useState<AccountingCategory[]>([]);
   const [selectedRow, setSelectedRow] = useState<any | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [totals, setTotals] = useState<{ total_in: number; total_out: number; net: number } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -495,6 +496,23 @@ function TransactionsTab() {
     return params;
   }, [dateFrom, dateTo, sourceType, storageId, categoryId, isPersonal, isInternal, refreshKey]);
 
+  // Fetch aggregated totals for the current filter so the tab behaves like a Ledger view.
+  useEffect(() => {
+    const fetchTotals = async () => {
+      try {
+        const { data } = await api.get('/api/accounting/transactions', { params: { ...extraParams, limit: 1, offset: 0 } });
+        if (typeof data.total_in === 'number' && typeof data.total_out === 'number' && typeof data.net === 'number') {
+          setTotals({ total_in: data.total_in, total_out: data.total_out, net: data.net });
+        } else {
+          setTotals(null);
+        }
+      } catch {
+        setTotals(null);
+      }
+    };
+    void fetchTotals();
+  }, [extraParams]);
+
   const handleSaveSelected = async () => {
     if (!selectedRow) return;
     const payload: any = {};
@@ -509,6 +527,24 @@ function TransactionsTab() {
   return (
     <div className="flex-1 flex flex-col gap-4">
       <Card className="p-4 flex flex-col gap-3">
+        {totals && (
+          <div className="grid grid-cols-3 gap-4 text-xs mb-2">
+            <div>
+              <div className="text-gray-500">Total In</div>
+              <div className="font-semibold text-emerald-700">{totals.total_in.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Total Out</div>
+              <div className="font-semibold text-red-700">{totals.total_out.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Net</div>
+              <div className={totals.net >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-red-700'}>
+                {totals.net.toFixed(2)}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
           <div>
             <Label className="block text-xs mb-1">From</Label>
@@ -673,9 +709,9 @@ export default function AccountingPage() {
           className="flex-1 flex flex-col"
         >
           <TabsList>
-            <TabsTrigger value="bank-statements">Bank Statements</TabsTrigger>
+            <TabsTrigger value="bank-statements">Statements</TabsTrigger>
             <TabsTrigger value="cash">Cash Expenses</TabsTrigger>
-            <TabsTrigger value="transactions">Transactions</TabsTrigger>
+            <TabsTrigger value="transactions">Ledger</TabsTrigger>
           </TabsList>
 
           <TabsContent value="bank-statements" className="flex-1 flex flex-col">

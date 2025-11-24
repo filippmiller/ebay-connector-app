@@ -5,7 +5,7 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers, admin_db, grid_layouts, orders_api, grids_data, admin_mssql, ai_messages, timesheets, grid_preferences, admin_migration, admin_db_migration_console, tasks, listing, sq_catalog, ebay_notifications, shipping, ui_tweak, security_center, admin_users
+from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers, admin_db, grid_layouts, orders_api, grids_data, admin_mssql, ai_messages, timesheets, grid_preferences, admin_migration, admin_db_migration_console, tasks, listing, sq_catalog, ebay_notifications, shipping, ui_tweak, security_center, admin_users, sniper
 from app.utils.logger import logger
 import os
 import asyncio
@@ -94,6 +94,7 @@ app.include_router(shipping.router)
 app.include_router(ui_tweak.router)
 app.include_router(security_center.router)
 app.include_router(admin_users.router)
+app.include_router(sniper.router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -177,6 +178,7 @@ async def startup_event():
                 run_health_check_worker_loop,
                 run_ebay_workers_loop,
                 run_tasks_reminder_worker_loop,
+                run_sniper_loop,
             )
             
             asyncio.create_task(run_token_refresh_worker_loop())
@@ -194,6 +196,9 @@ async def startup_event():
             # Tasks & reminders worker – fires due reminders and snoozed reminders.
             asyncio.create_task(run_tasks_reminder_worker_loop())
             logger.info("✅ Tasks & reminders worker started (runs every 60 seconds)")
+
+            asyncio.create_task(run_sniper_loop())
+            logger.info("✅ Sniper executor worker started (runs every %s seconds)", 5)
             
         except Exception as e:
             logger.error(f"⚠️  Failed to start background workers: {e}")

@@ -7,11 +7,13 @@ import {
 import type {
   ColDef,
   ColumnState,
+  CellClassRules,
 } from 'ag-grid-community';
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
 import type { GridColumnMeta } from '@/components/DataGridPage';
+import { legacyGridTheme } from '@/components/datagrid/legacyGridTheme';
 
 export interface AppDataGridColumnState {
   name: string;
@@ -56,6 +58,18 @@ function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): st
   return String(raw);
 }
 
+function coerceNumeric(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/[^0-9+\-.,]/g, '').replace(',', '.');
+    const n = Number.parseFloat(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function extractLayout(columnStates: ColumnState[]): { order: string[]; widths: Record<string, number> } {
   const order: string[] = [];
   const widths: Record<string, number> = {};
@@ -95,8 +109,71 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
     return columns.map((col) => {
       const meta = columnMetaByName[col.name];
       const type = meta?.type;
+      const lowerName = col.name.toLowerCase();
 
-      return {
+      const cellClasses: string[] = ['ui-table-cell'];
+      const cellClassRules: CellClassRules = {};
+
+      // Right-align numeric and money columns
+      if (type === 'number' || type === 'money') {
+        cellClasses.push('ag-legacy-number');
+      }
+
+      // Money columns: color positive/negative amounts
+      if (type === 'money') {
+        cellClasses.push('ag-legacy-price');
+        cellClassRules['ag-legacy-price-positive'] = (params) => {
+          const n = coerceNumeric(params.value);
+          return n !== null && n > 0;
+        };
+        cellClassRules['ag-legacy-price-negative'] = (params) => {
+          const n = coerceNumeric(params.value);
+          return n !== null && n < 0;
+        };
+      }
+
+      // ID / key style: SKU, ItemID, eBayID, generic *id
+      if (
+        lowerName === 'id' ||
+        lowerName.includes('sku') ||
+        lowerName.endsWith('_id') ||
+        lowerName.endsWith('id') ||
+        lowerName.includes('ebayid') ||
+        lowerName.includes('ebay_id')
+      ) {
+        cellClasses.push('ag-legacy-id-link');
+      }
+
+      // Status-style coloring based on common keywords
+      if (lowerName.includes('status')) {
+        cellClassRules['ag-legacy-status-error'] = (params) => {
+          if (typeof params.value !== 'string') return false;
+          const v = params.value.toLowerCase();
+          return (
+            v.includes('await') ||
+            v.includes('error') ||
+            v.includes('fail') ||
+            v.includes('hold') ||
+            v.includes('inactive') ||
+            v.includes('cancel') ||
+            v.includes('blocked')
+          );
+        };
+        cellClassRules['ag-legacy-status-ok'] = (params) => {
+          if (typeof params.value !== 'string') return false;
+          const v = params.value.toLowerCase();
+          return (
+            v.includes('active') ||
+            v.includes('checked') ||
+            v.includes('ok') ||
+            v.includes('complete') ||
+            v.includes('resolved') ||
+            v.includes('success')
+          );
+        };
+      }
+
+      const colDef: ColDef = {
         colId: col.name, // Explicit colId for AG Grid
         field: col.name, // Field name must match row data keys
         headerName: meta?.label || col.label || col.name,
@@ -107,13 +184,19 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
         valueFormatter: (params) => formatCellValue(params.value, type),
         // Ensure column is visible
         hide: false,
-      } as ColDef;
+        cellClass: cellClasses,
+      };
+
+      if (Object.keys(cellClassRules).length > 0) {
+        colDef.cellClassRules = cellClassRules;
+      }
+
+      return colDef;
     });
   }, [columns, columnMetaByName]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
-      cellClass: 'ui-table-cell',
       headerClass: 'ui-table-header',
       sortable: false,
     }),
@@ -157,7 +240,7 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
 
   return (
     <div
-      className="w-full h-full ag-theme-quartz"
+      className="w-full h-full app-grid__ag-root"
       style={{ position: 'relative', height: '100%', width: '100%' }}
     >
       {columnDefs.length === 0 ? (
@@ -166,7 +249,7 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
         </div>
       ) : (
         <AgGridReact
-          theme="legacy"
+          theme={legacyGridTheme}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           rowData={rows}

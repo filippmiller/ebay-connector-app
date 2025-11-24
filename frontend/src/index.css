@@ -112,21 +112,53 @@
     min-height: calc(2.25rem * var(--ui-nav-scale));
   }
 
-  /* AG Grid theme wired into our existing grid variables */
-  .ag-theme-sq {
-    --ag-font-size: var(--grid-font-size);
-    --ag-grid-size: 4px;
-    --ag-row-height: var(--grid-row-height);
-    --ag-header-height: var(--grid-header-height);
-    --ag-header-foreground-color: var(--grid-header-text-color);
-    --ag-header-background-color: var(--grid-header-bg);
-    --ag-odd-row-background-color: transparent;
-    --ag-row-hover-color: var(--grid-row-hover-bg);
-    --ag-selected-row-background-color: var(--grid-row-selected-bg);
+  /* AG Grid theme wiring for legacy-style dense grids.
+     We no longer rely on CSS theme classes like ag-theme-quartz; instead,
+     AG Grid's Theming API provides the theme, and these utilities just
+     refine typography and layout where needed. */
+
+  .app-grid__ag-root {
+    font-size: var(--grid-font-size);
   }
 
-  .ag-theme-sq .ag-root-wrapper {
-    border-radius: 0.5rem;
+  /* Legacy semantic cell styling (shared across all grids using AppDataGrid). */
+  .ag-legacy-number {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ag-legacy-id-link {
+    color: #0000ee;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .ag-legacy-id-link:hover {
+    text-decoration: underline;
+  }
+
+  .ag-legacy-status-error {
+    color: #b91c1c; /* red-700 */
+    font-weight: 600;
+  }
+
+  .ag-legacy-status-ok {
+    color: #166534; /* green-700 */
+    font-weight: 600;
+  }
+
+  .ag-legacy-price-positive {
+    color: #15803d; /* green-700 */
+    text-align: right;
+  }
+
+  .ag-legacy-price-negative {
+    color: #b91c1c; /* red-700 */
+    text-align: right;
+  }
+
+  .ag-legacy-price {
+    text-align: right;
   }
 
   .app-grid {

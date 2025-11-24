@@ -28,4 +28,5 @@ from . import (
     listing,
     sq_catalog,
     ebay_notifications,
+    sniper,
 )
