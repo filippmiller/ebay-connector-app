@@ -5416,7 +5416,7 @@ class EbayService:
                             case_id=normalized.get("caseId"),
                             case_type=normalized.get("caseType"),
                             inquiry_id=normalized.get("inquiryId"),
-                            return_id=normalized.get("returnId"),
+                            return_id=normalized.get("ReturnId"),
                             payment_dispute_id=normalized.get("paymentDisputeId"),
                             transaction_id=transaction_id,
                             is_case_related=is_case_related,
@@ -5428,8 +5428,8 @@ class EbayService:
                             attachments_meta=attachments_meta,
                             preview_text=preview_text,
                         )
-                            db_session.add(db_message)
-                            total_stored += 1
+                        db_session.add(db_message)
+                        total_stored += 1
 
                         db_session.commit()
 
