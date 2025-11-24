@@ -6,6 +6,7 @@ import {
     DialogTitle,
     DialogDescription,
 } from '@/components/ui/dialog';
+import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -104,14 +105,17 @@ export function ModelsModal({ isOpen, onClose, onModelSelected }: ModelsModalPro
 
     return (
         <>
-            <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DraggableResizableDialog
+      open={isOpen}
+      onOpenChange={(open) => !open && onClose()}
+      title="Models"
+      defaultWidth={900}
+      defaultHeight={700}
+      minWidth={600}
+      minHeight={400}
+    >
                 <DialogContent className="max-w-[50vw] min-w-[600px] w-full max-h-[85vh] flex flex-col top-[5%] translate-y-0">
-                    <DialogHeader>
-                        <DialogTitle>Models</DialogTitle>
-                        <DialogDescription>
-                            Select a model or create a new one. Double-click to select.
-                        </DialogDescription>
-                    </DialogHeader>
+                    
 
                     {/* Search Bar */}
                     <div className="flex items-center gap-2 py-2">
@@ -255,7 +259,7 @@ export function ModelsModal({ isOpen, onClose, onModelSelected }: ModelsModalPro
                         </div>
                     </div>
                 </DialogContent>
-            </Dialog>
+            </DraggableResizableDialog>
 
             {/* Add Model Modal (nested) */}
             <AddModelModal

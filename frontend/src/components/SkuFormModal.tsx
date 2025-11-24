@@ -6,6 +6,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -534,20 +535,19 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
   return (
     <>
-      <Dialog
+      <DraggableResizableDialog
         open={open}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) onClose();
         }}
+        title={mode === 'create' ? 'Create SKU' : 'Edit SKU'}
+        defaultWidth={1100}
+        defaultHeight={800}
+        minWidth={720}
+        minHeight={420}
       >
         <DialogContent className="max-w-5xl max-w-[95vw] w-full max-h-[90vh] min-w-[720px] min-h-[420px] flex flex-col resize-both overflow-auto text-sm">
-          <DialogHeader>
-            <DialogTitle className="ui-page-title">{mode === 'create' ? 'Create SKU' : 'Edit SKU'}</DialogTitle>
-            <DialogDescription className="ui-micro-label">
-              Fill in the main business fields for the SQ catalog item. Description fields accept raw HTML and will be
-              stored as-is in the database.
-            </DialogDescription>
-          </DialogHeader>
+          
 
           <div className="flex-1 overflow-y-auto pr-1 space-y-2 text-sm">
             {/* Title & Model */}

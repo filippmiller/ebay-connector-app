@@ -6,6 +6,7 @@ import {
     DialogTitle,
     DialogDescription,
 } from '@/components/ui/dialog';
+import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -157,14 +158,17 @@ export function AddModelModal({ isOpen, onClose, onCreated }: AddModelModalProps
     };
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && handleCancel()}>
+        <DraggableResizableDialog
+      open={isOpen}
+      onOpenChange={(open) => !open && handleCancel()}
+      title="Add Model"
+      defaultWidth={700}
+      defaultHeight={650}
+      minWidth={500}
+      minHeight={400}
+    >
             <DialogContent className="max-w-2xl w-full max-h-[85vh] overflow-y-auto top-[5%] translate-y-0">
-                <DialogHeader>
-                    <DialogTitle>Add Model</DialogTitle>
-                    <DialogDescription>
-                        Create a new computer model with condition scores.
-                    </DialogDescription>
-                </DialogHeader>
+                
 
                 <div className="space-y-4 py-4">
                     {/* Basic Info */}
@@ -403,6 +407,6 @@ export function AddModelModal({ isOpen, onClose, onCreated }: AddModelModalProps
                     </Button>
                 </div>
             </DialogContent>
-        </Dialog>
+        </DraggableResizableDialog>
     );
 }
