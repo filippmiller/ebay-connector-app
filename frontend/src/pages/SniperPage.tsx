@@ -83,10 +83,10 @@ export default function SniperPage() {
 
   const openAddModal = () => {
     setModalMode('add');
-    setForm((prev) => ({
+    setForm({
       ...EMPTY_FORM,
       ebay_account_id: accounts[0]?.id || '',
-    }));
+    });
     setIsModalOpen(true);
   };
 
