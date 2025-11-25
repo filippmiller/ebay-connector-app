@@ -23,7 +23,15 @@ from sqlalchemy.sql.sqltypes import (
 )
 
 from app.models_sqlalchemy import get_db
-from app.models_sqlalchemy.models import Inventory, InventoryStatus, SqItem, SKU, TblPartsInventory
+from app.models_sqlalchemy.models import (
+    Inventory,
+    InventoryStatus,
+    PartsDetail,
+    PartsDetailStatus,
+    SqItem,
+    SKU,
+    TblPartsInventory,
+)
 from app.services.auth import get_current_user
 from app.models.user import User
 from app.utils.logger import logger
@@ -97,6 +105,13 @@ class ListingCommitItemResponse(BaseModel):
 class ListingCommitResponse(BaseModel):
     created_count: int
     items: List[ListingCommitItemResponse]
+    parts_detail_ids: List[int] = Field(
+        default_factory=list,
+        description=(
+            "IDs of parts_detail rows created for this commit. "
+            "Used by the eBay listing debug worker to target fresh candidates."
+        ),
+    )
 
 
 from datetime import datetime
@@ -385,6 +400,7 @@ async def commit_listing_items(
         raise HTTPException(status_code=400, detail={"error": "unknown_sku_codes", "codes": missing})
 
     created_items: List[ListingCommitItemResponse] = []
+    parts_detail_ids: List[int] = []
 
     try:
         # Lookup legacy StatusSKU numeric codes from tbl_parts_inventorystatus.
@@ -433,14 +449,21 @@ async def commit_listing_items(
             # Map SQ catalog row → inventory logical fields.
             # Ensure we always have a valid inventory.sku_id by resolving or
             # creating a corresponding simplified SKU row.
+            inv_title = item.title or getattr(sq, "title", None) or sq.part
+            inv_price = (
+                float(item.price)
+                if item.price is not None
+                else (float(sq.price) if sq.price is not None else None)
+            )
+
             inv = Inventory(
                 sku_id=_get_or_create_simple_sku(db, sq),
                 model=sq.model,
                 category=sq.category,
                 condition=None,
                 part_number=sq.part_number,
-                title=item.title or sq.title or sq.part,
-                price_value=item.price if item.price is not None else (float(sq.price) if sq.price is not None else None),
+                title=inv_title,
+                price_value=inv_price,
                 price_currency=None,
                 status=status_enum,
                 photo_count=0,
@@ -453,6 +476,36 @@ async def commit_listing_items(
 
             db.add(inv)
             db.flush()  # assign ID
+
+            # Create a minimal parts_detail row in Supabase to feed the listing worker.
+            #
+            # We avoid any new schema and populate only the fields that the
+            # debug/live worker actually uses (sku, storage, price/title,
+            # status_sku, and basic audit fields). Account linkage
+            # (username/ebay_id) can be filled in later by dedicated tools.
+            sku_str = key
+            parts_status = (
+                PartsDetailStatus.CHECKED.value
+                if status_key == "checked"
+                else PartsDetailStatus.AWAITING_MODERATION.value
+            )
+
+            pd_row = PartsDetail(
+                sku=sku_str,
+                override_sku=sku_str,
+                storage=storage_value,
+                warehouse_id=item.warehouse_id,
+                status_sku=parts_status,
+                status_updated_at=datetime.utcnow(),
+                status_updated_by=current_user.username,
+                override_title=inv_title,
+                override_price=inv_price,
+                listing_time_updated=datetime.utcnow(),
+                record_created_by=current_user.username,
+            )
+            db.add(pd_row)
+            db.flush()  # assign ID
+            parts_detail_ids.append(pd_row.id)
 
             # Also mirror into legacy tbl_parts_inventory
             _insert_legacy_inventory_row(
@@ -486,4 +539,8 @@ async def commit_listing_items(
         logger.error("listing.commit failed user=%s error=%s", current_user.id, str(e))
         raise HTTPException(status_code=400, detail={"error": "commit_failed", "message": str(e)})
 
-    return ListingCommitResponse(created_count=len(created_items), items=created_items)
+    return ListingCommitResponse(
+        created_count=len(created_items),
+        items=created_items,
+        parts_detail_ids=parts_detail_ids,
+    )

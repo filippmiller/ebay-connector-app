@@ -3,8 +3,8 @@ import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 import api from '@/lib/apiClient';
 import { useToast } from '@/hooks/use-toast';
-import { runEbayListingDebug, type WorkerDebugTrace } from '@/api/ebayListingWorker';
 import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
+import { useEbayListingDebug } from '@/hooks/useEbayListingDebug';
 
 type DraftListingStatus = 'awaiting_moderation' | 'checked';
 
@@ -27,8 +27,6 @@ function uuid(): string {
   return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 }
 
-const DEBUG_EBAY_LISTING = import.meta.env.VITE_DEBUG_EBAY_LISTING === 'true';
-
 export default function ListingPage() {
   const { toast } = useToast();
 
@@ -40,10 +38,18 @@ export default function ListingPage() {
 
   // Debug listing worker (parts_detail) – dev only
   const [debugIds, setDebugIds] = useState('');
-  const [debugTrace, setDebugTrace] = useState<WorkerDebugTrace | null>(null);
-  const [debugOpen, setDebugOpen] = useState(false);
-  const [debugLoading, setDebugLoading] = useState(false);
-  const [debugError, setDebugError] = useState<string | null>(null);
+  const [debugMaxItems, setDebugMaxItems] = useState<number | ''>(50);
+
+  const {
+    isDebugEnabled,
+    runDebugForIds,
+    runDebugForAutoCandidates,
+    trace: debugTrace,
+    open: debugOpen,
+    setOpen: setDebugOpen,
+    loading: debugLoading,
+    error: debugError,
+  } = useEbayListingDebug();
 
   const selectedDraftItems = useMemo(
     () => draftItems.filter((i) => selectedDraftIds.has(i.tempId)),
@@ -182,6 +188,20 @@ export default function ListingPage() {
       const committedSkuCodes = new Set(resp.data?.items?.map((i: any) => i.sku_code) ?? []);
       setDraftItems((prev) => prev.filter((i) => !committedSkuCodes.has(i.skuCode)));
       setSelectedDraftIds(new Set());
+
+      // When debug mode is enabled, immediately run the listing worker for the
+      // freshly created parts_detail rows so we can see the full trace.
+      const pdIds: number[] = resp.data?.parts_detail_ids ?? [];
+      if (isDebugEnabled && Array.isArray(pdIds) && pdIds.length > 0) {
+        try {
+          await runDebugForIds(pdIds, {
+            dryRun: false,
+            maxItems: pdIds.length || 50,
+          });
+        } catch {
+          // Errors are surfaced inside the debug hook (toast + error state).
+        }
+      }
     } catch (e: any) {
       const detail = e?.response?.data?.detail ?? e?.message ?? 'Commit failed';
       toast({ title: 'Commit failed', description: String(detail), variant: 'destructive' });
@@ -191,7 +211,7 @@ export default function ListingPage() {
   };
 
   const handleRunDebugWorker = async () => {
-    if (!DEBUG_EBAY_LISTING) return;
+    if (!isDebugEnabled) return;
     const raw = debugIds.trim();
     if (!raw) {
       toast({ title: 'No IDs provided', description: 'Enter parts_detail IDs (comma separated).', variant: 'destructive' });
@@ -215,17 +235,9 @@ export default function ListingPage() {
     }
 
     try {
-      setDebugLoading(true);
-      setDebugError(null);
-      const resp = await runEbayListingDebug({ ids, dry_run: false, max_items: 50 });
-      setDebugTrace(resp.trace);
-      setDebugOpen(true);
-    } catch (e: any) {
-      const detail = e?.response?.data?.detail ?? e?.message ?? 'Debug worker failed';
-      setDebugError(String(detail));
-      toast({ title: 'Debug worker error', description: String(detail), variant: 'destructive' });
-    } finally {
-      setDebugLoading(false);
+      await runDebugForIds(ids, { dryRun: false, maxItems: 50 });
+    } catch {
+      // Errors are already surfaced via the debug hook (toast + error state).
     }
   };
 
@@ -378,7 +390,7 @@ export default function ListingPage() {
           </div>
         </div>
 
-        {DEBUG_EBAY_LISTING && (
+        {isDebugEnabled && (
           <div className="mt-4 border rounded-lg bg-white p-3 text-xs font-mono text-gray-700">
             <div className="flex items-center justify-between mb-2">
               <div className="font-semibold text-gray-800">eBay Listing Worker Debug (parts_detail)</div>
@@ -398,16 +410,46 @@ export default function ListingPage() {
               >
                 Run listing worker (debug)
               </button>
-              <span className="text-[11px] text-gray-500">
-                Uses POST /api/debug/ebay/list-once against Supabase parts_detail.
-              </span>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                className="border rounded px-2 py-1 text-xs w-24"
+                placeholder="max items"
+                value={debugMaxItems === '' ? '' : debugMaxItems}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setDebugMaxItems(v === '' ? '' : Number(v));
+                }}
+              />
+              <button
+                className="px-3 py-1 text-xs rounded bg-blue-700 text-white hover:bg-blue-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                onClick={async () => {
+                  if (!isDebugEnabled) return;
+                  const max = typeof debugMaxItems === 'number' && debugMaxItems > 0 ? debugMaxItems : 50;
+                  try {
+                    await runDebugForAutoCandidates({ dryRun: false, maxItems: max });
+                  } catch {
+                    // Errors are already surfaced via the debug hook (toast + error state).
+                  }
+                }}
+                disabled={debugLoading}
+              >
+                Run worker for Checked (bulk)
+              </button>
             </div>
+            <p className="text-[11px] text-gray-500 mb-1">
+              Bulk mode calls POST /api/debug/ebay/list-once without explicit ids; the backend auto-selects
+              up to <span className="font-semibold">max_items</span> parts_detail rows with
+              <code className="mx-1">status_sku = Checked</code>, <code className="mx-1">item_id IS NULL</code>, and no
+              freeze/cancel flags, grouped by account and published in batches.
+            </p>
             {debugError && <div className="text-red-600 text-[11px]">Error: {debugError}</div>}
           </div>
         )}
       </div>
 
-      {DEBUG_EBAY_LISTING && (
+      {isDebugEnabled && (
         <WorkerDebugTerminalModal
           isOpen={debugOpen}
           onClose={() => setDebugOpen(false)}

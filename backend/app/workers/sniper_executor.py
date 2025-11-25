@@ -1,17 +1,25 @@
-"""Sniper executor worker (stub implementation).
+"""Sniper executor worker (real bidding implementation).
 
-Periodically scans ebay_snipes for pending snipes that should fire soon and
-marks them as executed_stub with a placeholder result_message. This is a
-minimal worker skeleton; it does NOT place real eBay bids yet.
+This worker is responsible for:
+- polling ebay_snipes for due snipes based on the explicit fire_at timestamp;
+- placing a real proxy bid via the eBay Buy Offer API at fire_at;
+- marking snipes as BIDDING and recording detailed EbaySnipeLog entries;
+- after the auction end_time, querying bidding status and marking snipes as
+  WON / LOST / ERROR with result_price and logs.
+
+Lifecycle (Sniper v2):
+- scheduled -> bidding -> won / lost / error
+- scheduled -> error (when we cannot place a bid)
+- bidding -> error (when we cannot fetch bidding status)
 """
 from __future__ import annotations
 
 import asyncio
 import os
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional, Tuple
-import json
 
 import httpx
 from fastapi import HTTPException
@@ -19,7 +27,13 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models_sqlalchemy import SessionLocal
-from app.models_sqlalchemy.models import EbayAccount, EbaySnipe, EbaySnipeStatus, EbaySnipeLog, EbayToken
+from app.models_sqlalchemy.models import (
+    EbayAccount,
+    EbaySnipe,
+    EbaySnipeStatus,
+    EbaySnipeLog,
+    EbayToken,
+)
 from app.services.ebay import ebay_service
 from app.utils.logger import logger
 
@@ -27,8 +41,17 @@ from app.utils.logger import logger
 # Poll interval is configurable via env; default to 1s for precise scheduling.
 try:
     POLL_INTERVAL_SECONDS = max(1, int(os.getenv("SNIPER_POLL_INTERVAL_SECONDS", "1")))
-except ValueError:
+except ValueError:  # pragma: no cover - defensive fallback
     POLL_INTERVAL_SECONDS = 1
+
+# Safety cap: maximum number of snipes processed per tick to avoid bursts
+# against eBay APIs. Can be overridden via env.
+try:
+    MAX_SNIPES_PER_TICK = int(os.getenv("SNIPER_MAX_SNIPES_PER_TICK", "50"))
+    if MAX_SNIPES_PER_TICK <= 0:
+        MAX_SNIPES_PER_TICK = 50
+except ValueError:  # pragma: no cover - defensive fallback
+    MAX_SNIPES_PER_TICK = 50
 
 
 def _now_utc() -> datetime:
@@ -50,6 +73,7 @@ def _pick_due_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
             EbaySnipe.end_time > now,
         )
         .order_by(EbaySnipe.fire_at.asc())
+        .limit(MAX_SNIPES_PER_TICK)
     )
 
     return list(q.all())
@@ -59,7 +83,7 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
     """Return snipes whose auctions have ended and which are in BIDDING state.
 
     These are candidates for a result check via the Buy Offer getBidding
-    endpoint to determine WIN/LOST state and final price.
+    endpoint to determine WON/LOST state and final price.
     """
 
     q = (
@@ -73,7 +97,8 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
 
     return list(q.all())
 
-ndef _resolve_account_and_token(db: Session, snipe: EbaySnipe) -> tuple[Optional[EbayAccount], Optional[str], Optional[str]]:
+
+def _resolve_account_and_token(db: Session, snipe: EbaySnipe) -> Tuple[Optional[EbayAccount], Optional[str], Optional[str]]:
     """Resolve EbayAccount + decrypted OAuth access token for a snipe.
 
     Returns (account, access_token, error_message). When error_message is not
@@ -104,7 +129,8 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
 
     return account, access_token, None
 
-nasync def _resolve_rest_item_id(access_token: str, legacy_item_id: str) -> str:
+
+async def _resolve_rest_item_id(access_token: str, legacy_item_id: str) -> str:
     """Resolve the RESTful item id from a legacy numeric ItemID via Browse API.
 
     The Sniper UI stores legacy ItemIDs; Buy Offer APIs require the REST-style
@@ -124,8 +150,9 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
             resp = await client.get(url, params=params, headers=headers)
     except httpx.RequestError as exc:
+        # Use literal HTTP status codes to avoid depending on fastapi.status
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=502,
             detail=f"Failed to contact eBay Browse API for legacy_item_id={legacy_item_id}: {exc}",
         )
 
@@ -135,7 +162,7 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
         except Exception:
             body = {"message": resp.text[:500]}
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail={
                 "message": "Failed to resolve REST item id from legacy ItemID",
                 "status": resp.status_code,
@@ -153,13 +180,66 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
 
     return str(rest_item_id)
 
-nasync def _place_bid_for_snipe(db: Session, snipe: EbaySnipe, now: datetime) -> None:
+
+async def _place_bid_for_snipe(db: Session, snipe: EbaySnipe, now: datetime) -> None:
     """Place a real proxy bid for a due snipe via Buy Offer API.
 
     On success, marks the snipe as BIDDING and records a log entry. On error,
     marks status=ERROR and logs the failure while keeping the row for
     inspection.
     """
+
+    # Safety guardrails before doing any external calls.
+    # 1) Max bid must be positive.
+    if snipe.max_bid_amount is None or snipe.max_bid_amount <= 0:
+        snipe.status = EbaySnipeStatus.error.value
+        snipe.has_bid = False
+        snipe.result_message = "Skipped: invalid max_bid_amount (must be > 0)"
+        snipe.updated_at = now
+        logger.warning(
+            "Sniper executor: skipping snipe id=%s due to invalid max_bid_amount=%s",
+            snipe.id,
+            snipe.max_bid_amount,
+        )
+        db.add(
+            EbaySnipeLog(
+                snipe_id=snipe.id,
+                event_type="skipped_invalid_max_bid",
+                status=EbaySnipeStatus.error.value,
+                http_status=None,
+                payload=None,
+                message=snipe.result_message,
+            )
+        )
+        return
+
+    # 2) If we are already too close to end_time, do not attempt a bid.
+    if snipe.end_time is not None:
+        remaining_seconds = (snipe.end_time - now).total_seconds()
+        if remaining_seconds < 1.0:
+            snipe.status = EbaySnipeStatus.error.value
+            snipe.has_bid = False
+            snipe.result_message = (
+                "Skipped: too late to bid (end_time is in "
+                f"{remaining_seconds:.3f} seconds)"
+            )
+            snipe.updated_at = now
+            logger.warning(
+                "Sniper executor: skipping snipe id=%s because it is too late to bid (remaining_seconds=%.3f)",
+                snipe.id,
+                remaining_seconds,
+            )
+            db.add(
+                EbaySnipeLog(
+                    snipe_id=snipe.id,
+                    event_type="skipped_too_late",
+                    status=EbaySnipeStatus.error.value,
+                    http_status=None,
+                    payload=None,
+                    message=snipe.result_message,
+                )
+            )
+            return
 
     account, access_token, error_msg = _resolve_account_and_token(db, snipe)
     if error_msg or not account or not access_token:
@@ -251,7 +331,8 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
         )
     )
 
-nasync def _finalize_ended_snipes(db: Session, now: datetime) -> int:
+
+async def _finalize_ended_snipes(db: Session, now: datetime) -> int:
     """Check ended auctions in BIDDING state and mark them WON/LOST/ERROR."""
 
     snipes = _pick_ended_bidding_snipes(db, now)
@@ -323,17 +404,16 @@ def _pick_ended_bidding_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
 
         auction_status = None
         high_bidder = None
-        current_price_value = None
-        current_price_currency = None
+        current_price_value: Optional[Decimal] = None
         if isinstance(payload, dict):
             auction_status = payload.get("auctionStatus")
             high_bidder = payload.get("highBidder")
             current_price = payload.get("currentPrice") or {}
             try:
-                current_price_value = Decimal(str(current_price.get("value"))) if current_price.get("value") is not None else None
-            except Exception:
+                if current_price.get("value") is not None:
+                    current_price_value = Decimal(str(current_price.get("value")))
+            except Exception:  # pragma: no cover - defensive
                 current_price_value = None
-            current_price_currency = current_price.get("currency")
 
         message = None
         if auction_status == "ENDED":

@@ -5,7 +5,49 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts, ebay_workers, admin_db, grid_layouts, orders_api, grids_data, admin_mssql, ai_messages, timesheets, grid_preferences, admin_migration, admin_db_migration_console, tasks, listing, sq_catalog, ebay_notifications, shipping, ui_tweak, security_center, admin_users, sniper, ebay_listing_debug
+from app.routers import (
+    auth,
+    ebay,
+    orders,
+    messages,
+    offers,
+    migration,
+    buying,
+    inventory,
+    transactions,
+    financials,
+    admin,
+    offers_v2,
+    inventory_v2,
+    ebay_accounts,
+    ebay_workers,
+    admin_db,
+    grid_layouts,
+    orders_api,
+    grids_data,
+    admin_mssql,
+    ai_messages,
+    timesheets,
+    grid_preferences,
+    admin_migration,
+    admin_db_migration_console,
+    tasks,
+    listing,
+    sq_catalog,
+    ebay_notifications,
+    shipping,
+    ui_tweak,
+    security_center,
+    admin_users,
+    sniper,
+    ebay_listing_debug,
+    admin_ai,
+    admin_ai_rules_ext,
+    admin_monitoring,
+    admin_profitability,
+    admin_actions,
+    integrations,
+)
 from app.utils.logger import logger
 import os
 import asyncio
@@ -96,6 +138,12 @@ app.include_router(ui_tweak.router)
 app.include_router(security_center.router)
 app.include_router(admin_users.router)
 app.include_router(sniper.router)
+app.include_router(admin_ai.router)
+app.include_router(admin_ai_rules_ext.router)
+app.include_router(admin_monitoring.router)
+app.include_router(admin_profitability.router)
+app.include_router(admin_actions.router)
+app.include_router(integrations.router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -180,6 +228,8 @@ async def startup_event():
                 run_ebay_workers_loop,
                 run_tasks_reminder_worker_loop,
                 run_sniper_loop,
+                run_monitoring_loop,
+                run_auto_offer_buy_loop,
             )
             
             asyncio.create_task(run_token_refresh_worker_loop())
@@ -200,6 +250,12 @@ async def startup_event():
 
             asyncio.create_task(run_sniper_loop())
             logger.info("✅ Sniper executor worker started (runs every %s seconds)", 5)
+
+            asyncio.create_task(run_monitoring_loop())
+            logger.info("✅ eBay monitoring worker started (runs every %s seconds)", 60)
+
+            asyncio.create_task(run_auto_offer_buy_loop())
+            logger.info("✅ Auto-offer / Auto-buy planner worker started (runs every %s seconds)", 120)
             
         except Exception as e:
             logger.error(f"⚠️  Failed to start background workers: {e}")

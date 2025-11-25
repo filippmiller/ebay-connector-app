@@ -37,6 +37,12 @@ import SecurityCenterPage from './pages/SecurityCenterPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import SniperPage from './pages/SniperPage';
+import AdminAiGridPage from './pages/AdminAiGridPage';
+import AdminAiRulesPage from './pages/AdminAiRulesPage';
+import AdminMonitoringPage from './pages/AdminMonitoringPage';
+import AdminModelProfitPage from './pages/AdminModelProfitPage';
+import AdminActionsPage from './pages/AdminActionsPage';
+import './App.css';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -129,6 +135,11 @@ function App() {
           <Route path="/admin/users" element={<ProtectedRoute><AdminUsersPage /></ProtectedRoute>} />
           <Route path="/admin/ui-tweak" element={<ProtectedRoute><AdminUITweakPage /></ProtectedRoute>} />
           <Route path="/admin/security" element={<ProtectedRoute><SecurityCenterPage /></ProtectedRoute>} />
+          <Route path="/admin/ai-grid" element={<ProtectedRoute><AdminAiGridPage /></ProtectedRoute>} />
+          <Route path="/admin/ai-rules" element={<ProtectedRoute><AdminAiRulesPage /></ProtectedRoute>} />
+          <Route path="/admin/monitor" element={<ProtectedRoute><AdminMonitoringPage /></ProtectedRoute>} />
+          <Route path="/admin/model-profit" element={<ProtectedRoute><AdminModelProfitPage /></ProtectedRoute>} />
+          <Route path="/admin/actions" element={<ProtectedRoute><AdminActionsPage /></ProtectedRoute>} />
           <Route path="/admin/ebay-connection" element={<ProtectedRoute><EbayConnectionPage /></ProtectedRoute>} />
           <Route path="/admin/db-explorer" element={<ProtectedRoute><AdminDbExplorerPage /></ProtectedRoute>} />
           <Route path="/admin/data-migration" element={<ProtectedRoute><AdminDataMigrationPage /></ProtectedRoute>} />

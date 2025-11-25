@@ -1392,6 +1392,349 @@ class UiTweakSettings(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class AiRule(Base):
+    """Persisted AI analytics rule, typically a reusable SQL condition fragment.
+
+    These rules are created from natural-language descriptions in the admin
+    AI Rules UI and later reused by analytics and monitoring workers (e.g.
+    "good computer" profitability profiles).
+    """
+
+    __tablename__ = "ai_rules"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(Text, nullable=False)
+    # Raw SQL condition fragment or full WHERE clause (read-only, validated at use).
+    rule_sql = Column(Text, nullable=False)
+    # Optional free-form description or original natural-language prompt.
+    description = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+
+
+class AiQueryLog(Base):
+    """Append-only log of AI-powered admin analytics queries.
+
+    Each row captures the natural-language prompt, the generated SQL, and the
+    number of rows returned so we can audit and debug the AI Query Engine.
+    """
+
+    __tablename__ = "ai_query_log"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    prompt = Column(Text, nullable=False)
+    sql = Column(Text, nullable=False)
+    row_count = Column(Integer, nullable=True)
+
+    executed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+class AiEbayCandidate(Base):
+    """Candidate eBay listing discovered by the monitoring worker.
+
+    Each row represents a potentially profitable listing for a given model
+    discovered via the eBay Browse/Search API.
+    """
+
+    __tablename__ = "ai_ebay_candidates"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    ebay_item_id = Column(Text, nullable=False, unique=True)
+    model_id = Column(Text, nullable=False, index=True)
+
+    title = Column(Text, nullable=True)
+    price = Column(Numeric(14, 2), nullable=True)
+    shipping = Column(Numeric(14, 2), nullable=True)
+    condition = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+
+    predicted_profit = Column(Numeric(14, 2), nullable=True)
+    roi = Column(Numeric(10, 4), nullable=True)
+
+    matched_rule = Column(Boolean, nullable=True)
+    rule_name = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_ai_ebay_candidates_model_id", "model_id"),
+    )
+
+
+class AiEbayAction(Base):
+    """Planned auto-offer / auto-buy action for a discovered eBay candidate.
+
+    This table is populated by the auto-offer/auto-buy worker and can be
+    reviewed in the admin UI before enabling live execution.
+    """
+
+    __tablename__ = "ai_ebay_actions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    ebay_item_id = Column(Text, nullable=False)
+    model_id = Column(Text, nullable=False, index=True)
+
+    # 'offer' | 'buy_now'
+    action_type = Column(Text, nullable=False)
+
+    # Planned amount we intend to pay or offer (same currency as original_price).
+    offer_amount = Column(Numeric(14, 2), nullable=True)
+    original_price = Column(Numeric(14, 2), nullable=True)
+    shipping = Column(Numeric(14, 2), nullable=True)
+
+    predicted_profit = Column(Numeric(14, 2), nullable=True)
+    roi = Column(Numeric(10, 4), nullable=True)
+
+    rule_name = Column(Text, nullable=True)
+
+    # 'draft' | 'ready' | 'executed' | 'failed'
+    status = Column(Text, nullable=False, default="draft")
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_ai_ebay_actions_model_id", "model_id"),
+        Index("uq_ai_ebay_actions_item_type", "ebay_item_id", "action_type", unique=True),
+    )
+
+
+class IntegrationProvider(Base):
+    """Catalog entry for an external integration provider (Gmail, Slack, etc.)."""
+
+    __tablename__ = "integrations_providers"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(64), nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+    auth_type = Column(String(32), nullable=False)
+    default_scopes = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    accounts = relationship("IntegrationAccount", back_populates="provider")
+
+
+class IntegrationAccount(Base):
+    """Concrete connected account for a given provider and owner.
+
+    Example: Filipp's main Gmail account, a client's Slack workspace, etc.
+    """
+
+    __tablename__ = "integrations_accounts"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    provider_id = Column(String(36), ForeignKey("integrations_providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    external_account_id = Column(Text, nullable=False)  # e.g. email for Gmail
+    display_name = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False, default="active", index=True)
+
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    meta = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    provider = relationship("IntegrationProvider", back_populates="accounts")
+    owner = relationship("User")
+    credentials = relationship("IntegrationCredentials", back_populates="account", uselist=False)
+    email_messages = relationship("EmailMessage", back_populates="integration_account")
+    training_pairs = relationship("AiEmailTrainingPair", back_populates="integration_account")
+
+
+class IntegrationCredentials(Base):
+    """Encrypted credentials for a single IntegrationAccount.
+
+    Access and refresh tokens are stored encrypted at rest using the shared
+    crypto helper (AES-GCM derived from the application secret key).
+    """
+
+    __tablename__ = "integrations_credentials"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    integration_account_id = Column(
+        String(36),
+        ForeignKey("integrations_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    _access_token = Column("access_token", Text, nullable=True)
+    _refresh_token = Column("refresh_token", Text, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    scopes = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    account = relationship("IntegrationAccount", back_populates="credentials")
+
+    # ------------------------------------------------------------------
+    # Encrypted token accessors
+    # ------------------------------------------------------------------
+    @property
+    def access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @access_token.setter
+    def access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._access_token = None
+        else:
+            self._access_token = crypto.encrypt(value)
+
+    @property
+    def refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @refresh_token.setter
+    def refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._refresh_token = None
+        else:
+            self._refresh_token = crypto.encrypt(value)
+
+
+class EmailMessage(Base):
+    """Normalized email message fetched from an external provider.
+
+    This table is provider-agnostic; Gmail is simply the first concrete
+    implementation via the Integrations module.
+    """
+
+    __tablename__ = "emails_messages"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    integration_account_id = Column(
+        String(36),
+        ForeignKey("integrations_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    external_id = Column(Text, nullable=False)
+    thread_id = Column(Text, nullable=True, index=True)
+
+    direction = Column(String(16), nullable=False)  # incoming | outgoing
+
+    from_address = Column(Text, nullable=True)
+    to_addresses = Column(JSONB, nullable=True)
+    cc_addresses = Column(JSONB, nullable=True)
+    bcc_addresses = Column(JSONB, nullable=True)
+
+    subject = Column(Text, nullable=True)
+    body_text = Column(Text, nullable=True)
+    body_html = Column(Text, nullable=True)
+
+    sent_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    raw_headers = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    integration_account = relationship("IntegrationAccount", back_populates="email_messages")
+    client_pairs = relationship(
+        "AiEmailTrainingPair",
+        back_populates="client_message",
+        foreign_keys="AiEmailTrainingPair.client_message_id",
+    )
+    reply_pairs = relationship(
+        "AiEmailTrainingPair",
+        back_populates="our_reply_message",
+        foreign_keys="AiEmailTrainingPair.our_reply_message_id",
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_emails_messages_account_external_id",
+            "integration_account_id",
+            "external_id",
+            unique=True,
+        ),
+    )
+
+
+class AiEmailTrainingPair(Base):
+    """Paired client question and our reply extracted from email threads.
+
+    These rows power the AI email training dataset once approved in the
+    admin UI.
+    """
+
+    __tablename__ = "ai_training_pairs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    integration_account_id = Column(
+        String(36),
+        ForeignKey("integrations_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    thread_id = Column(Text, nullable=True, index=True)
+
+    client_message_id = Column(
+        String(36),
+        ForeignKey("emails_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    our_reply_message_id = Column(
+        String(36),
+        ForeignKey("emails_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    client_text = Column(Text, nullable=False)
+    our_reply_text = Column(Text, nullable=False)
+
+    status = Column(String(32), nullable=False, default="new", index=True)
+    labels = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    integration_account = relationship("IntegrationAccount", back_populates="training_pairs")
+    client_message = relationship("EmailMessage", foreign_keys=[client_message_id], back_populates="client_pairs")
+    our_reply_message = relationship("EmailMessage", foreign_keys=[our_reply_message_id], back_populates="reply_pairs")
+
+
 class AccountingExpenseCategory(Base):
     __tablename__ = "accounting_expense_category"
 

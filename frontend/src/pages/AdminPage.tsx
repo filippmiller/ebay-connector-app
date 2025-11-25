@@ -57,6 +57,31 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">Adjust navigation, text size, and grid density</p>
           </Card>
           
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ai-grid')}>
+            <h2 className="text-lg font-semibold">AI Grid Playground</h2>
+            <p className="text-sm text-gray-600 mt-1">Test AI-запросы и живой грид в админке</p>
+          </Card>
+          
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ai-rules')}>
+            <h2 className="text-lg font-semibold">AI Rules</h2>
+            <p className="text-sm text-gray-600 mt-1">Определить правила "хорошей покупки" и окупаемости</p>
+          </Card>
+          
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/monitor')}>
+            <h2 className="text-lg font-semibold">Monitoring Candidates</h2>
+            <p className="text-sm text-gray-600 mt-1">Кандидаты на покупку из eBay мониторинга по моделям</p>
+          </Card>
+          
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/model-profit')}>
+            <h2 className="text-lg font-semibold">Model Profitability</h2>
+            <p className="text-sm text-gray-600 mt-1">Просмотр профилей прибыльности моделей и max_buy_price</p>
+          </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/actions')}>
+            <h2 className="text-lg font-semibold">Auto-Offer / Auto-Buy Actions</h2>
+            <p className="text-sm text-gray-600 mt-1">Планировщик действий (draft / ready / executed / failed)</p>
+          </Card>
+          
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/timesheets/admin')}>
             <h2 className="text-lg font-semibold">Timesheets</h2>
             <p className="text-sm text-gray-600 mt-1">Admin timesheet overview & corrections</p>

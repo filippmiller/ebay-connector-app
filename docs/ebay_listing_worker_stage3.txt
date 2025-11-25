@@ -1,0 +1,736 @@
+Here’s what I implemented for Phase 3 and how it fits together, followed by full code for the affected files.
+
+
+
+Summary of what changed
+
+1. New reusable frontend hook: useEbayListingDebug
+
+File: frontend/src/hooks/useEbayListingDebug.ts
+
+I added a small reusable hook that encapsulates calling /api/debug/ebay/list-once and managing the modal state:
+
+•  API integration:
+◦  Uses the existing runEbayListingDebug client from frontend/src/api/ebayListingWorker.ts.
+•  Feature flag:
+◦  isDebugEnabled is derived from import.meta.env.VITE_DEBUG_EBAY_LISTING === 'true'.
+◦  When debug mode is off, runDebugForIds becomes a no-op and never touches the network.
+•  State exposed:
+ts
+•  Behavior of runDebugForIds:
+◦  Deduplicates and sanitizes IDs: converts to number, filters out non-finite or ≤0 values.
+◦  If no valid IDs remain, returns early.
+◦  Calls runEbayListingDebug({ ids, dry_run, max_items }).
+◦  On success:
+▪  Stores resp.trace in trace.
+▪  Sets open = true so the modal can show the trace.
+◦  On failure:
+▪  Extracts a human-readable error from err.response.data.detail or err.message.
+▪  Stores it in error.
+▪  Shows a toast with title "Listing debug worker error" and the message.
+◦  Crucially: it never throws in normal operation; any errors are contained in its own state. If you await runDebugForIds and it fails, the hook has already surfaced the error and the surrounding UI flow still succeeds.
+
+This hook is what future inventory/listing flows can import to wire the debug modal in, once they have a reliable parts_detail.id.
+
+2. ListingPage dev panel migrated to use the hook
+
+File: frontend/src/pages/ListingPage.tsx
+
+I refactored the existing manual “eBay Listing Worker Debug (parts_detail)” dev panel to use the new hook instead of managing its own debug state and calling the API directly.
+
+Key changes:
+
+•  Imports:
+◦  Removed: runEbayListingDebug, WorkerDebugTrace.
+◦  Added: useEbayListingDebug from @/hooks/useEbayListingDebug.
+•  Local state:
+◦  Removed ad-hoc debug state:
+▪  debugTrace, debugOpen, debugLoading, debugError.
+◦  Kept only:
+▪  debugIds: string — the text input where a dev types parts_detail IDs.
+•  Hook usage:
+ts
+•  Manual debug handler:
+◦  Still parses debugIds into a list of numeric IDs and validates them.
+◦  Now simply delegates to the hook:
+ts
+•  Note: runDebugForIds itself does not throw on normal errors; the catch is purely defensive.
+•  Conditional rendering:
+◦  Previously: conditional blocks were gated by DEBUG_EBAY_LISTING (env check inside the file).
+◦  Now: they use isDebugEnabled from the hook instead:
+tsx
+•  Dev panel UX:
+◦  Unchanged from the developer’s perspective:
+▪  Enter comma/space-separated parts_detail IDs.
+▪  Click “Run listing worker (debug)”.
+▪  See “Running…” indicator while the hook is loading.
+▪  View any error text.
+▪  Modal opens with the full trace using WorkerDebugTerminalModal.
+
+3. Inventory / listing flows and parts_detail.id availability
+
+Per the Phase 3 spec, I did the discovery step on the “real” inventory/listing flows.
+
+Frontend:
+
+•  InventoryPage.tsx → Uses DataGridPage with gridKey="active_inventory"; no per-row actions that map to parts_detail.
+•  InventoryPageV2.tsx:
+◦  Uses /api/inventory/search and /api/inventory/{id}.
+◦  Its InventoryItem type does not include parts_detail_id.
+◦  Bulk actions (handleBulkAction) operate on Inventory.id through /api/inventory/admin/bulk, not on parts_detail.id.
+•  InventoryPageV3.tsx:
+◦  Uses DataGridPage with gridKey="inventory" and extra params.
+◦  Again, the row model is inventory-centric, not parts_detail.
+•  ListingPage.tsx:
+◦  Works entirely in terms of SQ catalog SKUs and writes to the Postgres inventory table (and legacy tbl_parts_inventory) via POST /api/listing/commit.
+◦  The commit response includes inventory_id, sku_code, storage, status—no parts_detail_id.
+
+Backend:
+
+•  backend/app/routers/listing.py:
+◦  Implements /api/listing/commit.
+◦  Writes to Inventory and legacy TblPartsInventory, but does not touch or know about PartsDetail.
+•  backend/app/routers/inventory.py and inventory_v2.py:
+◦  Their responses only include Inventory fields, no parts_detail_id.
+•  Inventory SQLAlchemy model has no parts_detail_id column.
+
+This means: today there is no reliable mapping from the objects used by the real inventory/listing UIs to parts_detail.id:
+
+•  No field named parts_detail_id.
+•  No obvious 1:1 key from inventory → parts_detail.
+
+In line with your constraints (“do not attempt a large refactor in this phase” and “only wire where you can reliably obtain parts_detail.id”), I did not attempt to:
+
+•  Add new FK columns (parts_detail_id) to inventory.
+•  Change backend responses to guess a parts_detail.id.
+
+Instead, Phase 3 delivers:
+
+•  A clean, reusable front-end integration hook (useEbayListingDebug) that any future inventory/listing UI can use as soon as parts_detail.id becomes available in its models.
+•  A refactored ListingPage dev panel that uses this shared hook and continues to work as your “manual bridge” to the listing worker.
+
+Once you introduce a concrete link from, say, Inventory rows or a listing detail DTO to parts_detail.id (e.g. via a new column and a migration), you can:
+
+•  Call runDebugForIds([row.parts_detail_id]) in the appropriate Save/Checked/List-on-eBay handlers, gated on isDebugEnabled.
+•  Reuse the same WorkerDebugTerminalModal wiring you see in ListingPage.
+
+4. Build verification
+
+I ran a full frontend build to ensure TypeScript and the Vite build remain healthy:
+bash
+The build succeeded (tsc -b && vite build), with only the usual Vite warning about large bundles. So the new hook and updated ListingPage compile correctly.
+
+
+
+Notes on not yet wiring “real” flows
+
+Because there is currently no parts_detail.id in:
+
+•  InventoryItem / InventoryPageV2 data,
+•  InventoryPageV3 grid rows,
+•  Listing commit responses,
+
+I did not attach runDebugForIds to those flows yet. Doing so now would require adding schema and migration changes (e.g. inventory.parts_detail_id + backend join), which you explicitly asked to avoid unless strictly necessary for this phase.
+
+What I have done instead is:
+
+•  Prepare the integration surface via useEbayListingDebug.
+•  Keep the existing manual debug panel fully functional.
+•  Ensure that when you later extend your inventory/listing DTOs with parts_detail_id, the only extra work to fully satisfy Phase 3 will be:
+◦  Importing useEbayListingDebug in the relevant pages.
+◦  Calling runDebugForIds([partsDetailId]) after successful status changes or “List on eBay” operations.
+◦  Rendering WorkerDebugTerminalModal using the hook’s trace, open, and setOpen.
+
+
+
+========================
+FINAL CODE DUMP (NO LINE NUMBERS)
+
+
+// FILE: frontend/src/hooks/useEbayListingDebug.ts
+
+import { useCallback, useState } from 'react';
+import { runEbayListingDebug, type WorkerDebugTrace } from '@/api/ebayListingWorker';
+import { useToast } from '@/hooks/use-toast';
+
+export interface UseEbayListingDebugResult {
+  isDebugEnabled: boolean;
+  runDebugForIds: (
+    ids: number[],
+    opts?: { dryRun?: boolean; maxItems?: number },
+  ) => Promise<void>;
+  trace: WorkerDebugTrace | null;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  loading: boolean;
+  error: string | null;
+}
+
+/**
+ * Reusable hook for running the eBay listing debug worker and wiring
+ * its trace into the shared WorkerDebugTerminalModal.
+ *
+ * - Enabled only when VITE_DEBUG_EBAY_LISTING === 'true'.
+ * - Never breaks the surrounding UI flow: all errors are surfaced via
+ *   toast + `error` state but are otherwise swallowed.
+ */
+export function useEbayListingDebug(): UseEbayListingDebugResult {
+  const { toast } = useToast();
+  const isDebugEnabled = import.meta.env.VITE_DEBUG_EBAY_LISTING === 'true';
+
+  const [trace, setTrace] = useState<WorkerDebugTrace | null>(null);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runDebugForIds = useCallback<
+    UseEbayListingDebugResult['runDebugForIds']
+  >(
+    async (ids, opts) => {
+      if (!isDebugEnabled) {
+        // In non-debug environments this is a no-op.
+        return;
+      }
+
+      const uniqueIds = Array.from(
+        new Set(
+          (ids || [])
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0),
+        ),
+      );
+
+      if (!uniqueIds.length) {
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const resp = await runEbayListingDebug({
+          ids: uniqueIds,
+          dry_run: opts?.dryRun ?? false,
+          max_items: opts?.maxItems ?? 50,
+        });
+        setTrace(resp.trace);
+        setOpen(true);
+      } catch (err: any) {
+        const detail =
+          err?.response?.data?.detail ?? err?.message ?? 'Listing debug worker failed';
+        const message = String(detail);
+        setError(message);
+        toast({
+          title: 'Listing debug worker error',
+          description: message,
+          variant: 'destructive',
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [isDebugEnabled, toast],
+  );
+
+  return {
+    isDebugEnabled,
+    runDebugForIds,
+    trace,
+    open,
+    setOpen,
+    loading,
+    error,
+  };
+
+
+
+
+// FILE: frontend/src/pages/ListingPage.tsx
+
+import { useMemo, useState } from 'react';
+import FixedHeader from '@/components/FixedHeader';
+import { DataGridPage } from '@/components/DataGridPage';
+import api from '@/lib/apiClient';
+import { useToast } from '@/hooks/use-toast';
+import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
+import { useEbayListingDebug } from '@/hooks/useEbayListingDebug';
+
+type DraftListingStatus = 'awaiting_moderation' | 'checked';
+
+interface DraftListingItem {
+  tempId: string;
+  skuId: number;
+  skuCode: string;
+  model?: string | null;
+  category?: string | null;
+  price: number;
+  quantity: number;
+  condition?: string | null;
+  title?: string | null;
+  storage: string;
+  status: DraftListingStatus;
+  warehouseId?: number | null;
+}
+
+function uuid(): string {
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
+
+export default function ListingPage() {
+  const { toast } = useToast();
+
+  const [draftItems, setDraftItems] = useState<DraftListingItem[]>([]);
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
+  const [globalStorage, setGlobalStorage] = useState('');
+  const [globalStatus, setGlobalStatus] = useState<DraftListingStatus>(
+    'awaiting_moderation',
+  );
+  const [isCommitting, setIsCommitting] = useState(false);
+
+  // Debug listing worker (parts_detail) – dev only
+  const [debugIds, setDebugIds] = useState('');
+
+  const {
+    isDebugEnabled,
+    runDebugForIds,
+    trace: debugTrace,
+    open: debugOpen,
+    setOpen: setDebugOpen,
+    loading: debugLoading,
+    error: debugError,
+  } = useEbayListingDebug();
+
+  const selectedDraftItems = useMemo(
+    () => draftItems.filter((i) => selectedDraftIds.has(i.tempId)),
+    [draftItems, selectedDraftIds],
+  );
+
+  const handleAddSkuToDraft = (row: Record<string, any>) => {
+    if (!row || typeof row.id !== 'number') return;
+
+    const skuId = row.id as number;
+    const rawSku = row.sku_code ?? row.skuCode ?? '';
+    const skuCode = rawSku !== null && rawSku !== undefined ? String(rawSku) : '';
+    const model = (row.model || null) as string | null;
+    const category = (row.category || null) as string | null;
+    const price =
+      typeof row.price === 'number' ? row.price : Number(row.price || 0) || 0;
+    // The SKU grid exposes condition as either `condition_description` (human label)
+    // or `condition_id`. Prefer the label if present.
+    const condition = (row.condition_description || row.condition || null) as
+      | string
+      | null;
+    const title = (row.title || null) as string | null;
+
+    // Duplicate strategy: if SKU already exists in draft, increment quantity.
+    setDraftItems((prev) => {
+      const existing = prev.find((i) => i.skuId === skuId);
+      if (existing) {
+        return prev.map((i) =>
+          i.skuId === skuId ? { ...i, quantity: i.quantity + 1 } : i,
+        );
+      }
+      return [
+        ...prev,
+        {
+          tempId: uuid(),
+          skuId,
+          skuCode,
+          model,
+          category,
+          price,
+          quantity: 1,
+          condition,
+          title,
+          storage: '',
+          status: 'awaiting_moderation',
+          warehouseId: undefined,
+        },
+      ];
+    });
+  };
+
+  const applyGlobalToSelected = () => {
+    if (selectedDraftIds.size === 0) {
+      toast({
+        title: 'No rows selected',
+        description: 'Select rows in the bottom grid first.',
+      });
+      return;
+    }
+
+    setDraftItems((prev) =>
+      prev.map((item) => {
+        if (!selectedDraftIds.has(item.tempId)) return item;
+        return {
+          ...item,
+          storage: globalStorage || item.storage,
+          status: globalStatus,
+        };
+      }),
+    );
+  };
+
+  const removeSelected = () => {
+    if (selectedDraftIds.size === 0) return;
+    setDraftItems((prev) => prev.filter((i) => !selectedDraftIds.has(i.tempId)));
+    setSelectedDraftIds(new Set());
+  };
+
+  const clearAll = () => {
+    setDraftItems([]);
+    setSelectedDraftIds(new Set());
+  };
+
+  const toggleDraftSelection = (tempId: string) => {
+    setSelectedDraftIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(tempId)) next.delete(tempId);
+      else next.add(tempId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllDraft = () => {
+    if (selectedDraftIds.size === draftItems.length) {
+      setSelectedDraftIds(new Set());
+    } else {
+      setSelectedDraftIds(new Set(draftItems.map((i) => i.tempId)));
+    }
+  };
+
+  const handleCommitSelected = async () => {
+    if (selectedDraftItems.length === 0) {
+      toast({
+        title: 'Nothing to commit',
+        description: 'Select rows in the draft grid first.',
+      });
+      return;
+    }
+
+    const invalid = selectedDraftItems.filter((i) => !i.storage.trim());
+    if (invalid.length > 0) {
+      toast({
+        title: 'Storage required',
+        description: 'All selected rows must have Storage set before commit.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const payload = {
+      model_id: null,
+      storage: globalStorage || undefined,
+      default_status: globalStatus,
+      items: selectedDraftItems.map((item) => ({
+        sku_code: item.skuCode,
+        price: item.price,
+        quantity: item.quantity,
+        condition: item.condition,
+        title: item.title,
+        storage: item.storage,
+        status: item.status,
+        warehouse_id: item.warehouseId ?? undefined,
+      })),
+    };
+
+    try {
+      setIsCommitting(true);
+      const resp = await api.post('/api/listing/commit', payload);
+      const createdCount = resp.data?.created_count ?? 0;
+      toast({
+        title: 'Listing committed',
+        description: `${createdCount} items committed to inventory`,
+      });
+
+      const committedSkuCodes = new Set(
+        resp.data?.items?.map((i: any) => i.sku_code) ?? [],
+      );
+      setDraftItems((prev) => prev.filter((i) => !committedSkuCodes.has(i.skuCode)));
+      setSelectedDraftIds(new Set());
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail ?? e?.message ?? 'Commit failed';
+      toast({
+        title: 'Commit failed',
+        description: String(detail),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCommitting(false);
+    }
+  };
+
+  const handleRunDebugWorker = async () => {
+    if (!isDebugEnabled) return;
+    const raw = debugIds.trim();
+    if (!raw) {
+      toast({
+        title: 'No IDs provided',
+        description: 'Enter parts_detail IDs (comma separated).',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const ids = Array.from(
+      new Set(
+        raw
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => Number(s))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    );
+
+    if (!ids.length) {
+      toast({
+        title: 'Invalid IDs',
+        description: 'Could not parse any numeric IDs from input.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      await runDebugForIds(ids, { dryRun: false, maxItems: 50 });
+    } catch {
+      // Errors are already surfaced via the debug hook (toast + error state).
+    }
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-gray-50">
+      <FixedHeader />
+      <div className="pt-16 flex-1 px-4 py-4 overflow-hidden flex flex-col gap-4">
+        <h1 className="text-2xl font-bold mb-2">Listing (SKU → Inventory)</h1>
+
+        {/* Top section: SKU catalog grid */}
+        <div className="flex-[2] min-h-0 border rounded-lg bg-white flex flex-col">
+          <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 text-xs">
+            <div className="font-semibold">SKU catalog</div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500">
+                Select SKUs and click Add to listing
+              </span>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0">
+            <DataGridPage
+              gridKey="sku_catalog"
+              title="SKU catalog"
+              onRowClick={handleAddSkuToDraft}
+            />
+          </div>
+        </div>
+
+        {/* Bottom section: Draft listing grid */}
+        <div className="flex-[1] min-h-[220px] border rounded-lg bg-white flex flex-col">
+          <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 text-xs gap-4">
+            <div className="font-semibold">Draft listing (per physical computer)</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                className="border rounded px-2 py-1 text-xs w-32"
+                placeholder="Storage (e.g. B16:1)"
+                value={globalStorage}
+                onChange={(e) => setGlobalStorage(e.target.value)}
+              />
+              <select
+                className="border rounded px-2 py-1 text-xs"
+                value={globalStatus}
+                onChange={(e) =>
+                  setGlobalStatus(e.target.value as DraftListingStatus)
+                }
+              >
+                <option value="awaiting_moderation">Awaiting moderation</option>
+                <option value="checked">Checked</option>
+              </select>
+              <button
+                className="px-2 py-1 text-xs border rounded bg-gray-100 hover:bg-gray-200"
+                onClick={applyGlobalToSelected}
+              >
+                Apply to selected
+              </button>
+              <button
+                className="px-2 py-1 text-xs border rounded bg-white hover:bg-gray-100"
+                onClick={removeSelected}
+              >
+                Remove selected
+              </button>
+              <button
+                className="px-2 py-1 text-xs border rounded bg-white hover:bg-gray-100"
+                onClick={clearAll}
+              >
+                Clear all
+              </button>
+              <button
+                className="ml-2 px-3 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                onClick={handleCommitSelected}
+                disabled={isCommitting || selectedDraftItems.length === 0}
+              >
+                {isCommitting ? 'Committing…' : 'Commit selected'}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-auto">
+            <table className="min-w-full text-[11px] border-collapse">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="ui-table-header px-2 py-1 border-b border-r w-6">
+                    <input
+                      type="checkbox"
+                      className="h-3 w-3"
+                      checked={
+                        draftItems.length > 0 &&
+                        selectedDraftIds.size === draftItems.length
+                      }
+                      onChange={toggleSelectAllDraft}
+                    />
+                  </th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">#</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">SKU</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">Model</th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">
+                    Category
+                  </th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r text-right">
+                    Price
+                  </th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r text-center">
+                    Qty
+                  </th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">
+                    Condition
+                  </th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">
+                    Storage
+                  </th>
+                  <th className="ui-table-header px-2 py-1 border-b border-r">
+                    Status
+                  </th>
+                  <th className="ui-table-header px-2 py-1 border-b">Title</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draftItems.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={11}
+                      className="px-3 py-4 text-center text-gray-500 text-xs"
+                    >
+                      No draft items. Select SKUs in the top grid and click "Add to
+                      listing".
+                    </td>
+                  </tr>
+                ) : (
+                  draftItems.map((item, idx) => (
+                    <tr
+                      key={item.tempId}
+                      className={`border-t ${
+                        idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+                      } hover:bg-blue-50`}
+                    >
+                      <td className="ui-table-cell px-2 py-1 border-r text-center">
+                        <input
+                          type="checkbox"
+                          className="h-3 w-3"
+                          checked={selectedDraftIds.has(item.tempId)}
+                          onChange={() => toggleDraftSelection(item.tempId)}
+                        />
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r text-right text-gray-500">
+                        {idx + 1}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r font-mono">
+                        {item.skuCode}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r truncate max-w-xs">
+                        {item.model || '-'}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r">
+                        {item.category || '-'}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r text-right">
+                        {item.price ? item.price.toFixed(2) : '-'}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r text-center">
+                        {item.quantity}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r">
+                        {item.condition || '-'}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r font-mono">
+                        <input
+                          className="border rounded px-1 py-0.5 text-[11px] w-20"
+                          value={item.storage}
+                          onChange={(e) =>
+                            setDraftItems((prev) =>
+                              prev.map((p) =>
+                                p.tempId === item.tempId
+                                  ? { ...p, storage: e.target.value }
+                                  : p,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 border-r">
+                        {item.status === 'awaiting_moderation'
+                          ? 'Awaiting moderation'
+                          : 'Checked'}
+                      </td>
+                      <td className="ui-table-cell px-2 py-1 truncate max-w-md">
+                        {item.title || '-'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {isDebugEnabled && (
+          <div className="mt-4 border rounded-lg bg-white p-3 text-xs font-mono text-gray-700">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold text-gray-800">
+                eBay Listing Worker Debug (parts_detail)
+              </div>
+              {debugLoading && <span className="text-blue-600">Running…</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <input
+                className="border rounded px-2 py-1 text-xs min-w-[260px]"
+                placeholder="parts_detail IDs (e.g. 101, 102, 103)"
+                value={debugIds}
+                onChange={(e) => setDebugIds(e.target.value)}
+              />
+              <button
+                className="px-3 py-1 text-xs rounded bg-black text-white hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                onClick={handleRunDebugWorker}
+                disabled={debugLoading}
+              >
+                Run listing worker (debug)
+              </button>
+              <span className="text-[11px] text-gray-500">
+                Uses POST /api/debug/ebay/list-once against Supabase parts_detail.
+              </span>
+            </div>
+            {debugError && (
+              <div className="text-red-600 text-[11px]">Error: {debugError}</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {isDebugEnabled && (
+        <WorkerDebugTerminalModal
+          isOpen={debugOpen}
+          onClose={() => setDebugOpen(false)}
+          trace={debugTrace}
+        />
+      )}
+    </div>
+  );
+}
