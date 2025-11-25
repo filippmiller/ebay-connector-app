@@ -14,7 +14,7 @@ from typing import List
 from sqlalchemy.orm import Session
 
 from app.models_sqlalchemy import SessionLocal
-from app.models_sqlalchemy.models import EbaySnipe, EbaySnipeStatus
+from app.models_sqlalchemy.models import EbaySnipe, EbaySnipeStatus, EbaySnipeLog
 from app.utils.logger import logger
 
 
@@ -75,7 +75,22 @@ async def run_sniper_once() -> int:
                 s.result_message = (
                     "SNIPER_STUB_EXECUTED — real eBay bid is not implemented yet"
                 )
+                s.has_bid = True
                 s.updated_at = now
+
+                # Record a simple log entry so we already exercise the logging
+                # pipeline in the stub implementation. Real bidding will enrich
+                # this with the actual eBay response payload and IDs.
+                log_entry = EbaySnipeLog(
+                    snipe_id=s.id,
+                    event_type="stub_execute",
+                    status=EbaySnipeStatus.executed_stub.value,
+                    http_status=None,
+                    payload=None,
+                    message="Stub sniper execution: no real eBay bid was sent",
+                )
+                db.add(log_entry)
+
                 processed += 1
             except Exception as exc:  # pragma: no cover - safety net
                 logger.error(

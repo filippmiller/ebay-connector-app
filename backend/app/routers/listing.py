@@ -387,6 +387,25 @@ async def commit_listing_items(
     created_items: List[ListingCommitItemResponse] = []
 
     try:
+        # Lookup legacy StatusSKU numeric codes from tbl_parts_inventorystatus.
+        # This allows us to map UI statuses (awaiting_moderation, checked)
+        # onto the legacy numeric codes used by tbl_parts_inventory.
+        status_id_map: Dict[str, int] = {}
+        try:
+            status_sql = sa_text(
+                'SELECT "InventoryStatus_ID" AS id, "InventoryStatus_Name" AS name '
+                'FROM "tbl_parts_inventorystatus"'
+            )
+            result = db.execute(status_sql)
+            for row in result:
+                try:
+                    label_norm = str(row.name).strip().lower()
+                    status_id_map[label_norm] = int(row.id)
+                except Exception:
+                    continue
+        except Exception:
+            status_id_map = {}
+
         # Compute starting legacy inventory ID once (MAX(ID)+1)
         legacy_table = TblPartsInventory.__table__
         try:
@@ -444,6 +463,7 @@ async def commit_listing_items(
                 username=current_user.username,
                 next_id=next_legacy_id,
                 item_payload=item,
+                status_id_map=status_id_map,
             )
             next_legacy_id += 1
 

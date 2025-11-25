@@ -238,6 +238,7 @@ FINANCES_FEES_COLUMNS_META: List[ColumnMeta] = [
 
 SNIPER_SNIPES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="status", label="Status", type="string", width_default=120),
+  ColumnMeta(name="has_bid", label="Bid placed", type="boolean", width_default=110),
   ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
   ColumnMeta(name="item_id", label="Item ID", type="string", width_default=180),
   ColumnMeta(name="title", label="Title", type="string", width_default=260),
@@ -415,6 +416,7 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "sniper_snipes": {
         "visible_columns": [
             "status",
+            "has_bid",
             "ebay_account_id",
             "item_id",
             "title",

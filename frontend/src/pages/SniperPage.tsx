@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
-import { createSnipe, updateSnipe, cancelSnipe } from '@/api/sniper';
+import { createSnipe, updateSnipe, cancelSnipe, getSnipeLogs, SnipeLogRow } from '@/api/sniper';
 import { ebayApi } from '@/api/ebay';
 
 interface EditFormState {
@@ -52,6 +52,10 @@ export default function SniperPage() {
   const [form, setForm] = useState<EditFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [logsModalOpen, setLogsModalOpen] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<SnipeLogRow[]>([]);
 
   useEffect(() => {
     const loadAccounts = async () => {
@@ -164,6 +168,21 @@ export default function SniperPage() {
   };
 
   const canCancel = form.status === 'pending' || form.status === 'scheduled';
+
+  const openLogsModal = async () => {
+    if (!form.id) return;
+    try {
+      setLogsModalOpen(true);
+      setLogsLoading(true);
+      setLogsError(null);
+      const resp = await getSnipeLogs(form.id);
+      setLogs(resp.logs || []);
+    } catch (e: any) {
+      setLogsError(e?.response?.data?.detail || e?.message || 'Failed to load snipe logs');
+    } finally {
+      setLogsLoading(false);
+    }
+  };
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -297,15 +316,26 @@ export default function SniperPage() {
               )}
             </div>
             <div className="px-4 py-3 border-t flex items-center justify-between gap-3 text-sm">
-              {modalMode === 'edit' && canCancel && (
-                <button
-                  type="button"
-                  className="px-3 py-1 rounded border border-red-300 text-red-700 bg-red-50 hover:bg-red-100"
-                  onClick={handleCancelSnipeFromModal}
-                >
-                  Cancel snipe
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {modalMode === 'edit' && canCancel && (
+                  <button
+                    type="button"
+                    className="px-3 py-1 rounded border border-red-300 text-red-700 bg-red-50 hover:bg-red-100"
+                    onClick={handleCancelSnipeFromModal}
+                  >
+                    Cancel snipe
+                  </button>
+                )}
+                {modalMode === 'edit' && form.id && (
+                  <button
+                    type="button"
+                    className="px-3 py-1 rounded border text-gray-700 bg-gray-50 hover:bg-gray-100"
+                    onClick={openLogsModal}
+                  >
+                    View logs
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-3 ml-auto">
                 <button
                   type="button"
@@ -323,6 +353,80 @@ export default function SniperPage() {
                   {saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {logsModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-40">
+          <div className="bg-white rounded shadow-lg w-full max-w-xl max-h-[80vh] overflow-auto text-sm">
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div className="font-semibold text-sm">Snipe logs</div>
+              <button
+                type="button"
+                className="text-xs text-gray-500 hover:text-gray-700"
+                onClick={() => setLogsModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {logsLoading && <div className="text-xs text-gray-500">Loading logs…</div>}
+              {logsError && <div className="text-xs text-red-600">{logsError}</div>}
+              {!logsLoading && !logsError && logs.length === 0 && (
+                <div className="text-xs text-gray-500">No logs recorded for this snipe yet.</div>
+              )}
+              {!logsLoading && logs.length > 0 && (
+                <ul className="space-y-2">
+                  {logs.map((log) => (
+                    <li
+                      key={log.id}
+                      className="border rounded px-3 py-2 bg-gray-50 flex flex-col gap-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-gray-500">
+                          {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
+                        </span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-800">
+                          {log.event_type}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-700">
+                        {log.status && (
+                          <span className="font-semibold mr-1">Status:</span>
+                        )}
+                        {log.status || '—'}
+                      </div>
+                      {log.message && (
+                        <div className="text-[11px] text-gray-700">
+                          <span className="font-semibold mr-1">Message:</span>
+                          {log.message}
+                        </div>
+                      )}
+                      {(log.ebay_bid_id || log.correlation_id || log.http_status != null) && (
+                        <div className="text-[11px] text-gray-500 flex flex-wrap gap-2">
+                          {log.ebay_bid_id && (
+                            <span>
+                              <span className="font-semibold">Bid ID:</span> {log.ebay_bid_id}
+                            </span>
+                          )}
+                          {log.correlation_id && (
+                            <span>
+                              <span className="font-semibold">Corr ID:</span> {log.correlation_id}
+                            </span>
+                          )}
+                          {log.http_status != null && (
+                            <span>
+                              <span className="font-semibold">HTTP:</span> {log.http_status}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>

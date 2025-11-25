@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models_sqlalchemy import get_db
-from app.models_sqlalchemy.models import EbayAccount, EbaySnipe, EbaySnipeStatus, EbayToken
+from app.models_sqlalchemy.models import EbayAccount, EbaySnipe, EbaySnipeStatus, EbaySnipeLog, EbayToken
 from app.models.user import User as UserModel
 from app.services.auth import get_current_user
 
@@ -75,6 +75,7 @@ def _snipe_to_row(s: EbaySnipe) -> Dict[str, Any]:
         "currency": s.currency,
         "seconds_before_end": s.seconds_before_end,
         "status": s.status,
+        "has_bid": getattr(s, "has_bid", False),
         "current_bid_at_creation": _decimal_to_float(s.current_bid_at_creation),
         "result_price": _decimal_to_float(s.result_price),
         "result_message": s.result_message,
@@ -477,3 +478,50 @@ async def delete_snipe(
     db.refresh(snipe)
 
     return _snipe_to_row(snipe)
+
+
+@router.get("/snipes/{snipe_id}/logs")
+async def get_snipe_logs(
+    snipe_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Return audit log entries for a given snipe.
+
+    This endpoint exposes a concise view over EbaySnipeLog so the UI can show a
+    per-snipe timeline (event type, status, message). The raw payload field is
+    intentionally omitted from the response for now, but can be added behind a
+    separate, more privileged endpoint if needed.
+    """
+
+    snipe: Optional[EbaySnipe] = (
+        db.query(EbaySnipe)
+        .filter(EbaySnipe.id == snipe_id, EbaySnipe.user_id == current_user.id)
+        .one_or_none()
+    )
+    if not snipe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snipe not found")
+
+    logs = (
+        db.query(EbaySnipeLog)
+        .filter(EbaySnipeLog.snipe_id == snipe_id)
+        .order_by(EbaySnipeLog.created_at.asc())
+        .all()
+    )
+
+    return {
+        "snipe_id": snipe.id,
+        "logs": [
+            {
+                "id": log.id,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "event_type": log.event_type,
+                "status": log.status,
+                "message": log.message,
+                "ebay_bid_id": log.ebay_bid_id,
+                "correlation_id": log.correlation_id,
+                "http_status": log.http_status,
+            }
+            for log in logs
+        ],
+    }

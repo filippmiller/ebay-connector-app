@@ -1998,6 +1998,10 @@ class EbaySnipe(Base):
     # Optional free-form user note describing the intent/context of the snipe.
     comment = Column(Text, nullable=True)
 
+    # True once at least one bid attempt was made for this snipe. This is a
+    # denormalised helper flag; detailed history lives in EbaySnipeLog.
+    has_bid = Column(Boolean, nullable=False, default=False)
+
     contingency_group_id = Column(String(100), nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
@@ -2005,6 +2009,32 @@ class EbaySnipe(Base):
 
     user = relationship("User", backref="ebay_snipes")
     ebay_account = relationship("EbayAccount", backref="snipes")
+    logs = relationship("EbaySnipeLog", back_populates="snipe", cascade="all, delete-orphan")
+
+
+class EbaySnipeLog(Base):
+    """Per-snipe audit log for sniper executions and eBay responses."""
+
+    __tablename__ = "ebay_snipe_logs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    snipe_id = Column(String(36), ForeignKey("ebay_snipes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    event_type = Column(String(50), nullable=False)
+    status = Column(String(50), nullable=True)
+    ebay_bid_id = Column(String(100), nullable=True)
+    correlation_id = Column(String(100), nullable=True)
+    http_status = Column(Integer, nullable=True)
+
+    # Raw payload or structured summary of the eBay interaction. Stored as
+    # text for now; callers may persist JSON-serialised content when needed.
+    payload = Column(Text, nullable=True)
+
+    # Short human-readable summary suitable for direct display in the UI.
+    message = Column(Text, nullable=True)
+
+    snipe = relationship("EbaySnipe", back_populates="logs")
 
 
 class Message(Base):

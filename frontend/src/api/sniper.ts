@@ -13,6 +13,7 @@ export interface SnipeRow {
   currency: string | null;
   seconds_before_end: number | null;
   status: string | null;
+  has_bid?: boolean | null;
   current_bid_at_creation: number | null;
   result_price: number | null;
   result_message: string | null;
@@ -52,6 +53,22 @@ export interface UpdateSnipePayload {
   status?: string; // e.g. 'cancelled'
 }
 
+export interface SnipeLogRow {
+  id: string;
+  created_at: string | null;
+  event_type: string;
+  status: string | null;
+  message: string | null;
+  ebay_bid_id: string | null;
+  correlation_id: string | null;
+  http_status: number | null;
+}
+
+export interface SnipeLogsResponse {
+  snipe_id: string;
+  logs: SnipeLogRow[];
+}
+
 export async function listSnipes(params: ListSnipesParams = {}): Promise<SnipesListResponse> {
   const search = new URLSearchParams();
   if (params.limit != null) search.set('limit', String(params.limit));
@@ -76,5 +93,10 @@ export async function updateSnipe(id: string, payload: UpdateSnipePayload): Prom
 
 export async function cancelSnipe(id: string): Promise<SnipeRow> {
   const resp = await api.delete<SnipeRow>(`/api/sniper/snipes/${id}`);
+  return resp.data;
+}
+
+export async function getSnipeLogs(id: string): Promise<SnipeLogsResponse> {
+  const resp = await api.get<SnipeLogsResponse>(`/api/sniper/snipes/${id}/logs`);
   return resp.data;
 }
