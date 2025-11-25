@@ -3,6 +3,8 @@ import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 import api from '@/lib/apiClient';
 import { useToast } from '@/hooks/use-toast';
+import { runEbayListingDebug, type WorkerDebugTrace } from '@/api/ebayListingWorker';
+import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
 
 type DraftListingStatus = 'awaiting_moderation' | 'checked';
 
@@ -25,6 +27,8 @@ function uuid(): string {
   return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 }
 
+const DEBUG_EBAY_LISTING = import.meta.env.VITE_DEBUG_EBAY_LISTING === 'true';
+
 export default function ListingPage() {
   const { toast } = useToast();
 
@@ -33,6 +37,13 @@ export default function ListingPage() {
   const [globalStorage, setGlobalStorage] = useState('');
   const [globalStatus, setGlobalStatus] = useState<DraftListingStatus>('awaiting_moderation');
   const [isCommitting, setIsCommitting] = useState(false);
+
+  // Debug listing worker (parts_detail) – dev only
+  const [debugIds, setDebugIds] = useState('');
+  const [debugTrace, setDebugTrace] = useState<WorkerDebugTrace | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [debugError, setDebugError] = useState<string | null>(null);
 
   const selectedDraftItems = useMemo(
     () => draftItems.filter((i) => selectedDraftIds.has(i.tempId)),
@@ -176,6 +187,45 @@ export default function ListingPage() {
       toast({ title: 'Commit failed', description: String(detail), variant: 'destructive' });
     } finally {
       setIsCommitting(false);
+    }
+  };
+
+  const handleRunDebugWorker = async () => {
+    if (!DEBUG_EBAY_LISTING) return;
+    const raw = debugIds.trim();
+    if (!raw) {
+      toast({ title: 'No IDs provided', description: 'Enter parts_detail IDs (comma separated).', variant: 'destructive' });
+      return;
+    }
+
+    const ids = Array.from(
+      new Set(
+        raw
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => Number(s))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    );
+
+    if (!ids.length) {
+      toast({ title: 'Invalid IDs', description: 'Could not parse any numeric IDs from input.', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      setDebugLoading(true);
+      setDebugError(null);
+      const resp = await runEbayListingDebug({ ids, dry_run: false, max_items: 50 });
+      setDebugTrace(resp.trace);
+      setDebugOpen(true);
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail ?? e?.message ?? 'Debug worker failed';
+      setDebugError(String(detail));
+      toast({ title: 'Debug worker error', description: String(detail), variant: 'destructive' });
+    } finally {
+      setDebugLoading(false);
     }
   };
 
@@ -327,7 +377,43 @@ export default function ListingPage() {
             </table>
           </div>
         </div>
+
+        {DEBUG_EBAY_LISTING && (
+          <div className="mt-4 border rounded-lg bg-white p-3 text-xs font-mono text-gray-700">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold text-gray-800">eBay Listing Worker Debug (parts_detail)</div>
+              {debugLoading && <span className="text-blue-600">Running…</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <input
+                className="border rounded px-2 py-1 text-xs min-w-[260px]"
+                placeholder="parts_detail IDs (e.g. 101, 102, 103)"
+                value={debugIds}
+                onChange={(e) => setDebugIds(e.target.value)}
+              />
+              <button
+                className="px-3 py-1 text-xs rounded bg-black text-white hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                onClick={handleRunDebugWorker}
+                disabled={debugLoading}
+              >
+                Run listing worker (debug)
+              </button>
+              <span className="text-[11px] text-gray-500">
+                Uses POST /api/debug/ebay/list-once against Supabase parts_detail.
+              </span>
+            </div>
+            {debugError && <div className="text-red-600 text-[11px]">Error: {debugError}</div>}
+          </div>
+        )}
       </div>
+
+      {DEBUG_EBAY_LISTING && (
+        <WorkerDebugTerminalModal
+          isOpen={debugOpen}
+          onClose={() => setDebugOpen(false)}
+          trace={debugTrace}
+        />
+      )}
     </div>
   );
 }

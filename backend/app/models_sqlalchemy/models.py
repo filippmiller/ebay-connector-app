@@ -589,7 +589,9 @@ class PartsDetail(Base):
     loss_flag = Column(Boolean, nullable=True)
 
     # Audit
-    record_created_at = Column(DateTime(timezone=True), nullable=False, server_default=datetime.utcnow)
+    # Use server_default=func.now() instead of datetime.utcnow function object to
+    # satisfy SQLAlchemy 2.x ArgumentError expectations.
+    record_created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     record_created_by = Column(String(100), nullable=True)
     record_updated_at = Column(DateTime(timezone=True), nullable=True)
     record_updated_by = Column(String(100), nullable=True)
