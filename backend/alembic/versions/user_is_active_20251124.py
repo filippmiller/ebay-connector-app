@@ -19,18 +19,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add is_active column to users table for soft deactivation."""
+    """Add is_active column to users table for soft deactivation.
 
-    op.add_column(
-        "users",
-        sa.Column(
-            "is_active",
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.text("true"),
-        ),
+    This uses "IF NOT EXISTS" so that the migration is safe to run even if the
+    column was created manually or by a previous run.
+    """
+
+    op.execute(
+        sa.text(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true NOT NULL
+            """
+        )
     )
-    # Drop default after initial backfill; ORM default will apply for new rows.
+    # Drop default after initial backfill; ORM-level default will apply for new rows.
     op.alter_column("users", "is_active", server_default=None)
 
 
