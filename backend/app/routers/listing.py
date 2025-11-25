@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import func
+from sqlalchemy.sql import text as sa_text
 from sqlalchemy.sql.sqltypes import (
     String,
     Text,
@@ -171,6 +172,7 @@ def _insert_legacy_inventory_row(
     username: str,
     next_id: int,
     item_payload: DraftListingItemPayload,
+    status_id_map: Dict[str, int],
 ) -> int:
     """Insert a row into legacy tbl_parts_inventory with explicit ID.
 
@@ -278,6 +280,25 @@ def _insert_legacy_inventory_row(
         if col is not None:
             insert_data[col.name] = username
             break
+
+    # Legacy numeric status (StatusSKU) from tbl_parts_inventorystatus
+    # Map our logical UI status key ("awaiting_moderation" / "checked")
+    # to the InventoryStatus_ID value, when the lookup table is available.
+    if status_id_map:
+        # Normalise key: "awaiting_moderation" -> "awaiting moderation"
+        base_label = status_key.replace("_", " ").strip().lower()
+        status_id = status_id_map.get(base_label)
+        if status_id is None:
+            # Fallback: try partial matches to tolerate minor spelling/case
+            # differences between UI labels and legacy dictionary entries.
+            for label, sid in status_id_map.items():
+                if base_label in label or label in base_label:
+                    status_id = sid
+                    break
+        if status_id is not None:
+            status_col = cols_by_lower.get("statussku")
+            if status_col is not None:
+                insert_data[status_col.name] = status_id
 
     # Rec created
     now = datetime.utcnow()

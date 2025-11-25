@@ -8,8 +8,10 @@ import type {
   ColDef,
   ColumnState,
   CellClassRules,
+  CellStyle,
   GridApi,
   ICellRendererParams,
+  CellStyleFunc,
 } from 'ag-grid-community';
 
 // Register AG Grid modules
@@ -242,13 +244,14 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
           typeof styleOverride.fontSizeLevel === 'number'
             ? 10 + Math.min(10, Math.max(1, styleOverride.fontSizeLevel))
             : undefined;
-        colDef.cellStyle = (params) => {
-          const base: React.CSSProperties = {};
-          if (fontSizePx) base.fontSize = `${fontSizePx}px`;
-          if (styleOverride.fontWeight) base.fontWeight = styleOverride.fontWeight;
-          if (styleOverride.textColor) base.color = styleOverride.textColor;
+        const styleFn: CellStyleFunc<any, any, any> = () => {
+          const base: CellStyle = {};
+          if (fontSizePx) (base as any).fontSize = `${fontSizePx}px`;
+          if (styleOverride.fontWeight) (base as any).fontWeight = styleOverride.fontWeight;
+          if (styleOverride.textColor) (base as any).color = styleOverride.textColor;
           return base;
         };
+        colDef.cellStyle = styleFn;
       }
 
       // Special case: make sniper_snipes.item_id clickable to open the eBay page.
