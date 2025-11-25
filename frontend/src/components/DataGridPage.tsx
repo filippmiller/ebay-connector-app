@@ -134,6 +134,11 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       setError(null);
       try {
         const params = new URLSearchParams({ limit: limit.toString(), offset: offset.toString() });
+        const sort = gridPrefs.columns?.sort;
+        if (sort?.column) {
+          params.append('sort_by', sort.column);
+          params.append('sort_dir', sort.direction);
+        }
         if (search) params.append('search', search);
         if (extraParams) {
           Object.entries(extraParams).forEach(([k, v]) => params.append(k, String(v)));
@@ -148,7 +153,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       }
     };
     fetchData();
-  }, [gridKey, limit, offset, search, extraParams]);
+  }, [gridKey, limit, offset, search, extraParams, gridPrefs.columns?.sort]);
 
   // Handle layout changes from the grid (order & widths).
   // IMPORTANT: this only updates local in-memory preferences; persistence now
@@ -204,6 +209,17 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
   const handleResetToDefaults = async () => {
     await gridPrefs.clearServerPreferences();
+  };
+
+  const handleSortChangeFromGrid = (sort: { column: string; direction: 'asc' | 'desc' } | null) => {
+    const cfg = gridPrefs.columns;
+    if (!cfg) return;
+    gridPrefs.setColumns({
+      visible: cfg.visible,
+      order: cfg.order,
+      widths: cfg.widths,
+      sort,
+    });
   };
 
   const handleSaveColumns = async () => {
@@ -276,7 +292,17 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
           )}
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <input className="px-2 py-1 border rounded-md text-xs bg-white placeholder:text-gray-400" placeholder="Search all columns" value={search} onChange={e => setSearch(e.target.value)} />
+          <input className="px-2 py-1 border rounded-md text-xs bg-white placeholder:text-gray-400" placeholder="Search all columns" value={search} onChange={e => {
+            const value = e.target.value;
+            setSearch(value);
+            // Also apply client-side quick filter on the current page when possible.
+            try {
+              // gridRef may be null during initial layout load; that's fine.
+              (gridRef.current as any)?.setQuickFilter?.(value);
+            } catch {
+              // best-effort only
+            }
+          }} />
           <div className="flex items-center gap-1 text-xs text-gray-600">
             <span>Sort:</span>
             <select className="px-2 py-1 border rounded-md bg-white" value={currentSort?.column || ''} onChange={e => {
@@ -336,6 +362,8 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
             loading={loadingData}
             onRowClick={onRowClick}
             onLayoutChange={({ order, widths }) => handleGridLayoutChange(order, widths)}
+            sortConfig={gridPrefs.columns?.sort ?? null}
+            onSortChange={handleSortChangeFromGrid}
             gridKey={gridKey}
             gridTheme={gridPrefs.theme || null}
           />

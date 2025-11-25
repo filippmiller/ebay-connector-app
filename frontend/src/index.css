@@ -66,6 +66,8 @@
     --grid-font-size: 13px;
     --grid-header-bg: #f3f4f6; /* gray-100 */
     --grid-header-text-color: #4b5563; /* gray-600 */
+    --grid-row-bg: #ffffff;
+    --grid-row-alt-bg: #f9fafb; /* gray-50 */
     --grid-row-hover-bg: #eef2ff; /* indigo-50 */
     --grid-row-selected-bg: #e0f2fe; /* sky-100 */
   }
@@ -169,6 +171,7 @@
     font-size: inherit;
   }
 
+  /* Legacy table header styling (non-AG grids) */
   .app-grid thead {
     background-color: var(--grid-header-bg);
     color: var(--grid-header-text-color);
@@ -257,6 +260,59 @@
   .app-grid.grid-theme-highContrast {
     --grid-header-bg: #000000;
     --grid-header-text-color: #ffffff;
+  }
+
+  /* AG Grid row/header styling using the same grid variables */
+  .app-grid__ag-root .ag-root-wrapper {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    background-color: var(--grid-row-bg);
+  }
+
+  .app-grid__ag-root .ag-header {
+    background-color: var(--grid-header-bg);
+    color: var(--grid-header-text-color);
+    font-size: calc(var(--ui-font-scale-table-header) * 0.78rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-table-header);
+  }
+
+  .app-grid__ag-root .ag-header-cell,
+  .app-grid__ag-root .ag-header-cell-label {
+    font-family: inherit;
+  }
+
+  .app-grid__ag-root .ag-header-cell-resize::after {
+    background-color: rgba(148, 163, 184, 0.6); /* gray-400 */
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row {
+    background-color: var(--grid-row-bg);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row.ag-row-odd {
+    background-color: var(--grid-row-alt-bg);
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row.ag-row-hovered {
+    background-color: var(--grid-row-hover-bg);
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row.ag-row-selected {
+    background-color: var(--grid-row-selected-bg);
+  }
+
+  /* Allow selecting and copying text inside grid cells. */
+  .app-grid__ag-root .ag-root-wrapper,
+  .app-grid__ag-root .ag-root,
+  .app-grid__ag-root .ag-center-cols-viewport,
+  .app-grid__ag-root .ag-center-cols-container,
+  .app-grid__ag-root .ag-cell,
+  .app-grid__ag-root .ag-cell-value {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
   }
 }
 

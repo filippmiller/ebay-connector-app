@@ -44,6 +44,10 @@ export interface AppDataGridProps {
   loading?: boolean;
   onRowClick?: (row: Record<string, any>) => void;
   onLayoutChange?: (state: { order: string[]; widths: Record<string, number> }) => void;
+  /** Server-side sort config; drives header sort indicators. */
+  sortConfig?: { column: string; direction: 'asc' | 'desc' } | null;
+  /** Callback when sort model changes via header clicks. */
+  onSortChange?: (sort: { column: string; direction: 'asc' | 'desc' } | null) => void;
   /** Optional grid key used for targeted debug logging (e.g. finances_fees). */
   gridKey?: string;
   /** Per-grid theme configuration coming from /api/grid/preferences. */
@@ -124,6 +128,8 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   loading,
   onRowClick,
   onLayoutChange,
+  sortConfig,
+  onSortChange,
   gridKey,
   gridTheme,
 }, ref) => {
@@ -217,7 +223,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
         headerName: meta?.label || col.label || col.name,
         width: col.width,
         resizable: true, // Enable resizing
-        sortable: false, // Sorting handled by backend
+        sortable: meta?.sortable !== false, // Enable header click sorting when allowed
         filter: false,
         valueFormatter: (params) => formatCellValue(params.value, type),
         // Ensure column is visible
@@ -251,9 +257,14 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
         colDef.cellClassRules = cellClassRules;
       }
 
+      // Mark current sort column for header indicators.
+      if (sortConfig && sortConfig.column === col.name) {
+        (colDef as any).sort = sortConfig.direction;
+      }
+
       return colDef;
     });
-  }, [columns, columnMetaByName, gridKey]);
+  }, [columns, columnMetaByName, gridKey, sortConfig]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
@@ -281,6 +292,21 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       }
       onLayoutChange({ order, widths });
     }, 500);
+  };
+
+  const handleSortChanged = (event: any) => {
+    if (!onSortChange || !event.api) return;
+    const model = event.api.getSortModel?.() as { colId: string; sort: 'asc' | 'desc' }[] | undefined;
+    if (!model || model.length === 0) {
+      onSortChange(null);
+      return;
+    }
+    const first = model[0];
+    if (!first.colId || !first.sort) {
+      onSortChange(null);
+      return;
+    }
+    onSortChange({ column: first.colId, direction: first.sort });
   };
 
   // Debug logging (remove in production)
@@ -326,6 +352,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
           onColumnResized={handleColumnEvent}
           onColumnMoved={handleColumnEvent}
           onColumnVisible={handleColumnEvent}
+          onSortChanged={handleSortChanged}
           onRowClicked={
             onRowClick
               ? (event) => {
