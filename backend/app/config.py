@@ -17,6 +17,12 @@ class Settings(BaseSettings):
         return self.JWT_SECRET or self.SECRET_KEY
     
     EBAY_ENVIRONMENT: str = "sandbox"
+
+    # Mode for the eBay listing worker. When set to "stub" (default), the
+    # worker uses in-memory stubbed responses and never calls live eBay APIs.
+    # When set to "live", the worker will resolve eBay accounts/tokens and
+    # call real Inventory/Offers APIs for debug runs.
+    ebay_listing_mode: str = "stub"  # "stub" or "live"
     
     EBAY_SANDBOX_CLIENT_ID: Optional[str] = None
     EBAY_SANDBOX_DEV_ID: Optional[str] = None

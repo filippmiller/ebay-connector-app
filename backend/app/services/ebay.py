@@ -2465,7 +2465,7 @@ class EbayService:
         if not access_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="eBay access token required"
+                detail="eBay access token required",
             )
         
         api_url = f"{settings.ebay_api_base_url}/sell/inventory/v1/offer"
@@ -2473,29 +2473,34 @@ class EbayService:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
-            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
         }
         
         # According to eBay API docs: sku is REQUIRED parameter
         # Allowed params: sku (required), limit (optional), offset (optional), format (optional), marketplace_id (optional)
         params = {
-            "sku": sku
+            "sku": sku,
         }
         
         # Add optional params from filter_params
         if filter_params:
-            allowed_optional_params = {'limit', 'offset', 'format', 'marketplace_id'}
+            allowed_optional_params = {"limit", "offset", "format", "marketplace_id"}
             for key, value in filter_params.items():
-                if key in allowed_optional_params and value is not None and value != '':
+                if key in allowed_optional_params and value is not None and value != "":
                     params[key] = value
         
         # Set defaults for pagination if not provided
-        if 'limit' not in params:
-            params['limit'] = 200  # Max allowed by eBay
-        if 'offset' not in params:
-            params['offset'] = 0
+        if "limit" not in params:
+            params["limit"] = 200  # Max allowed by eBay
+        if "offset" not in params:
+            params["offset"] = 0
         
-        logger.info(f"fetch_offers params: sku={sku}, limit={params.get('limit')}, offset={params.get('offset')}")
+        logger.info(
+            "fetch_offers params: sku=%s, limit=%s, offset=%s",
+            sku,
+            params.get("limit"),
+            params.get("offset"),
+        )
         
         ebay_logger.log_ebay_event(
             "fetch_offers_request",
@@ -2503,68 +2508,136 @@ class EbayService:
             request_data={
                 "environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
-                "params": params
-            }
+                "params": params,
+            },
         )
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    api_url,
-                    headers=headers,
-                    params=params,
-                    timeout=30.0
-                )
-                
-                if response.status_code != 200:
-                    error_detail = response.text
-                    try:
-                        error_json = response.json()
-                        error_detail = str(error_json)
-                    except:
-                        pass
-                    
-                    ebay_logger.log_ebay_event(
-                        "fetch_offers_failed",
-                        f"Failed to fetch offers: {response.status_code}",
-                        response_data={"error": error_detail},
-                        status="error",
-                        error=error_detail
-                    )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Failed to fetch offers: {error_detail}"
-                    )
-                
-                offers_data = response.json()
-                
-                ebay_logger.log_ebay_event(
-                    "fetch_offers_success",
-                    f"Successfully fetched offers from eBay",
-                    response_data={
-                        "total_offers": offers_data.get('total', 0)
-                    },
-                    status="success"
-                )
-                
-                logger.info(f"Successfully fetched offers from eBay")
-                
-                return offers_data
-                
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(api_url, headers=headers, params=params)
         except httpx.RequestError as e:
-            error_msg = f"HTTP request failed: {str(e)}"
+            error_msg = f"HTTP request failed: {e}"
             ebay_logger.log_ebay_event(
                 "fetch_offers_error",
                 "HTTP request error during offers fetch",
                 status="error",
-                error=error_msg
+                error=error_msg,
             )
             logger.error(error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg
+                detail=error_msg,
+            )
+        
+        if response.status_code != 200:
+            error_detail = response.text
+            try:
+                error_json = response.json()
+                error_detail = str(error_json)
+            except Exception:
+                pass
+        
+            ebay_logger.log_ebay_event(
+                "fetch_offers_failed",
+                f"Failed to fetch offers: {response.status_code}",
+                response_data={"error": error_detail},
+                status="error",
+                error=error_detail,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Failed to fetch offers: {error_detail}",
+            )
+        
+        offers_data = response.json()
+        
+        ebay_logger.log_ebay_event(
+            "fetch_offers_success",
+            "Successfully fetched offers from eBay",
+            response_data={
+                "total": offers_data.get("total", 0),
+                "count": len(offers_data.get("offers", [])),
+            },
+            status="success",
+        )
+        
+        logger.info(
+            "Successfully fetched %s offers for SKU %s from eBay",
+            len(offers_data.get("offers", [])),
+            sku,
+        )
+        
+        return offers_data
+
+    async def bulk_publish_offers(
+        self,
+        access_token: str,
+        offer_ids: List[str],
+    ) -> Tuple[int, Dict[str, Any]]:
+        """Publish multiple existing offers as live listings.
+
+        Thin wrapper over ``POST /sell/inventory/v1/bulk_publish_offer``.
+        Returns ``(status_code, parsed_json_payload)``. On non-2xx/207
+        responses a HTTPException is raised so callers can surface a
+        structured error in their own traces.
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
             )
 
+        if not offer_ids:
+            # Treat empty input as a no-op that still looks successful.
+            return 200, {"responses": []}
+
+        api_url = f"{settings.ebay_api_base_url}/sell/inventory/v1/bulk_publish_offer"
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        body = {"requests": [{"offerId": oid} for oid in offer_ids]}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(api_url, headers=headers, json=body)
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed during bulk_publish_offer: {e}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg,
+            )
+
+        try:
+            payload: Any = response.json()
+        except Exception:
+            payload = {}
+
+        if response.status_code not in (200, 207):
+            error_body = payload or response.text
+            logger.error(
+                "bulk_publish_offer failed: status=%s body=%s",
+                response.status_code,
+                error_body,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={
+                    "message": "bulkPublishOffer failed",
+                    "status_code": response.status_code,
+                    "body": error_body,
+                },
+            )
+
+        if not isinstance(payload, dict):
+            payload = {}
+
+        return response.status_code, payload
 
     async def sync_all_transactions(
         self,
