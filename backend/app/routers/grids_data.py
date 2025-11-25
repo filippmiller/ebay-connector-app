@@ -932,6 +932,7 @@ def _get_inventory_data(
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
+    from sqlalchemy.sql import text as sa_text
     from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText
 
     table = TblPartsInventory.__table__
@@ -1022,6 +1023,24 @@ def _get_inventory_data(
 
     rows_db = query.offset(offset).limit(limit).all()
 
+    # Optional mapping of StatusSKU numeric codes to human-readable names from
+    # tbl_parts_inventorystatus. If the lookup table is missing in this
+    # environment, we silently fall back to showing the raw numeric code.
+    status_label_by_id: Dict[int, str] = {}
+    try:
+        status_sql = sa_text(
+            'SELECT "InventoryStatus_ID" AS id, "InventoryStatus_Name" AS name '
+            'FROM "tbl_parts_inventorystatus"'
+        )
+        result = db.execute(status_sql)
+        for row in result:
+            try:
+                status_label_by_id[int(row.id)] = str(row.name)
+            except Exception:
+                continue
+    except Exception:
+        status_label_by_id = {}
+
     def _serialize(row_) -> Dict[str, Any]:
         mapping = getattr(row_, "_mapping", row_)
         row: Dict[str, Any] = {}
@@ -1032,6 +1051,17 @@ def _get_inventory_data(
                 if value is None:
                     # Column not in mapping - skip it
                     continue
+                # Special case: map StatusSKU numeric ID to friendly name when available.
+                if col == "StatusSKU" and status_label_by_id:
+                    try:
+                        key = int(value)
+                        label = status_label_by_id.get(key)
+                        if label is not None:
+                            row[col] = label
+                            continue
+                    except Exception:
+                        # Fall through to generic serialization on failure.
+                        pass
                 if isinstance(value, dt_type):
                     row[col] = value.isoformat()
                 elif isinstance(value, Decimal):

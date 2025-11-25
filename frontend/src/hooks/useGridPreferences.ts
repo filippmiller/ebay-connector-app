@@ -8,6 +8,15 @@ export type GridColorScheme = 'default' | 'blue' | 'dark' | 'highContrast';
 export type GridHeaderStyle = 'default' | 'bold' | 'accent';
 export type GridButtonLayout = 'left' | 'right' | 'split';
 
+export interface ColumnStyle {
+  /** Optional numeric font size level (1-10) for this column's cells. */
+  fontSizeLevel?: number;
+  /** Optional font weight override for this column's cells. */
+  fontWeight?: 'normal' | 'bold';
+  /** Optional text color (e.g. #111827) for this column's cells. */
+  textColor?: string;
+}
+
 export interface GridThemeConfig {
   density: GridDensity;
   /** Legacy body font size preset (small/medium/large). Still used as a fallback. */
@@ -27,6 +36,8 @@ export interface GridThemeConfig {
   headerFontSize?: GridFontSize;
   /** Optional text color for column headers (e.g. #111827). */
   headerTextColor?: string;
+  /** Optional per-column style overrides keyed by column name. */
+  columnStyles?: Record<string, ColumnStyle>;
   // Allow forward-compatible flags without tightening the type too much
   [key: string]: unknown;
 }

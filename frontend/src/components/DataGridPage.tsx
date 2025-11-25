@@ -55,6 +55,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const [error, setError] = useState<string | null>(null);
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
   const [search, setSearch] = useState('');
+  const [styleColumn, setStyleColumn] = useState<string | null>(null);
 
   const gridRef = React.useRef<AppDataGridHandle | null>(null);
   const { toast } = useToast();
@@ -116,6 +117,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   useEffect(() => {
     if (orderedVisibleColumns.length === 0) {
       setColumns([]);
+      setStyleColumn(null);
       return;
     }
     const cfg = gridPrefs.columns;
@@ -125,7 +127,11 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
       return { name, label: meta?.label || name, width };
     });
     setColumns(nextCols);
-  }, [orderedVisibleColumns, availableColumnsMap, gridPrefs.columns]);
+    // Default the style editor to the first visible column if none selected.
+    if (!styleColumn && nextCols.length > 0) {
+      setStyleColumn(nextCols[0].name);
+    }
+  }, [orderedVisibleColumns, availableColumnsMap, gridPrefs.columns, styleColumn]);
 
   // Fetch data rows from backend
   useEffect(() => {
@@ -432,9 +438,114 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
                   })}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button className="px-2 py-1 border rounded bg-gray-100" onClick={handleResetToDefaults}>Reset to defaults</button>
-                <button className="px-2 py-1 border rounded bg-blue-500 text-white" onClick={handleSaveColumns}>Save</button>
+              <div className="border-t pt-3 mt-2 space-y-3">
+                {/* Per-column style controls */}
+                <div>
+                  <div className="font-semibold text-[11px] uppercase tracking-wide text-gray-600 mb-2">Column appearance</div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-600">Column:</span>
+                      <select
+                        className="px-2 py-1 border rounded text-[11px] bg-white"
+                        value={styleColumn || ''}
+                        onChange={(e) => setStyleColumn(e.target.value || null)}
+                      >
+                        <option value="">Select…</option>
+                        {orderedVisibleColumns.map((name) => (
+                          <option key={name} value={name}>
+                            {availableColumnsMap[name]?.label || name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {styleColumn && (
+                      (() => {
+                        const styles = (gridPrefs.theme?.columnStyles as any)?.[styleColumn] || {};
+                        const level: number = typeof styles.fontSizeLevel === 'number' ? styles.fontSizeLevel : 0;
+                        const weight: 'normal' | 'bold' | '' = styles.fontWeight || '';
+                        const color: string = styles.textColor || '';
+                        const updateStyles = (partial: { fontSizeLevel?: number | null; fontWeight?: 'normal' | 'bold' | null; textColor?: string | null }) => {
+                          if (!styleColumn) return;
+                          const current = (gridPrefs.theme?.columnStyles as any) || {};
+                          const existing = current[styleColumn] || {};
+                          const nextForCol: any = { ...existing };
+                          if (partial.fontSizeLevel !== undefined) {
+                            if (partial.fontSizeLevel === null) delete nextForCol.fontSizeLevel;
+                            else nextForCol.fontSizeLevel = partial.fontSizeLevel;
+                          }
+                          if (partial.fontWeight !== undefined) {
+                            if (partial.fontWeight === null) delete nextForCol.fontWeight;
+                            else nextForCol.fontWeight = partial.fontWeight;
+                          }
+                          if (partial.textColor !== undefined) {
+                            if (partial.textColor === null || partial.textColor === '') delete nextForCol.textColor;
+                            else nextForCol.textColor = partial.textColor;
+                          }
+                          const nextColumnStyles = { ...current, [styleColumn]: nextForCol };
+                          gridPrefs.setTheme({ columnStyles: nextColumnStyles });
+                        };
+                        return (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <label className="text-[11px] text-gray-600 flex-1">Font size level (1-10)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={10}
+                                className="w-16 px-1 py-0.5 border rounded text-[11px]"
+                                value={level || ''}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  if (!raw) {
+                                    updateStyles({ fontSizeLevel: null, fontWeight: undefined as any, textColor: undefined as any });
+                                    return;
+                                  }
+                                  const n = Number(raw);
+                                  if (Number.isFinite(n)) {
+                                    const clamped = Math.min(10, Math.max(1, n));
+                                    updateStyles({ fontSizeLevel: clamped, fontWeight: undefined as any, textColor: undefined as any });
+                                  }
+                                }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <label className="text-[11px] text-gray-600 flex-1">Font weight</label>
+                              <select
+                                className="w-24 px-1 py-0.5 border rounded text-[11px] bg-white"
+                                value={weight}
+                                onChange={(e) => {
+                                  const val = e.target.value as 'normal' | 'bold' | '';
+                                  updateStyles({ fontSizeLevel: undefined, fontWeight: val || null, textColor: undefined });
+                                }}
+                              >
+                                <option value="">Default</option>
+                                <option value="normal">Normal</option>
+                                <option value="bold">Bold</option>
+                              </select>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <label className="text-[11px] text-gray-600 flex-1">Text color (hex)</label>
+                              <input
+                                type="text"
+                                className="w-28 px-1 py-0.5 border rounded text-[11px]"
+                                placeholder="#111827"
+                                value={color}
+                                onChange={(e) => {
+                                  const val = e.target.value.trim();
+                                  updateStyles({ fontSizeLevel: undefined, fontWeight: undefined as any, textColor: val || null });
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })()
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button className="px-2 py-1 border rounded bg-gray-100" onClick={handleResetToDefaults}>Reset to defaults</button>
+                  <button className="px-2 py-1 border rounded bg-blue-500 text-white" onClick={handleSaveColumns}>Save</button>
+                </div>
               </div>
             </div>
           </div>

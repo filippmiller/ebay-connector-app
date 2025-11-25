@@ -16,7 +16,7 @@ import type {
 ModuleRegistry.registerModules([AllCommunityModule]);
 import type { GridColumnMeta } from '@/components/DataGridPage';
 import { buildLegacyGridTheme } from '@/components/datagrid/legacyGridTheme';
-import type { GridThemeConfig } from '@/hooks/useGridPreferences';
+import type { GridThemeConfig, ColumnStyle } from '@/hooks/useGridPreferences';
 
 export interface AppDataGridColumnState {
   name: string;
@@ -150,6 +150,10 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       return [];
     }
 
+    const columnStyles: Record<string, ColumnStyle> | undefined = gridTheme?.columnStyles as
+      | Record<string, ColumnStyle>
+      | undefined;
+
     return columns.map((col) => {
       const meta = columnMetaByName[col.name];
       const type = meta?.type;
@@ -231,6 +235,22 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
         cellClass: cellClasses,
       };
 
+      // Apply optional per-column style overrides (font size / weight / color).
+      const styleOverride = columnStyles?.[col.name];
+      if (styleOverride) {
+        const fontSizePx =
+          typeof styleOverride.fontSizeLevel === 'number'
+            ? 10 + Math.min(10, Math.max(1, styleOverride.fontSizeLevel))
+            : undefined;
+        colDef.cellStyle = (params) => {
+          const base: React.CSSProperties = {};
+          if (fontSizePx) base.fontSize = `${fontSizePx}px`;
+          if (styleOverride.fontWeight) base.fontWeight = styleOverride.fontWeight;
+          if (styleOverride.textColor) base.color = styleOverride.textColor;
+          return base;
+        };
+      }
+
       // Special case: make sniper_snipes.item_id clickable to open the eBay page.
       if (gridKey === 'sniper_snipes' && col.name === 'item_id') {
         colDef.valueFormatter = undefined;
@@ -264,7 +284,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
 
       return colDef;
     });
-  }, [columns, columnMetaByName, gridKey, sortConfig]);
+  }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
