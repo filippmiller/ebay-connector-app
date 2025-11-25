@@ -8,6 +8,7 @@ export interface SnipeRow {
   title: string | null;
   image_url: string | null;
   end_time: string | null;
+  fire_at: string | null;
   max_bid_amount: number | null;
   currency: string | null;
   seconds_before_end: number | null;
@@ -15,6 +16,7 @@ export interface SnipeRow {
   current_bid_at_creation: number | null;
   result_price: number | null;
   result_message: string | null;
+  comment: string | null;
   contingency_group_id: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -36,25 +38,17 @@ export interface ListSnipesParams {
 }
 
 export interface CreateSnipePayload {
-  ebay_account_id?: string;
+  ebay_account_id: string;
   item_id: string;
-  title?: string;
-  image_url?: string;
-  end_time: string; // ISO-8601
   max_bid_amount: number;
-  currency: string;
-  seconds_before_end: number;
-  contingency_group_id?: string;
+  seconds_before_end?: number;
+  comment?: string;
 }
 
 export interface UpdateSnipePayload {
   max_bid_amount?: number;
-  currency?: string;
   seconds_before_end?: number;
-  end_time?: string;
-  title?: string;
-  image_url?: string;
-  contingency_group_id?: string;
+  comment?: string;
   status?: string; // e.g. 'cancelled'
 }
 

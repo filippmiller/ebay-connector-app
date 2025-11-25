@@ -2,7 +2,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import api from '@/lib/apiClient';
 import { useGridPreferences } from '@/hooks/useGridPreferences';
-import { AppDataGrid } from '@/components/datagrid/AppDataGrid';
+import { AppDataGrid, type AppDataGridHandle } from '@/components/datagrid/AppDataGrid';
+import { useToast } from '@/hooks/use-toast';
 
 export interface GridColumnMeta {
   name: string;
@@ -54,6 +55,9 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   const [error, setError] = useState<string | null>(null);
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
   const [search, setSearch] = useState('');
+
+  const gridRef = React.useRef<AppDataGridHandle | null>(null);
+  const { toast } = useToast();
 
   const gridPrefs = useGridPreferences(gridKey);
 
@@ -203,7 +207,46 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
   };
 
   const handleSaveColumns = async () => {
-    await gridPrefs.save();
+    const cfg = gridPrefs.columns;
+    if (!cfg) return;
+
+    let columnsForSave = cfg;
+
+    const snapshot = gridRef.current?.getCurrentLayout() || null;
+    if (snapshot) {
+      const visibleSet = new Set(cfg.visible);
+      const orderedVisible = snapshot.order.filter((name) => visibleSet.has(name));
+      const hidden = cfg.order.filter((name) => !visibleSet.has(name));
+      const nextOrder = [...orderedVisible, ...hidden];
+      const nextWidths = { ...cfg.widths, ...snapshot.widths };
+      columnsForSave = {
+        ...cfg,
+        order: nextOrder,
+        widths: nextWidths,
+      };
+    }
+
+    await gridPrefs.save(columnsForSave);
+
+    // Build a short human-readable summary of saved widths
+    const parts: string[] = [];
+    const maxParts = 6;
+    for (const name of columnsForSave.visible) {
+      const meta = availableColumnsMap[name];
+      const label = meta?.label || name;
+      const width = columnsForSave.widths[name] ?? meta?.width_default;
+      if (width != null) {
+        parts.push(`${label}=${width}`);
+      }
+      if (parts.length >= maxParts) break;
+    }
+    const summary = parts.join(', ');
+
+    toast({
+      title: `Saved layout for ${title || gridKey}`,
+      description: summary || 'Column layout and widths saved.',
+    });
+
     setShowColumnsPanel(false);
   };
 
@@ -294,7 +337,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
             onRowClick={onRowClick}
             onLayoutChange={({ order, widths }) => handleGridLayoutChange(order, widths)}
             gridKey={gridKey}
-            gridTheme={gridPrefs.theme}
+            gridTheme={gridPrefs.theme || null}
           />
         )}
       </div>

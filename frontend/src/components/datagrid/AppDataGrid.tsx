@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   ModuleRegistry,
@@ -8,6 +8,7 @@ import type {
   ColDef,
   ColumnState,
   CellClassRules,
+  GridApi,
 } from 'ag-grid-community';
 
 // Register AG Grid modules
@@ -21,6 +22,19 @@ export interface AppDataGridColumnState {
   label: string;
   width: number;
 }
+
+export type GridLayoutSnapshot = {
+  order: string[];
+  widths: Record<string, number>;
+};
+
+export type AppDataGridHandle = {
+  /**
+   * Returns the current column order and widths as reported by AG Grid,
+   * or null when the grid API is not yet ready.
+   */
+  getCurrentLayout: () => GridLayoutSnapshot | null;
+};
 
 export interface AppDataGridProps {
   columns: AppDataGridColumnState[];
@@ -97,7 +111,7 @@ function extractLayout(columnStates: ColumnState[]): { order: string[]; widths: 
   return { order, widths };
 }
 
-export const AppDataGrid: React.FC<AppDataGridProps> = ({
+export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   columns,
   rows,
   columnMetaByName,
@@ -106,8 +120,19 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
   onLayoutChange,
   gridKey,
   gridTheme,
-}) => {
+}, ref) => {
   const layoutDebounceRef = useRef<number | null>(null);
+  const gridApiRef = useRef<GridApi | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    getCurrentLayout: () => {
+      const api = gridApiRef.current;
+      if (!api) return null;
+      const model = (api as any).getColumnState?.() as ColumnState[] | undefined;
+      if (!model) return null;
+      return extractLayout(model);
+    },
+  }), []);
   const columnDefs = useMemo<ColDef[]>(() => {
     if (!columns || columns.length === 0) {
       return [];
@@ -194,26 +219,35 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
         cellClass: cellClasses,
       };
 
+      // Special case: make sniper_snipes.item_id clickable to open the eBay page.
+      if (gridKey === 'sniper_snipes' && col.name === 'item_id') {
+        colDef.valueFormatter = undefined;
+        colDef.cellRenderer = (params) => {
+          const raw = params.value;
+          const value = formatCellValue(raw, type);
+          if (!value) return '';
+          const href = `https://www.ebay.com/itm/${encodeURIComponent(value)}`;
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-blue-600 hover:underline"
+            >
+              {value}
+            </a>
+          );
+        };
+      }
+
       if (Object.keys(cellClassRules).length > 0) {
         colDef.cellClassRules = cellClassRules;
       }
 
       return colDef;
     });
-  }, [columns, columnMetaByName]);
-
-  const defaultColDef = useMemo<ColDef>(
-    () => ({
-      headerClass: 'ui-table-header',
-      sortable: false,
-    }),
-    [],
-  );
-
-  const handleColumnEvent = (
-    event: any,
-  ) => {
-    if (!onLayoutChange || !event.api) return;
+  }, [columns, columnMetaByName, gridKey]);
 
     if (layoutDebounceRef.current !== null) {
       window.clearTimeout(layoutDebounceRef.current);
@@ -269,16 +303,19 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
           suppressScrollOnNewData
           suppressAggFuncInHeader
           animateRows
+          onGridReady={(params) => {
+            gridApiRef.current = params.api as GridApi;
+          }}
           onColumnResized={handleColumnEvent}
           onColumnMoved={handleColumnEvent}
           onColumnVisible={handleColumnEvent}
           onRowClicked={
             onRowClick
               ? (event) => {
-                if (event.data) {
-                  onRowClick(event.data as Record<string, any>);
+                  if (event.data) {
+                    onRowClick(event.data as Record<string, any>);
+                  }
                 }
-              }
               : undefined
           }
         />
@@ -290,4 +327,4 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
       )}
     </div>
   );
-};
+});

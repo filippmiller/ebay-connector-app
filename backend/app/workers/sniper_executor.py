@@ -7,18 +7,22 @@ minimal worker skeleton; it does NOT place real eBay bids yet.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+import os
+from datetime import datetime, timezone
 from typing import List
 
 from sqlalchemy.orm import Session
 
 from app.models_sqlalchemy import SessionLocal
-from app.models_sqlalchemy.models import EbaySnipe
+from app.models_sqlalchemy.models import EbaySnipe, EbaySnipeStatus
 from app.utils.logger import logger
 
 
-POLL_INTERVAL_SECONDS = 5
-SAFETY_MARGIN_SECONDS = 2
+# Poll interval is configurable via env; default to 1s for precise scheduling.
+try:
+    POLL_INTERVAL_SECONDS = max(1, int(os.getenv("SNIPER_POLL_INTERVAL_SECONDS", "1")))
+except ValueError:
+    POLL_INTERVAL_SECONDS = 1
 
 
 def _now_utc() -> datetime:
@@ -26,24 +30,28 @@ def _now_utc() -> datetime:
 
 
 def _pick_due_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
-    """Return pending snipes whose fire time has passed.
+    """Return snipes whose fire_at has passed but auction has not ended.
 
-    Fire time is computed as end_time - (seconds_before_end + SAFETY_MARGIN).
+    This uses the explicit fire_at column computed at creation/update time
+    instead of re-deriving the schedule expression on every tick.
     """
 
-    q = db.query(EbaySnipe).filter(EbaySnipe.status == "pending")
-    candidates: List[EbaySnipe] = q.all()
-    due: List[EbaySnipe] = []
+    q = (
+        db.query(EbaySnipe)
+        .filter(
+            EbaySnipe.status.in_(
+                [
+                    EbaySnipeStatus.pending.value,
+                    EbaySnipeStatus.scheduled.value,
+                ]
+            ),
+            EbaySnipe.fire_at <= now,
+            EbaySnipe.end_time > now,
+        )
+        .order_by(EbaySnipe.fire_at.asc())
+    )
 
-    for s in candidates:
-        if not s.end_time:
-            continue
-        secs = s.seconds_before_end or 0
-        fire_at = s.end_time - timedelta(seconds=secs + SAFETY_MARGIN_SECONDS)
-        if now >= fire_at:
-            due.append(s)
-
-    return due
+    return list(q.all())
 
 
 async def run_sniper_once() -> int:
@@ -64,7 +72,11 @@ async def run_sniper_once() -> int:
 
         for s in snipes:
             try:
-                s.status = "executed_stub"
+                # Stub implementation: mark the snipe as executed_stub. In a
+                # future iteration this is where we will call the real eBay
+                # PlaceOffer/Browse API and move the snipe into a proper
+                # BIDDING/WON/LOST lifecycle.
+                s.status = EbaySnipeStatus.executed_stub.value
                 s.result_message = (
                     "SNIPER_STUB_EXECUTED — real eBay bid is not implemented yet"
                 )

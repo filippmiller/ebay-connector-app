@@ -1705,6 +1705,7 @@ class EbaySnipeStatus(str, enum.Enum):
                 computed.
     scheduled – fully validated, has a concrete fire_at and is waiting for the
                 worker to execute.
+    bidding   – worker is actively attempting to place a bid for this snipe.
     executed_stub – internal/testing state used by the stub worker
                      implementation; real bidding will eventually use
                      "bidding" + terminal states instead.
@@ -1716,6 +1717,7 @@ class EbaySnipeStatus(str, enum.Enum):
 
     pending = "pending"
     scheduled = "scheduled"
+    bidding = "bidding"
     executed_stub = "executed_stub"
     won = "won"
     lost = "lost"

@@ -1,19 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 import { createSnipe, updateSnipe, cancelSnipe } from '@/api/sniper';
+import { ebayApi } from '@/api/ebay';
 
 interface EditFormState {
   id?: string;
   status?: string;
   ebay_account_id: string;
   item_id: string;
-  title: string;
-  image_url: string;
-  end_time: string;
   max_bid_amount: string;
-  currency: string;
   seconds_before_end: string;
+  comment: string;
 }
 
 const EMPTY_FORM: EditFormState = {
@@ -21,16 +19,33 @@ const EMPTY_FORM: EditFormState = {
   status: undefined,
   ebay_account_id: '',
   item_id: '',
-  title: '',
-  image_url: '',
-  end_time: '',
   max_bid_amount: '',
-  currency: 'USD',
   seconds_before_end: '5',
+  comment: '',
+};
+
+type EbayAccountOption = {
+  id: string;
+  username: string | null;
+  house_name: string;
+  marketplace_id?: string | null;
+  site_id?: number | null;
+  is_active?: boolean;
+  status?: string;
+  token?: {
+    id: string;
+    ebay_account_id: string;
+    expires_at?: string | null;
+    last_refreshed_at?: string | null;
+    refresh_error?: string | null;
+  } | null;
 };
 
 export default function SniperPage() {
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [accounts, setAccounts] = useState<EbayAccountOption[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
@@ -38,15 +53,40 @@ export default function SniperPage() {
   const [saving, setSaving] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
 
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        setAccountsLoading(true);
+        setAccountsError(null);
+        const data = await ebayApi.getAccounts(true);
+        // Filter to accounts that are active and have a non-broken token.
+        const usable = (data || []).filter((a: EbayAccountOption) => {
+          const active = a.is_active !== false && a.status !== 'DISABLED';
+          const hasToken = !!a.token && !a.token?.refresh_error;
+          return active && hasToken;
+        });
+        setAccounts(usable);
+      } catch (e) {
+        setAccountsError('Failed to load eBay accounts for Sniper');
+      } finally {
+        setAccountsLoading(false);
+      }
+    };
+    void loadAccounts();
+  }, []);
+
   const extraParams = useMemo(() => {
     const params: Record<string, unknown> = { refreshToken };
-    if (statusFilter) params.status = statusFilter;
+    if (statusFilter) params.state = statusFilter;
     return params;
   }, [statusFilter, refreshToken]);
 
   const openAddModal = () => {
     setModalMode('add');
-    setForm(EMPTY_FORM);
+    setForm((prev) => ({
+      ...EMPTY_FORM,
+      ebay_account_id: accounts[0]?.id || '',
+    }));
     setIsModalOpen(true);
   };
 
@@ -58,29 +98,30 @@ export default function SniperPage() {
       status: typeof r.status === 'string' ? r.status : undefined,
       ebay_account_id: typeof r.ebay_account_id === 'string' ? r.ebay_account_id : '',
       item_id: typeof r.item_id === 'string' ? r.item_id : '',
-      title: typeof r.title === 'string' ? r.title : '',
-      image_url: typeof r.image_url === 'string' ? r.image_url : '',
-      end_time: typeof r.end_time === 'string' ? r.end_time : '',
       max_bid_amount:
         typeof r.max_bid_amount === 'number'
           ? String(r.max_bid_amount)
           : typeof r.max_bid_amount === 'string'
           ? r.max_bid_amount
           : '',
-      currency: typeof r.currency === 'string' ? r.currency : 'USD',
       seconds_before_end:
         typeof r.seconds_before_end === 'number'
           ? String(r.seconds_before_end)
           : typeof r.seconds_before_end === 'string'
           ? r.seconds_before_end
           : '5',
+      comment: typeof r.comment === 'string' ? r.comment : '',
     });
     setIsModalOpen(true);
   };
 
   const handleSave = async () => {
-    if (!form.item_id || !form.max_bid_amount || !form.end_time) {
-      setError('Item ID, End time and Max bid are required');
+    if (!form.ebay_account_id) {
+      setError('eBay account is required');
+      return;
+    }
+    if (!form.item_id || !form.max_bid_amount) {
+      setError('Item ID and Max bid are required');
       return;
     }
     setSaving(true);
@@ -88,23 +129,17 @@ export default function SniperPage() {
     try {
       if (modalMode === 'add') {
         await createSnipe({
-          ebay_account_id: form.ebay_account_id || undefined,
+          ebay_account_id: form.ebay_account_id,
           item_id: form.item_id,
-          title: form.title || undefined,
-          image_url: form.image_url || undefined,
-          end_time: form.end_time,
           max_bid_amount: Number(form.max_bid_amount),
-          currency: form.currency || 'USD',
-          seconds_before_end: Number(form.seconds_before_end || '5'),
+          seconds_before_end: form.seconds_before_end ? Number(form.seconds_before_end) : undefined,
+          comment: form.comment || undefined,
         });
       } else if (modalMode === 'edit' && form.id) {
         await updateSnipe(form.id, {
-          title: form.title || undefined,
-          image_url: form.image_url || undefined,
-          end_time: form.end_time,
           max_bid_amount: Number(form.max_bid_amount),
-          currency: form.currency || 'USD',
-          seconds_before_end: Number(form.seconds_before_end || '5'),
+          seconds_before_end: form.seconds_before_end ? Number(form.seconds_before_end) : undefined,
+          comment: form.comment || undefined,
         });
       }
       setIsModalOpen(false);
@@ -192,14 +227,26 @@ export default function SniperPage() {
             <div className="p-4 space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">eBay account ID</label>
-                  <input
-                    type="text"
+                  <label className="block text-xs font-medium text-gray-600 mb-1">eBay account</label>
+                  <select
                     className="border rounded px-2 py-1 w-full text-sm"
                     value={form.ebay_account_id}
                     onChange={(e) => setForm((f) => ({ ...f, ebay_account_id: e.target.value }))}
-                    placeholder="Optional – existing ebay_accounts.id"
-                  />
+                    disabled={modalMode === 'edit'}
+                  >
+                    <option value="">Select account…</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.username || acc.house_name || acc.id}
+                      </option>
+                    ))}
+                  </select>
+                  {accountsLoading && (
+                    <div className="mt-1 text-[10px] text-gray-500">Loading eBay accounts…</div>
+                  )}
+                  {accountsError && (
+                    <div className="mt-1 text-[10px] text-red-600">{accountsError}</div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Item ID</label>
@@ -209,16 +256,6 @@ export default function SniperPage() {
                     value={form.item_id}
                     onChange={(e) => setForm((f) => ({ ...f, item_id: e.target.value }))}
                     readOnly={modalMode === 'edit'}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">End time (UTC)</label>
-                  <input
-                    type="datetime-local"
-                    className="border rounded px-2 py-1 w-full text-sm"
-                    value={form.end_time}
-                    onChange={(e) => setForm((f) => ({ ...f, end_time: e.target.value }))}
-                    required
                   />
                 </div>
                 <div>
@@ -234,16 +271,6 @@ export default function SniperPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Currency</label>
-                  <input
-                    type="text"
-                    maxLength={3}
-                    className="border rounded px-2 py-1 w-full text-sm"
-                    value={form.currency}
-                    onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
-                  />
-                </div>
-                <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Seconds before end</label>
                   <input
                     type="number"
@@ -256,21 +283,11 @@ export default function SniperPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Title (optional)</label>
-                <input
-                  type="text"
-                  className="border rounded px-2 py-1 w-full text-sm"
-                  value={form.title}
-                  onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Image URL (optional)</label>
-                <input
-                  type="text"
-                  className="border rounded px-2 py-1 w-full text-sm"
-                  value={form.image_url}
-                  onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
+                <label className="block text-xs font-medium text-gray-600 mb-1">Comment (optional)</label>
+                <textarea
+                  className="border rounded px-2 py-1 w-full text-sm resize-y min-h-[48px]"
+                  value={form.comment}
+                  onChange={(e) => setForm((f) => ({ ...f, comment: e.target.value }))}
                 />
               </div>
               {modalMode === 'edit' && form.status && (

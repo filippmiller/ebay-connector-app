@@ -63,7 +63,7 @@ def upgrade() -> None:
         sa.text(
             """
             UPDATE ebay_snipes
-            SET fire_at = end_time - (make_interval(secs := seconds_before_end))
+            SET fire_at = end_time - make_interval(secs => seconds_before_end)
             WHERE fire_at IS NULL
             """
         )

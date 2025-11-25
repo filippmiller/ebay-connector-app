@@ -22,6 +22,7 @@ from app.models_sqlalchemy.models import (
     AccountingTransaction as AccountingTxn,
     SqItem,
     TblPartsInventory,
+    EbaySnipe,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
@@ -249,12 +250,13 @@ async def get_grid_data(
     sort_by: Optional[str] = Query(None),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
     columns: Optional[str] = Query(None, description="Comma-separated list of columns to include"),
-    # Offers-specific filters (mirroring /offers)
+    # Offers-specific filters (mirroring /offers) and reused for sniper status filter
     state: Optional[str] = Query(None),
     direction: Optional[str] = Query(None),
     buyer: Optional[str] = Query(None),
     item_id: Optional[str] = Query(None),
     sku: Optional[str] = Query(None),
+    ebay_account_id: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
     # Finances-specific filters
@@ -382,6 +384,23 @@ async def get_grid_data(
                 sort_dir,
                 storage_id=storage_id,
                 ebay_status=ebay_status,
+                search=search,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "sniper_snipes":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_sniper_snipes_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                status_filter=state,
+                ebay_account_id=ebay_account_id,
                 search=search,
             )
         finally:
@@ -1027,6 +1046,91 @@ def _get_inventory_data(
         return row
 
     rows = [_serialize(item) for item in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_sniper_snipes_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    status_filter: Optional[str],
+    ebay_account_id: Optional[str],
+    search: Optional[str],
+) -> Dict[str, Any]:
+    """Sniper grid backed by ebay_snipes.
+
+    This powers the SNIPER tab and is deliberately simple: one row per snipe
+    scoped to the current user, with optional filters on status, account and a
+    lightweight search over item_id/title.
+    """
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    query = db.query(EbaySnipe).filter(EbaySnipe.user_id == current_user.id)
+
+    if status_filter:
+        # Accept either a single status or a comma-separated list.
+        raw = [s.strip() for s in status_filter.split(",") if s.strip()]
+        if raw:
+            query = query.filter(EbaySnipe.status.in_(raw))
+
+    if ebay_account_id:
+        query = query.filter(EbaySnipe.ebay_account_id == ebay_account_id)
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(EbaySnipe.item_id.ilike(like), EbaySnipe.title.ilike(like))
+        )
+
+    total = query.count()
+
+    # Allow sorting on a safe subset of real columns, default to created_at.
+    allowed_sort_cols = {
+        "created_at": EbaySnipe.created_at,
+        "end_time": EbaySnipe.end_time,
+        "fire_at": EbaySnipe.fire_at,
+        "status": EbaySnipe.status,
+        "max_bid_amount": EbaySnipe.max_bid_amount,
+    }
+    sort_attr = allowed_sort_cols.get(sort_column or "created_at")
+    if sort_dir == "desc":
+        query = query.order_by(desc(sort_attr))
+    else:
+        query = query.order_by(asc(sort_attr))
+
+    rows_db: List[EbaySnipe] = query.offset(offset).limit(limit).all()
+
+    def _serialize(snipe: EbaySnipe) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            try:
+                value = getattr(snipe, col, None)
+                if value is None:
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                # Skip unexpected/legacy columns without failing the entire grid.
+                continue
+        return row
+
+    rows = [_serialize(s) for s in rows_db]
 
     return {
         "rows": rows,
