@@ -192,7 +192,7 @@ export const WorkerDebugTerminalModal: React.FC<WorkerDebugTerminalModalProps> =
             <span className="text-gray-500">
               Debug mode only. Sensitive headers and tokens are masked in this view.
             </span>
-            <Button size="xs" variant="outline" onClick={onClose}>
+            <Button size="sm" variant="outline" onClick={onClose}>
               Close
             </Button>
           </div>
