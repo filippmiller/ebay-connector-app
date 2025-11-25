@@ -191,7 +191,12 @@ async def upsert_grid_preferences(
 
     The combination (user_id, grid_key) is unique so this behaves as an upsert.
     """
-    logger.info("upsert_grid_preferences: user_id=%s grid_key=%s payload=%s", current_user.id, payload.grid_key, payload.json())
+    logger.info(
+        "upsert_grid_preferences: user_id=%s grid_key=%s payload_len=%s",
+        current_user.id,
+        payload.grid_key,
+        len(payload.json()),
+    )
 
     grid_key = payload.grid_key
     allowed_cols = _allowed_columns_for_grid(grid_key)
@@ -215,6 +220,19 @@ async def upsert_grid_preferences(
             cleaned_widths[k] = int(v)
         except (TypeError, ValueError):
             continue
+
+    # Temporary targeted debug for finances_fees width persistence
+    if grid_key == "finances_fees":
+        try:
+            logger.info(
+                "grid_preferences.finances_fees_widths user_id=%s raw_keys=%s cleaned_keys=%s",
+                current_user.id,
+                sorted(list(payload.columns.widths.keys())),
+                sorted(list(cleaned_widths.keys())),
+            )
+        except Exception:
+            # Best-effort only; never fail the request because of logging
+            logger.debug("grid_preferences.finances_fees_widths: logging failed")
 
     # Validate sort column
     sort_dict: Optional[Dict[str, Any]] = None

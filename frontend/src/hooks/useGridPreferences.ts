@@ -238,10 +238,22 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         columns: cols,
         theme,
       };
-      console.log('[useGridPreferences] save() called with payload:', JSON.stringify(payload, null, 2));
+      if (gridKey === 'finances_fees') {
+        // Temporary targeted debug for width persistence investigation
+        // eslint-disable-next-line no-console
+        console.log('[useGridPreferences] finances_fees save() widths:', {
+          visible: cols.visible,
+          order: cols.order,
+          widths: cols.widths,
+          sort: cols.sort,
+        });
+      }
       try {
         const response = await api.post<GridPreferencesResponse>('/api/grid/preferences', payload);
-        console.log('[useGridPreferences] save() response:', response.data);
+        if (gridKey === 'finances_fees') {
+          // eslint-disable-next-line no-console
+          console.log('[useGridPreferences] finances_fees save() response.columns.widths:', response.data.columns.widths);
+        }
       } catch (e) {
         console.error('Failed to save grid preferences', e);
       }

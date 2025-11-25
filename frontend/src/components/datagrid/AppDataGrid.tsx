@@ -13,7 +13,8 @@ import type {
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
 import type { GridColumnMeta } from '@/components/DataGridPage';
-import { legacyGridTheme } from '@/components/datagrid/legacyGridTheme';
+import { buildLegacyGridTheme } from '@/components/datagrid/legacyGridTheme';
+import type { GridThemeConfig } from '@/hooks/useGridPreferences';
 
 export interface AppDataGridColumnState {
   name: string;
@@ -28,6 +29,10 @@ export interface AppDataGridProps {
   loading?: boolean;
   onRowClick?: (row: Record<string, any>) => void;
   onLayoutChange?: (state: { order: string[]; widths: Record<string, number> }) => void;
+  /** Optional grid key used for targeted debug logging (e.g. finances_fees). */
+  gridKey?: string;
+  /** Per-grid theme configuration coming from /api/grid/preferences. */
+  gridTheme?: GridThemeConfig | null;
 }
 
 function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): string {
@@ -99,6 +104,8 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
   loading,
   onRowClick,
   onLayoutChange,
+  gridKey,
+  gridTheme,
 }) => {
   const layoutDebounceRef = useRef<number | null>(null);
   const columnDefs = useMemo<ColDef[]>(() => {
@@ -216,7 +223,11 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
       const model = (event.api as any).getColumnState?.() as ColumnState[] | undefined;
       if (!model) return;
       const { order, widths } = extractLayout(model);
-      console.log('[AppDataGrid] Layout changed:', { order, widths });
+      if (gridKey === 'finances_fees') {
+        // Temporary targeted debug for width persistence investigation
+        // eslint-disable-next-line no-console
+        console.log('[AppDataGrid] finances_fees layout changed:', { order, widths });
+      }
       onLayoutChange({ order, widths });
     }, 500);
   };
@@ -249,7 +260,7 @@ export const AppDataGrid: React.FC<AppDataGridProps> = ({
         </div>
       ) : (
         <AgGridReact
-          theme={legacyGridTheme}
+          theme={buildLegacyGridTheme(gridTheme)}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           rowData={rows}

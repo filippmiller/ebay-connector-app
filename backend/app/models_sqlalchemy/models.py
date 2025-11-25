@@ -1698,6 +1698,22 @@ class EbayBuyerLog(Base):
 
 
 class EbaySnipeStatus(str, enum.Enum):
+    """Lifecycle states for a sniper entry.
+
+    pending   – (legacy) created but not fully scheduled; in v2 we generally
+                move new snipes directly into "scheduled" once fire_at is
+                computed.
+    scheduled – fully validated, has a concrete fire_at and is waiting for the
+                worker to execute.
+    executed_stub – internal/testing state used by the stub worker
+                     implementation; real bidding will eventually use
+                     "bidding" + terminal states instead.
+    won       – auction finished and the snipe won.
+    lost      – auction finished and the snipe lost.
+    error     – a worker or eBay API error occurred; see result_message.
+    cancelled – user cancelled the snipe before execution.
+    """
+
     pending = "pending"
     scheduled = "scheduled"
     executed_stub = "executed_stub"
@@ -1712,6 +1728,11 @@ class EbaySnipe(Base):
 
     Stores a scheduled last-second bid for an eBay auction along with cached
     item metadata and execution result fields.
+
+    In Sniper v2, each row also has a concrete fire_at timestamp that represents
+    the exact moment when the worker should attempt to place the bid. Storing
+    fire_at explicitly makes worker queries simpler and avoids recomputing the
+    schedule expression on every tick.
     """
 
     __tablename__ = "ebay_snipes"
@@ -1726,6 +1747,11 @@ class EbaySnipe(Base):
 
     end_time = Column(DateTime(timezone=True), nullable=False, index=True)
 
+    # Exact scheduled execution time (end_time - seconds_before_end). This is
+    # computed in application code whenever a snipe is created or its timing
+    # parameters change so that workers can simply query on fire_at.
+    fire_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
     max_bid_amount = Column(Numeric(14, 2), nullable=False)
     currency = Column(CHAR(3), nullable=False, default="USD")
     seconds_before_end = Column(Integer, nullable=False, default=5)
@@ -1735,6 +1761,9 @@ class EbaySnipe(Base):
     current_bid_at_creation = Column(Numeric(14, 2), nullable=True)
     result_price = Column(Numeric(14, 2), nullable=True)
     result_message = Column(Text, nullable=True)
+
+    # Optional free-form user note describing the intent/context of the snipe.
+    comment = Column(Text, nullable=True)
 
     contingency_group_id = Column(String(100), nullable=True)
 

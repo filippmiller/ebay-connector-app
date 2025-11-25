@@ -293,6 +293,8 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
             loading={loadingData}
             onRowClick={onRowClick}
             onLayoutChange={({ order, widths }) => handleGridLayoutChange(order, widths)}
+            gridKey={gridKey}
+            gridTheme={gridPrefs.theme}
           />
         )}
       </div>
