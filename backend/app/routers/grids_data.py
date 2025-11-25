@@ -293,12 +293,16 @@ async def get_grid_data(
     else:
         requested_cols = allowed_cols
 
-    # Determine sort column
+    # Determine default sort column for each grid. We prefer stable identifiers
+    # or creation timestamps so that with sort_dir="desc" newest records appear
+    # first. When users pick an explicit sort_by, that takes precedence.
     default_sort_col = None
     if grid_key == "orders":
+        # Order line items: newest orders first.
         default_sort_col = "created_at"
     elif grid_key == "transactions":
-        default_sort_col = "transaction_date"
+        # Legacy ebay_transactions: fall back to created_at when present.
+        default_sort_col = "created_at" if "created_at" in allowed_cols else "transaction_date"
     elif grid_key == "messages":
         default_sort_col = "message_date"
     elif grid_key == "offers":
@@ -311,6 +315,15 @@ async def get_grid_data(
         # Default to the numeric ID column so newest rows (highest IDs)
         # appear first when sort_dir is "desc".
         default_sort_col = "ID"
+    elif grid_key == "buying":
+        # Buying grid (purchases): newest purchases first.
+        # _get_buying_data will map this to EbayBuyer.record_created_at when needed.
+        default_sort_col = "record_created_at" if "record_created_at" in allowed_cols else None
+    elif grid_key in {"sku_catalog", "active_inventory", "accounting_bank_statements", "accounting_cash_expenses", "accounting_transactions", "ledger_transactions"}:
+        # These all have a real numeric/id or primary timestamp column named "id"
+        # (or similar) in their ColumnMeta; prefer that when available.
+        if "id" in allowed_cols:
+            default_sort_col = "id"
 
     sort_column = sort_by if sort_by in allowed_cols else default_sort_col
 

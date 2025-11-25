@@ -376,6 +376,68 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
         )}
       </div>
 
+      {/* Bottom pagination controls */}
+      <div className="mt-2 flex items-center justify-between text-xs text-gray-600">
+        <div>
+          {total > 0 && (
+            <span>
+              Showing {Math.min(total, offset + 1)}–{Math.min(total, offset + limit)} of {total} rows
+            </span>
+          )}
+        </div>
+        {total > limit && (
+          (() => {
+            const currentPage = Math.floor(offset / limit) + 1;
+            const totalPages = Math.max(1, Math.ceil(total / limit));
+            const canPrev = currentPage > 1;
+            const canNext = currentPage < totalPages;
+            const goToPage = (page: number) => {
+              const clamped = Math.min(totalPages, Math.max(1, page));
+              setOffset((clamped - 1) * limit);
+            };
+            return (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="px-2 py-1 border rounded bg-white disabled:opacity-50"
+                  disabled={!canPrev}
+                  onClick={() => goToPage(1)}
+                >
+                  « First
+                </button>
+                <button
+                  type="button"
+                  className="px-2 py-1 border rounded bg-white disabled:opacity-50"
+                  disabled={!canPrev}
+                  onClick={() => goToPage(currentPage - 1)}
+                >
+                  ‹ Prev
+                </button>
+                <span className="px-2">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="px-2 py-1 border rounded bg-white disabled:opacity-50"
+                  disabled={!canNext}
+                  onClick={() => goToPage(currentPage + 1)}
+                >
+                  Next ›
+                </button>
+                <button
+                  type="button"
+                  className="px-2 py-1 border rounded bg-white disabled:opacity-50"
+                  disabled={!canNext}
+                  onClick={() => goToPage(totalPages)}
+                >
+                  Last »
+                </button>
+              </div>
+            );
+          })()
+        )}
+      </div>
+
       {/* Columns / Layout & Theme panel */}
       {showColumnsPanel && (
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
