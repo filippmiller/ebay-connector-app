@@ -39,12 +39,7 @@ def _pick_due_snipes(db: Session, now: datetime) -> List[EbaySnipe]:
     q = (
         db.query(EbaySnipe)
         .filter(
-            EbaySnipe.status.in_(
-                [
-                    EbaySnipeStatus.pending.value,
-                    EbaySnipeStatus.scheduled.value,
-                ]
-            ),
+            EbaySnipe.status == EbaySnipeStatus.scheduled.value,
             EbaySnipe.fire_at <= now,
             EbaySnipe.end_time > now,
         )

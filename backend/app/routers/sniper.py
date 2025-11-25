@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -167,20 +167,6 @@ async def list_snipes(
     }
 
 
-def _compute_fire_at(end_time: datetime, seconds_before_end: int) -> datetime:
-    """Compute fire_at timestamp from end_time and seconds_before_end.
-
-    The result is always normalized to UTC and never later than end_time.
-    """
-
-    if end_time.tzinfo is None:
-        end_time = end_time.replace(tzinfo=timezone.utc)
-    else:
-        end_time = end_time.astimezone(timezone.utc)
-    secs = max(0, int(seconds_before_end))
-    # We do not bake in any additional safety margin here; workers can add
-    # their own internal safeguards if needed.
-    return end_time - timedelta(seconds=secs)
 
 
 async def _fetch_auction_metadata(
