@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Dat
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy.exc import NoSuchTableError
+from sqlalchemy.exc import NoSuchTableError, OperationalError
 from datetime import datetime
 import enum
 import uuid
@@ -447,8 +447,233 @@ class Inventory(Base):
     )
 
 
+class PartsDetailStatus(str, enum.Enum):
+    """High-level business status for parts_detail.sku/listing lifecycle.
+
+    This is a thin semantic layer over the legacy numeric StatusSKU codes from
+    the historical MSSQL schema. We intentionally keep the enum small and map
+    concrete numeric codes in application logic where needed.
+    """
+
+    AWAITING_MODERATION = "AwaitingModeration"
+    CHECKED = "Checked"
+    LISTED_ACTIVE = "ListedActive"
+    ENDED = "Ended"
+    CANCELLED = "Cancelled"
+    PUBLISH_ERROR = "PublishError"
+
+
+class PartsDetail(Base):
+    """Supabase/Postgres equivalent of legacy dbo.tbl_parts_detail.
+
+    Only the core columns required by the first implementation of the eBay
+    listing worker are modelled here. Additional legacy columns can be added
+    incrementally as we migrate more behaviour.
+    """
+
+    __tablename__ = "parts_detail"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Identity & warehouse
+    sku = Column(String(100), nullable=True, index=True)
+    sku2 = Column(String(100), nullable=True)
+    override_sku = Column(String(100), nullable=True)
+    storage = Column(String(100), nullable=True, index=True)
+    alt_storage = Column(String(100), nullable=True)
+    storage_alias = Column(String(100), nullable=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)
+
+    # eBay account & linkage
+    item_id = Column(String(100), nullable=True, index=True)
+    ebay_id = Column(String(64), nullable=True, index=True)  # internal account/site id
+    username = Column(String(100), nullable=True, index=True)  # eBay username
+    global_ebay_id_for_relist = Column(String(64), nullable=True)
+    global_ebay_id_for_relist_flag = Column(Boolean, nullable=True)
+
+    # Status fields (stored as string; PartsDetailStatus is a semantic helper enum)
+    status_sku = Column(String(32), nullable=True, index=True)
+    listing_status = Column(String(50), nullable=True, index=True)
+    status_updated_at = Column(DateTime(timezone=True), nullable=True)
+    status_updated_by = Column(String(100), nullable=True)
+    listing_status_updated_at = Column(DateTime(timezone=True), nullable=True)
+    listing_status_updated_by = Column(String(100), nullable=True)
+
+    # Listing lifetime
+    listing_start_time = Column(DateTime(timezone=True), nullable=True)
+    listing_end_time = Column(DateTime(timezone=True), nullable=True)
+    listing_time_updated = Column(DateTime(timezone=True), nullable=True)
+    item_listed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Prices & overrides
+    override_price = Column(Numeric(14, 2), nullable=True)
+    price_to_change = Column(Numeric(14, 2), nullable=True)
+    price_to_change_one_time = Column(Numeric(14, 2), nullable=True)
+    override_price_flag = Column(Boolean, nullable=True)
+    price_to_change_flag = Column(Boolean, nullable=True)
+    price_to_change_one_time_flag = Column(Boolean, nullable=True)
+
+    # Best Offer
+    best_offer_enabled_flag = Column(Boolean, nullable=True)
+    best_offer_auto_accept_price_flag = Column(Boolean, nullable=True)
+    best_offer_auto_accept_price_value = Column(Numeric(14, 2), nullable=True)
+    best_offer_auto_accept_price_percent = Column(Numeric(5, 2), nullable=True)
+    best_offer_min_price_flag = Column(Boolean, nullable=True)
+    best_offer_min_price_value = Column(Numeric(14, 2), nullable=True)
+    best_offer_min_price_percent = Column(Numeric(5, 2), nullable=True)
+    best_offer_mode = Column(String(20), nullable=True)
+    best_offer_to_change_flag = Column(Boolean, nullable=True)
+    active_best_offer_flag = Column(Boolean, nullable=True)
+    active_best_offer_manual_flag = Column(Boolean, nullable=True)
+
+    # Title, description, pictures
+    override_title = Column(Text, nullable=True)
+    override_description = Column(Text, nullable=True)
+    override_condition_id = Column(Integer, nullable=True)
+    condition_description_to_change = Column(Text, nullable=True)
+    override_pic_url_1 = Column(Text, nullable=True)
+    override_pic_url_2 = Column(Text, nullable=True)
+    override_pic_url_3 = Column(Text, nullable=True)
+    override_pic_url_4 = Column(Text, nullable=True)
+    override_pic_url_5 = Column(Text, nullable=True)
+    override_pic_url_6 = Column(Text, nullable=True)
+    override_pic_url_7 = Column(Text, nullable=True)
+    override_pic_url_8 = Column(Text, nullable=True)
+    override_pic_url_9 = Column(Text, nullable=True)
+    override_pic_url_10 = Column(Text, nullable=True)
+    override_pic_url_11 = Column(Text, nullable=True)
+    override_pic_url_12 = Column(Text, nullable=True)
+
+    # eBay API ACK / errors
+    verify_ack = Column(String(20), nullable=True)
+    verify_timestamp = Column(DateTime(timezone=True), nullable=True)
+    verify_error = Column(Text, nullable=True)
+    add_ack = Column(String(20), nullable=True)
+    add_timestamp = Column(DateTime(timezone=True), nullable=True)
+    add_error = Column(Text, nullable=True)
+    revise_ack = Column(String(20), nullable=True)
+    revise_timestamp = Column(DateTime(timezone=True), nullable=True)
+    revise_error = Column(Text, nullable=True)
+
+    # Batch / queue flags
+    batch_error_flag = Column(Boolean, nullable=True, index=True)
+    batch_error_message = Column(JSONB, nullable=True)
+    batch_success_flag = Column(Boolean, nullable=True, index=True)
+    batch_success_message = Column(JSONB, nullable=True)
+    mark_as_listed_queue_flag = Column(Boolean, nullable=True, index=True)
+    mark_as_listed_queue_updated_at = Column(DateTime(timezone=True), nullable=True)
+    mark_as_listed_queue_updated_by = Column(String(100), nullable=True)
+    listing_price_batch_flag = Column(Boolean, nullable=True)
+    cancel_listing_queue_flag = Column(Boolean, nullable=True)
+    cancel_listing_queue_flag_updated_at = Column(DateTime(timezone=True), nullable=True)
+    cancel_listing_queue_flag_updated_by = Column(String(100), nullable=True)
+    relist_listing_queue_flag = Column(Boolean, nullable=True)
+    relist_listing_queue_flag_updated_at = Column(DateTime(timezone=True), nullable=True)
+    relist_listing_queue_flag_updated_by = Column(String(100), nullable=True)
+    freeze_listing_queue_flag = Column(Boolean, nullable=True)
+
+    # Event flags
+    relist_flag = Column(Boolean, nullable=True)
+    relist_quantity = Column(Integer, nullable=True)
+    relist_listing_flag = Column(Boolean, nullable=True)
+    relist_listing_flag_updated_at = Column(DateTime(timezone=True), nullable=True)
+    relist_listing_flag_updated_by = Column(String(100), nullable=True)
+    cancel_listing_flag = Column(Boolean, nullable=True)
+    cancel_listing_status_sku = Column(String(50), nullable=True)
+    cancel_listing_interface = Column(String(50), nullable=True)
+    freeze_listing_flag = Column(Boolean, nullable=True)
+    phantom_cancel_listing_flag = Column(Boolean, nullable=True)
+    ended_for_relist_flag = Column(Boolean, nullable=True)
+    just_sold_flag = Column(Boolean, nullable=True)
+    return_flag = Column(Boolean, nullable=True)
+    loss_flag = Column(Boolean, nullable=True)
+
+    # Audit
+    record_created_at = Column(DateTime(timezone=True), nullable=False, server_default=datetime.utcnow)
+    record_created_by = Column(String(100), nullable=True)
+    record_updated_at = Column(DateTime(timezone=True), nullable=True)
+    record_updated_by = Column(String(100), nullable=True)
+
+    logs = relationship("PartsDetailLog", back_populates="part_detail", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_parts_detail_sku", "sku"),
+        Index("idx_parts_detail_item_id", "item_id"),
+        Index("idx_parts_detail_status_sku", "status_sku"),
+        Index("idx_parts_detail_listing_status", "listing_status"),
+        Index("idx_parts_detail_username", "username"),
+        Index("idx_parts_detail_ebay_id", "ebay_id"),
+    )
+
+
+class PartsDetailLog(Base):
+    """High-level audit log for PartsDetail changes and worker events."""
+
+    __tablename__ = "parts_detail_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    part_detail_id = Column(Integer, ForeignKey("parts_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Linkage / snapshot identifiers
+    sku = Column(String(100), nullable=True, index=True)
+    model_id = Column(Integer, nullable=True)
+
+    # Product snapshot
+    part = Column(Text, nullable=True)
+    price = Column(Numeric(14, 2), nullable=True)
+    previous_price = Column(Numeric(14, 2), nullable=True)
+    price_updated_at = Column(DateTime(timezone=True), nullable=True)
+    market = Column(String(50), nullable=True)
+    category = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
+    shipping_type = Column(String(50), nullable=True)
+    shipping_group = Column(String(50), nullable=True)
+    condition_id = Column(Integer, nullable=True)
+    pic_url_1 = Column(Text, nullable=True)
+    pic_url_2 = Column(Text, nullable=True)
+    pic_url_3 = Column(Text, nullable=True)
+    pic_url_4 = Column(Text, nullable=True)
+    pic_url_5 = Column(Text, nullable=True)
+    pic_url_6 = Column(Text, nullable=True)
+    pic_url_7 = Column(Text, nullable=True)
+    pic_url_8 = Column(Text, nullable=True)
+    pic_url_9 = Column(Text, nullable=True)
+    pic_url_10 = Column(Text, nullable=True)
+    pic_url_11 = Column(Text, nullable=True)
+    pic_url_12 = Column(Text, nullable=True)
+    weight = Column(Numeric(12, 3), nullable=True)
+    part_number = Column(String(100), nullable=True)
+
+    # Flags & statuses
+    alert_flag = Column(Boolean, nullable=True)
+    alert_message = Column(Text, nullable=True)
+    record_status = Column(String(50), nullable=True)
+    record_status_flag = Column(Boolean, nullable=True)
+    checked_status = Column(String(50), nullable=True)
+    checked_at = Column(DateTime(timezone=True), nullable=True)
+    checked_by = Column(String(100), nullable=True)
+    one_time_auction = Column(Boolean, nullable=True)
+
+    # Audit
+    record_created_at = Column(DateTime(timezone=True), nullable=True)
+    record_created_by = Column(String(100), nullable=True)
+    record_updated_at = Column(DateTime(timezone=True), nullable=True)
+    record_updated_by = Column(String(100), nullable=True)
+    log_created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    log_created_by = Column(String(100), nullable=True)
+
+    part_detail = relationship("PartsDetail", back_populates="logs")
+
+    __table_args__ = (
+        Index("idx_parts_detail_log_part_detail_id", "part_detail_id"),
+        Index("idx_parts_detail_log_sku", "sku"),
+        Index("idx_parts_detail_log_checked_status", "checked_status"),
+    )
+
+
 # Attempt reflection of the legacy Supabase inventory table at import time,
-# but never crash the app if it is missing in the current environment.
+# but never crash the app if it is missing in the current environment or the
+# database is temporarily unreachable.
 try:
     tbl_parts_inventory_table = Table(
         "tbl_parts_inventory",  # REAL table name, do not change
@@ -466,9 +691,10 @@ try:
     pk_cols = list(pk_info.get("constrained_columns") or [])
     if not pk_cols and "ID" in tbl_parts_inventory_table.c:
         pk_cols = ["ID"]
-except NoSuchTableError:
+except (NoSuchTableError, OperationalError) as exc:
     logger.warning(
-        "tbl_parts_inventory not found in database; TblPartsInventory will be abstract in this environment",
+        "tbl_parts_inventory reflection failed (%s); TblPartsInventory will be abstract in this environment",
+        type(exc).__name__,
     )
     tbl_parts_inventory_table = None
     pk_cols = []
@@ -499,33 +725,36 @@ else:
 
 
 # Optional reflection of the legacy models dictionary table used for the
-# SKU create/edit form typeahead (tbl_parts_models). Missing tables are
-# tolerated so that local/dev environments without the legacy schema still
-# boot cleanly.
+# SKU create/edit form typeahead (tbl_parts_models). Missing tables and
+# transient connection errors are tolerated so that environments without the
+# legacy schema still boot cleanly.
 try:
     tbl_parts_models_table = Table(
         "tbl_parts_models",  # REAL table name provided by legacy system
         Base.metadata,
         autoload_with=engine,
     )
-except NoSuchTableError:
+except (NoSuchTableError, OperationalError) as exc:
     logger.warning(
-        "tbl_parts_models not found in database; model search endpoint will return an empty result set",
+        "tbl_parts_models reflection failed (%s); model search endpoint will return an empty result set",
+        type(exc).__name__,
     )
     tbl_parts_models_table = None
 
 
 # Optional reflection of legacy internal categories table used for the
-# Internal category dropdown when available (tbl_parts_category).
+# Internal category dropdown when available (tbl_parts_category). Missing
+# tables and transient connection errors are tolerated.
 try:
     tbl_parts_category_table = Table(
         "tbl_parts_category",  # REAL table name in Postgres
         Base.metadata,
         autoload_with=engine,
     )
-except NoSuchTableError:
+except (NoSuchTableError, OperationalError) as exc:
     logger.warning(
-        "tbl_parts_category not found; falling back to sq_internal_categories for internal category list",
+        "tbl_parts_category reflection failed (%s); falling back to sq_internal_categories for internal category list",
+        type(exc).__name__,
     )
     tbl_parts_category_table = None
 
