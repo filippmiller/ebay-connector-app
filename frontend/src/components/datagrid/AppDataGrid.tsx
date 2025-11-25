@@ -104,8 +104,13 @@ function extractLayout(columnStates: ColumnState[]): { order: string[]; widths: 
     }
 
     order.push(id);
-    if (typeof col.width === 'number') {
-      widths[id] = col.width;
+    if (typeof col.width === 'number' && Number.isFinite(col.width)) {
+      // Normalise to an integer pixel width. AG Grid can emit fractional widths,
+      // but the backend expects Dict[str, int] in columns.widths.
+      const rounded = Math.round(col.width);
+      // Clamp to a sane range to avoid pathological values.
+      const clamped = Math.min(4000, Math.max(40, rounded));
+      widths[id] = clamped;
     }
   });
 
