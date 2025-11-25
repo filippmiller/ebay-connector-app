@@ -2569,6 +2569,145 @@ class EbayService:
         
         return offers_data
 
+    async def place_proxy_bid(
+        self,
+        access_token: str,
+        item_id: str,
+        *,
+        max_amount_value: str,
+        currency: str,
+        marketplace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Place a proxy bid on an auction listing via Buy Offer API.
+
+        This is a thin wrapper over
+        ``POST /buy/offer/v1_beta/bidding/{item_id}/place_proxy_bid``.
+        ``item_id`` is the RESTful item id returned by Browse/Feed APIs
+        (e.g. "v1|1234567890|0").
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        base_url = settings.ebay_api_base_url.rstrip("/")
+        api_url = f"{base_url}/buy/offer/v1_beta/bidding/{item_id}/place_proxy_bid"
+
+        headers: Dict[str, Any] = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if marketplace_id:
+            headers["X-EBAY-C-MARKETPLACE-ID"] = marketplace_id
+
+        body = {
+            "maxAmount": {
+                "currency": currency,
+                "value": max_amount_value,
+            }
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+                response = await client.post(api_url, headers=headers, json=body)
+        except httpx.RequestError as exc:
+            error_msg = f"HTTP request failed during placeProxyBid: {exc}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=error_msg,
+            )
+
+        try:
+            payload: Any = response.json()
+        except Exception:
+            payload = {}
+
+        if response.status_code not in (200, 201):
+            error_body = payload or response.text
+            logger.error(
+                "placeProxyBid failed: status=%s body=%s",
+                response.status_code,
+                error_body,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={
+                    "message": "placeProxyBid failed",
+                    "status_code": response.status_code,
+                    "body": error_body,
+                },
+            )
+
+        return payload
+
+    async def get_bidding_status(
+        self,
+        access_token: str,
+        item_id: str,
+        *,
+        marketplace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve bidding status for an auction via Buy Offer API.
+
+        Wrapper over ``GET /buy/offer/v1_beta/bidding/{item_id}``.
+        Returns the parsed JSON body on success and raises HTTPException on
+        non-2xx responses.
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        base_url = settings.ebay_api_base_url.rstrip("/")
+        api_url = f"{base_url}/buy/offer/v1_beta/bidding/{item_id}"
+
+        headers: Dict[str, Any] = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        if marketplace_id:
+            headers["X-EBAY-C-MARKETPLACE-ID"] = marketplace_id
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+                response = await client.get(api_url, headers=headers)
+        except httpx.RequestError as exc:
+            error_msg = f"HTTP request failed during get_bidding_status: {exc}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=error_msg,
+            )
+
+        try:
+            payload: Any = response.json()
+        except Exception:
+            payload = {}
+
+        if response.status_code != 200:
+            error_body = payload or response.text
+            logger.error(
+                "get_bidding_status failed: status=%s body=%s",
+                response.status_code,
+                error_body,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={
+                    "message": "getBidding failed",
+                    "status_code": response.status_code,
+                    "body": error_body,
+                },
+            )
+
+        return payload
+
     async def bulk_publish_offers(
         self,
         access_token: str,
