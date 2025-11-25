@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   ModuleRegistry,
@@ -9,6 +9,7 @@ import type {
   ColumnState,
   CellClassRules,
   GridApi,
+  ICellRendererParams,
 } from 'ag-grid-community';
 
 // Register AG Grid modules
@@ -222,7 +223,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       // Special case: make sniper_snipes.item_id clickable to open the eBay page.
       if (gridKey === 'sniper_snipes' && col.name === 'item_id') {
         colDef.valueFormatter = undefined;
-        colDef.cellRenderer = (params) => {
+        colDef.cellRenderer = (params: ICellRendererParams) => {
           const raw = params.value;
           const value = formatCellValue(raw, type);
           if (!value) return '';
