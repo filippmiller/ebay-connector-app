@@ -249,6 +249,17 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
     });
   }, [columns, columnMetaByName, gridKey]);
 
+  const defaultColDef = useMemo<ColDef>(
+    () => ({
+      headerClass: 'ui-table-header',
+      sortable: false,
+    }),
+    [],
+  );
+
+  const handleColumnEvent = (event: any) => {
+    if (!onLayoutChange || !event.api) return;
+
     if (layoutDebounceRef.current !== null) {
       window.clearTimeout(layoutDebounceRef.current);
     }
