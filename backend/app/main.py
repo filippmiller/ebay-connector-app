@@ -234,6 +234,7 @@ async def startup_event():
                 run_sniper_loop,
                 run_monitoring_loop,
                 run_auto_offer_buy_loop,
+                run_db_migration_workers_loop,
             )
             
             asyncio.create_task(run_token_refresh_worker_loop())
@@ -260,6 +261,10 @@ async def startup_event():
 
             asyncio.create_task(run_auto_offer_buy_loop())
             logger.info("✅ Auto-offer / Auto-buy planner worker started (runs every %s seconds)", 120)
+
+            # DB migration workers: incremental MSSQL→Supabase sync for selected tables.
+            asyncio.create_task(run_db_migration_workers_loop())
+            logger.info("✅ DB migration worker loop started (runs every %s seconds)", 60)
             
         except Exception as e:
             logger.error(f"⚠️  Failed to start background workers: {e}")

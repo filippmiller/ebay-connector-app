@@ -20,7 +20,9 @@ from app.utils.logger import logger
 # Default lookback window for initial sync when last_sync_at is empty.
 _DEFAULT_SYNC_LOOKBACK_DAYS = 30
 # Max messages to pull per sync cycle for a single account.
-_DEFAULT_MAX_MESSAGES_PER_SYNC = 100
+# Increased to 500 so initial and manual syncs pull a larger sample
+# without yet implementing full paging across the entire mailbox.
+_DEFAULT_MAX_MESSAGES_PER_SYNC = 500
 
 
 def _normalize_email(value: Optional[str]) -> Optional[str]:

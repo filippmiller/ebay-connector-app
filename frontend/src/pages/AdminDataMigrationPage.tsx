@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import api from '@/lib/apiClient';
 
-type MainTab = 'mssql-database' | 'temp';
+type MainTab = 'mssql-database' | 'temp' | 'worker';
 type DetailTab = 'columns' | 'preview';
 
 interface MssqlConnectionConfig {
@@ -79,10 +79,19 @@ const AdminDataMigrationPage: React.FC = () => {
             >
               Dual-DB Migration Studio
             </Button>
+            <Button
+              variant={activeTab === 'worker' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('worker')}
+            >
+              Worker
+            </Button>
           </div>
 
           <div className="flex-1 min-h-0">
-            {activeTab === 'mssql-database' ? <MssqlDatabaseTab /> : <DualDbMigrationStudioShell />}
+            {activeTab === 'mssql-database' && <MssqlDatabaseTab />}
+            {activeTab === 'temp' && <DualDbMigrationStudioShell />}
+            {activeTab === 'worker' && <MigrationWorkerTab />}
           </div>
         </div>
       </div>
@@ -1592,6 +1601,484 @@ const DualDbMigrationStudioShell: React.FC = () => {
               </table>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+interface MigrationWorkerState {
+  id: number;
+  source_database: string;
+  source_schema: string;
+  source_table: string;
+  target_schema: string;
+  target_table: string;
+  pk_column: string;
+  worker_enabled: boolean;
+  interval_seconds: number;
+  owner_user_id?: string | null;
+  notify_on_success: boolean;
+  notify_on_error: boolean;
+  last_run_started_at?: string | null;
+  last_run_finished_at?: string | null;
+  last_run_status?: string | null;
+  last_error?: string | null;
+  last_source_row_count?: number | null;
+  last_target_row_count?: number | null;
+  last_inserted_count?: number | null;
+  last_max_pk_source?: number | null;
+  last_max_pk_target?: number | null;
+}
+
+const MigrationWorkerTab: React.FC = () => {
+  const [workers, setWorkers] = React.useState<MigrationWorkerState[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [savingId, setSavingId] = React.useState<number | null>(null);
+  const [runningId, setRunningId] = React.useState<number | null>(null);
+
+  // New worker dialog state
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [createBusy, setCreateBusy] = React.useState(false);
+  const [createSourceDatabase, setCreateSourceDatabase] = React.useState('');
+  const [createSourceSchema, setCreateSourceSchema] = React.useState('dbo');
+  const [createSourceTable, setCreateSourceTable] = React.useState('');
+  const [createTargetSchema, setCreateTargetSchema] = React.useState('public');
+  const [createTargetTable, setCreateTargetTable] = React.useState('');
+  const [createPkColumn, setCreatePkColumn] = React.useState('');
+  const [createIntervalSeconds, setCreateIntervalSeconds] = React.useState(300);
+  const [createRunImmediately, setCreateRunImmediately] = React.useState(true);
+
+  const resetCreateForm = () => {
+    setCreateSourceDatabase('');
+    setCreateSourceSchema('dbo');
+    setCreateSourceTable('');
+    setCreateTargetSchema('public');
+    setCreateTargetTable('');
+    setCreatePkColumn('');
+    setCreateIntervalSeconds(300);
+    setCreateRunImmediately(true);
+  };
+
+  const loadWorkers = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await api.get<MigrationWorkerState[]>('/api/admin/db-migration/worker/state');
+      setWorkers(resp.data);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to load workers');
+      setWorkers([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    void loadWorkers();
+  }, []);
+
+  const handleOpenCreate = () => {
+    resetCreateForm();
+    setError(null);
+    setCreateOpen(true);
+  };
+
+  const handleSubmitCreate = async () => {
+    if (!createSourceDatabase.trim() || !createSourceTable.trim() || !createTargetTable.trim()) {
+      setError('Source database, source table, and target table are required.');
+      return;
+    }
+    setCreateBusy(true);
+    setError(null);
+    try {
+      // Upsert worker (will auto-detect PK if createPkColumn is empty)
+      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', {
+        source_database: createSourceDatabase.trim(),
+        source_schema: createSourceSchema.trim() || 'dbo',
+        source_table: createSourceTable.trim(),
+        target_schema: createTargetSchema.trim() || 'public',
+        target_table: createTargetTable.trim(),
+        pk_column: createPkColumn.trim() || undefined,
+        worker_enabled: true,
+        interval_seconds: createIntervalSeconds || 300,
+        owner_user_id: undefined,
+        notify_on_success: true,
+        notify_on_error: true,
+      });
+      const worker = resp.data;
+      // Optionally run an initial catch-up immediately
+      if (createRunImmediately) {
+        try {
+          await api.post('/api/admin/db-migration/worker/run-once', { id: worker.id, batch_size: 5000 });
+        } catch (e: any) {
+          // Не считаем это фатальной ошибкой создания; просто покажем сообщение.
+          setError(
+            e?.response?.data?.detail ||
+              e?.message ||
+              'Worker was created, but initial run failed. Check logs for details.',
+          );
+        }
+      }
+      await loadWorkers();
+      setCreateOpen(false);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to create worker');
+    } finally {
+      setCreateBusy(false);
+    }
+  };
+
+  const handleToggleEnabled = async (worker: MigrationWorkerState, enabled: boolean) => {
+    setSavingId(worker.id);
+    setError(null);
+    try {
+      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', {
+        id: worker.id,
+        source_database: worker.source_database,
+        source_schema: worker.source_schema,
+        source_table: worker.source_table,
+        target_schema: worker.target_schema,
+        target_table: worker.target_table,
+        pk_column: worker.pk_column,
+        worker_enabled: enabled,
+        interval_seconds: worker.interval_seconds,
+        owner_user_id: worker.owner_user_id,
+        notify_on_success: worker.notify_on_success,
+        notify_on_error: worker.notify_on_error,
+      });
+      setWorkers((prev) => prev.map((w) => (w.id === worker.id ? resp.data : w)));
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to update worker');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleIntervalChange = async (worker: MigrationWorkerState, nextInterval: number) => {
+    if (!nextInterval || nextInterval <= 0) return;
+    setSavingId(worker.id);
+    setError(null);
+    try {
+      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', {
+        id: worker.id,
+        source_database: worker.source_database,
+        source_schema: worker.source_schema,
+        source_table: worker.source_table,
+        target_schema: worker.target_schema,
+        target_table: worker.target_table,
+        pk_column: worker.pk_column,
+        worker_enabled: worker.worker_enabled,
+        interval_seconds: nextInterval,
+        owner_user_id: worker.owner_user_id,
+        notify_on_success: worker.notify_on_success,
+        notify_on_error: worker.notify_on_error,
+      });
+      setWorkers((prev) => prev.map((w) => (w.id === worker.id ? resp.data : w)));
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to update interval');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleRunOnce = async (worker: MigrationWorkerState) => {
+    setRunningId(worker.id);
+    setError(null);
+    try {
+      await api.post('/api/admin/db-migration/worker/run-once', { id: worker.id, batch_size: 5000 });
+      await loadWorkers();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to run worker');
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between mb-1">
+        <div>
+          <h2 className="text-sm font-semibold">Migration Workers</h2>
+          <p className="text-xs text-gray-600">
+            MSSQL→Supabase incremental workers for append-only tables. Each worker periodically pulls new rows based on a
+            numeric primary key and appends them into the target table.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={handleOpenCreate}>
+          New worker
+        </Button>
+      </div>
+      {error && <div className="text-xs text-red-600 mb-2">{error}</div>}
+      {loading ? (
+        <div className="text-sm text-gray-500">Loading workers...</div>
+      ) : workers.length === 0 ? (
+        <div className="text-sm text-gray-500">No workers configured yet.</div>
+      ) : (
+        <div className="border rounded bg-white overflow-auto max-h-[60vh] text-xs">
+          <table className="min-w-full text-[11px]">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="px-2 py-1 border text-left">ID</th>
+                <th className="px-2 py-1 border text-left">Source</th>
+                <th className="px-2 py-1 border text-left">Target</th>
+                <th className="px-2 py-1 border text-left">PK column</th>
+                <th className="px-2 py-1 border text-left">Enabled</th>
+                <th className="px-2 py-1 border text-left">Interval (sec)</th>
+                <th className="px-2 py-1 border text-left">Notify OK</th>
+                <th className="px-2 py-1 border text-left">Notify errors</th>
+                <th className="px-2 py-1 border text-left">Last status</th>
+                <th className="px-2 py-1 border text-left">Last run</th>
+                <th className="px-2 py-1 border text-left">Last counts</th>
+                <th className="px-2 py-1 border text-left">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workers.map((w) => (
+                <tr key={w.id} className="border-t align-top">
+                  <td className="px-2 py-1 border whitespace-nowrap">{w.id}</td>
+                  <td className="px-2 py-1 border whitespace-pre text-[11px] font-mono">
+                    {w.source_database}\n{w.source_schema}.{w.source_table}
+                  </td>
+                  <td className="px-2 py-1 border whitespace-pre text-[11px] font-mono">
+                    {w.target_schema}.{w.target_table}
+                  </td>
+                  <td className="px-2 py-1 border font-mono">{w.pk_column}</td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="checkbox"
+                      checked={w.worker_enabled}
+                      disabled={savingId === w.id}
+                      onChange={(e) => handleToggleEnabled(w, e.target.checked)}
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="number"
+                      min={30}
+                      className="w-20 border rounded px-1 py-0.5 text-[11px]"
+                      value={w.interval_seconds}
+                      disabled={savingId === w.id}
+                      onChange={(e) => handleIntervalChange(w, Number(e.target.value) || w.interval_seconds)}
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="checkbox"
+                      checked={w.notify_on_success}
+                      disabled={savingId === w.id}
+                      onChange={(e) =>
+                        handleToggleEnabled(
+                          { ...w, notify_on_success: e.target.checked },
+                          w.worker_enabled,
+                        )
+                      }
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="checkbox"
+                      checked={w.notify_on_error}
+                      disabled={savingId === w.id}
+                      onChange={(e) =>
+                        handleToggleEnabled(
+                          { ...w, notify_on_error: e.target.checked },
+                          w.worker_enabled,
+                        )
+                      }
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    {w.last_run_status ? (
+                      <span
+                        className={
+                          w.last_run_status === 'ok'
+                            ? 'text-green-700'
+                            : w.last_run_status === 'error'
+                            ? 'text-red-700'
+                            : 'text-gray-700'
+                        }
+                      >
+                        {w.last_run_status}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">never</span>
+                    )}
+                    {w.last_error && (
+                      <div className="text-[10px] text-red-600 mt-0.5 max-w-xs truncate" title={w.last_error}>
+                        {w.last_error}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 border text-[10px] text-gray-600">
+                    {w.last_run_started_at && (
+                      <div>start: {w.last_run_started_at}</div>
+                    )}
+                    {w.last_run_finished_at && (
+                      <div>finish: {w.last_run_finished_at}</div>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 border text-[10px] text-gray-700">
+                    {w.last_source_row_count != null && (
+                      <div>src: {w.last_source_row_count}</div>
+                    )}
+                    {w.last_target_row_count != null && (
+                      <div>tgt: {w.last_target_row_count}</div>
+                    )}
+                    {w.last_inserted_count != null && (
+                      <div>+{w.last_inserted_count} rows</div>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[11px]"
+                      disabled={runningId === w.id}
+                      onClick={() => {
+                        void handleRunOnce(w);
+                      }}
+                    >
+                      {runningId === w.id ? 'Running…' : 'Run once now'}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Create migration worker</DialogTitle>
+            <DialogDescription>
+              Set up an incremental MSSQL→Supabase worker for an append-only table. The worker will periodically pull
+              new rows based on a numeric primary key.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px]">MSSQL database</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createSourceDatabase}
+                  onChange={(e) => setCreateSourceDatabase(e.target.value)}
+                  placeholder="DB_A28F26_parts"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px]">MSSQL schema</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createSourceSchema}
+                  onChange={(e) => setCreateSourceSchema(e.target.value || 'dbo')}
+                  placeholder="dbo"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px]">MSSQL table</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createSourceTable}
+                  onChange={(e) => setCreateSourceTable(e.target.value)}
+                  placeholder="tbl_ebay_fees"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px]">Supabase target table</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createTargetTable}
+                  onChange={(e) => setCreateTargetTable(e.target.value)}
+                  placeholder="tbl_ebay_fees"
+                />
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Schema: {createTargetSchema || 'public'}. Table: {createTargetTable || 'tbl_ebay_fees'}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px]">Supabase schema</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createTargetSchema}
+                  onChange={(e) => setCreateTargetSchema(e.target.value || 'public')}
+                  placeholder="public"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px]">Primary key column (optional)</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createPkColumn}
+                  onChange={(e) => setCreatePkColumn(e.target.value)}
+                  placeholder="FeeID (leave blank to auto-detect)"
+                />
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Must be a numeric, monotonically increasing column. If left blank, the system will try to auto-detect a
+                  single-column primary key in MSSQL.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+              <div>
+                <Label className="text-[11px]">Run every (seconds)</Label>
+                <Input
+                  type="number"
+                  min={30}
+                  className="mt-1 h-7 text-[11px] w-32"
+                  value={createIntervalSeconds}
+                  onChange={(e) => setCreateIntervalSeconds(Number(e.target.value) || 300)}
+                />
+                <p className="mt-1 text-[11px] text-gray-500">e.g. 300 = every 5 minutes.</p>
+              </div>
+              <div className="flex items-center gap-2 mt-4">
+                <input
+                  id="create-worker-run-immediately"
+                  type="checkbox"
+                  className="h-3 w-3"
+                  checked={createRunImmediately}
+                  onChange={(e) => setCreateRunImmediately(e.target.checked)}
+                />
+                <label htmlFor="create-worker-run-immediately" className="text-[11px] text-gray-700">
+                  Run initial catch-up immediately after creating the worker
+                </label>
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              On each run, the worker will read MAX(pk) from the Supabase table, then fetch rows from MSSQL where
+              pk &gt; MAX(pk) and insert them using ON CONFLICT(pk) DO NOTHING.
+            </p>
+          </div>
+          <DialogFooter className="flex justify-end gap-2 mt-3">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (!createBusy) setCreateOpen(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={createBusy}
+              onClick={() => {
+                void handleSubmitCreate();
+              }}
+            >
+              {createBusy ? 'Creating…' : 'Create worker'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

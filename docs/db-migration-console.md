@@ -217,3 +217,33 @@ This command:
 3. Click **Validate** to check schemas and estimate row counts.
 4. If validation passes, click **Run migration** to copy data in batches.
 5. Review the log area for per-run issues and the final summary.
+
+---
+
+## Migration Worker (incremental sync)
+
+For large, append-only tables you can configure a background **Migration Worker**
+that periodically pulls only new rows from MSSQL into Supabase based on a
+numeric primary key:
+
+- Workers are configured in **Admin → Data Migration → Worker** tab.
+- Each worker tracks one MSSQL source table (database/schema/table) and one
+  Supabase target table (schema.table).
+- The worker assumes a single-column primary key that is **monotonically
+  increasing** (identity/sequence) and that rows are only appended.
+- On each run the worker:
+  - looks up the current `MAX(pk)` in the Supabase target table,
+  - reads batches of rows from MSSQL where `pk > MAX(pk)`,
+  - inserts them into the target table using `ON CONFLICT(pk) DO NOTHING`.
+
+This makes the process idempotent: if a run fails halfway through, re-running
+will simply continue from the last successfully inserted primary key.
+
+Limitations:
+
+- Workers do **not** detect updates or deletes of older rows; they are intended
+  for append-only tables.
+- MSSQL remains read-only; all writes happen in Supabase.
+- The first full migration should still be performed via the 1:1 migration flow
+  or the JSON Migration Console; the worker is designed for ongoing incremental
+  top-ups after that.
