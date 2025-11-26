@@ -1159,7 +1159,8 @@ class EbayService:
         paths such as Browse API calls used by Sniper/AI workers.
         """
         target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
-n        # Normalize scopes deterministically for cache key purposes.
+
+        # Normalize scopes deterministically for cache key purposes.
         if not scopes:
             scopes_list = ["https://api.ebay.com/oauth/api_scope"]
         else:
@@ -1189,7 +1190,6 @@ class EbayService:
         )
 
         return token
-
     def save_user_tokens(
         self,
         user_id: str,
