@@ -3,14 +3,14 @@ import { useCallback, useEffect, useState } from 'react';
 /**
  * useSpeechInput
  *
- * Lightweight wrapper around the browser Web Speech API (SpeechRecognition).
+ * Лёгкий враппер над браузерным Web Speech API (SpeechRecognition).
+ * Отвечает ТОЛЬКО за распознавание речи в текст на стороне браузера.
  *
- * Security considerations:
- * - This hook NEVER exposes any API keys or talks to OpenAI directly.
- * - All recognition happens inside the browser via the underlying engine
- *   (Chrome / Edge etc.). Our backend не участвует в голосовом вводе.
- * - Используем только текстовый результат (transcript), который вы уже
- *   затем можете отправлять на backend так же, как обычный текст из input.
+ * Безопасность:
+ * - Хук НИКОГДА не трогает OpenAI API и не знает про ваш API‑ключ.
+ * - Вся обработка звука происходит в браузере (Chrome / Edge и т.д.).
+ * - В приложение возвращается только готовый текст (transcript),
+ *   который обрабатывается так же, как ввод из обычного текстового поля.
  */
 export interface UseSpeechInputOptions {
   /**
@@ -34,21 +34,40 @@ export interface UseSpeechInputResult {
   startDictation(onText: (text: string) => void): void;
 }
 
+/**
+ * Пытаемся выбрать язык распознавания на основе настроек браузера.
+ *
+ * Приоритет такой:
+ * 1) Если среди navigator.languages есть любой вариант "ru" — берём ru-RU.
+ * 2) Иначе, если есть любой вариант "en" — берём en-US.
+ * 3) Иначе падаем в fallback (по умолчанию ru-RU).
+ */
 function pickPreferredLanguage(fallback: string = 'ru-RU'): string {
   try {
     const rawList = (navigator as any).languages || [navigator.language];
     const langs = (rawList || []).filter(Boolean).map((l: string) => l.toLowerCase());
 
-    // 1) Если есть любой вариант русского — всегда берём его (ты хочешь русский по умолчанию).
+    // 1) Если есть любой вариант русского — всегда берём его (русский по умолчанию).
     if (langs.some((l) => l.startsWith('ru'))) return 'ru-RU';
     // 2) Иначе, если есть английский — берём английский.
     if (langs.some((l) => l.startsWith('en'))) return 'en-US';
   } catch {
-    // ignore and fall back below
+    // игнорируем и используем fallback ниже
   }
   return fallback;
 }
 
+/**
+ * Основной React‑хук для голосового ввода.
+ *
+ * Пример использования:
+ *
+ *   const { supportsSpeech, isRecording, error, startDictation } = useSpeechInput();
+ *
+ *   const handleVoice = () => {
+ *     startDictation((text) => setPrompt(prev => prev ? prev + ' ' + text : text));
+ *   };
+ */
 export function useSpeechInput(options: UseSpeechInputOptions = {}): UseSpeechInputResult {
   const [supportsSpeech, setSupportsSpeech] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -75,6 +94,8 @@ export function useSpeechInput(options: UseSpeechInputOptions = {}): UseSpeechIn
         }
 
         const recognition = new SpeechRecognition();
+        // Если язык явно не передан, пытаемся угадать его из настроек браузера,
+        // отдавая приоритет русскому (ru-RU), затем английскому (en-US).
         const lang = options.language || pickPreferredLanguage('ru-RU');
         recognition.lang = lang;
         recognition.interimResults = false;
