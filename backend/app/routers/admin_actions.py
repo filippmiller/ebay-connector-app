@@ -4,17 +4,17 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
-from app.dependencies import get_db
+from app.models_sqlalchemy import get_db
 from app.models_sqlalchemy.models import AiEbayAction
-from app.routers.auth_dependencies import admin_required
-from app.schemas.base import ApiBaseModel
+from app.services.auth import admin_required
 
 
 router = APIRouter(prefix="/api/admin/ai/actions", tags=["admin-actions"])
 
 
-class AiEbayActionDto(ApiBaseModel):
+class AiEbayActionDto(BaseModel):
     id: int
     ebay_item_id: str
     model_id: Optional[str]
