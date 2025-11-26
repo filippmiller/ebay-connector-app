@@ -24,7 +24,11 @@ from app.models_sqlalchemy.models import (
 from app.services.auth import get_current_active_user, admin_required
 from app.models.user import User
 from app.utils.logger import logger
-from app.services.gmail_sync import sync_gmail_account
+from app.services.gmail_sync import (
+    sync_gmail_account,
+    get_gmail_account_diagnostics,
+    rebuild_training_pairs_for_account,
+)
 
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -532,6 +536,52 @@ async def sync_integration_account_now(
         "last_sync_at": account.last_sync_at.isoformat() if account.last_sync_at else None,
         "meta": account.meta or {},
     }
+
+
+@router.post("/accounts/{account_id}/rebuild-training-pairs")
+async def rebuild_gmail_training_pairs(
+    account_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Rebuild AI email training pairs for a Gmail account from existing messages.
+
+    This endpoint never calls the Gmail API; it operates purely on the local
+    ``emails_messages`` table. It is intended for diagnostics and backfill when
+    pairing logic changes (for example, after improving HTML→text extraction).
+    """
+
+    try:
+        summary = rebuild_training_pairs_for_account(db, account_id)
+    except RuntimeError as exc:
+        logger.error(
+            "Gmail rebuild-training-pairs failed for account %s: %s",
+            account_id,
+            exc,
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return summary
+
+
+@router.get("/accounts/{account_id}/diagnostics")
+async def get_gmail_account_stats(
+    account_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Return basic diagnostics for a Gmail integration account.
+
+    This provides counts of messages and threads without contacting Gmail.
+    """
+
+    try:
+        stats = get_gmail_account_diagnostics(db, account_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return stats
+
 
 class AiEmailPairStatusUpdate(BaseModel):
     status: str

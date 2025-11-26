@@ -1281,6 +1281,117 @@ The **knowledge base** for email AI is defined by two layered tables:
   - RAG-style retrieval of similar past cases when drafting new replies.
   - Analytics on typical complaint/response patterns.
 
+### Gmail HTML → text & Training Pairs Fix (2025-11)
+
+After connecting real Gmail accounts and running manual syncs, we observed that:
+
+- Many incoming eBay-related emails were **HTML-only**.
+- Our Gmail client populated `body_html` but left `body_text` as `NULL` for these messages.
+- The pairing logic for `ai_training_pairs` relied primarily on `body_text`.
+- As a result, `pairs_created = 0` even for threads where we clearly had "client question → our reply" exchanges.
+
+To address this without changing the overall architecture, we implemented the following fixes.
+
+#### 1. Gmail HTML → text extraction
+
+File: `backend/app/services/gmail_client.py`
+
+Changes:
+
+- Added a lightweight HTML-to-text helper `_HtmlTextExtractor` based on `html.parser.HTMLParser`:
+  - Collects all text nodes while parsing HTML.
+  - Strips whitespace and joins segments with single spaces.
+  - Decodes HTML entities via `html.unescape`.
+- Introduced `_html_to_text(value: Optional[str]) -> Optional[str]`:
+  - Returns `None` when the result is empty after stripping.
+  - On parser errors falls back to a very naive `html.unescape(value)`.
+- Updated `GmailClient.get_message`:
+  - After walking MIME parts and populating `body_text` / `body_html`, we now run:
+
+    ```python path=null start=null
+    if body_text is None and body_html:
+        body_text = _html_to_text(body_html)
+    ```
+
+Effect:
+
+- For HTML-only emails (typical for eBay notifications), `emails_messages.body_text` now contains a readable plain-text approximation of the email body.
+- Existing `body_html` behaviour is unchanged.
+
+#### 2. Pairing logic validation
+
+File: `backend/app/services/gmail_sync.py`
+
+- Pairing already favours `body_text` and falls back to `body_html` only when necessary:
+
+  ```python path=null start=null
+  client_text = _clean_email_text(msg.body_text or msg.body_html or "")
+  reply_text = _clean_email_text(reply.body_text or reply.body_html or "")
+  if not client_text or not reply_text:
+      continue
+  ```
+
+- With the new HTML→text extraction, incoming messages from eBay/Gmail now have non-empty `body_text`, so this filter no longer drops all pairs.
+- We intentionally keep the filter simple: any non-empty cleaned text is considered valid; there is no minimum length threshold beyond `len(strip()) > 0`.
+
+#### 3. Diagnostics and rebuild of training pairs (no Gmail API calls)
+
+File: `backend/app/services/gmail_sync.py`
+
+We added two helpers that operate purely on local DB data:
+
+1. `get_gmail_account_diagnostics(db: Session, account_id: str) -> dict`
+   - Returns aggregate stats for one `IntegrationAccount`:
+     - `total_messages`
+     - `incoming_messages`
+     - `outgoing_messages`
+     - `total_threads` (distinct `thread_id`)
+     - `threads_with_incoming_and_outgoing` (threads that contain both directions)
+   - Uses only the `emails_messages` table; does not talk to Gmail.
+
+2. `rebuild_training_pairs_for_account(db: Session, account_id: str) -> dict`
+   - Intended for backfill/diagnostics when pairing logic changes.
+   - Steps:
+     - Ensures the account exists and belongs to the Gmail provider.
+     - Deletes all existing `ai_training_pairs` for that `integration_account_id`.
+     - Collects all distinct non-null `thread_id` values for this account.
+     - Calls the existing `_build_pairs_for_threads(...)` helper to recreate pairs from the current `emails_messages` rows.
+     - Commits the transaction.
+     - Calls `get_gmail_account_diagnostics(...)` and extends that dict with:
+       - `pairs_created`
+       - `pairs_skipped_existing`
+       - `pairs_deleted_before_rebuild`
+     - Logs a concise summary and returns it.
+
+File: `backend/app/routers/integrations.py`
+
+- Extended imports to include the new helpers:
+
+  ```python path=null start=null
+  from app.services.gmail_sync import (
+      sync_gmail_account,
+      get_gmail_account_diagnostics,
+      rebuild_training_pairs_for_account,
+  )
+  ```
+
+- Added two admin-only endpoints:
+
+1. **POST `/api/integrations/accounts/{account_id}/rebuild-training-pairs`**
+   - Auth: `admin_required`.
+   - Behaviour:
+     - Calls `rebuild_training_pairs_for_account(db, account_id)`.
+     - On `RuntimeError` (unknown account, not Gmail, provider missing) returns 400 with a short `detail`.
+     - On success returns the diagnostics dict described above.
+   - Does **not** call Gmail; works entirely on local data.
+
+2. **GET `/api/integrations/accounts/{account_id}/diagnostics`**
+   - Auth: `admin_required`.
+   - Returns the output of `get_gmail_account_diagnostics(db, account_id)`.
+   - Useful for quickly understanding how many messages/threads we have and how many threads can potentially yield Q→A pairs.
+
+These endpoints are designed to be safe to run in production for inspection and rebuilding pairs without re-reading email content from Gmail.
+
 ### Testing checklist – Phase 6
 
 1. **Set OpenAI key:**

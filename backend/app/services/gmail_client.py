@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
 
 import base64
+import html as html_lib
 
 import httpx
 from sqlalchemy.orm import Session
@@ -48,6 +50,57 @@ def _parse_date_header(value: Optional[str]) -> Optional[datetime]:
         return dt.astimezone(timezone.utc)
     except Exception:
         return None
+
+
+class _HtmlTextExtractor(HTMLParser):
+    """Very small HTML→text helper used for Gmail HTML-only messages.
+
+    We deliberately avoid heavy dependencies and keep extraction simple:
+    - Collect all text nodes.
+    - Strip and join them with single spaces.
+    - Decode HTML entities.
+
+    This is sufficient to get a readable `body_text` from eBay-style HTML
+    templates while keeping the implementation lightweight.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._parts: List[str] = []
+
+    def handle_data(self, data: str) -> None:  # type: ignore[override]
+        if not data:
+            return
+        self._parts.append(data)
+
+    def get_text(self) -> str:
+        # Join non-empty segments with single spaces.
+        raw = " ".join(part.strip() for part in self._parts if part.strip())
+        if not raw:
+            return ""
+        return html_lib.unescape(raw)
+
+
+def _html_to_text(value: Optional[str]) -> Optional[str]:
+    """Convert a small HTML fragment to plain text.
+
+    Returns ``None`` when the conversion results in an empty string.
+    """
+
+    if not value:
+        return None
+    parser = _HtmlTextExtractor()
+    try:
+        parser.feed(value)
+        parser.close()
+    except Exception:
+        # On any parsing issue, fall back to a very naive strip of tags.
+        # This keeps the pipeline robust even for malformed HTML.
+        text = html_lib.unescape(value)
+        return text.strip() or None
+
+    text = parser.get_text().strip()
+    return text or None
 
 
 @dataclass
@@ -315,6 +368,13 @@ class GmailClient:
 
         if payload:
             _extract_from_part(payload)
+
+        # Some providers (including many eBay notifications) send HTML-only
+        # emails. In that case `body_text` remains None even though we have a
+        # perfectly good HTML body. To make downstream AI pairing logic work,
+        # we synthesise a plain-text version from HTML when needed.
+        if body_text is None and body_html:
+            body_text = _html_to_text(body_html)
 
         return GmailMessage(
             external_id=data.get("id"),

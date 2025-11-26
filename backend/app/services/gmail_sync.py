@@ -179,6 +179,140 @@ def _build_pairs_for_threads(
     }
 
 
+def get_gmail_account_diagnostics(db: Session, account_id: str) -> Dict[str, Any]:
+    """Return basic stats for a Gmail account based on existing EmailMessage rows.
+
+    This helper never talks to Gmail; it only inspects the local database.
+    It is useful for understanding how many messages/threads we have and how
+    many threads contain both incoming and outgoing messages.
+    """
+
+    account: Optional[IntegrationAccount] = (
+        db.query(IntegrationAccount)
+        .filter(IntegrationAccount.id == account_id)
+        .one_or_none()
+    )
+    if not account:
+        raise RuntimeError("integration_account_not_found")
+
+    total_messages = (
+        db.query(EmailMessage)
+        .filter(EmailMessage.integration_account_id == account.id)
+        .count()
+    )
+    incoming_messages = (
+        db.query(EmailMessage)
+        .filter(
+            EmailMessage.integration_account_id == account.id,
+            EmailMessage.direction == "incoming",
+        )
+        .count()
+    )
+    outgoing_messages = (
+        db.query(EmailMessage)
+        .filter(
+            EmailMessage.integration_account_id == account.id,
+            EmailMessage.direction == "outgoing",
+        )
+        .count()
+    )
+
+    # Thread-level stats.
+    rows = (
+        db.query(EmailMessage.thread_id, EmailMessage.direction)
+        .filter(
+            EmailMessage.integration_account_id == account.id,
+            EmailMessage.thread_id.isnot(None),
+        )
+        .all()
+    )
+
+    thread_dirs: Dict[str, set[str]] = {}
+    for thread_id, direction in rows:
+        if not thread_id or not direction:
+            continue
+        bucket = thread_dirs.setdefault(thread_id, set())
+        bucket.add(direction)
+
+    total_threads = len(thread_dirs)
+    threads_with_both = sum(
+        1 for dirs in thread_dirs.values() if "incoming" in dirs and "outgoing" in dirs
+    )
+
+    return {
+        "account_id": account.id,
+        "external_account_id": account.external_account_id,
+        "total_messages": total_messages,
+        "incoming_messages": incoming_messages,
+        "outgoing_messages": outgoing_messages,
+        "total_threads": total_threads,
+        "threads_with_incoming_and_outgoing": threads_with_both,
+    }
+
+
+def rebuild_training_pairs_for_account(db: Session, account_id: str) -> Dict[str, Any]:
+    """Rebuild AI email training pairs for a single Gmail account.
+
+    This function operates **only** on existing ``emails_messages`` rows and
+    does not call the Gmail API. It is safe to run repeatedly and is designed
+    for backfill/diagnostics when pairing logic changes.
+    """
+
+    provider = _ensure_gmail_provider(db)
+    if not provider:
+        raise RuntimeError("gmail_provider_not_configured")
+
+    account: Optional[IntegrationAccount] = (
+        db.query(IntegrationAccount)
+        .filter(IntegrationAccount.id == account_id)
+        .one_or_none()
+    )
+    if not account:
+        raise RuntimeError("integration_account_not_found")
+    if account.provider_id != provider.id:
+        raise RuntimeError("integration_account_not_gmail")
+
+    # Wipe existing pairs for this account so we can rebuild from scratch.
+    deleted_pairs = (
+        db.query(AiEmailTrainingPair)
+        .filter(AiEmailTrainingPair.integration_account_id == account.id)
+        .delete(synchronize_session=False)
+    )
+
+    # Collect all distinct thread ids that have at least one message.
+    thread_rows = (
+        db.query(EmailMessage.thread_id)
+        .filter(
+            EmailMessage.integration_account_id == account.id,
+            EmailMessage.thread_id.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    thread_ids = [row[0] for row in thread_rows if row[0]]
+
+    pair_stats = _build_pairs_for_threads(db, account, thread_ids)
+
+    db.commit()
+
+    diagnostics = get_gmail_account_diagnostics(db, account.id)
+    diagnostics.update(
+        {
+            "pairs_created": pair_stats["pairs_created"],
+            "pairs_skipped_existing": pair_stats["pairs_skipped_existing"],
+            "pairs_deleted_before_rebuild": deleted_pairs,
+        }
+    )
+
+    logger.info(
+        "[gmail-sync] rebuilt training pairs for account_id=%s: %s",
+        account.id,
+        diagnostics,
+    )
+
+    return diagnostics
+
+
 async def sync_gmail_account(
     db: Session,
     account_id: str,
