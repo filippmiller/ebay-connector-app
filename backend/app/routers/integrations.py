@@ -541,7 +541,8 @@ class OpenAiProviderPayload(BaseModel):
     api_key: Optional[str] = None
     model_default: Optional[str] = None
 
-n@router.get("/ai-email-pairs")
+
+@router.get("/ai-email-pairs")
 async def list_ai_email_pairs(
     status: str = Query("new", description="Filter by pair status: new|approved|rejected"),
     provider: Optional[str] = Query(None, description="Filter by provider code, e.g. 'gmail'"),
@@ -585,7 +586,8 @@ async def list_ai_email_pairs(
 
     return {"items": items, "count": total, "limit": limit, "offset": offset}
 
-n@router.post("/ai-email-pairs/{pair_id}/status")
+
+@router.post("/ai-email-pairs/{pair_id}/status")
 async def update_ai_email_pair_status(
     pair_id: str,
     payload: AiEmailPairStatusUpdate,
@@ -615,7 +617,8 @@ async def update_ai_email_pair_status(
 
     return _serialize_ai_email_pair(pair, account, provider)
 
-n@router.get("/ai-provider/openai")
+
+@router.get("/ai-provider/openai")
 async def get_openai_provider(
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required),  # noqa: ARG001
@@ -641,7 +644,7 @@ async def get_openai_provider(
         "model_default": model_default,
     }
 
-n@router.post("/ai-provider/openai")
+@router.post("/ai-provider/openai")
 async def upsert_openai_provider(
     payload: OpenAiProviderPayload,
     db: Session = Depends(get_db),
