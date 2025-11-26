@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import api from '@/lib/apiClient';
 import { AppDataGrid, type AppDataGridColumnState } from '@/components/datagrid/AppDataGrid';
 import type { GridColumnMeta } from '@/components/DataGridPage';
+import { useSpeechInput } from '@/hooks/useSpeechInput';
 
 interface AiGridColumnDto {
   field: string;
@@ -36,6 +37,8 @@ export default function AdminAiGridPage() {
   const [rows, setRows] = useState<Record<string, any>[]>([]);
   const [columnMetaByName, setColumnMetaByName] = useState<Record<string, GridColumnMeta>>({});
   const [lastSql, setLastSql] = useState<string | null>(null);
+
+  const { supportsSpeech, isRecording, error: voiceError, startDictation } = useSpeechInput();
 
   const applyStoredLayout = useMemo(
     () =>
@@ -124,6 +127,12 @@ export default function AdminAiGridPage() {
     }
   };
 
+  const handleVoiceInput = () => {
+    startDictation((text) => {
+      setPrompt((prev) => (prev ? `${prev} ${text}` : text));
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <FixedHeader />
@@ -148,13 +157,31 @@ export default function AdminAiGridPage() {
             <div className="text-xs text-gray-500">
               Я сгенерирую только SELECT-запрос и выполню его в read-only режиме по безопасным таблицам.
             </div>
-            <Button onClick={handleRunQuery} disabled={loading}>
-              {loading ? 'Выполняю…' : 'Run AI Query'}
-            </Button>
+            <div className="flex items-center gap-2">
+              {supportsSpeech && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleVoiceInput}
+                  disabled={loading || isRecording}
+                >
+                  {isRecording ? 'Слушаю…' : 'Голосом'}
+                </Button>
+              )}
+              <Button onClick={handleRunQuery} disabled={loading}>
+                {loading ? 'Выполняю…' : 'Run AI Query'}
+              </Button>
+            </div>
           </div>
           {error && (
             <div className="text-xs text-red-600 whitespace-pre-wrap border border-red-200 bg-red-50 rounded px-2 py-1 mt-2">
               {error}
+            </div>
+          )}
+          {voiceError && (
+            <div className="text-xs text-red-600 whitespace-pre-wrap border border-red-200 bg-red-50 rounded px-2 py-1 mt-2">
+              {voiceError}
             </div>
           )}
           {lastSql && (

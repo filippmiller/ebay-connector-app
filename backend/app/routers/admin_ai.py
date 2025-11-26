@@ -92,7 +92,11 @@ async def run_ai_query(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="prompt_required")
 
     try:
-        sql, ai_columns = await build_sql_from_prompt(prompt, allowed_tables=ALLOWED_ANALYTICS_TABLES)
+        sql, ai_columns = await build_sql_from_prompt(
+            prompt,
+            allowed_tables=ALLOWED_ANALYTICS_TABLES,
+            db=db,
+        )
     except AiSqlGenerationError as exc:
         logger.warning("AI SQL validation failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

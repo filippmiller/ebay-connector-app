@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
 import json
-import os
 import re
 
 import httpx
 from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services.ai_providers import get_openai_api_config
 from app.utils.logger import logger
 
 
@@ -97,7 +98,12 @@ def _validate_sql(sql: str, allowed_tables: List[str]) -> None:
         )
 
 
-async def build_sql_from_prompt(prompt: str, *, allowed_tables: List[str]) -> Tuple[str, List[str]]:
+async def build_sql_from_prompt(
+    prompt: str,
+    *,
+    allowed_tables: List[str],
+    db: Session | None = None,
+) -> Tuple[str, List[str]]:
     """Call OpenAI Chat Completions API to turn natural language into SQL.
 
     Returns a tuple ``(sql, columns)`` where ``columns`` is the ordered list of
@@ -106,15 +112,7 @@ async def build_sql_from_prompt(prompt: str, *, allowed_tables: List[str]) -> Tu
     the actual query result set.
     """
 
-    api_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OPENAI_API_KEY is not configured on the backend; contact an administrator.",
-        )
-
-    model = settings.OPENAI_MODEL
-    base_url = settings.OPENAI_API_BASE_URL.rstrip("/")
+    api_key, model, base_url = get_openai_api_config(db)
 
     system_prompt = (
         "You are an internal analytics SQL generator for a private eBay operations app. "
