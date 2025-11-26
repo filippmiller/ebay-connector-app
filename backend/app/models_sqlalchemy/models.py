@@ -423,6 +423,11 @@ class Inventory(Base):
     buyer_info = Column(Text, nullable=True)
     tracking_number = Column(String(100), nullable=True, index=True)
     raw_payload = Column(JSONB, nullable=True)
+
+    # Optional link to parts_detail row used by the eBay listing worker.
+    # This is populated when listings are committed from the ListingPage and
+    # allows Inventory status changes to keep PartsDetail.status_sku in sync.
+    parts_detail_id = Column(Integer, nullable=True, index=True)
     
     sku = relationship("SKU", back_populates="inventory_items")
     warehouse = relationship("Warehouse", back_populates="inventory_items")

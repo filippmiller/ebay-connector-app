@@ -9,6 +9,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Loader2, Download, RefreshCw, X, Camera } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
+import { useEbayListingDebug } from '@/hooks/useEbayListingDebug';
 
 interface InventoryItem {
   id: number;
@@ -33,6 +35,7 @@ interface InventoryItem {
   buyer_info?: string;
   tracking_number?: string;
   notes?: string;
+  parts_detail_id?: number;
 }
 
 export default function InventoryPageV2() {
@@ -63,6 +66,20 @@ export default function InventoryPageV2() {
 
   const { toast } = useToast();
 
+  const {
+    isDebugEnabled,
+    runDebugForIds,
+    runDebugForAutoCandidates,
+    trace: debugTrace,
+    open: debugOpen,
+    setOpen: setDebugOpen,
+    loading: debugLoading,
+    error: debugError,
+  } = useEbayListingDebug();
+
+  const [debugIds, setDebugIds] = useState('');
+  const [debugMaxItems, setDebugMaxItems] = useState<number | ''>(50);
+
   useEffect(() => {
     fetchInventory();
   }, [filters]);
@@ -73,7 +90,7 @@ export default function InventoryPageV2() {
     }
   }, [detailId]);
 
-  const fetchInventory = async () => {
+  const fetchInventory = async (): Promise<InventoryItem[]> => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -85,12 +102,58 @@ export default function InventoryPageV2() {
 
       const response = await api.get(`/inventory/search`, { params });
 
-      setItems(response.data.rows || []);
+      const rows: InventoryItem[] = response.data.rows || [];
+      setItems(rows);
       setTotal(response.data.total || 0);
+      return rows;
     } catch (error) {
       console.error('Failed to fetch inventory:', error);
+      // On error, keep existing items and return them so callers have a
+      // consistent view for any debug-only logic.
+      return items;
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRunDebugWorker = async () => {
+    if (!isDebugEnabled) return;
+    const raw = debugIds.trim();
+    if (!raw) {
+      toast({ title: 'No IDs provided', description: 'Enter parts_detail IDs (comma separated).', variant: 'destructive' });
+      return;
+    }
+
+    const ids = Array.from(
+      new Set(
+        raw
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => Number(s))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    );
+
+    if (!ids.length) {
+      toast({ title: 'Invalid IDs', description: 'Could not parse any numeric IDs from input.', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      await runDebugForIds(ids, { dryRun: false, maxItems: 50 });
+    } catch {
+      // Errors are already surfaced via the debug hook (toast + error state).
+    }
+  };
+
+  const handleRunBulkAuto = async () => {
+    if (!isDebugEnabled) return;
+    const max = typeof debugMaxItems === 'number' && debugMaxItems > 0 ? debugMaxItems : 50;
+    try {
+      await runDebugForAutoCandidates({ dryRun: false, maxItems: max });
+    } catch {
+      // Errors are already surfaced via the debug hook (toast + error state).
     }
   };
 
@@ -109,18 +172,70 @@ export default function InventoryPageV2() {
       return;
     }
 
+    // Capture a snapshot of the currently selected rows so we can detect
+    // status transitions after the bulk action and inventory reload.
+    const prevById = new Map<number, InventoryItem>();
+    items.forEach((item) => {
+      if (selected.has(item.id)) {
+        prevById.set(item.id, item);
+      }
+    });
+
     try {
       const response = await api.post('/inventory/admin/bulk', {
         ids: Array.from(selected),
-        action
+        action,
       });
 
       toast({
         title: "Bulk Action Complete",
-        description: `Updated ${response.data.updated} items`
+        description: `Updated ${response.data.updated} items`,
       });
       setSelected(new Set());
-      fetchInventory();
+
+      // Reload inventory and use the fresh rows to detect which linked
+      // parts_detail records just transitioned to AVAILABLE (Checked).
+      const newRows = await fetchInventory();
+      const newById = new Map<number, InventoryItem>();
+      newRows.forEach((row) => {
+        newById.set(row.id, row);
+      });
+
+      if (isDebugEnabled && prevById.size > 0) {
+        const partsDetailIdsToDebug: number[] = [];
+
+        prevById.forEach((prevRow, id) => {
+          const nextRow = newById.get(id);
+          if (!nextRow) {
+            return;
+          }
+
+          const prevStatus = prevRow.status;
+          const nextStatus = nextRow.status;
+          const partsDetailId = nextRow.parts_detail_id ?? prevRow.parts_detail_id;
+
+          if (
+            prevStatus !== 'AVAILABLE' &&
+            nextStatus === 'AVAILABLE' &&
+            partsDetailId &&
+            partsDetailId > 0
+          ) {
+            partsDetailIdsToDebug.push(partsDetailId);
+          }
+        });
+
+        if (partsDetailIdsToDebug.length > 0) {
+          try {
+            await runDebugForIds(partsDetailIdsToDebug, {
+              dryRun: false,
+              maxItems: partsDetailIdsToDebug.length || 50,
+            });
+          } catch {
+            // Debug worker errors are surfaced via the hook (toast + error state)
+            // and must never break the main bulk action flow.
+          }
+        }
+      }
     } catch (error) {
       toast({ title: "Bulk action failed", variant: "destructive" });
     }
@@ -500,6 +615,64 @@ export default function InventoryPageV2() {
           )}
         </SheetContent>
       </Sheet>
+
+      {isDebugEnabled && (
+        <div className="mt-4 border rounded-lg bg-white p-3 text-xs font-mono text-gray-700">
+          <div className="flex items-center justify-between mb-2">
+            <div className="font-semibold text-gray-800">eBay Listing Worker Debug (parts_detail)</div>
+            {debugLoading && <span className="text-blue-600">Running…</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <input
+              className="border rounded px-2 py-1 text-xs min-w-[260px]"
+              placeholder="parts_detail IDs (e.g. 101, 102, 103)"
+              value={debugIds}
+              onChange={(e) => setDebugIds(e.target.value)}
+            />
+            <button
+              className="px-3 py-1 text-xs rounded bg-black text-white hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              onClick={handleRunDebugWorker}
+              disabled={debugLoading}
+            >
+              Run listing worker (debug)
+            </button>
+            <input
+              type="number"
+              min={1}
+              max={200}
+              className="border rounded px-2 py-1 text-xs w-24"
+              placeholder="max items"
+              value={debugMaxItems === '' ? '' : debugMaxItems}
+              onChange={(e) => {
+                const v = e.target.value;
+                setDebugMaxItems(v === '' ? '' : Number(v));
+              }}
+            />
+            <button
+              className="px-3 py-1 text-xs rounded bg-blue-700 text-white hover:bg-blue-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              onClick={handleRunBulkAuto}
+              disabled={debugLoading}
+            >
+              Run worker for Checked (bulk)
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-500 mb-1">
+            Bulk mode calls POST /api/debug/ebay/list-once without explicit ids; the backend auto-selects
+            up to <span className="font-semibold">max_items</span> parts_detail rows with
+            <code className="mx-1">status_sku = Checked</code>, <code className="mx-1">item_id IS NULL</code>, and no
+            freeze/cancel flags, grouped by account and published in batches.
+          </p>
+          {debugError && <div className="text-red-600 text-[11px]">Error: {debugError}</div>}
+        </div>
+      )}
+
+      {isDebugEnabled && (
+        <WorkerDebugTerminalModal
+          isOpen={debugOpen}
+          onClose={() => setDebugOpen(false)}
+          trace={debugTrace}
+        />
+      )}
     </div>
   );
 }

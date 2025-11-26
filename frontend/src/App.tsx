@@ -15,6 +15,7 @@ import { AnalyticsDashboardPage } from './pages/AnalyticsDashboardPage';
 import TodoListPage from './pages/TodoListPage';
 import BuyingPage from './pages/BuyingPage';
 import InventoryPageV3 from './pages/InventoryPageV3';
+import InventoryPageV2 from './pages/InventoryPageV2';
 import TransactionsPage from './pages/TransactionsPage';
 import FinancialsPage from './pages/FinancialsPage';
 import AdminJobsPage from './pages/AdminJobsPage';
@@ -42,6 +43,7 @@ import AdminAiRulesPage from './pages/AdminAiRulesPage';
 import AdminMonitoringPage from './pages/AdminMonitoringPage';
 import AdminModelProfitPage from './pages/AdminModelProfitPage';
 import AdminActionsPage from './pages/AdminActionsPage';
+import AdminAiCenterPage from './pages/AdminAiCenterPage';
 import './App.css';
 import './App.css';
 
@@ -135,6 +137,7 @@ function App() {
           <Route path="/admin/users" element={<ProtectedRoute><AdminUsersPage /></ProtectedRoute>} />
           <Route path="/admin/ui-tweak" element={<ProtectedRoute><AdminUITweakPage /></ProtectedRoute>} />
           <Route path="/admin/security" element={<ProtectedRoute><SecurityCenterPage /></ProtectedRoute>} />
+          <Route path="/admin/ai-center" element={<ProtectedRoute><AdminAiCenterPage /></ProtectedRoute>} />
           <Route path="/admin/ai-grid" element={<ProtectedRoute><AdminAiGridPage /></ProtectedRoute>} />
           <Route path="/admin/ai-rules" element={<ProtectedRoute><AdminAiRulesPage /></ProtectedRoute>} />
           <Route path="/admin/monitor" element={<ProtectedRoute><AdminMonitoringPage /></ProtectedRoute>} />
@@ -217,6 +220,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <InventoryPageV3 />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/inventory-v2"
+            element={
+              <ProtectedRoute>
+                <InventoryPageV2 />
               </ProtectedRoute>
             }
           />

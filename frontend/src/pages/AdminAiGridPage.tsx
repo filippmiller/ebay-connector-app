@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,14 @@ interface AiQueryResponseDto {
   sql: string;
 }
 
+const GRID_KEY = 'admin_ai_grid';
+const LAYOUT_STORAGE_KEY = `grid_layout_${GRID_KEY}`;
+
+interface StoredLayout {
+  order: string[];
+  widths: Record<string, number>;
+}
+
 export default function AdminAiGridPage() {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,6 +36,48 @@ export default function AdminAiGridPage() {
   const [rows, setRows] = useState<Record<string, any>[]>([]);
   const [columnMetaByName, setColumnMetaByName] = useState<Record<string, GridColumnMeta>>({});
   const [lastSql, setLastSql] = useState<string | null>(null);
+
+  const applyStoredLayout = useMemo(
+    () =>
+      (incoming: AppDataGridColumnState[]): AppDataGridColumnState[] => {
+        if (!incoming.length) return incoming;
+        let stored: StoredLayout | null = null;
+        try {
+          const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+          if (raw) {
+            stored = JSON.parse(raw) as StoredLayout;
+          }
+        } catch {
+          stored = null;
+        }
+
+        if (!stored || !stored.order || stored.order.length === 0) {
+          return incoming;
+        }
+
+        const byName = new Map<string, AppDataGridColumnState>();
+        incoming.forEach((c) => {
+          byName.set(c.name, { ...c });
+        });
+
+        const ordered: AppDataGridColumnState[] = [];
+        for (const name of stored.order) {
+          const col = byName.get(name);
+          if (!col) continue;
+          const width = stored.widths?.[name];
+          ordered.push({ ...col, width: typeof width === 'number' && width > 0 ? width : col.width });
+          byName.delete(name);
+        }
+
+        // Append any new columns that were not in the stored layout.
+        byName.forEach((col) => {
+          ordered.push(col);
+        });
+
+        return ordered;
+      },
+    [],
+  );
 
   const handleRunQuery = async () => {
     const trimmed = prompt.trim();
@@ -41,11 +91,12 @@ export default function AdminAiGridPage() {
       const resp = await api.post<AiQueryResponseDto>('/api/admin/ai/query', { prompt: trimmed });
       const data = resp.data;
 
-      const nextCols: AppDataGridColumnState[] = data.columns.map((c) => ({
+      const baseCols: AppDataGridColumnState[] = data.columns.map((c) => ({
         name: c.field,
         label: c.headerName || c.field,
         width: c.width && c.width > 0 ? c.width : 180,
       }));
+      const nextCols = applyStoredLayout(baseCols);
       setColumns(nextCols);
 
       const meta: Record<string, GridColumnMeta> = {};
@@ -127,8 +178,16 @@ export default function AdminAiGridPage() {
                 rows={rows}
                 columnMetaByName={columnMetaByName}
                 loading={loading}
-                gridKey="admin_ai_grid"
+                gridKey={GRID_KEY}
                 gridTheme={null}
+                onLayoutChange={({ order, widths }) => {
+                  const payload: StoredLayout = { order, widths };
+                  try {
+                    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(payload));
+                  } catch {
+                    // best-effort only
+                  }
+                }}
               />
             )}
           </div>

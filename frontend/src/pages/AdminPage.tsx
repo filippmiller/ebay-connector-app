@@ -57,6 +57,11 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">Adjust navigation, text size, and grid density</p>
           </Card>
           
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ai-center')}>
+            <h2 className="text-lg font-semibold">AI & Automation Center</h2>
+            <p className="text-sm text-gray-600 mt-1">Обзор всех AI-правил, воркеров и кандидатов</p>
+          </Card>
+
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ai-grid')}>
             <h2 className="text-lg font-semibold">AI Grid Playground</h2>
             <p className="text-sm text-gray-600 mt-1">Test AI-запросы и живой грид в админке</p>

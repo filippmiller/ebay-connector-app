@@ -19,7 +19,6 @@ from . import (
     admin_ai,
     admin_ai_rules_ext,
     admin_monitoring,
-    admin_profitability,
     orders_api,
     grids_data,
     admin_mssql,
@@ -33,9 +32,6 @@ from . import (
     sq_catalog,
     ebay_notifications,
     sniper,
-    admin_ai,
-    admin_ai_rules_ext,
-    admin_monitoring,
-    admin_profitability,
     admin_actions,
+    admin_ai_overview,
 )

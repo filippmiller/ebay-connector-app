@@ -43,6 +43,20 @@ This document describes the current eBay OAuth token flow in production, storage
   - inventory/offers → https://api.ebay.com/oauth/api_scope/sell.inventory
   - messages → https://api.ebay.com/oauth/api_scope/trading
 
+**2025-11-26 – Sniper / Buy Offer note:**
+
+- Для Sniper-модуля (Buy Browse + Buy Offer) мы дополнительно полагаемся на
+  наличие buy-скопов в user-токене, в частности:
+  - base: `https://api.ebay.com/oauth/api_scope`;
+  - bidding: `https://api.ebay.com/oauth/api_scope/buy.offer.auction`.
+- Эти scope не отражены в упрощённой матрице выше (она фокусируется на
+  sell-* и базовых Debugger-шаблонах), но фактически присутствуют в
+  `ebay_authorizations.scopes` для аккаунтов, переподключённых после
+  применения миграции `ensure_buy_offer_auction_scope_20251126`.
+- При анализе проблем со Sniper/ставками всегда проверяйте, что у
+  соответствующего аккаунта в `ebay_authorizations.scopes` есть
+  `buy.offer.auction`.
+
 5) Why “Full Access” TTL looked like 2 hours previously
 - The UI used the term “Full Access Token” for the displayed token but actually showed the user access token, which naturally has ~2h TTL. This was a terminology/UI bug. The UI is corrected to:
   - “User access token (~2h)” — used for REST calls.

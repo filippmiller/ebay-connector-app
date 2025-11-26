@@ -507,6 +507,10 @@ async def commit_listing_items(
             db.flush()  # assign ID
             parts_detail_ids.append(pd_row.id)
 
+            # Link the Inventory row to its corresponding parts_detail row so
+            # that Inventory updates can drive the listing worker lifecycle.
+            inv.parts_detail_id = pd_row.id
+
             # Also mirror into legacy tbl_parts_inventory
             _insert_legacy_inventory_row(
                 db=db,

@@ -87,6 +87,35 @@ state. Typical automatic lifecycle today is:
 
 Router: `backend/app/routers/sniper.py`, prefix `/api/sniper`.
 
+### OAuth scopes and tokens (Sniper-specific)
+
+- Sniper использует **те же account-level user токены**, что и остальные
+  eBay-модули, но для Browse/Buy Offer ему дополнительно требуются buy-скопы.
+- Для корректной работы Sniper-воркера access token eBay-аккаунта должен
+  включать как минимум:
+  - `https://api.ebay.com/oauth/api_scope` – базовый browse/identity scope,
+    используется в вызове `GET /buy/browse/v1/item/get_item_by_legacy_id` при
+    создании снайпа и в воркере при разрешении REST `itemId`.
+  - `https://api.ebay.com/oauth/api_scope/buy.offer.auction` – scope для
+    Buy Offer Sniper:
+    - `POST /buy/offer/v1_beta/bidding/{item_id}/place_proxy_bid`;
+    - `GET /buy/offer/v1_beta/bidding/{item_id}`.
+- Оба scope попадают в токен автоматически, если:
+  - применены миграции Alembic для `ebay_scope_definitions`, включая
+    `ensure_buy_offer_auction_scope_20251126`;
+  - аккаунт был заново подключён через `/ebay/auth/start` после применения
+    миграций.
+- При диагностике проблем со Sniper важно:
+  - проверить `ebay_authorizations.scopes` для соответствующего
+    `ebay_account_id` и убедиться, что там есть `buy.offer.auction`;
+  - при необходимости переподключить аккаунт, чтобы получить токен с
+    обновлённым набором scope.
+
+### POST /api/sniper/snipes
+
+Create a new snipe using minimal client input and server-side metadata
+lookup from eBay.
+
 ### POST /api/sniper/snipes
 
 Create a new snipe using minimal client input and server-side metadata

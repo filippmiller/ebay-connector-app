@@ -44,8 +44,8 @@ from app.routers import (
     admin_ai,
     admin_ai_rules_ext,
     admin_monitoring,
-    admin_profitability,
     admin_actions,
+    admin_ai_overview,
     integrations,
 )
 from app.utils.logger import logger
@@ -141,8 +141,8 @@ app.include_router(sniper.router)
 app.include_router(admin_ai.router)
 app.include_router(admin_ai_rules_ext.router)
 app.include_router(admin_monitoring.router)
-app.include_router(admin_profitability.router)
 app.include_router(admin_actions.router)
+app.include_router(admin_ai_overview.router)
 app.include_router(integrations.router)
 
 @app.on_event("startup")
