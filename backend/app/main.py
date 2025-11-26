@@ -47,6 +47,7 @@ from app.routers import (
     admin_actions,
     admin_ai_overview,
     integrations,
+    admin_ai_integrations,
 )
 from app.utils.logger import logger
 import os
@@ -144,6 +145,7 @@ app.include_router(admin_monitoring.router)
 app.include_router(admin_actions.router)
 app.include_router(admin_ai_overview.router)
 app.include_router(integrations.router)
+app.include_router(admin_ai_integrations.router)
 
 @app.on_event("startup")
 async def startup_event():

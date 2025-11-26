@@ -4,33 +4,42 @@ import FixedHeader from '@/components/FixedHeader';
 import { Card } from '@/components/ui/card';
 import api from '@/lib/apiClient';
 
-interface OpenAiProviderDto {
-  provider_code: string;
-  name: string;
+interface OpenAiSettingsDto {
   has_api_key: boolean;
-  model_default: string | null;
+  model_default: string;
 }
 
-const MODEL_OPTIONS = ['gpt-4.1-mini', 'gpt-4.1', 'o3-mini'];
+const OPENAI_MODELS = [
+  'gpt-4.1-mini',
+  'gpt-4.1',
+  'gpt-4o-mini',
+  'gpt-4o',
+  'gpt-5.1-mini',
+  'gpt-5.1',
+];
+
+const DEFAULT_MODEL = 'gpt-4.1-mini';
 
 export default function AdminAiSettingsPage() {
-  const [provider, setProvider] = useState<OpenAiProviderDto | null>(null);
+  const [settings, setSettings] = useState<OpenAiSettingsDto | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState('');
-  const [modelDefault, setModelDefault] = useState('gpt-4.1-mini');
+  const [modelDefault, setModelDefault] = useState(DEFAULT_MODEL);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
 
-  const loadProvider = async () => {
+  const loadSettings = async () => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await api.get<OpenAiProviderDto>('/integrations/ai-provider/openai');
+      const resp = await api.get<OpenAiSettingsDto>('/ai/integrations/ai-provider/openai');
       const data = resp.data;
-      setProvider(data);
+      setSettings(data);
       if (data.model_default) {
         setModelDefault(data.model_default);
+      } else {
+        setModelDefault(DEFAULT_MODEL);
       }
     } catch (e: any) {
       const msg = e?.response?.data?.detail || e?.message || 'Не удалось загрузить настройки OpenAI';
@@ -41,7 +50,7 @@ export default function AdminAiSettingsPage() {
   };
 
   useEffect(() => {
-    void loadProvider();
+    void loadSettings();
   }, []);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -50,13 +59,13 @@ export default function AdminAiSettingsPage() {
     setError(null);
     setFlash(null);
     try {
-      await api.post<OpenAiProviderDto>('/integrations/ai-provider/openai', {
+      await api.post('/ai/integrations/ai-provider/openai', {
         api_key: apiKeyInput || null,
         model_default: modelDefault,
       });
       setApiKeyInput('');
       setFlash('Настройки сохранены. Новый ключ будет использоваться для AI-запросов.');
-      void loadProvider();
+      void loadSettings();
     } catch (e: any) {
       const msg = e?.response?.data?.detail || e?.message || 'Не удалось сохранить настройки OpenAI';
       setError(String(msg));
@@ -101,7 +110,7 @@ export default function AdminAiSettingsPage() {
                 id="openai-api-key"
                 type="password"
                 className="w-full border rounded px-2 py-1 text-xs bg-white"
-                placeholder={provider?.has_api_key ? '•••••••• (ключ уже задан, введите новый для замены)' : ''}
+                placeholder={settings?.has_api_key ? '•••••••• (ключ уже задан, введите новый для замены)' : ''}
                 autoComplete="off"
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
@@ -122,7 +131,7 @@ export default function AdminAiSettingsPage() {
                 value={modelDefault}
                 onChange={(e) => setModelDefault(e.target.value)}
               >
-                {MODEL_OPTIONS.map((m) => (
+                {OPENAI_MODELS.map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
