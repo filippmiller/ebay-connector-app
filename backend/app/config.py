@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE_URL: str = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+
+    # Optional Deepgram API key for high-quality speech-to-text.
+    # This key is ONLY used on the backend; it is never exposed to the frontend.
+    DEEPGRAM_API_KEY: Optional[str] = None
     
     @property
     def secret_key(self) -> str:

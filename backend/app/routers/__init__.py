@@ -41,4 +41,5 @@ from . import (
     admin_ai_overview,
     integrations,
     admin_ai_integrations,
+    ai_speech,
 )

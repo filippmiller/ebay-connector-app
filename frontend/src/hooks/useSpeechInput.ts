@@ -58,15 +58,23 @@ function pickPreferredLanguage(fallback: string = 'ru-RU'): string {
 }
 
 /**
+ * Преобразует BCP-47 код (ru-RU / en-US) в короткий хинт для Deepgram.
+ */
+function toDeepgramLanguageHint(langBcp47: string): string | undefined {
+  const lower = langBcp47.toLowerCase();
+  if (lower.startsWith('ru')) return 'ru';
+  if (lower.startsWith('en')) return 'en';
+  return undefined;
+}
+
+/**
  * Основной React‑хук для голосового ввода.
  *
- * Пример использования:
- *
- *   const { supportsSpeech, isRecording, error, startDictation } = useSpeechInput();
- *
- *   const handleVoice = () => {
- *     startDictation((text) => setPrompt(prev => prev ? prev + ' ' + text : text));
- *   };
+ * Текущая реализация:
+ * - Пишет короткий отрывок через MediaRecorder (если доступен) и
+ *   отправляет его на backend /api/ai/speech/deepgram.
+ * - Backend вызывает Deepgram STT и возвращает текст.
+ * - API‑ключ Deepgram хранится только на сервере.
  */
 export function useSpeechInput(options: UseSpeechInputOptions = {}): UseSpeechInputResult {
   const [supportsSpeech, setSupportsSpeech] = useState(false);
@@ -75,9 +83,11 @@ export function useSpeechInput(options: UseSpeechInputOptions = {}): UseSpeechIn
 
   useEffect(() => {
     try {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      setSupportsSpeech(Boolean(SpeechRecognition));
+      const hasMediaRecorder =
+        typeof (window as any).MediaRecorder !== 'undefined' &&
+        navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === 'function';
+      setSupportsSpeech(Boolean(hasMediaRecorder));
     } catch {
       setSupportsSpeech(false);
     }
@@ -85,50 +95,94 @@ export function useSpeechInput(options: UseSpeechInputOptions = {}): UseSpeechIn
 
   const startDictation = useCallback(
     (onText: (text: string) => void) => {
-      try {
-        const SpeechRecognition =
-          (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-          setError('Распознавание речи не поддерживается в этом браузере.');
-          return;
-        }
-
-        const recognition = new SpeechRecognition();
-        // Если язык явно не передан, пытаемся угадать его из настроек браузера,
-        // отдавая приоритет русскому (ru-RU), затем английскому (en-US).
-        const lang = options.language || pickPreferredLanguage('ru-RU');
-        recognition.lang = lang;
-        recognition.interimResults = false;
-        recognition.maxAlternatives = 1;
-
-        setIsRecording(true);
-        setError(null);
-
-        recognition.onresult = (event: any) => {
-          const transcript = event.results?.[0]?.[0]?.transcript as string | undefined;
-          if (transcript) {
-            onText(transcript);
-          }
-        };
-
-        recognition.onerror = (event: any) => {
-          const msg = event?.error === 'not-allowed'
-            ? 'Доступ к микрофону запрещён браузером.'
-            : 'Ошибка распознавания речи.';
-          setError(msg);
-        };
-
-        recognition.onend = () => {
-          setIsRecording(false);
-        };
-
-        recognition.start();
-      } catch (e: any) {
-        setIsRecording(false);
-        setError(e?.message || 'Не удалось запустить распознавание речи.');
+      if (!supportsSpeech) {
+        setError('Браузер не поддерживает MediaRecorder для голосового ввода.');
+        return;
       }
+
+      const recordAndSend = async () => {
+        try {
+          setIsRecording(true);
+          setError(null);
+
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const mimeType = 'audio/webm';
+          const MediaRecorderCtor = (window as any).MediaRecorder as typeof MediaRecorder;
+          const recorder = new MediaRecorderCtor(stream, { mimeType });
+
+          const chunks: BlobPart[] = [];
+
+          recorder.ondataavailable = (event: BlobEvent) => {
+            if (event.data && event.data.size > 0) {
+              chunks.push(event.data);
+            }
+          };
+
+          recorder.start();
+
+          // Автоматически останавливаем запись через 10 секунд
+          const MAX_MS = 10000;
+          const stopTimeout = setTimeout(() => {
+            if (recorder.state === 'recording') {
+              recorder.stop();
+            }
+          }, MAX_MS);
+
+          recorder.onstop = async () => {
+            clearTimeout(stopTimeout);
+            stream.getTracks().forEach((t) => t.stop());
+
+            const blob = new Blob(chunks, { type: mimeType });
+            if (blob.size === 0) {
+              setIsRecording(false);
+              setError('Не удалось записать звук. Попробуйте ещё раз.');
+              return;
+            }
+
+            try {
+              const form = new FormData();
+              form.append('file', blob, 'speech.webm');
+
+              const langBcp47 = options.language || pickPreferredLanguage('ru-RU');
+              const dgLang = toDeepgramLanguageHint(langBcp47);
+              if (dgLang) {
+                form.append('language', dgLang);
+              }
+
+              const { default: api } = await import('@/lib/apiClient');
+              const resp = await api.post<{ text: string }>('/ai/speech/deepgram', form, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+              });
+
+              const text = (resp.data?.text || '').trim();
+              if (text) {
+                onText(text);
+              } else {
+                setError('Речь распознана, но текст пустой. Попробуйте сказать чуть медленнее.');
+              }
+            } catch (e: any) {
+              const msg =
+                e?.response?.data?.detail ||
+                e?.message ||
+                'Не удалось отправить аудио на сервер для распознавания речи.';
+              setError(String(msg));
+            } finally {
+              setIsRecording(false);
+            }
+          };
+        } catch (e: any) {
+          setIsRecording(false);
+          if (e?.name === 'NotAllowedError') {
+            setError('Доступ к микрофону запрещён браузером. Разрешите доступ в настройках.');
+          } else {
+            setError(e?.message || 'Не удалось получить доступ к микрофону.');
+          }
+        }
+      };
+
+      void recordAndSend();
     },
-    [options.language],
+    [supportsSpeech, options.language],
   );
 
   return { supportsSpeech, isRecording, error, startDictation };
