@@ -42,6 +42,14 @@ interface MssqlTablePreviewResponse {
   offset: number;
 }
 
+// Minimal Supabase table info used by the Migration Worker tab.
+// This matches the shape returned by /api/admin/db/tables for our purposes.
+interface TableInfo {
+  schema: string;
+  name: string;
+  row_estimate?: number | null;
+}
+
 interface SelectedTable {
   schema: string;
   name: string;
@@ -2102,7 +2110,7 @@ const MigrationWorkerTab: React.FC = () => {
                   placeholder="DB_A28F26_parts"
                 />
                 <div className="mt-1 flex items-center gap-2">
-                  <Button size="xs" variant="outline" onClick={() => void handleCreateTestConnection()}>
+                  <Button size="sm" variant="outline" onClick={() => void handleCreateTestConnection()}>
                     Test & load tables
                   </Button>
                   {createMssqlTestOk === true && (
