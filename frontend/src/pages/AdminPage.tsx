@@ -51,6 +51,11 @@ export default function AdminPage() {
             <h2 className="text-lg font-semibold">Security Center</h2>
             <p className="text-sm text-gray-600 mt-1">Login protection, security events, and policies</p>
           </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ai-settings')}>
+            <h2 className="text-lg font-semibold">AI Settings</h2>
+            <p className="text-sm text-gray-600 mt-1">OpenAI ключ и модель по умолчанию</p>
+          </Card>
           
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ui-tweak')}>
             <h2 className="text-lg font-semibold">UI Tweak</h2>
@@ -70,6 +75,11 @@ export default function AdminPage() {
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ai-rules')}>
             <h2 className="text-lg font-semibold">AI Rules</h2>
             <p className="text-sm text-gray-600 mt-1">Определить правила "хорошей покупки" и окупаемости</p>
+          </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ai-email-training')}>
+            <h2 className="text-lg font-semibold">AI Email Training</h2>
+            <p className="text-sm text-gray-600 mt-1">Просмотр и модерация email-пар для обучения AI</p>
           </Card>
           
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/monitor')}>

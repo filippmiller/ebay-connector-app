@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import FixedHeader from '@/components/FixedHeader';
 import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import api from '@/lib/apiClient';
 
 interface IntegrationAccountDto {
@@ -14,6 +15,17 @@ interface IntegrationAccountDto {
   external_account_id: string | null;
   display_name: string | null;
   status: string;
+  last_sync_at: string | null;
+  meta: Record<string, any> | null;
+}
+
+interface GmailSyncSummaryDto {
+  account_id: string;
+  messages_fetched: number;
+  messages_upserted: number;
+  pairs_created: number;
+  pairs_skipped_existing: number;
+  errors: string[];
   last_sync_at: string | null;
   meta: Record<string, any> | null;
 }
@@ -52,6 +64,9 @@ export default function AdminIntegrationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<FlashMessage | null>(null);
   const [gmailLoading, setGmailLoading] = useState(false);
+  const [syncLoadingAccountId, setSyncLoadingAccountId] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<GmailSyncSummaryDto | null>(null);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
 
   // Handle ?gmail=connected|error&reason=... from backend callback
   useEffect(() => {
@@ -101,6 +116,37 @@ export default function AdminIntegrationsPage() {
     }
   };
 
+  const formatShortDateTime = (value: string | null | undefined): string => {
+    if (!value) return '—';
+    try {
+      const d = new Date(value);
+      return d.toLocaleString(undefined, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return value;
+    }
+  };
+
+  const getLastSyncSummary = (acc: IntegrationAccountDto): GmailSyncSummaryDto | null => {
+    const raw = acc.meta?.last_sync_summary;
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+      account_id: String(raw.account_id ?? acc.id),
+      messages_fetched: Number(raw.messages_fetched ?? 0),
+      messages_upserted: Number(raw.messages_upserted ?? 0),
+      pairs_created: Number(raw.pairs_created ?? 0),
+      pairs_skipped_existing: Number(raw.pairs_skipped_existing ?? 0),
+      errors: Array.isArray(raw.errors) ? raw.errors.map(String) : [],
+      last_sync_at: typeof raw.finished_at === 'string' ? raw.finished_at : acc.last_sync_at,
+      meta: acc.meta ?? {},
+    };
+  };
+
   const hasGmailAccount = useMemo(
     () => accounts.some((a) => a.provider_code === 'gmail' && a.status === 'active'),
     [accounts],
@@ -127,6 +173,27 @@ export default function AdminIntegrationsPage() {
 
   const updateAccountInState = (updated: IntegrationAccountDto) => {
     setAccounts((prev) => prev.map((acc) => (acc.id === updated.id ? updated : acc)));
+  };
+
+  const handleRunSyncNow = async (account: IntegrationAccountDto) => {
+    setError(null);
+    setSyncLoadingAccountId(account.id);
+    try {
+      const resp = await api.post<GmailSyncSummaryDto>(
+        `/api/integrations/accounts/${account.id}/sync-now`,
+      );
+      const result = resp.data;
+      setSyncResult(result);
+      setSyncModalOpen(true);
+      // Best-effort refresh of accounts to reflect new last_sync_at/meta.
+      void loadAccounts();
+      setFlash({ kind: 'success', text: 'Gmail sync completed.' });
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e?.message || 'Не удалось выполнить синхронизацию';
+      setError(String(msg));
+    } finally {
+      setSyncLoadingAccountId(null);
+    }
   };
 
   const withAccountAction = async (
@@ -186,7 +253,11 @@ export default function AdminIntegrationsPage() {
             <div>
               <h2 className="text-lg font-semibold">Gmail</h2>
               <p className="text-sm text-gray-600 mt-1">
-                Подключите Gmail аккаунт, чтобы забирать письма и строить AI-тренировочные пары.
+                Подключите Gmail аккаунт, чтобы забирать исторические письма и строить AI-тренировочные пары.
+              </p>
+              <p className="mt-1 text-[11px] text-gray-500">
+                Gmail используется только для чтения входящих/исходящих писем и обучения AI.
+                Отправка ответов клиентам будет происходить через раздел Messages.
               </p>
             </div>
             <div className="mt-3 flex items-center justify-between">
@@ -229,6 +300,7 @@ export default function AdminIntegrationsPage() {
                     <th className="text-left px-2 py-1">Owner</th>
                     <th className="text-left px-2 py-1">Status</th>
                     <th className="text-left px-2 py-1">Last Sync</th>
+                    <th className="text-left px-2 py-1">Summary</th>
                     <th className="text-left px-2 py-1">Actions</th>
                   </tr>
                 </thead>
@@ -267,6 +339,26 @@ export default function AdminIntegrationsPage() {
                       <td className="px-2 py-1 align-top text-gray-700">
                         {formatDateTime(acc.last_sync_at)}
                       </td>
+                      <td className="px-2 py-1 align-top text-gray-700">
+                        {(() => {
+                          const summary = getLastSyncSummary(acc);
+                          if (!summary) return '—';
+                          const parts: string[] = [];
+                          parts.push(`msgs: ${summary.messages_upserted}`);
+                          parts.push(`pairs: ${summary.pairs_created}`);
+                          if ((summary.errors || []).length > 0) {
+                            parts.push(`errors: ${summary.errors.length}`);
+                          }
+                          return (
+                            <div>
+                              <div>{parts.join(' · ')}</div>
+                              <div className="text-[10px] text-gray-400">
+                                {summary.last_sync_at ? `at ${formatShortDateTime(summary.last_sync_at)}` : ''}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="px-2 py-1 align-top">
                         <div className="flex flex-wrap gap-1">
                           {acc.status === 'active' ? (
@@ -293,6 +385,16 @@ export default function AdminIntegrationsPage() {
                           >
                             Request resync
                           </button>
+                          {acc.provider_code === 'gmail' && (
+                            <button
+                              type="button"
+                              className="px-2 py-0.5 rounded border border-blue-300 bg-white text-[11px] text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+                              disabled={!!syncLoadingAccountId}
+                              onClick={() => void handleRunSyncNow(acc)}
+                            >
+                              {syncLoadingAccountId === acc.id ? 'Running…' : 'Run sync now'}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -303,6 +405,54 @@ export default function AdminIntegrationsPage() {
           )}
         </Card>
       </div>
+
+      <Dialog open={syncModalOpen} onOpenChange={(open) => !open && setSyncModalOpen(false)}>
+        <DialogContent className="max-w-lg text-sm">
+          <DialogHeader>
+            <DialogTitle>Gmail sync result</DialogTitle>
+          </DialogHeader>
+          {syncResult ? (
+            <div className="space-y-2">
+              <div className="text-xs text-gray-600">
+                Для аккаунта <span className="font-mono">{syncResult.account_id}</span>:
+              </div>
+              <ul className="text-xs text-gray-800 list-disc list-inside space-y-0.5">
+                <li>
+                  Сообщений получено: <span className="font-semibold">{syncResult.messages_fetched}</span>
+                </li>
+                <li>
+                  Сообщений записано/обновлено: <span className="font-semibold">{syncResult.messages_upserted}</span>
+                </li>
+                <li>
+                  Пары создано: <span className="font-semibold">{syncResult.pairs_created}</span>
+                  {syncResult.pairs_skipped_existing > 0 && (
+                    <span className="text-gray-500">
+                      {' '}
+                      (пропущено существующих: {syncResult.pairs_skipped_existing})
+                    </span>
+                  )}
+                </li>
+              </ul>
+              {Array.isArray(syncResult.errors) && syncResult.errors.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-xs font-semibold text-red-700">Ошибки:</div>
+                  <ul className="mt-1 text-xs text-red-700 list-disc list-inside space-y-0.5">
+                    {syncResult.errors.map((err, idx) => (
+                      <li key={idx}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="mt-2 text-[11px] text-gray-500">
+                Последний sync:{' '}
+                {formatShortDateTime(syncResult.last_sync_at)}
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-gray-500">Результат синхронизации недоступен.</div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

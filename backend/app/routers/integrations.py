@@ -6,6 +6,7 @@ from typing import Optional, List
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -17,11 +18,13 @@ from app.models_sqlalchemy.models import (
     IntegrationCredentials,
     EmailMessage,
     AiEmailTrainingPair,
+    AiProvider,
     User as SAUser,
 )
 from app.services.auth import get_current_active_user, admin_required
 from app.models.user import User
 from app.utils.logger import logger
+from app.services.gmail_sync import sync_gmail_account
 
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -94,6 +97,25 @@ def _serialize_integration_account(
         "status": account.status,
         "last_sync_at": account.last_sync_at.isoformat() if account.last_sync_at else None,
         "meta": account.meta or {},
+    }
+
+
+def _serialize_ai_email_pair(
+    pair: AiEmailTrainingPair,
+    account: IntegrationAccount,
+    provider: IntegrationProvider,
+) -> dict:
+    return {
+        "id": pair.id,
+        "provider_code": provider.code,
+        "integration_account_id": account.id,
+        "integration_display_name": account.display_name,
+        "thread_id": pair.thread_id,
+        "status": pair.status,
+        "client_text": pair.client_text,
+        "our_reply_text": pair.our_reply_text,
+        "created_at": pair.created_at.isoformat() if pair.created_at else None,
+        "updated_at": pair.updated_at.isoformat() if pair.updated_at else None,
     }
 
 
@@ -462,3 +484,203 @@ async def request_integration_resync(
     logger.info("Manual resync requested for integration account %s by admin %s", account.id, current_user.id)
 
     return _serialize_integration_account(account, provider, owner)
+
+
+@router.post("/accounts/{account_id}/sync-now")
+async def sync_integration_account_now(
+    account_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Run a one-off sync for a single integration account.
+
+    This endpoint is primarily used by the admin Integrations UI to provide a
+    "Run sync now" button with an immediate textual summary of what changed.
+    """
+
+    account = db.query(IntegrationAccount).filter(IntegrationAccount.id == account_id).one_or_none()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="integration_account_not_found")
+
+    provider = db.query(IntegrationProvider).filter(IntegrationProvider.id == account.provider_id).one_or_none()
+    if not provider:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="integration_provider_not_found")
+
+    if provider.code != "gmail":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sync_not_supported_for_provider")
+
+    try:
+        summary = await sync_gmail_account(db, account.id, manual=True)
+    except RuntimeError as exc:
+        # Controlled failures (missing creds, inactive, etc.).
+        logger.error("Gmail sync-now failed for account %s: %s", account.id, exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Gmail sync-now failed for account %s: %s", account.id, exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="gmail_sync_failed") from exc
+
+    # Reload account to ensure last_sync_at/meta are fresh.
+    db.refresh(account)
+
+    return {
+        "account_id": summary.get("account_id"),
+        "messages_fetched": summary.get("messages_fetched", 0),
+        "messages_upserted": summary.get("messages_upserted", 0),
+        "pairs_created": summary.get("pairs_created", 0),
+        "pairs_skipped_existing": summary.get("pairs_skipped_existing", 0),
+        "errors": summary.get("errors", []),
+        "last_sync_at": account.last_sync_at.isoformat() if account.last_sync_at else None,
+        "meta": account.meta or {},
+    }
+
+class AiEmailPairStatusUpdate(BaseModel):
+    status: str
+
+
+class OpenAiProviderPayload(BaseModel):
+    api_key: Optional[str] = None
+    model_default: Optional[str] = None
+
+n@router.get("/ai-email-pairs")
+async def list_ai_email_pairs(
+    status: str = Query("new", description="Filter by pair status: new|approved|rejected"),
+    provider: Optional[str] = Query(None, description="Filter by provider code, e.g. 'gmail'"),
+    integration_account_id: Optional[str] = Query(None, description="Filter by specific integration account id"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """List AI email training pairs for admin review.
+
+    Returns a lightweight paginated payload suitable for the Admin AI Email Training UI.
+    """
+
+    q = (
+        db.query(AiEmailTrainingPair, IntegrationAccount, IntegrationProvider)
+        .join(IntegrationAccount, AiEmailTrainingPair.integration_account_id == IntegrationAccount.id)
+        .join(IntegrationProvider, IntegrationAccount.provider_id == IntegrationProvider.id)
+    )
+
+    if status:
+        q = q.filter(AiEmailTrainingPair.status == status)
+    if provider:
+        q = q.filter(IntegrationProvider.code == provider)
+    if integration_account_id:
+        q = q.filter(IntegrationAccount.id == integration_account_id)
+
+    total = q.count()
+
+    rows = (
+        q.order_by(AiEmailTrainingPair.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    items = [
+        _serialize_ai_email_pair(pair, account, prov)
+        for pair, account, prov in rows
+    ]
+
+    return {"items": items, "count": total, "limit": limit, "offset": offset}
+
+n@router.post("/ai-email-pairs/{pair_id}/status")
+async def update_ai_email_pair_status(
+    pair_id: str,
+    payload: AiEmailPairStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Update the status of a single AI email training pair.
+
+    Valid statuses are: new, approved, rejected.
+    """
+
+    new_status = (payload.status or "").strip().lower()
+    allowed = {"new", "approved", "rejected"}
+    if new_status not in allowed:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_status")
+
+    pair = db.query(AiEmailTrainingPair).filter(AiEmailTrainingPair.id == pair_id).one_or_none()
+    if not pair:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ai_email_pair_not_found")
+
+    pair.status = new_status
+    db.commit()
+    db.refresh(pair)
+
+    account = db.query(IntegrationAccount).filter(IntegrationAccount.id == pair.integration_account_id).one()
+    provider = db.query(IntegrationProvider).filter(IntegrationProvider.id == account.provider_id).one()
+
+    return _serialize_ai_email_pair(pair, account, provider)
+
+n@router.get("/ai-provider/openai")
+async def get_openai_provider(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Return OpenAI provider config without exposing the raw API key.
+
+    The response indicates whether a key is set and what the default model is.
+    """
+
+    provider = (
+        db.query(AiProvider)
+        .filter(AiProvider.provider_code == "openai")
+        .one_or_none()
+    )
+
+    has_api_key = bool(provider and provider.api_key)
+    model_default = provider.model_default if provider else None
+
+    return {
+        "provider_code": "openai",
+        "name": provider.name if provider else "OpenAI",
+        "has_api_key": has_api_key,
+        "model_default": model_default,
+    }
+
+n@router.post("/ai-provider/openai")
+async def upsert_openai_provider(
+    payload: OpenAiProviderPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),
+):
+    """Create or update the OpenAI provider configuration.
+
+    - api_key: new key to store (encrypted). If omitted/empty, the existing
+      key is preserved.
+    - model_default: logical default model name (e.g. "gpt-4.1-mini").
+    """
+
+    provider = (
+        db.query(AiProvider)
+        .filter(AiProvider.provider_code == "openai")
+        .one_or_none()
+    )
+    if not provider:
+        provider = AiProvider(
+            provider_code="openai",
+            name="OpenAI",
+            owner_user_id=str(current_user.id),
+        )
+        db.add(provider)
+
+    # Update API key only when a non-empty value is provided, so an
+    # accidental empty submit does not wipe the key.
+    if payload.api_key is not None and payload.api_key != "":
+        provider.api_key = payload.api_key
+
+    if payload.model_default:
+        provider.model_default = payload.model_default.strip()
+
+    db.commit()
+    db.refresh(provider)
+
+    return {
+        "provider_code": provider.provider_code,
+        "name": provider.name,
+        "has_api_key": bool(provider.api_key),
+        "model_default": provider.model_default,
+    }

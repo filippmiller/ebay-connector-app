@@ -45,6 +45,8 @@ import AdminModelProfitPage from './pages/AdminModelProfitPage';
 import AdminActionsPage from './pages/AdminActionsPage';
 import AdminAiCenterPage from './pages/AdminAiCenterPage';
 import AdminIntegrationsPage from './pages/AdminIntegrationsPage';
+import AdminAiEmailTrainingPage from './pages/AdminAiEmailTrainingPage';
+import AdminAiSettingsPage from './pages/AdminAiSettingsPage';
 import './App.css';
 import './App.css';
 
@@ -142,6 +144,8 @@ function App() {
           <Route path="/admin/ai-center" element={<ProtectedRoute><AdminAiCenterPage /></ProtectedRoute>} />
           <Route path="/admin/ai-grid" element={<ProtectedRoute><AdminAiGridPage /></ProtectedRoute>} />
           <Route path="/admin/ai-rules" element={<ProtectedRoute><AdminAiRulesPage /></ProtectedRoute>} />
+          <Route path="/admin/ai-email-training" element={<ProtectedRoute><AdminAiEmailTrainingPage /></ProtectedRoute>} />
+          <Route path="/admin/ai-settings" element={<ProtectedRoute><AdminAiSettingsPage /></ProtectedRoute>} />
           <Route path="/admin/monitor" element={<ProtectedRoute><AdminMonitoringPage /></ProtectedRoute>} />
           <Route path="/admin/model-profit" element={<ProtectedRoute><AdminModelProfitPage /></ProtectedRoute>} />
           <Route path="/admin/actions" element={<ProtectedRoute><AdminActionsPage /></ProtectedRoute>} />

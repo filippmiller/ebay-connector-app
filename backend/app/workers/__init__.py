@@ -16,6 +16,7 @@ from app.workers.tasks_reminder_worker import run_tasks_reminder_worker_loop
 from app.workers.sniper_executor import run_sniper_loop
 from app.workers.ebay_monitor_worker import run_monitoring_loop
 from app.workers.auto_offer_buy_worker import run_auto_offer_buy_loop
+from app.workers.gmail_sync_worker import run_gmail_sync_loop, run_gmail_sync_once
 
 __all__ = [
     "refresh_expiring_tokens",
@@ -28,4 +29,6 @@ __all__ = [
     "run_sniper_loop",
     "run_monitoring_loop",
     "run_auto_offer_buy_loop",
+    "run_gmail_sync_loop",
+    "run_gmail_sync_once",
 ]

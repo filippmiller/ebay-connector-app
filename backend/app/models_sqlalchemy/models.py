@@ -1740,6 +1740,50 @@ class AiEmailTrainingPair(Base):
     our_reply_message = relationship("EmailMessage", foreign_keys=[our_reply_message_id], back_populates="reply_pairs")
 
 
+class AiProvider(Base):
+    """AI provider configuration, including encrypted API keys (e.g. OpenAI).
+
+    This table starts with a single provider_code="openai" row but is generic
+    enough to support additional providers in the future.
+    """
+
+    __tablename__ = "ai_providers"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    provider_code = Column(Text, nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+
+    owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    _api_key = Column("api_key", Text, nullable=True)
+    model_default = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # ------------------------------------------------------------------
+    # Encrypted API key accessors
+    # ------------------------------------------------------------------
+    @property
+    def api_key(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._api_key
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @api_key.setter
+    def api_key(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._api_key = None
+        else:
+            self._api_key = crypto.encrypt(value)
+
+
 class AccountingExpenseCategory(Base):
     __tablename__ = "accounting_expense_category"
 
