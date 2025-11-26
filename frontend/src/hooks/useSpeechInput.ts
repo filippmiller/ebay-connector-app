@@ -34,6 +34,21 @@ export interface UseSpeechInputResult {
   startDictation(onText: (text: string) => void): void;
 }
 
+function pickPreferredLanguage(fallback: string = 'ru-RU'): string {
+  try {
+    const rawList = (navigator as any).languages || [navigator.language];
+    const langs = (rawList || []).filter(Boolean).map((l: string) => l.toLowerCase());
+
+    // 1) Если есть любой вариант русского — всегда берём его (ты хочешь русский по умолчанию).
+    if (langs.some((l) => l.startsWith('ru'))) return 'ru-RU';
+    // 2) Иначе, если есть английский — берём английский.
+    if (langs.some((l) => l.startsWith('en'))) return 'en-US';
+  } catch {
+    // ignore and fall back below
+  }
+  return fallback;
+}
+
 export function useSpeechInput(options: UseSpeechInputOptions = {}): UseSpeechInputResult {
   const [supportsSpeech, setSupportsSpeech] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -60,7 +75,7 @@ export function useSpeechInput(options: UseSpeechInputOptions = {}): UseSpeechIn
         }
 
         const recognition = new SpeechRecognition();
-        const lang = options.language || (navigator.language?.startsWith('en') ? 'en-US' : 'ru-RU');
+        const lang = options.language || pickPreferredLanguage('ru-RU');
         recognition.lang = lang;
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
