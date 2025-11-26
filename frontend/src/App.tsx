@@ -44,6 +44,7 @@ import AdminMonitoringPage from './pages/AdminMonitoringPage';
 import AdminModelProfitPage from './pages/AdminModelProfitPage';
 import AdminActionsPage from './pages/AdminActionsPage';
 import AdminAiCenterPage from './pages/AdminAiCenterPage';
+import AdminIntegrationsPage from './pages/AdminIntegrationsPage';
 import './App.css';
 import './App.css';
 
@@ -134,6 +135,7 @@ function App() {
           <Route path="/messages" element={<ProtectedRoute><MessagesPage /></ProtectedRoute>} />
           <Route path="/offers" element={<ProtectedRoute><OffersPageV2 /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="/admin/integrations" element={<ProtectedRoute><AdminIntegrationsPage /></ProtectedRoute>} />
           <Route path="/admin/users" element={<ProtectedRoute><AdminUsersPage /></ProtectedRoute>} />
           <Route path="/admin/ui-tweak" element={<ProtectedRoute><AdminUITweakPage /></ProtectedRoute>} />
           <Route path="/admin/security" element={<ProtectedRoute><SecurityCenterPage /></ProtectedRoute>} />

@@ -1,8 +1,11 @@
 """Worker-level configuration for background analytics and automation workers.
 
-This module centralises numeric thresholds and feature flags so they can be
-adjusted without code changes.
+This module mirrors the settings previously located under
+``app.config.worker_settings`` but is defined as a top-level module so that
+it can be imported without requiring ``app.config`` to be a package.
 """
+
+from app.config import settings  # re-use global Settings if needed in future
 
 # Minimum desired profit margin per computer (in the same currency units as
 # expected_profit). The model profitability and monitoring workers use this to

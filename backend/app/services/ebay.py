@@ -2,8 +2,9 @@ import base64
 import httpx
 import asyncio
 import json
-from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List, Tuple, Iterable
+from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 from urllib.parse import urlencode
 from fastapi import HTTPException, status
 from app.config import settings
@@ -24,6 +25,19 @@ TRANSACTIONS_CONCURRENCY = 5
 DISPUTES_CONCURRENCY = 5
 OFFERS_CONCURRENCY = 6
 MESSAGES_CONCURRENCY = 5
+
+
+@dataclass
+class _AppTokenCacheEntry:
+    access_token: str
+    expires_at: datetime  # UTC
+
+
+# In-memory cache for application access tokens, keyed by (environment, scopes_key).
+# scopes_key is a deterministic, normalized representation of the scopes list.
+_APP_TOKEN_CACHE: Dict[Tuple[str, str], _AppTokenCacheEntry] = {}
+# Safety margin (in seconds) subtracted from expires_in so we refresh a bit early.
+_APP_TOKEN_SAFETY_MARGIN_SECONDS = 120
 
 
 class EbayService:
@@ -1002,14 +1016,15 @@ class EbayService:
                 detail=error_msg,
             )
 
-    async def get_app_access_token(
+    async def _get_app_access_token_raw(
         self,
-        scopes: Optional[List[str]] = None,
+        scopes: Optional[Iterable[str]] = None,
         environment: Optional[str] = None,
-    ) -> str:
-        """Obtain an application access token via client credentials grant.
+    ) -> Tuple[str, Optional[int]]:
+        """Low-level helper to obtain an AppToken and its TTL.
 
-        By default, uses ["https://api.ebay.com/oauth/api_scope"].
+        Returns (access_token, expires_in_seconds). Callers that do not care
+        about caching can ignore the second element.
         """
         target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
         original_env = settings.EBAY_ENVIRONMENT
@@ -1036,12 +1051,15 @@ class EbayService:
                 "Authorization": f"Basic {encoded_credentials}",
             }
 
+            scopes_list: List[str]
             if not scopes:
-                scopes = ["https://api.ebay.com/oauth/api_scope"]
+                scopes_list = ["https://api.ebay.com/oauth/api_scope"]
+            else:
+                scopes_list = list(scopes)
 
             # Normalize scopes: strip whitespace and drop empties.
-            scopes = [s.strip() for s in scopes if s and s.strip()]
-            scope_str = " ".join(scopes)
+            scopes_list = [s.strip() for s in scopes_list if s and s.strip()]
+            scope_str = " ".join(scopes_list)
 
             data = {
                 "grant_type": "client_credentials",
@@ -1058,7 +1076,7 @@ class EbayService:
                 "Requesting eBay application access token via client_credentials",
                 request_data={
                     "environment": target_env,
-                    "scopes": scopes,
+                    "scopes": scopes_list,
                     "url": self.token_url,
                     "headers": masked_headers,
                 },
@@ -1096,6 +1114,13 @@ class EbayService:
 
                 token_data = response_body if isinstance(response_body, dict) else response.json()
                 access_token = token_data.get("access_token")
+                expires_in: Optional[int] = None
+                try:
+                    if "expires_in" in token_data:
+                        expires_in = int(token_data.get("expires_in"))  # type: ignore[arg-type]
+                except Exception:
+                    expires_in = None
+
                 if not access_token:
                     logger.error("eBay app token response missing access_token field")
                     raise HTTPException(
@@ -1104,23 +1129,54 @@ class EbayService:
                     )
 
                 logger.info("Successfully obtained eBay application access token")
-                return str(access_token)
+                return str(access_token), expires_in
 
             except httpx.RequestError as e:
-                error_msg = f"HTTP request failed while obtaining app token: {str(e)}"
-                ebay_logger.log_ebay_event(
-                    "app_token_error",
-                    "HTTP request error during app token retrieval",
-                    status="error",
-                    error=error_msg,
-                )
-                logger.error(error_msg)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=error_msg,
-                )
-        finally:
+                error_msg = f        finally:
             settings.EBAY_ENVIRONMENT = original_env
+
+    async def get_browse_app_token(
+        self,
+        scopes: Optional[List[str]] = None,
+        environment: Optional[str] = None,
+    ) -> str:
+        """Return a cached AppToken suitable for Browse/read-only operations.
+
+        This helper wraps the client_credentials flow with a small in-memory
+        cache keyed by (environment, scopes). It is intended for read-heavy
+        paths such as Browse API calls used by Sniper/AI workers.
+        """
+        target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
+n        # Normalize scopes deterministically for cache key purposes.
+        if not scopes:
+            scopes_list = ["https://api.ebay.com/oauth/api_scope"]
+        else:
+            scopes_list = [s.strip() for s in scopes if s and s.strip()]
+        scopes_key = " ".join(sorted(set(scopes_list)))
+
+        cache_key = (target_env, scopes_key)
+        now = datetime.now(timezone.utc)
+        entry = _APP_TOKEN_CACHE.get(cache_key)
+        if entry and entry.expires_at > now:
+            return entry.access_token
+
+        # Cache miss or expired entry: mint a new AppToken and cache it.
+        token, expires_in = await self._get_app_access_token_raw(
+            scopes=scopes_list,
+            environment=target_env,
+        )
+
+        ttl = expires_in or 3600  # fall back to a conservative 1h TTL if missing
+        safety = min(_APP_TOKEN_SAFETY_MARGIN_SECONDS, max(0, ttl // 2))
+        effective_ttl = max(0, ttl - safety)
+        expires_at = now + timedelta(seconds=effective_ttl)
+
+        _APP_TOKEN_CACHE[cache_key] = _AppTokenCacheEntry(
+            access_token=token,
+            expires_at=expires_at,
+        )
+
+        return token
 
     def save_user_tokens(
         self,

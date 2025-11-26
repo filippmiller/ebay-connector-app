@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.config.worker_settings import (
+from app.config_worker_settings import (
     MIN_PROFIT_MARGIN,
     AUTO_BUY_DRY_RUN,
     AUTO_BUY_MIN_ROI,

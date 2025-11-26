@@ -130,19 +130,34 @@ def _resolve_account_and_token(db: Session, snipe: EbaySnipe) -> Tuple[Optional[
     return account, access_token, None
 
 
-async def _resolve_rest_item_id(access_token: str, legacy_item_id: str) -> str:
+async def _resolve_rest_item_id(legacy_item_id: str) -> str:
     """Resolve the RESTful item id from a legacy numeric ItemID via Browse API.
 
     The Sniper UI stores legacy ItemIDs; Buy Offer APIs require the REST-style
     item id used by Browse/Inventory (e.g. ``v1|1234567890|0``). This helper is
     intentionally narrow and only returns the itemId field.
+
+    It uses an application access token (AppToken) obtained via the shared
+    in-memory AppToken cache so that Browse lookups do not depend on
+    per-account user tokens.
     """
 
     base_url = settings.ebay_api_base_url.rstrip("/")
     url = f"{base_url}/buy/browse/v1/item/get_item_by_legacy_id"
     params = {"legacy_item_id": legacy_item_id}
+
+    try:
+        app_token = await ebay_service.get_browse_app_token()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to obtain application access token for Browse: {exc}",
+        )
+
     headers = {
-        "Authorization": f"Bearer {access_token}",
+        "Authorization": f"Bearer {app_token}",
         "Accept": "application/json",
     }
 
@@ -259,8 +274,8 @@ async def _place_bid_for_snipe(db: Session, snipe: EbaySnipe, now: datetime) -> 
         )
         return
 
-    try:
-        rest_item_id = await _resolve_rest_item_id(access_token, snipe.item_id)
+        try:
+        rest_item_id = await _resolve_rest_item_id(snipe.item_id)
     except HTTPException as exc:
         snipe.status = EbaySnipeStatus.error.value
         snipe.has_bid = True
@@ -360,7 +375,7 @@ async def _finalize_ended_snipes(db: Session, now: datetime) -> int:
             continue
 
         try:
-            rest_item_id = await _resolve_rest_item_id(access_token, snipe.item_id)
+        rest_item_id = await _resolve_rest_item_id(snipe.item_id)
         except HTTPException as exc:
             snipe.status = EbaySnipeStatus.error.value
             snipe.result_message = str(exc.detail)

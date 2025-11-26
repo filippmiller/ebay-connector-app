@@ -92,6 +92,11 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">Admin timesheet overview & corrections</p>
           </Card>
           
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/integrations')}>
+            <h2 className="text-lg font-semibold">Integrations</h2>
+            <p className="text-sm text-gray-600 mt-1">Подключение Gmail и других внешних провайдеров</p>
+          </Card>
+
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/todolist')}>
             <h2 className="text-lg font-semibold">Todo List</h2>
             <p className="text-sm text-gray-600 mt-1">View development progress</p>

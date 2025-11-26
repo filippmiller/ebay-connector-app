@@ -12,9 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models_sqlalchemy import get_db
-from app.models_sqlalchemy.models import EbayAccount, EbaySnipe, EbaySnipeStatus, EbaySnipeLog, EbayToken
+from app.models_sqlalchemy.models import EbayAccount, EbaySnipe, EbaySnipeStatus, EbaySnipeLog
 from app.models.user import User as UserModel
 from app.services.auth import get_current_user
+from app.services.ebay import ebay_service
 
 
 router = APIRouter(prefix="/api/sniper", tags=["sniper"])
@@ -187,25 +188,37 @@ async def _fetch_auction_metadata(
     when the item is not suitable for sniping.
     """
 
-    token_row: Optional[EbayToken] = (
-        db.query(EbayToken)
-        .filter(EbayToken.ebay_account_id == ebay_account_id)
-        .order_by(EbayToken.updated_at.desc())
-        .first()
+    # Validate that the eBay account exists and belongs to the current org.
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.id == ebay_account_id)
+        .one_or_none()
     )
-    if not token_row or not getattr(token_row, "access_token", None):
+    if not account:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active eBay token found for this account. Please reconnect the account.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="eBay account not found",
         )
 
-    access_token = token_row.access_token  # type: ignore[attr-defined]
+    # Use an application access token (AppToken) for Browse. This keeps
+    # read-only metadata lookups decoupled from per-account user tokens and
+    # leverages the shared in-memory AppToken cache.
+    try:
+        app_token = await ebay_service.get_browse_app_token()
+    except HTTPException:
+        # Bubble up HTTPExceptions from the underlying helper unchanged.
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to obtain eBay application access token for Browse: {exc}",
+        )
 
     base_url = settings.ebay_api_base_url.rstrip("/")
     url = f"{base_url}/buy/browse/v1/item/get_item_by_legacy_id"
     params = {"legacy_item_id": item_id}
     headers = {
-        "Authorization": f"Bearer {access_token}",
+        "Authorization": f"Bearer {app_token}",
         "Accept": "application/json",
     }
 
