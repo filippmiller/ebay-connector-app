@@ -134,6 +134,8 @@ const AdminDbExplorerPage: React.FC = () => {
   const [schema, setSchema] = useState<TableSchemaResponse | null>(null);
   const [rows, setRows] = useState<RowsResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'structure' | 'data'>('structure');
+  // Client-side filter for table structure (column list)
+  const [columnSearch, setColumnSearch] = useState('');
   const [dataSortColumn, setDataSortColumn] = useState<string | null>(null);
   const [dataSortDirection, setDataSortDirection] = useState<'asc' | 'desc'>('desc');
   const [rowsLimit, setRowsLimit] = useState(50);
@@ -553,6 +555,30 @@ const AdminDbExplorerPage: React.FC = () => {
     if (!schema) {
       return <div className="text-sm text-gray-500">No structure loaded.</div>;
     }
+
+    // Apply client-side filter + alphabetical sort for columns
+    const q = columnSearch.trim();
+    let cols = schema.columns;
+    if (q) {
+      const pattern = q.replace(/\*/g, '.*');
+      let re: RegExp;
+      try {
+        re = new RegExp(pattern, 'i');
+      } catch {
+        // If user typed an invalid regex, fall back to simple case-insensitive substring
+        const qLower = q.toLowerCase();
+        cols = cols.filter((c) => c.name.toLowerCase().includes(qLower));
+        re = null as unknown as RegExp; // not used below
+      }
+      if (typeof re !== 'undefined' && re !== (null as unknown as RegExp)) {
+        cols = cols.filter((c) => re.test(c.name));
+      }
+    }
+
+    const visible = [...cols].sort((a, b) =>
+      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }),
+    );
+
     return (
       <table className="min-w-full border text-sm">
         <thead className="bg-gray-100">
@@ -566,7 +592,7 @@ const AdminDbExplorerPage: React.FC = () => {
           </tr>
         </thead>
         <tbody>
-          {schema.columns.map((col) => (
+          {visible.map((col) => (
             <tr key={col.name}>
               <td className="px-2 py-1 border font-mono text-xs">{col.name}</td>
               <td className="px-2 py-1 border text-xs">{col.data_type}</td>
@@ -1020,6 +1046,20 @@ const AdminDbExplorerPage: React.FC = () => {
                         )}
                       </>
                     )}
+                  </div>
+                )}
+
+                {/* Column filter for structure tab */}
+                {activeTab === 'structure' && (
+                  <div className="mt-2 mb-1 flex items-center gap-2 text-xs">
+                    <span className="text-gray-600">Filter columns:</span>
+                    <input
+                      type="text"
+                      value={columnSearch}
+                      onChange={(e) => setColumnSearch(e.target.value)}
+                      placeholder="e.g. title, *date*, id"
+                      className="border rounded px-2 py-1 text-xs max-w-xs"
+                    />
                   </div>
                 )}
 

@@ -1650,6 +1650,29 @@ const MigrationWorkerTab: React.FC = () => {
   const [createIntervalSeconds, setCreateIntervalSeconds] = React.useState(300);
   const [createRunImmediately, setCreateRunImmediately] = React.useState(true);
 
+  // MSSQL connection & schema for the New Worker dialog
+  const [createMssqlTestOk, setCreateMssqlTestOk] = React.useState<boolean | null>(null);
+  const [createMssqlTestMessage, setCreateMssqlTestMessage] = React.useState<string | null>(null);
+  const [createMssqlSchemaTree, setCreateMssqlSchemaTree] = React.useState<MssqlSchemaTreeResponse | null>(null);
+  const [createMssqlSchemaLoading, setCreateMssqlSchemaLoading] = React.useState(false);
+  const [createMssqlSchemaError, setCreateMssqlSchemaError] = React.useState<string | null>(null);
+  const [createMssqlTableSearch, setCreateMssqlTableSearch] = React.useState('');
+
+  // Supabase tables for the New Worker dialog
+  const [createSupabaseTables, setCreateSupabaseTables] = React.useState<TableInfo[]>([]);
+  const [createSupabaseLoading, setCreateSupabaseLoading] = React.useState(false);
+  const [createSupabaseError, setCreateSupabaseError] = React.useState<string | null>(null);
+  const [createSupabaseSearch, setCreateSupabaseSearch] = React.useState('');
+
+  const buildCreateMssqlConfig = (): MssqlConnectionConfig => ({
+    host: '',
+    port: 1433,
+    database: createSourceDatabase,
+    username: '',
+    password: '',
+    encrypt: true,
+  });
+
   const resetCreateForm = () => {
     setCreateSourceDatabase('');
     setCreateSourceSchema('dbo');
@@ -1659,6 +1682,13 @@ const MigrationWorkerTab: React.FC = () => {
     setCreatePkColumn('');
     setCreateIntervalSeconds(300);
     setCreateRunImmediately(true);
+    setCreateMssqlTestOk(null);
+    setCreateMssqlTestMessage(null);
+    setCreateMssqlSchemaTree(null);
+    setCreateMssqlSchemaError(null);
+    setCreateMssqlTableSearch('');
+    setCreateSupabaseError(null);
+    setCreateSupabaseSearch('');
   };
 
   const loadWorkers = async () => {
@@ -1675,6 +1705,97 @@ const MigrationWorkerTab: React.FC = () => {
     }
   };
 
+  const loadCreateSupabaseTables = async () => {
+    if (createSupabaseTables.length > 0) return;
+    setCreateSupabaseLoading(true);
+    setCreateSupabaseError(null);
+    try {
+      const resp = await api.get<TableInfo[]>('/api/admin/db/tables');
+      setCreateSupabaseTables(resp.data);
+    } catch (e: any) {
+      setCreateSupabaseError(e?.response?.data?.detail || e.message || 'Failed to load Supabase tables');
+      setCreateSupabaseTables([]);
+    } finally {
+      setCreateSupabaseLoading(false);
+    }
+  };
+
+  const loadCreateMssqlSchemaTree = async () => {
+    if (!createSourceDatabase.trim()) {
+      setCreateMssqlSchemaError('Enter MSSQL database name first');
+      setCreateMssqlSchemaTree(null);
+      return;
+    }
+    setCreateMssqlSchemaLoading(true);
+    setCreateMssqlSchemaError(null);
+    try {
+      const cfg = buildCreateMssqlConfig();
+      const resp = await api.post<MssqlSchemaTreeResponse>('/api/admin/mssql/schema-tree', cfg);
+      setCreateMssqlSchemaTree(resp.data);
+      setCreateMssqlTestOk(true);
+      setCreateMssqlTestMessage('Connection OK. Schema tree loaded.');
+    } catch (e: any) {
+      setCreateMssqlSchemaTree(null);
+      const msg = e?.response?.data?.detail || e.message || 'Failed to load MSSQL schema tree';
+      setCreateMssqlSchemaError(msg);
+    } finally {
+      setCreateMssqlSchemaLoading(false);
+    }
+  };
+
+  const handleCreateTestConnection = async () => {
+    setCreateMssqlTestOk(null);
+    setCreateMssqlTestMessage(null);
+    setCreateMssqlSchemaTree(null);
+    setCreateMssqlSchemaError(null);
+    if (!createSourceDatabase.trim()) {
+      setCreateMssqlTestOk(false);
+      setCreateMssqlTestMessage('Enter MSSQL database name first');
+      return;
+    }
+    try {
+      const cfg = buildCreateMssqlConfig();
+      const resp = await api.post<{ ok: boolean; error?: string; message?: string }>(
+        '/api/admin/mssql/test-connection',
+        cfg,
+      );
+      if (resp.data.ok) {
+        setCreateMssqlTestOk(true);
+        setCreateMssqlTestMessage(resp.data.message || 'Connection successful. Loading schema tree...');
+        await loadCreateMssqlSchemaTree();
+      } else {
+        setCreateMssqlTestOk(false);
+        setCreateMssqlTestMessage(resp.data.error || 'Connection failed');
+      }
+    } catch (e: any) {
+      setCreateMssqlTestOk(false);
+      const msg = e?.response?.data?.detail || e.message || 'Connection failed';
+      setCreateMssqlTestMessage(msg);
+    }
+  };
+
+  const createMssqlTableOptions: SelectedTable[] = React.useMemo(() => {
+    if (!createMssqlSchemaTree) return [];
+    const all: SelectedTable[] = [];
+    createMssqlSchemaTree.schemas.forEach((s) => {
+      s.tables.forEach((t) => {
+        all.push({ schema: s.name, name: t.name });
+      });
+    });
+    const q = createMssqlTableSearch.trim().toLowerCase();
+    if (!q) return all.slice(0, 50);
+    return all.filter((t) => `${t.schema}.${t.name}`.toLowerCase().includes(q)).slice(0, 50);
+  }, [createMssqlSchemaTree, createMssqlTableSearch]);
+
+  const createSupabaseTableOptions: TableInfo[] = React.useMemo(() => {
+    const all = createSupabaseTables;
+    const q = createSupabaseSearch.trim().toLowerCase();
+    if (!q) return all.slice(0, 50);
+    return all
+      .filter((t) => `${t.schema}.${t.name}`.toLowerCase().includes(q) || t.name.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [createSupabaseTables, createSupabaseSearch]);
+
   React.useEffect(() => {
     void loadWorkers();
   }, []);
@@ -1683,11 +1804,21 @@ const MigrationWorkerTab: React.FC = () => {
     resetCreateForm();
     setError(null);
     setCreateOpen(true);
+    // Preload Supabase table list for nicer UX
+    void loadCreateSupabaseTables();
   };
 
   const handleSubmitCreate = async () => {
-    if (!createSourceDatabase.trim() || !createSourceTable.trim() || !createTargetTable.trim()) {
-      setError('Source database, source table, and target table are required.');
+    if (!createSourceDatabase.trim()) {
+      setError('MSSQL database is required.');
+      return;
+    }
+    if (!createSourceSchema.trim() || !createSourceTable.trim()) {
+      setError('Select a MSSQL table from the list (test connection first).');
+      return;
+    }
+    if (!createTargetTable.trim()) {
+      setError('Supabase target table is required.');
       return;
     }
     setCreateBusy(true);
@@ -1960,6 +2091,7 @@ const MigrationWorkerTab: React.FC = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-xs">
+            {/* MSSQL connection */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-[11px]">MSSQL database</Label>
@@ -1969,6 +2101,17 @@ const MigrationWorkerTab: React.FC = () => {
                   onChange={(e) => setCreateSourceDatabase(e.target.value)}
                   placeholder="DB_A28F26_parts"
                 />
+                <div className="mt-1 flex items-center gap-2">
+                  <Button size="xs" variant="outline" onClick={() => void handleCreateTestConnection()}>
+                    Test & load tables
+                  </Button>
+                  {createMssqlTestOk === true && (
+                    <span className="text-[11px] text-green-700">{createMssqlTestMessage || 'OK'}</span>
+                  )}
+                  {createMssqlTestOk === false && (
+                    <span className="text-[11px] text-red-700">{createMssqlTestMessage || 'Connection failed'}</span>
+                  )}
+                </div>
               </div>
               <div>
                 <Label className="text-[11px]">MSSQL schema</Label>
@@ -1978,31 +2121,103 @@ const MigrationWorkerTab: React.FC = () => {
                   onChange={(e) => setCreateSourceSchema(e.target.value || 'dbo')}
                   placeholder="dbo"
                 />
+                <p className="mt-1 text-[11px] text-gray-500">Used when selecting a table from MSSQL.</p>
               </div>
             </div>
+
+            {/* Source & target table selection */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-[11px]">MSSQL table</Label>
                 <Input
                   className="mt-1 h-7 text-[11px]"
-                  value={createSourceTable}
-                  onChange={(e) => setCreateSourceTable(e.target.value)}
-                  placeholder="tbl_ebay_fees"
+                  value={createMssqlTableSearch}
+                  onChange={(e) => setCreateMssqlTableSearch(e.target.value)}
+                  placeholder="Start typing to search tables, e.g. 'fees'"
                 />
+                {createMssqlSchemaLoading && (
+                  <p className="mt-1 text-[11px] text-gray-500">Loading MSSQL schema...</p>
+                )}
+                {createMssqlSchemaError && (
+                  <p className="mt-1 text-[11px] text-red-600">{createMssqlSchemaError}</p>
+                )}
+                {createMssqlSchemaTree && createMssqlTableOptions.length > 0 && (
+                  <div className="mt-1 max-h-40 overflow-auto border rounded bg-white text-[11px]">
+                    {createMssqlTableOptions.map((t) => {
+                      const key = `${t.schema}.${t.name}`;
+                      const isSelected = t.schema === createSourceSchema && t.name === createSourceTable;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          className={`w-full text-left px-2 py-0.5 border-b border-dotted border-gray-100 hover:bg-blue-50 ${
+                            isSelected ? 'bg-blue-100 font-semibold' : ''
+                          }`}
+                          onClick={() => {
+                            setCreateSourceSchema(t.schema);
+                            setCreateSourceTable(t.name);
+                            setCreateMssqlTableSearch(`${t.schema}.${t.name}`);
+                          }}
+                        >
+                          <span className="font-mono">{t.schema}.{t.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {createSourceTable && (
+                  <p className="mt-1 text-[11px] text-gray-600">
+                    Selected: {createSourceSchema}.{createSourceTable}
+                  </p>
+                )}
               </div>
               <div>
                 <Label className="text-[11px]">Supabase target table</Label>
                 <Input
                   className="mt-1 h-7 text-[11px]"
-                  value={createTargetTable}
-                  onChange={(e) => setCreateTargetTable(e.target.value)}
-                  placeholder="tbl_ebay_fees"
+                  value={createSupabaseSearch}
+                  onChange={(e) => setCreateSupabaseSearch(e.target.value)}
+                  placeholder="Start typing to search tables, e.g. 'fees'"
                 />
-                <p className="mt-1 text-[11px] text-gray-500">
-                  Schema: {createTargetSchema || 'public'}. Table: {createTargetTable || 'tbl_ebay_fees'}
-                </p>
+                {createSupabaseLoading && (
+                  <p className="mt-1 text-[11px] text-gray-500">Loading Supabase tables...</p>
+                )}
+                {createSupabaseError && (
+                  <p className="mt-1 text-[11px] text-red-600">{createSupabaseError}</p>
+                )}
+                {createSupabaseTableOptions.length > 0 && (
+                  <div className="mt-1 max-h-40 overflow-auto border rounded bg-white text-[11px]">
+                    {createSupabaseTableOptions.map((t) => {
+                      const key = `${t.schema}.${t.name}`;
+                      const isSelected = t.schema === createTargetSchema && t.name === createTargetTable;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          className={`w-full text-left px-2 py-0.5 border-b border-dotted border-gray-100 hover:bg-blue-50 ${
+                            isSelected ? 'bg-blue-100 font-semibold' : ''
+                          }`}
+                          onClick={() => {
+                            setCreateTargetSchema(t.schema);
+                            setCreateTargetTable(t.name);
+                            setCreateSupabaseSearch(`${t.schema}.${t.name}`);
+                          }}
+                        >
+                          <span className="font-mono">{t.schema}.{t.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {createTargetTable && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Schema: {createTargetSchema || 'public'}. Table: {createTargetTable}
+                  </p>
+                )}
               </div>
             </div>
+
+            {/* Supabase schema + PK */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-[11px]">Supabase schema</Label>

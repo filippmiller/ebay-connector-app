@@ -244,9 +244,21 @@ def _insert_legacy_inventory_row(
             break
 
     # Title / overview title
+    #
+    # В legacy-таблице tbl_parts_inventory нет колонки "Title"; фактическая
+    # колонка, куда бизнес ожидает видеть заголовок из SKU/LISTING, называется
+    # "OverrideTitle". Поэтому в первую очередь пытаемся заполнить именно её,
+    # а затем уже любые более общие текстовые колонки, если они присутствуют.
     title_val = (item_payload.title or sq.part or sq.description or "").strip()
     if title_val:
-        for key in ["overviewtitle", "title", "part", "itemtitle"]:
+        for key in [
+            "overridetitle",  # canonical target: OverrideTitle
+            "override_title",
+            "overviewtitle",
+            "title",
+            "part",
+            "itemtitle",
+        ]:
             col = cols_by_lower.get(key)
             if col is not None:
                 insert_data[col.name] = title_val
