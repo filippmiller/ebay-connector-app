@@ -93,7 +93,7 @@ export default function AdminIntegrationsPage() {
     setLoading(true);
     setError(null);
     try {
-      const resp = await api.get<IntegrationAccountsResponse>('/api/integrations/accounts');
+      const resp = await api.get<IntegrationAccountsResponse>('/integrations/accounts');
       setAccounts(resp.data?.accounts ?? []);
     } catch (e: any) {
       const msg = e?.response?.data?.detail || e?.message || 'Не удалось загрузить интеграции';
@@ -156,7 +156,7 @@ export default function AdminIntegrationsPage() {
     setGmailLoading(true);
     setError(null);
     try {
-      const resp = await api.post<{ auth_url: string }>('/api/integrations/gmail/auth-url');
+      const resp = await api.post<{ auth_url: string }>('/integrations/gmail/auth-url');
       const url = resp.data?.auth_url;
       if (!url) {
         setError('Сервер вернул некорректный auth_url');
@@ -180,7 +180,7 @@ export default function AdminIntegrationsPage() {
     setSyncLoadingAccountId(account.id);
     try {
       const resp = await api.post<GmailSyncSummaryDto>(
-        `/api/integrations/accounts/${account.id}/sync-now`,
+        `/integrations/accounts/${account.id}/sync-now`,
       );
       const result = resp.data;
       setSyncResult(result);
@@ -203,7 +203,7 @@ export default function AdminIntegrationsPage() {
     setError(null);
     try {
       const resp = await api.post<IntegrationAccountDto>(
-        `/api/integrations/accounts/${account.id}/${action}`,
+        `/integrations/accounts/${account.id}/${action}`,
       );
       updateAccountInState(resp.data);
       if (action === 'resync') {

@@ -53,7 +53,7 @@ export default function AdminAiEmailTrainingPage() {
       if (provider !== 'all') {
         params.provider = provider;
       }
-      const resp = await api.get<AiEmailPairsResponse>('/api/integrations/ai-email-pairs', {
+      const resp = await api.get<AiEmailPairsResponse>('/integrations/ai-email-pairs', {
         params,
       });
       setItems(resp.data?.items ?? []);
@@ -85,7 +85,7 @@ export default function AdminAiEmailTrainingPage() {
     setError(null);
     try {
       const resp = await api.post<AiEmailPairDto>(
-        `/api/integrations/ai-email-pairs/${pair.id}/status`,
+        `/integrations/ai-email-pairs/${pair.id}/status`,
         { status: nextStatus },
       );
       const updated = resp.data;

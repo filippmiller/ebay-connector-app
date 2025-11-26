@@ -26,7 +26,7 @@ export default function AdminAiSettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const resp = await api.get<OpenAiProviderDto>('/api/integrations/ai-provider/openai');
+      const resp = await api.get<OpenAiProviderDto>('/integrations/ai-provider/openai');
       const data = resp.data;
       setProvider(data);
       if (data.model_default) {
@@ -50,7 +50,7 @@ export default function AdminAiSettingsPage() {
     setError(null);
     setFlash(null);
     try {
-      await api.post<OpenAiProviderDto>('/api/integrations/ai-provider/openai', {
+      await api.post<OpenAiProviderDto>('/integrations/ai-provider/openai', {
         api_key: apiKeyInput || null,
         model_default: modelDefault,
       });
