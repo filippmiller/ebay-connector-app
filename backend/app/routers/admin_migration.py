@@ -186,7 +186,7 @@ def _run_one_to_one_migration_sync(
             detail="Source MSSQL table appears to have no columns.",
         )
 
-    # Open MSSQL and Postgres connections.
+    # Open MSSQL connection.
     mssql_engine: Engine = create_engine_for_session(payload.mssql)
     rows_inserted = 0
     batches = 0
@@ -195,103 +195,106 @@ def _run_one_to_one_migration_sync(
     target_row_count_after: int | None = None
 
     try:
-        with mssql_engine.connect() as mssql_conn, pg_engine.begin() as pg_conn:
-            # Ensure target table is present / created depending on mode.
-            _ensure_target_table_exists(
-                pg_conn,
-                schema=payload.target_schema,
-                table=payload.target_table,
-                mssql_columns=mssql_columns,
-                mode=payload.mode,
-            )
-
-            # Fetch Postgres columns and validate that every MSSQL column has a match.
-            pg_columns = _get_postgres_columns(
-                pg_conn,
-                schema=payload.target_schema,
-                table=payload.target_table,
-            )
-            pg_by_name = {c["name"].lower(): c for c in pg_columns}
-
-            missing = [c["name"] for c in mssql_columns if c["name"].lower() not in pg_by_name]
-            if missing:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "message": "Target table is missing columns required for 1:1 migration.",
-                        "missing_columns": missing,
-                    },
+        with mssql_engine.connect() as mssql_conn:
+            # Step 1: one short Postgres transaction for DDL/checks/counts-before.
+            with pg_engine.begin() as pg_conn:
+                # Ensure target table is present / created depending on mode.
+                _ensure_target_table_exists(
+                    pg_conn,
+                    schema=payload.target_schema,
+                    table=payload.target_table,
+                    mssql_columns=mssql_columns,
+                    mode=payload.mode,
                 )
 
-            # Duplicate check for existing tables: if there are already duplicate groups in
-            # the target based on all columns, abort to avoid compounding duplicates.
-            if payload.mode == "existing":
-                if not pg_columns:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Target table has no columns; cannot perform duplicate check.",
-                    )
-                cols_list = ", ".join(f'"{c["name"]}"' for c in pg_columns)
-                dup_sql = text(
-                    f"""
-                    SELECT COUNT(*) FROM (
-                      SELECT 1
-                      FROM {payload.target_schema}."{payload.target_table}"
-                      GROUP BY {cols_list}
-                      HAVING COUNT(*) > 1
-                    ) AS dup
-                    """
+                # Fetch Postgres columns and validate that every MSSQL column has a match.
+                pg_columns = _get_postgres_columns(
+                    pg_conn,
+                    schema=payload.target_schema,
+                    table=payload.target_table,
                 )
-                dup_groups = int(pg_conn.execute(dup_sql).scalar() or 0)
-                if dup_groups > 0:
+                pg_by_name = {c["name"].lower(): c for c in pg_columns}
+
+                missing = [c["name"] for c in mssql_columns if c["name"].lower() not in pg_by_name]
+                if missing:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail={
-                            "message": "Target table already contains duplicate groups; clean up duplicates before running another 1:1 migration.",
-                            "duplicate_groups": dup_groups,
+                            "message": "Target table is missing columns required for 1:1 migration.",
+                            "missing_columns": missing,
                         },
                     )
 
-            # Compute counts before migration for visibility/verification.
-            count_sql_mssql = text(
-                f"SELECT COUNT(*) FROM [{payload.source_schema}].[{payload.source_table}]"
-            )
-            source_row_count = int(mssql_conn.execute(count_sql_mssql).scalar() or 0)
+                # Duplicate check for existing tables: if there are already duplicate groups in
+                # the target based on all columns, abort to avoid compounding duplicates.
+                if payload.mode == "existing":
+                    if not pg_columns:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Target table has no columns; cannot perform duplicate check.",
+                        )
+                    cols_list = ", ".join(f'"{c["name"]}"' for c in pg_columns)
+                    dup_sql = text(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                          SELECT 1
+                          FROM {payload.target_schema}."{payload.target_table}"
+                          GROUP BY {cols_list}
+                          HAVING COUNT(*) > 1
+                        ) AS dup
+                        """
+                    )
+                    dup_groups = int(pg_conn.execute(dup_sql).scalar() or 0)
+                    if dup_groups > 0:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail={
+                                "message": "Target table already contains duplicate groups; clean up duplicates before running another 1:1 migration.",
+                                "duplicate_groups": dup_groups,
+                            },
+                        )
 
-            count_sql_pg = text(
-                f'SELECT COUNT(*) FROM "{payload.target_schema}"."{payload.target_table}"'
-            )
-            target_row_count_before = int(pg_conn.execute(count_sql_pg).scalar() or 0)
+                # Compute counts before migration for visibility/verification.
+                count_sql_mssql = text(
+                    f"SELECT COUNT(*) FROM [{payload.source_schema}].[{payload.source_table}]"
+                )
+                source_row_count = int(mssql_conn.execute(count_sql_mssql).scalar() or 0)
 
-            # Column list for SELECT and INSERT (preserve MSSQL order).
-            column_names: List[str] = [c["name"] for c in mssql_columns]
+                count_sql_pg = text(
+                    f'SELECT COUNT(*) FROM "{payload.target_schema}"."{payload.target_table}"'
+                )
+                target_row_count_before = int(pg_conn.execute(count_sql_pg).scalar() or 0)
 
-            # Build MSSQL SELECT (paged).
-            select_cols = ", ".join(f"[{name}]" for name in column_names)
-            select_sql = text(
-                f"SELECT {select_cols} FROM [{payload.source_schema}].[{payload.source_table}] "
-                "ORDER BY 1 OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
-            )
+                # Column list for SELECT and INSERT (preserve MSSQL order).
+                column_names: List[str] = [c["name"] for c in mssql_columns]
 
-            # Build Postgres INSERT.
-            insert_cols = ", ".join(f'"{name}"' for name in column_names)
-            value_placeholders = ", ".join(f":{name}" for name in column_names)
+                # Build MSSQL SELECT (paged).
+                select_cols = ", ".join(f"[{name}]" for name in column_names)
+                select_sql = text(
+                    f"SELECT {select_cols} FROM [{payload.source_schema}].[{payload.source_table}] "
+                    "ORDER BY 1 OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
+                )
 
-            # Make 1:1 migrations idempotent for tables with a primary key 'id'.
-            conflict_cols: List[str] = []
-            if "id" in column_names:
-                conflict_cols = ["id"]
+                # Build Postgres INSERT.
+                insert_cols = ", ".join(f'"{name}"' for name in column_names)
+                value_placeholders = ", ".join(f":{name}" for name in column_names)
 
-            conflict_clause = ""
-            if conflict_cols:
-                conflict_cols_sql = ", ".join(f'"{c}"' for c in conflict_cols)
-                conflict_clause = f" ON CONFLICT ({conflict_cols_sql}) DO NOTHING"
+                # Make 1:1 migrations idempotent for tables with a primary key 'id'.
+                conflict_cols: List[str] = []
+                if "id" in column_names:
+                    conflict_cols = ["id"]
 
-            insert_sql = text(
-                f'INSERT INTO "{payload.target_schema}"."{payload.target_table}" '
-                f'({insert_cols}) VALUES ({value_placeholders}){conflict_clause}'
-            )
+                conflict_clause = ""
+                if conflict_cols:
+                    conflict_cols_sql = ", ".join(f'"{c}"' for c in conflict_cols)
+                    conflict_clause = f" ON CONFLICT ({conflict_cols_sql}) DO NOTHING"
 
+                insert_sql = text(
+                    f'INSERT INTO "{payload.target_schema}"."{payload.target_table}" '
+                    f'({insert_cols}) VALUES ({value_placeholders}){conflict_clause}'
+                )
+
+            # Step 2: stream MSSQL in batches and insert into Postgres with per-batch tx.
             offset = 0
             batch_size = payload.batch_size
 
@@ -301,7 +304,9 @@ def _run_one_to_one_migration_sync(
                 if not rows:
                     break
 
-                pg_conn.execute(insert_sql, rows)
+                # Each batch gets its own short transaction in Postgres.
+                with pg_engine.begin() as pg_batch_conn:
+                    pg_batch_conn.execute(insert_sql, rows)
 
                 batch_count = len(rows)
                 rows_inserted += batch_count
@@ -317,8 +322,12 @@ def _run_one_to_one_migration_sync(
                         None,
                     )
 
-            # Count rows after migration for verification.
-            target_row_count_after = int(pg_conn.execute(count_sql_pg).scalar() or 0)
+            # Step 3: compute rows-after in a fresh short transaction.
+            with pg_engine.begin() as pg_conn:
+                count_sql_pg = text(
+                    f'SELECT COUNT(*) FROM "{payload.target_schema}"."{payload.target_table}"'
+                )
+                target_row_count_after = int(pg_conn.execute(count_sql_pg).scalar() or 0)
 
     finally:
         mssql_engine.dispose()
