@@ -48,9 +48,9 @@ function pickPreferredLanguage(fallback: string = 'ru-RU'): string {
     const langs = (rawList || []).filter(Boolean).map((l: string) => l.toLowerCase());
 
     // 1) Если есть любой вариант русского — всегда берём его (русский по умолчанию).
-    if (langs.some((l) => l.startsWith('ru'))) return 'ru-RU';
+    if (langs.some((l: string) => l.startsWith('ru'))) return 'ru-RU';
     // 2) Иначе, если есть английский — берём английский.
-    if (langs.some((l) => l.startsWith('en'))) return 'en-US';
+    if (langs.some((l: string) => l.startsWith('en'))) return 'en-US';
   } catch {
     // игнорируем и используем fallback ниже
   }
