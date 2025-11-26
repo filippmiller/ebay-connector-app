@@ -73,8 +73,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     method: request.method,
     headers,
     redirect: 'follow',
-    // Increase timeout for Cloudflare Functions (max 30s for free tier)
-    signal: AbortSignal.timeout(25000)
+    // Increase timeout for Cloudflare Functions (max 30s for free tier).
+    // Gmail sync and other heavy admin operations can legitimately take
+    // longer than 25s on the backend, so we push this close to the
+    // platform limit.
+    signal: AbortSignal.timeout(29000)
   };
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {

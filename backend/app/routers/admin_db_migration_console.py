@@ -170,6 +170,34 @@ def _get_pg_column_names(schema: str, table: str) -> List[str]:
     return [r["column_name"] for r in rows]
 
 
+def _pg_column_has_unique_or_pk(schema: str, table: str, column: str) -> bool:
+    """Return True if *column* participates in a UNIQUE or PRIMARY KEY constraint.
+
+    This is used to decide whether it's safe to use ON CONFLICT(column) DO NOTHING.
+    If there is no such constraint, Postgres will raise
+    InvalidColumnReference, so we skip ON CONFLICT entirely in that case.
+    """
+
+    sql = text(
+        """
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+        WHERE n.nspname = :schema
+          AND t.relname = :table
+          AND a.attname = :column
+          AND c.contype IN ('p', 'u')
+        LIMIT 1
+        """
+    )
+    with pg_engine.connect() as conn:
+        return bool(
+            conn.execute(sql, {"schema": schema, "table": table, "column": column}).scalar()
+        )
+
+
 def _get_mssql_single_pk_column(cfg: MssqlConnectionConfig, schema: str, table: str) -> Optional[str]:
     """Return the single-column primary key for a MSSQL table, if any.
 
@@ -572,10 +600,15 @@ def run_worker_incremental_sync(
         f"ORDER BY [{pk_column}] OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY"
     )
 
-    # Build Postgres INSERT with ON CONFLICT(pk) DO NOTHING.
+    # Build Postgres INSERT. We prefer ON CONFLICT(pk) DO NOTHING for idempotency,
+    # but Postgres requires a UNIQUE or PRIMARY KEY constraint on that column.
     col_list_sql = ", ".join(f'"{c}"' for c in insert_columns)
     values_placeholders = ", ".join(f":{c}" for c in insert_columns)
-    conflict_clause = f' ON CONFLICT ("{pk_column}") DO NOTHING'
+
+    conflict_clause = ""
+    if _pg_column_has_unique_or_pk(target_schema, target_table, pk_column):
+        conflict_clause = f' ON CONFLICT ("{pk_column}") DO NOTHING'
+
     insert_sql = text(
         f'INSERT INTO "{target_schema}"."{target_table}" ({col_list_sql}) '
         f"VALUES ({values_placeholders}){conflict_clause}"
