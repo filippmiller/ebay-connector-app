@@ -1132,7 +1132,19 @@ class EbayService:
                 return str(access_token), expires_in
 
             except httpx.RequestError as e:
-                error_msg = f        finally:
+                error_msg = f"HTTP request failed during app token request: {e}"
+                ebay_logger.log_ebay_event(
+                    "app_token_error",
+                    "HTTP request error during app token request",
+                    status="error",
+                    error=error_msg,
+                )
+                logger.error(error_msg)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=error_msg,
+                )
+        finally:
             settings.EBAY_ENVIRONMENT = original_env
 
     async def get_browse_app_token(
