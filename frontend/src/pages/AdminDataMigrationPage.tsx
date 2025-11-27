@@ -2022,15 +2022,28 @@ const MigrationWorkerTab: React.FC = () => {
 
   const handleConfirmRunOnce = async () => {
     if (!previewWorker) return;
-    setRunningId(previewWorker.id);
+    const workerId = previewWorker.id;
+    // Закрываем модалку сразу, а сам прогон выполняем в фоне, чтобы не блокировать экран.
+    setPreviewOpen(false);
+    setRunningId(workerId);
     setError(null);
     try {
-      await api.post('/api/admin/db-migration/worker/run-once', {
-        id: previewWorker.id,
-        batch_size: 5000,
-      });
-      await loadWorkers();
-      setPreviewOpen(false);
+      // Цикл: вызываем run-once несколько раз подряд, пока ещё есть новые строки.
+      // Каждый HTTP-запрос ограничен по времени на бэкенде (max_seconds),
+      // поэтому лучше сделать несколько коротких прогонов, чем один длинный.
+      // Защитимся от бесконечного цикла верхней границей итераций.
+      const maxPasses = 200;
+      for (let i = 0; i < maxPasses; i += 1) {
+        const resp = await api.post<any>('/api/admin/db-migration/worker/run-once', {
+          id: workerId,
+          batch_size: 5000,
+        });
+        const inserted = resp.data?.rows_inserted ?? 0;
+        await loadWorkers();
+        if (!inserted || inserted <= 0) {
+          break;
+        }
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail || e.message || 'Failed to run worker');
     } finally {
