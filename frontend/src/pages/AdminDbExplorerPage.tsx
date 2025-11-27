@@ -125,6 +125,8 @@ interface MssqlColumnInfo {
   defaultValue: string | null;
 }
 
+// NOTE (2025-11-27): AdminDbExplorerPage includes per-column search for large tables
+// and a safe TRUNCATE action wired to /api/admin/db/tables/{name}/truncate.
 const AdminDbExplorerPage: React.FC = () => {
   const [activeDb, setActiveDb] = useState<DbMode>('supabase');
   const [tables, setTables] = useState<TableInfo[]>([]);
