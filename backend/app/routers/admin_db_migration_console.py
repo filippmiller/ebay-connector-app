@@ -212,6 +212,28 @@ def _pg_column_has_unique_or_pk(schema: str, table: str, column: str) -> bool:
         )
 
 
+def _resolve_pg_column_name_case(schema: str, table: str, column: str) -> str:
+    """Return the actual Postgres column name for *column* on *schema.table*.
+
+    We first try an exact match, then fall back to a case-insensitive match.
+    Raises RuntimeError if the column cannot be found.
+    """
+
+    available = _get_pg_column_names(schema, table)
+    if column in available:
+        return column
+
+    lowered = {c.lower(): c for c in available}
+    candidate = lowered.get(column.lower())
+    if candidate:
+        return candidate
+
+    raise RuntimeError(
+        f"Column {column!r} not found in Postgres table {schema}.{table}; "
+        f"available columns: {', '.join(available) if available else '[none]'}"
+    )
+
+
 def _get_mssql_single_pk_column(cfg: MssqlConnectionConfig, schema: str, table: str) -> Optional[str]:
     """Return the single-column primary key for a MSSQL table, if any.
 
@@ -567,10 +589,13 @@ def run_worker_incremental_sync(
         encrypt=True,
     )
 
+    # Resolve PK column case on the Postgres side before we start.
+    pk_column_pg = _resolve_pg_column_name_case(target_schema, target_table, pk_column)
+
     # Determine current max PK in target (Supabase).
     with pg_engine.begin() as pg_conn:
         max_pk_sql = text(
-            f'SELECT COALESCE(MAX("{pk_column}"), 0) FROM "{target_schema}"."{target_table}"'
+            f'SELECT COALESCE(MAX("{pk_column_pg}"), 0) FROM "{target_schema}"."{target_table}"'
         )
         target_max_pk = int(pg_conn.execute(max_pk_sql).scalar() or 0)
 
@@ -587,30 +612,42 @@ def run_worker_incremental_sync(
 
     source_column_names = [c["name"] for c in mssql_cols]
 
-    # Ensure that the target table has (at least) all MSSQL columns; we will
-    # only insert into the intersection.
+    # Ensure that the target table exists and build a case-insensitive mapping
+    # between MSSQL source column names and Postgres target column names.
     target_columns = _get_pg_column_names(target_schema, target_table)
     if not target_columns:
         raise RuntimeError(
             f"Target table {target_schema}.{target_table} does not exist in Supabase"
         )
 
-    # Intersection of column names, preserving MSSQL order.
-    insert_columns: List[str] = [
-        name
-        for name in source_column_names
-        if name in target_columns
-    ]
-    if pk_column not in insert_columns:
-        insert_columns.append(pk_column)
+    target_by_lower = {c.lower(): c for c in target_columns}
 
-    if not insert_columns:
+    # Build (source_name, target_name) pairs for all overlapping columns,
+    # preserving MSSQL column order.
+    insert_mappings: List[tuple[str, str]] = []
+    for src_name in source_column_names:
+        tgt_name = target_by_lower.get(src_name.lower())
+        if tgt_name:
+            insert_mappings.append((src_name, tgt_name))
+
+    # Ensure PK column mapping is present; this will also raise if the target
+    # table does not have a matching PK column (even case-insensitive).
+    pk_target_name = target_by_lower.get(pk_column.lower())
+    if not pk_target_name:
+        raise RuntimeError(
+            f"PK column {pk_column!r} not found in Supabase table "
+            f"{target_schema}.{target_table}"
+        )
+    if (pk_column, pk_target_name) not in insert_mappings:
+        insert_mappings.append((pk_column, pk_target_name))
+
+    if not insert_mappings:
         raise RuntimeError(
             "No overlapping columns between MSSQL source and Supabase target for incremental worker"
         )
 
     # Build MSSQL SELECT with PK filter and paging.
-    select_cols_sql = ", ".join(f"[{name}]" for name in insert_columns)
+    select_cols_sql = ", ".join(f"[{src}]" for src, _ in insert_mappings)
     select_sql = text(
         f"SELECT {select_cols_sql} "
         f"FROM [{source_schema}].[{source_table}] "
@@ -620,12 +657,12 @@ def run_worker_incremental_sync(
 
     # Build Postgres INSERT. We prefer ON CONFLICT(pk) DO NOTHING for idempotency,
     # but Postgres requires a UNIQUE or PRIMARY KEY constraint on that column.
-    col_list_sql = ", ".join(f'"{c}"' for c in insert_columns)
-    values_placeholders = ", ".join(f":{c}" for c in insert_columns)
+    col_list_sql = ", ".join(f'"{tgt}"' for _, tgt in insert_mappings)
+    values_placeholders = ", ".join(f":{src}" for src, _ in insert_mappings)
 
     conflict_clause = ""
-    if _pg_column_has_unique_or_pk(target_schema, target_table, pk_column):
-        conflict_clause = f' ON CONFLICT ("{pk_column}") DO NOTHING'
+    if _pg_column_has_unique_or_pk(target_schema, target_table, pk_target_name):
+        conflict_clause = f' ON CONFLICT ("{pk_target_name}") DO NOTHING'
 
     insert_sql = text(
         f'INSERT INTO "{target_schema}"."{target_table}" ({col_list_sql}) '
@@ -680,7 +717,7 @@ def run_worker_incremental_sync(
         new_target_max_pk = int(
             pg_conn.execute(
                 text(
-                    f'SELECT COALESCE(MAX("{pk_column}"), 0) FROM "{target_schema}"."{target_table}"'
+                    f'SELECT COALESCE(MAX("{pk_target_name}"), 0) FROM "{target_schema}"."{target_table}"'
                 )
             ).scalar()
             or 0
@@ -1010,10 +1047,14 @@ async def preview_migration_worker_run(
     source_schema = worker["source_schema"] or "dbo"
     target_schema = worker["target_schema"] or "public"
 
+    # Resolve PK column case on the Postgres side so that we handle
+    # differences like MSSQL 'ID' vs Postgres 'id' more gracefully.
+    pk_column_pg = _resolve_pg_column_name_case(target_schema, worker["target_table"], pk_column)
+
     # Target stats (Supabase)
     with pg_engine.connect() as pg_conn:
         max_pk_sql = text(
-            f'SELECT COALESCE(MAX("{pk_column}"), 0) FROM "{target_schema}"."{worker["target_table"]}"'
+            f'SELECT COALESCE(MAX("{pk_column_pg}"), 0) FROM "{target_schema}"."{worker["target_table"]}"'
         )
         target_max_pk = int(pg_conn.execute(max_pk_sql).scalar() or 0)
 
