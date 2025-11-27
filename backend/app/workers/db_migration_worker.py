@@ -141,6 +141,7 @@ async def run_db_migration_workers_once(max_workers: int = 20) -> Dict[str, Any]
                 pk_column=row["pk_column"],
                 batch_size=5000,
                 worker_id=wid,
+                max_seconds=None,  # background loop can run as long as needed
             )
             summaries.append({"worker_id": wid, **summary})
 

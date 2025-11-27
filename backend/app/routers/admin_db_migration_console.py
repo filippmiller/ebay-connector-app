@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -112,6 +114,9 @@ class MigrationWorkerRunOnceRequest(BaseModel):
     target_schema: Optional[str] = None
     target_table: Optional[str] = None
     batch_size: int = 5000
+    # Hard cap for how long a single HTTP-triggered run should take, in seconds.
+    # The background worker loop is not limited; this is just to avoid CF/axios timeouts.
+    max_seconds: int = 20
 
 
 SUPPORTED_SOURCE_DBS = {"mssql"}
@@ -525,6 +530,7 @@ def run_worker_incremental_sync(
     pk_column: str,
     batch_size: int = 5000,
     worker_id: Optional[int] = None,
+    max_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run a single incremental append-only sync for one table pair.
 
@@ -619,11 +625,18 @@ def run_worker_incremental_sync(
     batches = 0
     last_source_pk: Optional[int] = None
 
+    # For HTTP-triggered runs we may want to cap total runtime to avoid CF/axios timeouts.
+    start_time = time.monotonic()
+
     mssql_engine: Engine = create_engine_for_session(mssql_cfg)
     try:
         with mssql_engine.connect() as mssql_conn:
             offset = 0
             while True:
+                if max_seconds is not None and batches > 0:
+                    elapsed = time.monotonic() - start_time
+                    if elapsed >= max_seconds:
+                        break
                 result = mssql_conn.execute(
                     select_sql,
                     {"min_pk": target_max_pk, "offset": offset, "limit": batch_size},
@@ -971,6 +984,7 @@ async def run_migration_worker_once(
         pk_column=worker["pk_column"],
         batch_size=req.batch_size,
         worker_id=worker["id"],
+        max_seconds=req.max_seconds,
     )
 
     return summary
