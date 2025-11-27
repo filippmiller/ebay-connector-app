@@ -1660,6 +1660,10 @@ const MigrationWorkerTab: React.FC = () => {
   const [savingId, setSavingId] = React.useState<number | null>(null);
   const [runningId, setRunningId] = React.useState<number | null>(null);
 
+  // Simple in-page "terminal" log of worker runs (since page load)
+  const [logLines, setLogLines] = React.useState<string[]>([]);
+  const lastRunSnapshotRef = React.useRef<Map<number, string>>(new Map());
+
   // Run-once confirmation modal
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [previewWorker, setPreviewWorker] = React.useState<MigrationWorkerState | null>(null);
@@ -1827,6 +1831,62 @@ const MigrationWorkerTab: React.FC = () => {
   React.useEffect(() => {
     void loadWorkers();
   }, []);
+
+  // Periodically refresh workers so background loop activity is visible.
+  React.useEffect(() => {
+    const id = window.setInterval(() => {
+      void loadWorkers();
+    }, 15000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Derive log lines whenever worker state changes (per-page history).
+  React.useEffect(() => {
+    const snapshots = lastRunSnapshotRef.current;
+    const newLines: string[] = [];
+
+    const fmt = (value?: string | null) => formatDateTime(value) || 'n/a';
+
+    for (const w of workers) {
+      const sig = `${w.last_run_finished_at || ''}|${w.last_inserted_count ?? ''}|${
+        w.last_run_status || ''
+      }`;
+      const prev = snapshots.get(w.id);
+      if (sig && sig !== prev && w.last_run_status) {
+        snapshots.set(w.id, sig);
+        const when = fmt(w.last_run_finished_at || w.last_run_started_at);
+        const line =
+          `${when} — worker #${w.id} ${w.source_database}.${w.source_schema}.${w.source_table} → ` +
+          `${w.target_schema}.${w.target_table}; ` +
+          `inserted +${w.last_inserted_count ?? 0} rows; ` +
+          `src=${w.last_source_row_count ?? 'n/a'}, tgt=${w.last_target_row_count ?? 'n/a'}; ` +
+          `max_pk_src=${w.last_max_pk_source ?? 'n/a'}, max_pk_tgt=${w.last_max_pk_target ?? 'n/a'}.`;
+        newLines.push(line);
+      }
+    }
+
+    if (newLines.length) {
+      setLogLines((prev) => {
+        const merged = [...prev, ...newLines];
+        // Ограничимся последними ~200 строками, чтобы не раздувать состояние.
+        return merged.slice(-200);
+      });
+    }
+  }, [workers]);
+
+  const formatDateTime = (value?: string | null): string => {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mi = pad(d.getMinutes());
+    const ss = pad(d.getSeconds());
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+  };
 
   const handleOpenCreate = () => {
     resetCreateForm();
@@ -2095,10 +2155,10 @@ const MigrationWorkerTab: React.FC = () => {
                   </td>
                   <td className="px-2 py-1 border text-[10px] text-gray-600">
                     {w.last_run_started_at && (
-                      <div>start: {w.last_run_started_at}</div>
+                      <div>start: {formatDateTime(w.last_run_started_at)}</div>
                     )}
                     {w.last_run_finished_at && (
-                      <div>finish: {w.last_run_finished_at}</div>
+                      <div>finish: {formatDateTime(w.last_run_finished_at)}</div>
                     )}
                   </td>
                   <td className="px-2 py-1 border text-[10px] text-gray-700">
@@ -2129,6 +2189,15 @@ const MigrationWorkerTab: React.FC = () => {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Simple "terminal" log of worker runs */}
+      {logLines.length > 0 && (
+        <div className="mt-3 border rounded bg-black text-green-200 text-[11px] font-mono max-h-60 overflow-auto p-2">
+          {logLines.map((line, idx) => (
+            <div key={idx}>{line}</div>
+          ))}
         </div>
       )}
 
