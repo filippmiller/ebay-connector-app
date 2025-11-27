@@ -186,6 +186,10 @@ def _pg_column_has_unique_or_pk(schema: str, table: str, column: str) -> bool:
     This is used to decide whether it's safe to use ON CONFLICT(column) DO NOTHING.
     If there is no such constraint, Postgres will raise
     InvalidColumnReference, so we skip ON CONFLICT entirely in that case.
+
+    NOTE (2025-11-27): this helper is critical for the ebay fees worker to avoid
+    inserting duplicates when rerunning migrations. Do not remove this check
+    unless you also change the ON CONFLICT strategy.
     """
 
     sql = text(
@@ -527,6 +531,9 @@ async def run_migration_command(
 
 def run_worker_incremental_sync(
     *,
+    # NOTE (2025-11-27): this function is used both by the admin API and the
+    # background db_migration_worker loop. It must remain idempotent with
+    # respect to PK collisions so that reruns after timeouts are safe.
     source_database: str,
     source_schema: str,
     source_table: str,

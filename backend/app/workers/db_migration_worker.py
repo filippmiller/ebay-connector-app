@@ -132,6 +132,9 @@ async def run_db_migration_workers_once(max_workers: int = 20) -> Dict[str, Any]
                 row["target_schema"],
                 row["target_table"],
             )
+            # Single best-effort incremental pass for this worker. The helper
+            # is idempotent thanks to ON CONFLICT(pk) DO NOTHING on the target
+            # table, so reruns after crashes / timeouts are safe.
             summary = migration_console.run_worker_incremental_sync(
                 source_database=row["source_database"],
                 source_schema=row["source_schema"],
