@@ -140,6 +140,8 @@ const AdminDbExplorerPage: React.FC = () => {
   const [dataSortDirection, setDataSortDirection] = useState<'asc' | 'desc'>('desc');
   const [rowsLimit, setRowsLimit] = useState(50);
   const [rowsOffset, setRowsOffset] = useState(0);
+  const [dataSearchColumn, setDataSearchColumn] = useState<string | null>(null);
+  const [dataSearchValue, setDataSearchValue] = useState('');
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -279,9 +281,17 @@ const AdminDbExplorerPage: React.FC = () => {
     setError(null);
     try {
       if (activeDb === 'supabase') {
-        const resp = await api.get<RowsResponse>(`/api/admin/db/tables/${encodeURIComponent(table.name)}/rows`, {
-          params: { limit, offset },
-        });
+        const resp = await api.get<RowsResponse>(
+          `/api/admin/db/tables/${encodeURIComponent(table.name)}/rows`,
+          {
+            params: {
+              limit,
+              offset,
+              search_column: dataSearchColumn || undefined,
+              search_value: dataSearchValue.trim() || undefined,
+            },
+          },
+        );
         setRows(resp.data);
       } else {
         const resp = await api.post<MssqlTablePreviewResponse>('/api/admin/mssql/table-preview', {
@@ -497,6 +507,12 @@ const AdminDbExplorerPage: React.FC = () => {
     }
   };
 
+  const handleApplyDataSearch = () => {
+    if (!selectedTable) return;
+    setRowsOffset(0);
+    loadRows(selectedTable, rowsLimit, 0);
+  };
+
   const handleLoadMore = () => {
     if (!selectedTable || !rows) return;
     const newOffset = rowsOffset + rowsLimit;
@@ -652,8 +668,46 @@ const AdminDbExplorerPage: React.FC = () => {
             Rows {rowsOffset + 1}–{rowsOffset + rows.rows.length} (limit {rowsLimit}
             {rows.total_estimate != null && `, estimate ~${Math.round(rows.total_estimate)}`} )
           </div>
-          <div className="flex items-center gap-2">
-            <span>Limit:</span>
+          <div className="flex items-center gap-4">
+            {/* Per-column search (Supabase only for now) */}
+            {activeDb === 'supabase' && schema && (
+              <div className="flex items-center gap-1">
+                <span>Search column:</span>
+                <select
+                  className="border rounded px-1 py-0.5 text-[11px] max-w-[140px]"
+                  value={dataSearchColumn || ''}
+                  onChange={(e) => setDataSearchColumn(e.target.value || null)}
+                >
+                  <option value="">(all)</option>
+                  {schema.columns.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  className="border rounded px-1 py-0.5 text-[11px] max-w-[160px]"
+                  placeholder="substring, e.g. 2022-08-26"
+                  value={dataSearchValue}
+                  onChange={(e) => setDataSearchValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleApplyDataSearch();
+                    }
+                  }}
+                />
+                <button
+                  className="px-2 py-0.5 border rounded bg-white hover:bg-gray-50"
+                  onClick={handleApplyDataSearch}
+                  disabled={!dataSearchColumn || !dataSearchValue.trim()}
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span>Limit:</span>
             <select
               className="border rounded px-1 py-0.5 text-xs"
               value={rowsLimit}
