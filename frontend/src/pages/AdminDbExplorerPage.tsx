@@ -668,7 +668,7 @@ const AdminDbExplorerPage: React.FC = () => {
         <div className="flex items-center justify-between text-xs text-gray-600">
           <div>
             Rows {rowsOffset + 1}–{rowsOffset + rows.rows.length} (limit {rowsLimit}
-            {rows.total_estimate != null && `, estimate ~${Math.round(rows.total_estimate)}`} )
+            {rows.total_estimate != null ? `, estimate ~${Math.round(rows.total_estimate)}` : ''} )
           </div>
           <div className="flex items-center gap-4">
             {/* Per-column search (Supabase only for now) */}
@@ -710,16 +710,17 @@ const AdminDbExplorerPage: React.FC = () => {
             )}
             <div className="flex items-center gap-2">
               <span>Limit:</span>
-            <select
-              className="border rounded px-1 py-0.5 text-xs"
-              value={rowsLimit}
-              onChange={(e) => handleChangeLimit(Number(e.target.value) || 50)}
-            >
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-            </select>
+              <select
+                className="border rounded px-1 py-0.5 text-xs"
+                value={rowsLimit}
+                onChange={(e) => handleChangeLimit(Number(e.target.value) || 50)}
+              >
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+              </select>
+            </div>
           </div>
         </div>
         <div className="overflow-auto border rounded max-h-[60vh]">
