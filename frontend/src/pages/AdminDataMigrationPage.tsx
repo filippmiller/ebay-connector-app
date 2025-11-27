@@ -1639,6 +1639,20 @@ interface MigrationWorkerState {
   last_max_pk_target?: number | null;
 }
 
+interface MigrationWorkerPreview {
+  source_database: string;
+  source_schema: string;
+  source_table: string;
+  target_schema: string;
+  target_table: string;
+  pk_column: string;
+  source_row_count: number;
+  target_row_count: number;
+  rows_to_copy: number;
+  source_max_pk: number | null;
+  target_max_pk: number | null;
+}
+
 const MigrationWorkerTab: React.FC = () => {
   const [workers, setWorkers] = React.useState<MigrationWorkerState[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -1646,10 +1660,17 @@ const MigrationWorkerTab: React.FC = () => {
   const [savingId, setSavingId] = React.useState<number | null>(null);
   const [runningId, setRunningId] = React.useState<number | null>(null);
 
+  // Run-once confirmation modal
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [previewWorker, setPreviewWorker] = React.useState<MigrationWorkerState | null>(null);
+  const [previewData, setPreviewData] = React.useState<MigrationWorkerPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+
   // New worker dialog state
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createBusy, setCreateBusy] = React.useState(false);
-  const [createSourceDatabase, setCreateSourceDatabase] = React.useState('');
+  const [createSourceDatabase, setCreateSourceDatabase] = React.useState('DB_A28F26_parts');
   const [createSourceSchema, setCreateSourceSchema] = React.useState('dbo');
   const [createSourceTable, setCreateSourceTable] = React.useState('');
   const [createTargetSchema, setCreateTargetSchema] = React.useState('public');
@@ -1682,8 +1703,7 @@ const MigrationWorkerTab: React.FC = () => {
   });
 
   const resetCreateForm = () => {
-    setCreateSourceDatabase('');
-    setCreateSourceSchema('dbo');
+    setCreateSourceDatabase('DB_A28F26_parts');
     setCreateSourceTable('');
     setCreateTargetSchema('public');
     setCreateTargetTable('');
@@ -1923,11 +1943,34 @@ const MigrationWorkerTab: React.FC = () => {
   };
 
   const handleRunOnce = async (worker: MigrationWorkerState) => {
-    setRunningId(worker.id);
+    setPreviewWorker(worker);
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewData(null);
+    try {
+      const resp = await api.post<MigrationWorkerPreview>('/api/admin/db-migration/worker/preview', {
+        id: worker.id,
+      });
+      setPreviewData(resp.data);
+    } catch (e: any) {
+      setPreviewError(e?.response?.data?.detail || e.message || 'Failed to load worker preview');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleConfirmRunOnce = async () => {
+    if (!previewWorker) return;
+    setRunningId(previewWorker.id);
     setError(null);
     try {
-      await api.post('/api/admin/db-migration/worker/run-once', { id: worker.id, batch_size: 5000 });
+      await api.post('/api/admin/db-migration/worker/run-once', {
+        id: previewWorker.id,
+        batch_size: 5000,
+      });
       await loadWorkers();
+      setPreviewOpen(false);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e.message || 'Failed to run worker');
     } finally {
@@ -2088,6 +2131,91 @@ const MigrationWorkerTab: React.FC = () => {
           </table>
         </div>
       )}
+
+      {/* Run-once confirmation dialog */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Confirm worker run</DialogTitle>
+            <DialogDescription>
+              Короткий отчёт перед запуском инкрементальной миграции.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-xs">
+            {previewError && <div className="text-red-600">{previewError}</div>}
+            {previewLoading && <div className="text-gray-500">Loading preview…</div>}
+            {!previewLoading && previewData && (
+              <>
+                <p>
+                  Копируем из
+                  {' '}
+                  <span className="font-mono">
+                    {previewData.source_database}.{previewData.source_schema}.{previewData.source_table}
+                  </span>
+                  {' '}
+                  в
+                  {' '}
+                  <span className="font-mono">
+                    {previewData.target_schema}.{previewData.target_table}
+                  </span>
+                  .
+                </p>
+                <p>
+                  В source найдено
+                  {' '}
+                  <span className="font-mono">{previewData.source_row_count}</span>
+                  {' '}
+                  записей. В target найдено
+                  {' '}
+                  <span className="font-mono">{previewData.target_row_count}</span>
+                  {' '}
+                  записей.
+                </p>
+                <p>
+                  Нужно домигрировать примерно
+                  {' '}
+                  <span className="font-mono">{previewData.rows_to_copy}</span>
+                  {' '}
+                  записей (pk &gt; MAX(pk) в целевой таблице).
+                </p>
+                <p>
+                  MAX(pk) в source:
+                  {' '}
+                  <span className="font-mono">{previewData.source_max_pk ?? 'n/a'}</span>
+                  ; MAX(pk) в target:
+                  {' '}
+                  <span className="font-mono">{previewData.target_max_pk ?? 'n/a'}</span>
+                  .
+                </p>
+                <p className="text-[11px] text-gray-600">
+                  ВАЖНО: worker всегда берёт MAX(pk) из целевой таблицы и копирует только строки, где pk &gt; этот MAX(pk).
+                  Уже существующие записи не перезаписываются.
+                </p>
+              </>
+            )}
+          </div>
+          <DialogFooter className="flex justify-end gap-2 mt-3">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setPreviewOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={previewLoading || !previewData || runningId === previewWorker?.id}
+              onClick={() => {
+                void handleConfirmRunOnce();
+              }}
+            >
+              {runningId === previewWorker?.id ? 'Running…' : 'Start migration'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-xl">

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -87,10 +88,14 @@ class MigrationWorkerConfig(BaseModel):
 
 
 class MigrationWorkerState(MigrationWorkerConfig):
-    """Full worker state as stored in db_migration_workers."""
+    """Full worker state as stored in db_migration_workers.
 
-    last_run_started_at: Optional[str] = None
-    last_run_finished_at: Optional[str] = None
+    We expose timestamps as datetimes; FastAPI/Pydantic will serialize them
+    as ISO8601 strings for the frontend.
+    """
+
+    last_run_started_at: Optional[datetime] = None
+    last_run_finished_at: Optional[datetime] = None
     last_run_status: Optional[str] = None
     last_error: Optional[str] = None
     last_source_row_count: Optional[int] = None
@@ -743,6 +748,23 @@ def run_worker_incremental_sync(
     }
 
 
+class MigrationWorkerPreview(BaseModel):
+    """Lightweight preview for a worker run used in the UI confirmation modal."""
+
+    source_database: str
+    source_schema: str
+    source_table: str
+    target_schema: str
+    target_table: str
+    pk_column: str
+
+    source_row_count: int
+    target_row_count: int
+    rows_to_copy: int
+    source_max_pk: Optional[int]
+    target_max_pk: Optional[int]
+
+
 @router.get("/worker/state", response_model=List[MigrationWorkerState])
 async def list_migration_workers(
     current_user: User = Depends(get_current_admin_user),
@@ -919,6 +941,133 @@ async def upsert_migration_worker(
         )
 
     return MigrationWorkerState(**dict(row))
+
+
+@router.post("/worker/preview", response_model=MigrationWorkerPreview)
+async def preview_migration_worker_run(
+    req: MigrationWorkerRunOnceRequest,
+    current_user: User = Depends(get_current_admin_user),
+) -> MigrationWorkerPreview:
+    """Compute a short summary of what a run would do, without inserting rows.
+
+    Used by the admin UI to show a confirmation modal before running.
+    """
+
+    # Load the worker row (same logic as run-once).
+    with pg_engine.connect() as conn:
+        if req.id is not None:
+            sql = text("SELECT * FROM db_migration_workers WHERE id = :id")
+            row = conn.execute(sql, {"id": req.id}).mappings().first()
+        else:
+            if not (
+                req.source_database
+                and req.source_schema
+                and req.source_table
+                and req.target_schema
+                and req.target_table
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Either id or full source/target identity must be provided.",
+                )
+            sql = text(
+                """
+                SELECT *
+                FROM db_migration_workers
+                WHERE source_database = :source_database
+                  AND source_schema = :source_schema
+                  AND source_table = :source_table
+                  AND target_schema = :target_schema
+                  AND target_table = :target_table
+                """
+            )
+            row = conn.execute(
+                sql,
+                {
+                    "source_database": req.source_database,
+                    "source_schema": req.source_schema,
+                    "source_table": req.source_table,
+                    "target_schema": req.target_schema,
+                    "target_table": req.target_table,
+                },
+            ).mappings().first()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Migration worker not found",
+        )
+
+    worker = dict(row)
+    pk_column = worker["pk_column"]
+    source_schema = worker["source_schema"] or "dbo"
+    target_schema = worker["target_schema"] or "public"
+
+    # Target stats (Supabase)
+    with pg_engine.connect() as pg_conn:
+        max_pk_sql = text(
+            f'SELECT COALESCE(MAX("{pk_column}"), 0) FROM "{target_schema}"."{worker["target_table"]}"'
+        )
+        target_max_pk = int(pg_conn.execute(max_pk_sql).scalar() or 0)
+
+        target_count_sql = text(
+            f'SELECT COUNT(*) FROM "{target_schema}"."{worker["target_table"]}"'
+        )
+        target_row_count = int(pg_conn.execute(target_count_sql).scalar() or 0)
+
+    # Source stats (MSSQL)
+    mssql_cfg = MssqlConnectionConfig(
+        host=None,
+        port=1433,
+        database=worker["source_database"],
+        username=None,
+        password=None,
+        encrypt=True,
+    )
+    mssql_engine: Engine = create_engine_for_session(mssql_cfg)
+    try:
+        with mssql_engine.connect() as mssql_conn:
+            source_count_sql = text(
+                f"SELECT COUNT(*) FROM [{source_schema}].[{worker['source_table']}]"
+            )
+            source_row_count = int(
+                mssql_conn.execute(source_count_sql).scalar() or 0
+            )
+
+            source_max_pk_sql = text(
+                f"SELECT COALESCE(MAX([{pk_column}]), 0) FROM [{source_schema}].[{worker['source_table']}]"
+            )
+            source_max_pk = int(
+                mssql_conn.execute(source_max_pk_sql).scalar() or 0
+            )
+
+            # How many rows would be copied if we ran now?
+            rows_to_copy_sql = text(
+                f"SELECT COUNT(*) FROM [{source_schema}].[{worker['source_table']}] "
+                f"WHERE [{pk_column}] > :min_pk"
+            )
+            rows_to_copy = int(
+                mssql_conn.execute(
+                    rows_to_copy_sql, {"min_pk": target_max_pk}
+                ).scalar()
+                or 0
+            )
+    finally:
+        mssql_engine.dispose()
+
+    return MigrationWorkerPreview(
+        source_database=worker["source_database"],
+        source_schema=source_schema,
+        source_table=worker["source_table"],
+        target_schema=target_schema,
+        target_table=worker["target_table"],
+        pk_column=pk_column,
+        source_row_count=source_row_count,
+        target_row_count=target_row_count,
+        rows_to_copy=rows_to_copy,
+        source_max_pk=source_max_pk,
+        target_max_pk=target_max_pk,
+    )
 
 
 @router.post("/worker/run-once")
