@@ -1537,8 +1537,8 @@ class EbayService:
         """Synchronize orders from eBay to database with pagination (limit=200).
 
         If ``window_from``/``window_to`` are provided, they define the inclusive
-        ``lastModifiedDate`` window used for Fulfillment search via an RSQL
-        filter (e.g. ``lastModifiedDate:[start..end]``). When the values are
+        ``lastmodifieddate`` window used for Fulfillment search via an RSQL
+        filter (e.g. ``lastmodifieddate:[start..end]``). When the values are
         missing or cannot be parsed, a conservative default of the last 90 days
         ending at "now" (UTC) is applied.
 
@@ -1695,15 +1695,16 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # Restrict search to the effective lastModifiedDate window so
+                # Restrict search to the effective lastmodifieddate window so
                 # workers truly behave incrementally instead of always pulling
-                # the full 90-day default.
+                # the full 90-day default. NOTE: the Fulfillment API expects the
+                # field name to be all lower-case ("lastmodifieddate").
                 filter_params = {
                     "limit": limit,
                     "offset": offset,
                     "fieldGroups": "TAX_BREAKDOWN",
                     "filter": (
-                        f"lastModifiedDate:[{start_iso}..{end_iso}]"
+                        f"lastmodifieddate:[{start_iso}..{end_iso}]"
                     ),
                 }
                 
