@@ -64,19 +64,3 @@
 .read-the-docs {
   color: #888;
 }
-
-/* Make all fonts on the Tasks page approximately twice as large for readability */
-.tasks-page-large-text {
-  font-size: 200%; /* double the base */
-}
-/* Reset inner Tailwind fine-grained sizes so everything scales from the doubled base */
-.tasks-page-large-text * {
-  font-size: 1em !important;
-}
-/* Within the main grid, make column headers roughly twice the row text size */
-.tasks-page-large-text table thead th {
-  font-size: 1.6em !important; /* ~2x vs 0.8–1em body text */
-}
-.tasks-page-large-text table tbody td {
-  font-size: 0.9em !important; /* slightly smaller than base so header stands out */
-}

@@ -285,7 +285,7 @@ const TasksPage: React.FC = () => {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-white tasks-page-large-text">
+    <div className="h-screen flex flex-col bg-white">
       <FixedHeader />
       <div className="pt-16 flex-1 px-4 py-4 overflow-hidden">
         <div className="w-full h-full flex flex-col">
