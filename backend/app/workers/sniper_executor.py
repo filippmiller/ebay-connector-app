@@ -274,7 +274,7 @@ async def _place_bid_for_snipe(db: Session, snipe: EbaySnipe, now: datetime) -> 
         )
         return
 
-        try:
+    try:
         rest_item_id = await _resolve_rest_item_id(snipe.item_id)
     except HTTPException as exc:
         snipe.status = EbaySnipeStatus.error.value
@@ -375,7 +375,7 @@ async def _finalize_ended_snipes(db: Session, now: datetime) -> int:
             continue
 
         try:
-        rest_item_id = await _resolve_rest_item_id(snipe.item_id)
+            rest_item_id = await _resolve_rest_item_id(snipe.item_id)
         except HTTPException as exc:
             snipe.status = EbaySnipeStatus.error.value
             snipe.result_message = str(exc.detail)

@@ -267,7 +267,7 @@ async def startup_event():
             logger.info("✅ Auto-offer / Auto-buy planner worker started (runs every %s seconds)", 120)
 
             # DB migration workers: incremental MSSQL→Supabase sync for selected tables.
-                asyncio.create_task(run_db_migration_workers_loop())
+            asyncio.create_task(run_db_migration_workers_loop())
             logger.info("✅ DB migration worker loop started (runs every %s seconds)", 60)
 
             # eBay search watch worker – polls Browse API for user-defined rules.
