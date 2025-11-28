@@ -10,6 +10,33 @@ from app.utils.logger import logger, ebay_logger
 
 router = APIRouter(prefix="/ebay", tags=["ebay"])
 
+# Certain eBay scopes require a special approval process and will cause
+# `invalid_scope` errors if we include them in a regular user-consent
+# authorization URL. We keep them in the catalog for documentation, but
+# always strip them from live OAuth flows.
+FORBIDDEN_USER_CONSENT_SCOPES = {
+    "https://api.ebay.com/oauth/api_scope/buy.offer.auction",
+}
+
+
+def _sanitize_requested_scopes(scopes: List[str]) -> List[str]:
+    """Remove forbidden scopes from the requested set.
+
+    This is applied to both client-provided scope lists and the default
+    catalog-backed scope set used when the client omits scopes.
+    """
+    if not scopes:
+        return []
+
+    cleaned = [s for s in scopes if s not in FORBIDDEN_USER_CONSENT_SCOPES]
+    if len(cleaned) != len(scopes):
+        removed = sorted(set(scopes) - set(cleaned))
+        logger.info(
+            "Filtering forbidden user-consent scopes from eBay auth request: %s",
+            ", ".join(removed),
+        )
+    return cleaned
+
 
 @router.post("/auth/start")
 async def start_ebay_auth(
@@ -70,6 +97,9 @@ async def start_ebay_auth(
                 effective_scopes = auth_request.scopes or []
             finally:
                 db_session.close()
+
+        # In all cases, remove scopes that are not allowed in regular user-consent flows
+        effective_scopes = _sanitize_requested_scopes(effective_scopes)
         
         auth_url = ebay_service.get_authorization_url(
             redirect_uri=redirect_uri,

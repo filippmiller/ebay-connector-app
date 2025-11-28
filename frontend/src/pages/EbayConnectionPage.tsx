@@ -27,6 +27,15 @@ const DEFAULT_SCOPES = [
   'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
 ];
 
+// Scopes that require special eBay approval and must not be requested in
+// regular user-consent flows (they cause `invalid_scope` errors).
+const FORBIDDEN_REQUEST_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope/buy.offer.auction',
+];
+
+const sanitizeScopes = (scopes: string[]): string[] =>
+  scopes.filter((s) => !FORBIDDEN_REQUEST_SCOPES.includes(s));
+
 export const EbayConnectionPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, refreshMe } = useAuth();
@@ -110,9 +119,14 @@ export const EbayConnectionPage: React.FC = () => {
   const [preflightSubmitting, setPreflightSubmitting] = useState(false);
 
   // Derived scope previews for the pre-flight modal
-  const baseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
-  const extraScopes = (extraScopesInput || '').trim().split(/\s+/).filter(Boolean);
+  const rawBaseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
+  const baseScopes = sanitizeScopes(rawBaseScopes);
+  const extraScopesRaw = (extraScopesInput || '').trim().split(/\s+/).filter(Boolean);
+  const extraScopes = sanitizeScopes(extraScopesRaw);
   const finalScopesPreview = Array.from(new Set([...baseScopes, ...extraScopes]));
+  const forbiddenInPreview = rawBaseScopes
+    .concat(extraScopesRaw)
+    .filter((s) => FORBIDDEN_REQUEST_SCOPES.includes(s));
 
   // Compact: collapse Connection Request Preview details by default
   const [showRequestPreview, setShowRequestPreview] = useState(false);
@@ -687,7 +701,7 @@ export const EbayConnectionPage: React.FC = () => {
                         new URLSearchParams({
                           response_type: 'code',
                           redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
-                          scope: (availableScopes.length ? availableScopes : DEFAULT_SCOPES).join(' '),
+                          scope: baseScopes.join(' '),
                           state: 'generated server-side',
                         }).entries()
                       ).map(([key, value]) => (
@@ -704,7 +718,7 @@ export const EbayConnectionPage: React.FC = () => {
                           const qs = new URLSearchParams({
                             response_type: 'code',
                             redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
-                            scope: (availableScopes.length ? availableScopes : DEFAULT_SCOPES).join(' '),
+                            scope: baseScopes.join(' '),
                             state: 'generated server-side',
                             client_id: 'configured server-side'
                           }).toString();
@@ -866,8 +880,15 @@ export const EbayConnectionPage: React.FC = () => {
                       </div>
                       <p className="text-xs text-gray-500">
                         This is the exact union of the base catalog scopes and any additional scopes you
-                        entered above. It is what will be sent when you proceed to eBay.
+                        entered above, after removing scopes that eBay will not grant without special approval.
+                        It is what will be sent when you proceed to eBay.
                       </p>
+                      {forbiddenInPreview.length > 0 && (
+                        <p className="text-xs text-amber-700">
+                          The following scopes are present in the catalog but will <span className="font-semibold">not</span>{' '}
+                          be requested automatically: {forbiddenInPreview.join(', ')}.
+                        </p>
+                      )}
                       <ScrollArea className="max-h-40 rounded border p-2 bg-slate-100">
                         <div className="flex flex-wrap gap-1">
                           {finalScopesPreview.length > 0 ? (
