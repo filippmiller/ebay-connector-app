@@ -77,6 +77,63 @@ interface EbayWorkersPanelProps {
   ebayUserId?: string;
 }
 
+const API_INFO: Record<string, { source: string; endpoint: string; destination: string; keys: string }> = {
+  orders: {
+    source: "Orders – Fulfillment API",
+    endpoint: "GET /sell/fulfillment/v1/order",
+    destination: "ebay_orders (+ ebay_order_line_items)",
+    keys: "(order_id, user_id); line items keyed by (order_id, line_item_id)",
+  },
+  transactions: {
+    source: "Transactions – Finances API",
+    endpoint: "GET /sell/finances/v1/transaction",
+    destination: "ebay_transactions",
+    keys: "(transaction_id, user_id)",
+  },
+  finances: {
+    source: "Finances – Finances API",
+    endpoint: "GET /sell/finances/v1/transaction",
+    destination: "ebay_finances_transactions (+ ebay_finances_fees)",
+    keys: "(ebay_account_id, transaction_id)",
+  },
+  messages: {
+    source: "Messages – Trading API",
+    endpoint: "GetMyMessages",
+    destination: "ebay_messages",
+    keys: "message_id (per ebay_account_id, user_id)",
+  },
+  cases: {
+    source: "Post-Order – Case Management API",
+    endpoint: "GET /post-order/v2/casemanagement/search",
+    destination: "ebay_cases",
+    keys: "(case_id, user_id)",
+  },
+  inquiries: {
+    source: "Post-Order – Inquiry API",
+    endpoint: "GET /post-order/v2/inquiry/search",
+    destination: "ebay_inquiries",
+    keys: "(inquiry_id, user_id)",
+  },
+  offers: {
+    source: "Offers – Inventory API",
+    endpoint: "GET /sell/inventory/v1/offer?sku=...",
+    destination: "ebay_offers (+ inventory)",
+    keys: "(offer_id, user_id); inventory keyed by sku_code",
+  },
+  buyer: {
+    source: "Buying – Trading API",
+    endpoint: "GetMyeBayBuying",
+    destination: "ebay_buyer",
+    keys: "(ebay_account_id, item_id, transaction_id, order_line_item_id)",
+  },
+  active_inventory: {
+    source: "Active inventory – Trading API",
+    endpoint: "GetMyeBaySelling (ActiveList)",
+    destination: "ebay_active_inventory",
+    keys: "(ebay_account_id, sku, item_id)",
+  },
+};
+
 export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, accountLabel, ebayUserId }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +153,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   const [runAllOpen, setRunAllOpen] = useState(false);
   const [runAllLoading, setRunAllLoading] = useState(false);
   const [runAllResult, setRunAllResult] = useState<RunAllWorkersResponse | null>(null);
+  const [hoveredApi, setHoveredApi] = useState<string | null>(null);
 
   const deriveSyncRunId = (run: { id: string; api_family: string } | null | undefined): string | null => {
     if (!run || !run.id || !run.api_family) return null;
@@ -356,7 +414,29 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
           params: { account_id: accountId },
         },
       );
-      setRunAllResult(resp.data);
+      const data = resp.data;
+      setRunAllResult(data);
+
+      // Optimistically inject started runs into recentRuns so the dropdown and
+      // terminal see them immediately, without waiting for the next poll.
+      const startedRuns = (data.results || []).filter((r) => r.status === "started" && r.run_id);
+      if (startedRuns.length > 0) {
+        setRecentRuns((prev) => {
+          const existingIds = new Set((prev || []).map((r: any) => r.id));
+          const synthetic = startedRuns
+            .filter((r) => !existingIds.has(r.run_id as string))
+            .map((r) => ({
+              id: r.run_id as string,
+              api_family: r.api_family,
+              status: "running",
+              started_at: new Date().toISOString(),
+              finished_at: null,
+              summary: null,
+            }));
+          return synthetic.length > 0 ? [...synthetic, ...prev] : prev;
+        });
+      }
+
       // Refresh worker config, recent runs and schedule to pick up new state.
       fetchConfig();
       fetchRecentRuns();
@@ -432,51 +512,64 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
               {config.workers.map((w) => (
                 <tr key={w.api_family} className="border-t">
                   <td className="px-3 py-2 font-medium align-top">
-                    <div className="font-medium capitalize">{w.api_family}</div>
-                    {w.api_family === 'orders' && (
-                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
-                        <div>Source: Orders – Fulfillment API</div>
-                        <div className="font-mono text-[11px] text-gray-500">GET /sell/fulfillment/v1/order</div>
-                        <div className="mt-1">
-                          Destination: <span className="font-mono">ebay_orders</span>
-                          <span className="text-gray-500"> (+ </span>
-                          <span className="font-mono">ebay_order_line_items</span>
-                          <span className="text-gray-500">)</span>
+                    <div className="flex items-center gap-1">
+                      <div className="font-medium capitalize">{w.api_family}</div>
+                      {API_INFO[w.api_family] && (
+                        <div
+                          className="relative inline-flex items-center justify-center h-4 w-4 rounded-full border text-[10px] cursor-default group"
+                          onMouseEnter={() => setHoveredApi(w.api_family)}
+                          onMouseLeave={() => setHoveredApi((current) => (current === w.api_family ? null : current))}
+                        >
+                          <span className="leading-none text-gray-600">i</span>
+                          {hoveredApi === w.api_family && (
+                            <div className="absolute z-20 mt-1 left-0 transform translate-y-full min-w-[260px] max-w-md border bg-white shadow-lg rounded p-2 text-[11px] text-gray-700">
+                              <div className="font-semibold mb-1">{API_INFO[w.api_family].source}</div>
+                              <div className="font-mono text-[10px] text-gray-500 mb-1">
+                                {API_INFO[w.api_family].endpoint}
+                              </div>
+                              <div className="mb-1">
+                                <span className="font-semibold">Destination:</span>{" "}
+                                <span className="font-mono">{API_INFO[w.api_family].destination}</span>
+                              </div>
+                              <div>
+                                <span className="font-semibold">Key columns:</span>{" "}
+                                {API_INFO[w.api_family].keys}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <div className="mt-1 text-[11px] text-gray-500">
-                          Key columns: order_id, user_id, creation_date, last_modified_date, order_payment_status,
-                          order_fulfillment_status, buyer_username, total_amount, total_currency, ship_to_*, line_items_count.
-                        </div>
-                      </div>
-                    )}
-                    {w.api_family === 'transactions' && (
-                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
-                        <div>Source: Transactions – Finances API</div>
-                        <div className="font-mono text-[11px] text-gray-500">GET /sell/finances/v1/transaction</div>
-                        <div className="mt-1">
-                          Destination: <span className="font-mono">ebay_transactions</span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-gray-500">
-                          Key columns: transaction_id, user_id, order_id, transaction_date, transaction_type,
-                          transaction_status, amount, currency. All rows are tagged with ebay_account_id and ebay_user_id
-                          (e.g. mil_243) for precise account-level tracking.
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1 mb-1">
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full ${
-                          w.enabled && !w.last_error && w.last_run_status === "completed"
-                            ? "bg-green-500"
-                            : w.last_error || w.last_run_status === "error"
-                            ? "bg-red-500"
-                            : w.last_run_status === "running"
-                            ? "bg-yellow-400"
-                            : "bg-gray-300"
-                        }`}
-                      />
+                      {(() => {
+                        let statusLabel = "";
+                        if (!w.enabled) {
+                          statusLabel = "Disabled: worker will not run on schedule.";
+                        } else if (w.last_error || w.last_run_status === "error") {
+                          statusLabel = "Error: last run failed; see 'Last error' for details.";
+                        } else if (w.last_run_status === "running") {
+                          statusLabel = "Running: worker is currently in progress.";
+                        } else if (!w.last_run_status) {
+                          statusLabel = "Idle: worker is enabled but has not run yet.";
+                        } else {
+                          statusLabel = "Healthy: last run completed without errors.";
+                        }
+                        const dotClass = w.enabled && !w.last_error && w.last_run_status === "completed"
+                          ? "bg-green-500"
+                          : w.last_error || w.last_run_status === "error"
+                          ? "bg-red-500"
+                          : w.last_run_status === "running"
+                          ? "bg-yellow-400"
+                          : "bg-gray-300";
+                        return (
+                          <span
+                            className={`inline-block h-2 w-2 rounded-full ${dotClass}`}
+                            title={statusLabel}
+                          />
+                        );
+                      })()}
                       <span
                         className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${
                           w.enabled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"

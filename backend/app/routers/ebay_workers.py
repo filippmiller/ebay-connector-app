@@ -330,6 +330,9 @@ async def run_worker_once(
     return {"status": "started", "run_id": run_id, "api_family": api_family}
 
 
+RUN_ALL_STAGGER_SECONDS = 2
+
+
 @router.post("/run-all", response_model=RunAllWorkersResponse)
 async def run_all_workers_once(
     account_id: str = Query(..., description="eBay account id"),
@@ -405,7 +408,7 @@ async def run_all_workers_once(
 
     # Dispatch per API family similarly to /run, but always iterate through the
     # full list so the caller gets a complete status matrix.
-    for api_family in ensured_families:
+    for index, api_family in enumerate(ensured_families):
         state = states_by_api.get(api_family)
         if not state or not state.enabled:
             results.append(
@@ -416,6 +419,13 @@ async def run_all_workers_once(
                 )
             )
             continue
+
+        # Small stagger between workers to avoid an immediate burst of heavy
+        # API calls against eBay and our own database when "Run ALL" is used.
+        if index > 0 and RUN_ALL_STAGGER_SECONDS > 0:
+            from asyncio import sleep as _sleep  # imported lazily to avoid
+            # adding asyncio as a global dependency for this module.
+            await _sleep(RUN_ALL_STAGGER_SECONDS)
 
         try:
             if api_family == "orders":
@@ -616,7 +626,14 @@ async def get_worker_schedule(
         overlap_min: int,
         backfill_days: int,
     ) -> tuple[datetime, datetime]:
-        """Pure version of compute_sync_window for schedule simulation."""
+        """Pure version of compute_sync_window for schedule simulation.
+
+        For the current eBay workers we use an overlap-only model:
+        - If a cursor exists and parses, window_from = cursor - overlap.
+        - If cursor is missing or invalid, treat cursor as now_dt and look back
+          only by the overlap. The ``backfill_days`` argument is kept for
+          potential future extensions but is not applied here.
+        """
 
         window_to = now_dt
         if cursor_value:
@@ -626,10 +643,11 @@ async def get_worker_schedule(
                     raw = raw.replace("Z", "+00:00")
                 cursor_dt = datetime.fromisoformat(raw)
             except Exception:
-                cursor_dt = window_to - timedelta(days=backfill_days)
-            window_from_dt = cursor_dt - timedelta(minutes=overlap_min)
+                cursor_dt = window_to
         else:
-            window_from_dt = window_to - timedelta(days=backfill_days)
+            cursor_dt = window_to
+
+        window_from_dt = cursor_dt - timedelta(minutes=overlap_min)
         return window_from_dt, window_to
 
     worker_items: List[WorkerScheduleItem] = []
@@ -644,11 +662,14 @@ async def get_worker_schedule(
             for i in range(total_runs):
                 run_at_dt = now + timedelta(minutes=interval_minutes * (i + 1))
                 run_at_iso = run_at_dt.replace(microsecond=0).isoformat() + "Z"
+                # Snapshot worker: treat the run time itself as both window
+                # bounds so the schedule clearly shows when snapshots are
+                # expected to occur.
                 runs.append(
                     WorkerScheduleRun(
                         run_at=run_at_iso,
-                        window_from=None,
-                        window_to=None,
+                        window_from=run_at_iso,
+                        window_to=run_at_iso,
                     )
                 )
 

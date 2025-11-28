@@ -2,8 +2,9 @@
 
 This document explains how all eBay workers share the same incremental, cursor-based sync model:
 
-- First run: backfill a fixed number of days (90 by default, 30 for Buyer/Purchases).
-- Subsequent runs: use the last cursor **minus 30 minutes** as the start of the next window.
+- Every run uses the **last cursor minus 30 minutes** as the start of the next window.
+- If there is no cursor yet, the worker behaves as if the last run ended *now*
+  and looks back only 30 minutes.
 - All runs advance the cursor to the **end** of the window on success.
 - Overlap (30 minutes) plus **upsert-by-natural-key** makes all workers idempotent.
 
@@ -30,10 +31,10 @@ Key points:
 
 There is also `get_or_create_global_config`, which seeds `EbayWorkerGlobalConfig` with JSON defaults:
 
-- `overlap_minutes = 30` (global default overlap for future uses).
-- `initial_backfill_days = 90`.
+- `overlap_minutes = 30` (global default overlap for eBay workers).
+- `initial_backfill_days = 90` (kept for potential future use but not used by the current workers).
 
-> Note: individual workers explicitly pass their own overlap and backfill values, but the global config now reflects the 30‑minute policy as well.
+> Note: individual workers explicitly pass their own overlap and backfill values, but effective behaviour is now purely overlap-based (no automatic 90‑day backfill).
 
 ---
 
@@ -271,8 +272,10 @@ This ensures the Admin Workers UI shows **exactly the same 30‑minute overlap**
 ## Summary of behavior
 
 - All incremental workers (Orders, Transactions, Finances, Messages, Cases, Inquiries, Offers, Buyer) share the same cursor policy:
-  - First run: backfill (90 days, or 30 days for Buyer).
-  - Subsequent runs: `[cursor - 30 minutes, now]`.
+  - Every run uses `[cursor - 30 minutes, now]`.
+  - If there is no cursor yet (fresh account or API family), the worker
+    behaves as if the previous cursor was `now` and still uses a 30‑minute
+    look‑back window.
   - Cursor is moved to `window_to` only on successful runs.
 - Where eBay APIs expose a reliable time filter (`lastModifiedDate`, `transactionDate`, Trading `StartTimeFrom/To`), the workers project the window directly onto those parameters.
 - Where the external API does **not** support such a filter (Post-Order, Offers, current Trading Buying flow):
