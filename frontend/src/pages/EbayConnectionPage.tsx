@@ -15,7 +15,6 @@ import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SyncTerminal } from '../components/SyncTerminal';
 import { EbayDebugger } from '../components/EbayDebugger';
-import { EbayWorkersPanel } from '../components/workers/EbayWorkersPanel';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
 import { Link as LinkIcon, Loader2, Copy } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
@@ -557,7 +556,6 @@ export const EbayConnectionPage: React.FC = () => {
               <TabsTrigger value="connection" className="text-sm px-3 py-1">eBay Connection</TabsTrigger>
               <TabsTrigger value="accounts" className="text-sm px-3 py-1">eBay Accounts</TabsTrigger>
               <TabsTrigger value="sync" className="text-sm px-3 py-1">Sync Data</TabsTrigger>
-              <TabsTrigger value="workers" className="text-sm px-3 py-1">Workers</TabsTrigger>
               <TabsTrigger value="debugger" className="text-sm px-3 py-1">🔧 API Debugger</TabsTrigger>
               <TabsTrigger value="terminal" className="text-sm px-3 py-1">Connection Terminal</TabsTrigger>
             </TabsList>
@@ -1413,58 +1411,6 @@ export const EbayConnectionPage: React.FC = () => {
                   </AlertDescription>
                 </Alert>
               )}
-            </TabsContent>
-
-            {/* Workers tab */}
-            <TabsContent value="workers" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-xl">eBay Workers</CardTitle>
-                  <CardDescription className="text-sm text-gray-600">
-                    Background jobs that continuously sync data from eBay into Supabase.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {accounts.length === 0 ? (
-                    <div className="text-sm text-gray-600">
-                      No eBay accounts yet. Connect an account first.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Label className="text-xs text-gray-700">eBay account</Label>
-                        <Select
-                          value={selectedConnectAccountId || accounts[0]?.id}
-                          onValueChange={(val) => setSelectedConnectAccountId(val)}
-                        >
-                          <SelectTrigger className="h-8 w-72 text-xs">
-                            <SelectValue placeholder="Select eBay account" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {accounts.map((acc) => (
-                              <SelectItem key={acc.id} value={acc.id}>
-                                {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {selectedConnectAccountId && (
-                        <EbayWorkersPanel
-                          accountId={selectedConnectAccountId}
-                          accountLabel={
-                            (accounts.find(a => a.id === selectedConnectAccountId)?.house_name) ||
-                            (accounts.find(a => a.id === selectedConnectAccountId)?.username) ||
-                            selectedConnectAccountId
-                          }
-                          ebayUserId={accounts.find(a => a.id === selectedConnectAccountId)?.ebay_user_id}
-                        />
-                      )}
-                    </>
-                  )}
-                </CardContent>
-              </Card>
             </TabsContent>
 
             {/* API Debugger tab */}

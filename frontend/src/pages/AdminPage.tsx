@@ -32,6 +32,11 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">Manage eBay API connections</p>
           </Card>
 
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/workers')}>
+            <h2 className="text-lg font-semibold">eBay Workers</h2>
+            <p className="text-sm text-gray-600 mt-1">Configure and run background eBay sync jobs</p>
+          </Card>
+
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/db-explorer')}>
             <h2 className="text-lg font-semibold">DB Explorer</h2>
             <p className="text-sm text-gray-600 mt-1">Browse Supabase tables and recent rows (read-only)</p>

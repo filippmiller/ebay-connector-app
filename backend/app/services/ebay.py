@@ -1536,10 +1536,11 @@ class EbayService:
     ) -> Dict[str, Any]:
         """Synchronize orders from eBay to database with pagination (limit=200).
 
-        If ``window_from``/``window_to`` are provided, they are used as a logical
-        time window for logging and for future filtering once the Fulfillment API
-        exposes stable filters; for now they are recorded in logs while the
-        underlying API still relies on its default 90-day window.
+        If ``window_from``/``window_to`` are provided, they define the inclusive
+        ``lastModifiedDate`` window used for Fulfillment search via an RSQL
+        filter (e.g. ``lastModifiedDate:[start..end]``). When the values are
+        missing or cannot be parsed, a conservative default of the last 90 days
+        ending at "now" (UTC) is applied.
 
         Args:
             user_id: User ID
@@ -1618,9 +1619,11 @@ class EbayService:
             # Persist context so PostgresEbayDatabase can tag rows
             from app.services.ebay_database import ebay_db
 
-            # Determine effective date window for logging. Fulfillment API does
-            # not yet accept a precise lastModifiedDate filter in this path, but
-            # workers compute a window and pass it through for observability.
+            # Determine effective date window for Fulfillment search and
+            # logging. Workers pass ``window_from``/``window_to`` based on a
+            # cursor with overlap (e.g. cursor - 30 minutes). We convert those
+            # into a concrete ``lastModifiedDate:[start..end]`` filter so that
+            # each run only refetches a narrow tail of orders.
             from datetime import datetime, timedelta, timezone
 
             now_utc = datetime.now(timezone.utc)
@@ -1642,6 +1645,11 @@ class EbayService:
                 start_dt = _parse_iso(window_from) or (end_dt - timedelta(days=90))
             else:
                 start_dt = end_dt - timedelta(days=90)
+
+            # Pre-compute ISO strings for the Fulfillment filter so we use a
+            # stable, millisecond-truncated representation.
+            start_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            end_iso = end_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
             event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
             event_logger.log_info(f"=== WHO WE ARE ===")
@@ -1687,14 +1695,16 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # For now we do not send any explicit status/date filter and instead
-                # rely on eBay's default time window. Once the exact filter
-                # semantics are finalized, we can re-introduce a canonical
-                # filter here (e.g. creationdate or lastmodifieddate ranges).
+                # Restrict search to the effective lastModifiedDate window so
+                # workers truly behave incrementally instead of always pulling
+                # the full 90-day default.
                 filter_params = {
                     "limit": limit,
                     "offset": offset,
                     "fieldGroups": "TAX_BREAKDOWN",
+                    "filter": (
+                        f"lastModifiedDate:[{start_iso}..{end_iso}]"
+                    ),
                 }
                 
                 # Check for cancellation BEFORE making the API request

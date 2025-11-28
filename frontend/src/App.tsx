@@ -22,6 +22,7 @@ import AdminJobsPage from './pages/AdminJobsPage';
 import OffersPageV2 from './pages/OffersPageV2';
 import AdminDbExplorerPage from './pages/AdminDbExplorerPage';
 import EbayNotificationsPage from './pages/EbayNotificationsPage';
+import AdminWorkersPage from './pages/AdminWorkersPage';
 import SKUPage from './pages/SKUPage';
 import ListingPage from './pages/ListingPage';
 import ShippingPage from './pages/ShippingPage';
@@ -154,6 +155,7 @@ function App() {
           <Route path="/admin/db-explorer" element={<ProtectedRoute><AdminDbExplorerPage /></ProtectedRoute>} />
           <Route path="/admin/data-migration" element={<ProtectedRoute><AdminDataMigrationPage /></ProtectedRoute>} />
           <Route path="/admin/notifications" element={<ProtectedRoute><EbayNotificationsPage /></ProtectedRoute>} />
+          <Route path="/admin/workers" element={<ProtectedRoute><AdminWorkersPage /></ProtectedRoute>} />
           <Route
             path="/orders"
             element={

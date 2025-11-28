@@ -37,6 +37,11 @@ router = APIRouter(prefix="/ebay/workers", tags=["ebay_workers"])
 class WorkerConfigItem(BaseModel):
     api_family: str
     enabled: bool
+    # Human-readable description of the natural key used for deduplication in
+    # the underlying Postgres tables (e.g. "(order_id, user_id)"). This is
+    # surfaced in the Workers UI so admins can see exactly how we avoid
+    # duplicates when windows overlap.
+    primary_dedup_key: Optional[str] = None
     cursor_type: Optional[str] = None
     cursor_value: Optional[str] = None
     last_run_at: Optional[str] = None
@@ -81,6 +86,19 @@ class WorkerScheduleResponse(BaseModel):
     interval_minutes: int
     hours: int
     workers: List[WorkerScheduleItem]
+
+
+class RunAllWorkersResult(BaseModel):
+    api_family: str
+    status: str  # started, skipped, error
+    run_id: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class RunAllWorkersResponse(BaseModel):
+    account: Dict[str, Any]
+    workers_enabled: bool
+    results: List[RunAllWorkersResult]
 
 
 @router.get("/config", response_model=WorkerConfigResponse)
@@ -135,6 +153,22 @@ async def get_worker_config(
     ordered_api_families = sorted(states_by_api.keys())
     states: List[EbaySyncState] = [states_by_api[api] for api in ordered_api_families]
 
+    # Static mapping of api_family -> human-readable primary dedup key. These
+    # strings are derived from the ON CONFLICT keys and unique indexes used by
+    # PostgresEbayDatabase and the SQLAlchemy models.
+    primary_key_by_api: Dict[str, str] = {
+        "orders": "(order_id, user_id)",
+        "transactions": "(transaction_id, user_id)",
+        "finances": "(ebay_account_id, transaction_id)",
+        "offers": "(offer_id, user_id)",
+        "messages": "message_id (per ebay_account_id, user_id)",
+        "active_inventory": "(ebay_account_id, sku, item_id)",
+        "buyer": "(ebay_account_id, item_id, transaction_id, order_line_item_id)",
+        "inquiries": "(inquiry_id, user_id)",
+        "cases": "(case_id, user_id)",
+        "disputes": "(dispute_id, user_id)",
+    }
+
     items: List[WorkerConfigItem] = []
     for state in states:
         # Last run info
@@ -152,6 +186,7 @@ async def get_worker_config(
             WorkerConfigItem(
                 api_family=state.api_family,
                 enabled=state.enabled,
+                primary_dedup_key=primary_key_by_api.get(state.api_family),
                 cursor_type=state.cursor_type,
                 cursor_value=state.cursor_value,
                 last_run_at=state.last_run_at.isoformat() if state.last_run_at else None,
@@ -295,6 +330,171 @@ async def run_worker_once(
     return {"status": "started", "run_id": run_id, "api_family": api_family}
 
 
+@router.post("/run-all", response_model=RunAllWorkersResponse)
+async def run_all_workers_once(
+    account_id: str = Query(..., description="eBay account id"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Run all enabled workers for a given eBay account once.
+
+    This is a convenience wrapper around the per-API /run endpoint. It starts a
+    run for each enabled api_family and returns a per-worker status summary so
+    the UI can show a confirmation modal.
+    """
+
+    workers_enabled = are_workers_globally_enabled(db)
+
+    account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
+    if not account or account.org_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    ensured_families = [
+        "orders",
+        "transactions",
+        "offers",
+        "messages",
+        "active_inventory",
+        "cases",
+        "inquiries",
+        "finances",
+        "buyer",
+    ]
+
+    ebay_user_id = account.ebay_user_id or "unknown"
+
+    # Ensure sync state rows exist so enabled/disabled flags are consistent.
+    existing_states: List[EbaySyncState] = (
+        db.query(EbaySyncState)
+        .filter(EbaySyncState.ebay_account_id == account_id)
+        .all()
+    )
+    states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
+
+    for api_family in ensured_families:
+        if api_family not in states_by_api:
+            states_by_api[api_family] = get_or_create_sync_state(
+                db,
+                ebay_account_id=account_id,
+                ebay_user_id=ebay_user_id,
+                api_family=api_family,
+            )
+
+    results: List[RunAllWorkersResult] = []
+
+    if not workers_enabled:
+        # Do not start anything; return explicit "workers disabled" reason.
+        for api_family in ensured_families:
+            results.append(
+                RunAllWorkersResult(
+                    api_family=api_family,
+                    status="skipped",
+                    reason="workers_disabled",
+                )
+            )
+        return RunAllWorkersResponse(
+            account={
+                "id": account.id,
+                "ebay_user_id": account.ebay_user_id,
+                "username": account.username,
+                "house_name": account.house_name,
+            },
+            workers_enabled=False,
+            results=results,
+        )
+
+    # Dispatch per API family similarly to /run, but always iterate through the
+    # full list so the caller gets a complete status matrix.
+    for api_family in ensured_families:
+        state = states_by_api.get(api_family)
+        if not state or not state.enabled:
+            results.append(
+                RunAllWorkersResult(
+                    api_family=api_family,
+                    status="skipped",
+                    reason="disabled",
+                )
+            )
+            continue
+
+        try:
+            if api_family == "orders":
+                run_id = await run_orders_worker_for_account(account_id)
+            elif api_family == "transactions":
+                run_id = await run_transactions_worker_for_account(account_id)
+            elif api_family == "offers":
+                run_id = await run_offers_worker_for_account(account_id)
+            elif api_family == "messages":
+                run_id = await run_messages_worker_for_account(account_id)
+            elif api_family == "active_inventory":
+                run_id = await run_active_inventory_worker_for_account(account_id)
+            elif api_family == "cases":
+                run_id = await run_cases_worker_for_account(account_id)
+            elif api_family == "inquiries":
+                run_id = await run_inquiries_worker_for_account(account_id)
+            elif api_family == "finances":
+                run_id = await run_finances_worker_for_account(account_id)
+            elif api_family == "buyer":
+                run_id = await run_purchases_worker_for_account(account_id)
+            else:
+                run_id = None
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to start worker run (run-all) account=%s api=%s: %s",
+                account_id,
+                api_family,
+                exc,
+                exc_info=True,
+            )
+            results.append(
+                RunAllWorkersResult(
+                    api_family=api_family,
+                    status="error",
+                    reason=str(exc),
+                )
+            )
+            continue
+
+        if not run_id:
+            active = get_active_run(db, ebay_account_id=account_id, api_family=api_family)
+            if active:
+                results.append(
+                    RunAllWorkersResult(
+                        api_family=api_family,
+                        status="skipped",
+                        run_id=active.id,
+                        reason="already_running",
+                    )
+                )
+            else:
+                results.append(
+                    RunAllWorkersResult(
+                        api_family=api_family,
+                        status="skipped",
+                        reason="not_started",
+                    )
+                )
+        else:
+            results.append(
+                RunAllWorkersResult(
+                    api_family=api_family,
+                    status="started",
+                    run_id=run_id,
+                )
+            )
+
+    return RunAllWorkersResponse(
+        account={
+            "id": account.id,
+            "ebay_user_id": account.ebay_user_id,
+            "username": account.username,
+            "house_name": account.house_name,
+        },
+        workers_enabled=True,
+        results=results,
+    )
+
+
 @router.get("/runs")
 async def list_worker_runs(
     account_id: str = Query(..., description="eBay account id"),
@@ -381,14 +581,16 @@ async def get_worker_schedule(
 
     # Per-API overlap/backfill configuration (mirrors worker constants).
     overlap_by_api: Dict[str, int] = {
-        "orders": 60,
-        "transactions": 60,
-        "finances": 60,
-        "cases": 60,
-        "inquiries": 60,
-        "offers": 360,
-        # Messages worker uses a 60-minute overlap between runs.
-        "messages": 60,
+        # All time-windowed workers use a 30-minute overlap so each incremental
+        # run re-checks a small tail around the cursor.
+        "orders": 30,
+        "transactions": 30,
+        "finances": 30,
+        "cases": 30,
+        "inquiries": 30,
+        "offers": 30,
+        # Messages worker also uses a 30-minute overlap between runs.
+        "messages": 30,
     }
     backfill_by_api: Dict[str, int] = {
         "orders": 90,

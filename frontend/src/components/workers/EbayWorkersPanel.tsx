@@ -5,6 +5,7 @@ import { SyncTerminal } from "../SyncTerminal";
 interface WorkerConfigItem {
   api_family: string;
   enabled: boolean;
+  primary_dedup_key?: string | null;
   cursor_type?: string | null;
   cursor_value?: string | null;
   last_run_at?: string | null;
@@ -52,6 +53,24 @@ interface WorkerScheduleResponse {
   workers: WorkerScheduleItem[];
 }
 
+interface RunAllWorkersResult {
+  api_family: string;
+  status: string;
+  run_id?: string | null;
+  reason?: string | null;
+}
+
+interface RunAllWorkersResponse {
+  account: {
+    id: string;
+    ebay_user_id?: string;
+    username?: string;
+    house_name?: string;
+  };
+  workers_enabled: boolean;
+  results: RunAllWorkersResult[];
+}
+
 interface EbayWorkersPanelProps {
   accountId: string;
   accountLabel: string;
@@ -73,6 +92,10 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   const [runningApiFamily, setRunningApiFamily] = useState<string | null>(null);
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | "latest" | null>("latest");
+  // Run-all modal state
+  const [runAllOpen, setRunAllOpen] = useState(false);
+  const [runAllLoading, setRunAllLoading] = useState(false);
+  const [runAllResult, setRunAllResult] = useState<RunAllWorkersResponse | null>(null);
 
   const deriveSyncRunId = (run: { id: string; api_family: string } | null | undefined): string | null => {
     if (!run || !run.id || !run.api_family) return null;
@@ -321,6 +344,31 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     }
   };
 
+  const handleRunAllConfirm = async () => {
+    if (!accountId) return;
+    setRunAllLoading(true);
+    setError(null);
+    try {
+      const resp = await api.post<RunAllWorkersResponse>(
+        `/ebay/workers/run-all`,
+        null,
+        {
+          params: { account_id: accountId },
+        },
+      );
+      setRunAllResult(resp.data);
+      // Refresh worker config, recent runs and schedule to pick up new state.
+      fetchConfig();
+      fetchRecentRuns();
+      fetchSchedule();
+    } catch (e: any) {
+      console.error("Failed to run all workers", e);
+      setError(e?.response?.data?.detail || e.message || "Failed to run all workers");
+    } finally {
+      setRunAllLoading(false);
+    }
+  };
+
   if (!accountId) {
     return <div className="mt-4 text-gray-500">Select an eBay account to see workers.</div>;
   }
@@ -347,14 +395,26 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                 <div className="text-xs text-gray-500">eBay user id: {ebayUserId}</div>
               )}
             </div>
-            <button
-              onClick={toggleGlobal}
-              className={`px-4 py-2 font-semibold rounded shadow text-white ${
-                config.workers_enabled ? "bg-red-600" : "bg-green-600"
-              }`}
-            >
-              {config.workers_enabled ? "BIG RED BUTTON: TURN OFF ALL JOBS" : "Enable all workers"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleGlobal}
+                className={`px-4 py-2 font-semibold rounded shadow text-white ${
+                  config.workers_enabled ? "bg-red-600" : "bg-green-600"
+                }`}
+              >
+                {config.workers_enabled ? "BIG RED BUTTON: TURN OFF ALL JOBS" : "Enable all workers"}
+              </button>
+              <button
+                onClick={() => {
+                  setRunAllOpen(true);
+                  setRunAllResult(null);
+                }}
+                className="px-4 py-2 font-semibold rounded shadow text-white bg-blue-600 text-xs"
+                disabled={!config.workers_enabled}
+              >
+                Run ALL workers
+              </button>
+            </div>
           </div>
 
           <table className="min-w-full text-sm border mt-4">
@@ -364,6 +424,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                 <th className="px-3 py-2 text-left">Status</th>
                 <th className="px-3 py-2 text-left">Last run</th>
                 <th className="px-3 py-2 text-left">Cursor</th>
+                <th className="px-3 py-2 text-left">Primary key</th>
                 <th className="px-3 py-2 text-left">Actions</th>
               </tr>
             </thead>
@@ -404,13 +465,32 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${
-                        w.enabled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {w.enabled ? "Enabled" : "Disabled"}
-                    </span>
+                    <div className="flex items-center gap-1 mb-1">
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${
+                          w.enabled && !w.last_error && w.last_run_status === "completed"
+                            ? "bg-green-500"
+                            : w.last_error || w.last_run_status === "error"
+                            ? "bg-red-500"
+                            : w.last_run_status === "running"
+                            ? "bg-yellow-400"
+                            : "bg-gray-300"
+                        }`}
+                      />
+                      <span
+                        className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${
+                          w.enabled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {w.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </div>
+                    {w.last_run_summary && (
+                      <div className="text-[11px] text-gray-600 max-w-xs">
+                        Last run: fetched {w.last_run_summary?.total_fetched ?? "–"}, stored {" "}
+                        {w.last_run_summary?.total_stored ?? "–"}
+                      </div>
+                    )}
                     {w.last_error && (
                       <div className="text-xs text-red-600 mt-1 max-w-xs truncate">
                         Last error: {w.last_error}
@@ -427,6 +507,18 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                   <td className="px-3 py-2">
                     <div>Type: {w.cursor_type || "–"}</div>
                     <div>Value: {w.cursor_value || "–"}</div>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-700 align-top max-w-xs">
+                    {w.primary_dedup_key ? (
+                      <>
+                        <div className="font-mono text-[11px]">{w.primary_dedup_key}</div>
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          Natural key from eBay data used to avoid duplicates when windows overlap.
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-gray-400 text-[11px]">n/a</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 space-x-2">
                     <button
@@ -625,9 +717,117 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
             {detailsLoading ? (
               <div>Loading...</div>
             ) : (
-              <pre className="text-xs bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap">
-                {JSON.stringify(detailsData, null, 2)}
-              </pre>
+              <>
+                {detailsData?.run?.summary && (
+                  <div className="mb-2 text-xs text-gray-700 border rounded p-2 bg-gray-50">
+                    <div>
+                      <span className="font-semibold">API:</span> {detailsData.run.api_family}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Status:</span> {detailsData.run.status}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Window:</span>{' '}
+                      {detailsData.run.summary.window_from || "–"} .. {detailsData.run.summary.window_to || "–"}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Fetched / stored:</span>{' '}
+                      {detailsData.run.summary.total_fetched ?? "–"} /{' '}
+                      {detailsData.run.summary.total_stored ?? "–"}
+                    </div>
+                  </div>
+                )}
+                <pre className="text-xs bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                  {JSON.stringify(detailsData, null, 2)}
+                </pre>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {runAllOpen && config && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg max-w-3xl w-full max-h-[80vh] overflow-auto p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold">Run ALL workers for this account</div>
+              <button
+                onClick={() => {
+                  setRunAllOpen(false);
+                  setRunAllResult(null);
+                }}
+                className="text-sm text-gray-600"
+              >
+                Close
+              </button>
+            </div>
+            <div className="text-xs text-gray-700 mb-3">
+              Account: {accountLabel || config.account.username || config.account.house_name || config.account.id}
+              {ebayUserId && <span className="ml-2">(eBay user id: {ebayUserId})</span>}
+            </div>
+            <div className="text-xs text-gray-600 mb-2">
+              Будут последовательно запущены все включённые воркеры для этого аккаунта.
+              Уже запущенные воркеры будут помечены как <span className="font-semibold">already_running</span> и не будут дублироваться.
+            </div>
+            <div className="mb-3">
+              <div className="font-semibold text-xs mb-1">Enabled workers</div>
+              <div className="flex flex-wrap gap-1 text-xs">
+                {config.workers
+                  .filter((w) => w.enabled)
+                  .map((w) => (
+                    <span key={w.api_family} className="px-2 py-0.5 rounded border bg-gray-50">
+                      {w.api_family}
+                    </span>
+                  ))}
+                {config.workers.filter((w) => w.enabled).length === 0 && (
+                  <span className="text-gray-500">No enabled workers for this account.</span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={handleRunAllConfirm}
+                disabled={runAllLoading || !config.workers_enabled || config.workers.filter((w) => w.enabled).length === 0}
+                className={`px-3 py-1 rounded text-xs font-semibold text-white ${
+                  runAllLoading ? 'bg-blue-400' : 'bg-blue-600'
+                }`}
+              >
+                {runAllLoading ? 'Starting…' : 'Run ALL workers now'}
+              </button>
+              {!config.workers_enabled && (
+                <div className="text-[11px] text-red-600">Global workers toggle is OFF. Turn it on to start workers.</div>
+              )}
+            </div>
+            {runAllResult && (
+              <div className="mt-2 border-t pt-2">
+                <div className="font-semibold text-xs mb-1">Run-all result</div>
+                <table className="min-w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="px-2 py-1 text-left">API</th>
+                      <th className="px-2 py-1 text-left">Status</th>
+                      <th className="px-2 py-1 text-left">Run ID / Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runAllResult.results.map((r) => (
+                      <tr key={r.api_family} className="border-t">
+                        <td className="px-2 py-1 whitespace-nowrap">{r.api_family}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{r.status}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">
+                          {r.run_id ? (
+                            <span className="text-gray-700">run_id: {r.run_id}</span>
+                          ) : r.reason ? (
+                            <span className="text-gray-500">{r.reason}</span>
+                          ) : (
+                            <span className="text-gray-400">–</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>

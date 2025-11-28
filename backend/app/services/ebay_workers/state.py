@@ -74,7 +74,8 @@ def get_or_create_global_config(db: Session) -> EbayWorkerGlobalConfig:
         id=str(uuid4()),
         workers_enabled=True,
         defaults_json={
-            "overlap_minutes": 60,
+            # Global default: 30-minute overlap and 90-day initial backfill.
+            "overlap_minutes": 30,
             "initial_backfill_days": 90,
         },
     )
