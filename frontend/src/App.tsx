@@ -39,6 +39,7 @@ import AdminUsersPage from './pages/AdminUsersPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import SniperPage from './pages/SniperPage';
 import AdminAiGridPage from './pages/AdminAiGridPage';
+import EbayBrowserPage from './pages/EbayBrowserPage';
 import AdminAiRulesPage from './pages/AdminAiRulesPage';
 import AdminMonitoringPage from './pages/AdminMonitoringPage';
 import AdminModelProfitPage from './pages/AdminModelProfitPage';
@@ -306,6 +307,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <SniperPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ebay-browser"
+            element={
+              <ProtectedRoute>
+                <EbayBrowserPage />
               </ProtectedRoute>
             }
           />
