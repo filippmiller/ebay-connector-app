@@ -2608,6 +2608,10 @@ class Task(Base):
 
     is_popup = Column(Boolean, nullable=False, server_default="true")
 
+    # Archiving / importance flags
+    is_archived = Column(Boolean, nullable=False, default=False, server_default="false")
+    is_important = Column(Boolean, nullable=False, default=False, server_default="false")
+
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)

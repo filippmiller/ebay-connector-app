@@ -45,6 +45,8 @@ class TaskBasicResponse(BaseModel):
     due_at: Optional[datetime]
     snooze_until: Optional[datetime]
     is_popup: bool
+    is_archived: bool
+    is_important: bool
     creator_id: str
     creator_username: Optional[str]
     assignee_id: Optional[str]
@@ -71,6 +73,8 @@ class TaskDetailResponse(BaseModel):
     due_at: Optional[datetime]
     snooze_until: Optional[datetime]
     is_popup: bool
+    is_archived: bool
+    is_important: bool
     creator_id: str
     creator_username: Optional[str]
     assignee_id: Optional[str]
@@ -112,6 +116,10 @@ class TaskCommentCreateRequest(BaseModel):
 class TaskSnoozeRequest(BaseModel):
     snooze_until: Optional[datetime] = None
     preset: Optional[str] = None  # "15m", "1h", "tomorrow"
+
+
+class TaskImportantRequest(BaseModel):
+    is_important: bool
 
 
 class TaskNotificationResponse(BaseModel):
@@ -239,6 +247,7 @@ async def list_tasks(
     role: str = Query("assigned_to_me", regex="^(assigned_to_me|created_by_me|all)$"),
     status_filter: Optional[List[str]] = Query(None, alias="status"),
     search: Optional[str] = Query(None),
+    archived: bool = Query(False, description="When true, return archived tasks instead of active ones"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     current_user: UserModel = Depends(get_current_active_user),
@@ -248,7 +257,7 @@ async def list_tasks(
 
     Non-admins are restricted to creator/assignee visibility.
     """
-    query = db.query(Task)
+    query = db.query(Task).filter(Task.deleted_at.is_(None))
 
     is_admin = _is_admin(current_user)
 
@@ -265,6 +274,11 @@ async def list_tasks(
     elif role == "all" and not is_admin:
         # Non-admins cannot see truly global list
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required for role=all")
+
+    if archived:
+        query = query.filter(Task.is_archived.is_(True))
+    else:
+        query = query.filter(Task.is_archived.is_(False))
 
     if status_filter:
         lowered = [s.lower() for s in status_filter]
@@ -312,6 +326,8 @@ async def list_tasks(
                 due_at=t.due_at,
                 snooze_until=t.snooze_until,
                 is_popup=bool(t.is_popup),
+                is_archived=bool(getattr(t, "is_archived", False)),
+                is_important=bool(getattr(t, "is_important", False)),
                 creator_id=t.creator_id,
                 creator_username=getattr(user_map.get(t.creator_id), "username", None),
                 assignee_id=t.assignee_id,
@@ -332,7 +348,7 @@ async def get_task(
     db: Session = Depends(get_db),
 ) -> TaskDetailResponse:
     task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
+    if not task or task.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
     _ensure_can_view(task, current_user)
@@ -380,6 +396,8 @@ async def get_task(
         due_at=task.due_at,
         snooze_until=task.snooze_until,
         is_popup=bool(task.is_popup),
+        is_archived=bool(getattr(task, "is_archived", False)),
+        is_important=bool(getattr(task, "is_important", False)),
         creator_id=task.creator_id,
         creator_username=getattr(creator, "username", None),
         assignee_id=task.assignee_id,
@@ -444,7 +462,7 @@ async def update_task(
     db: Session = Depends(get_db),
 ) -> TaskDetailResponse:
     task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
+    if not task or task.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
     _ensure_can_modify(task, current_user)
@@ -490,7 +508,7 @@ async def change_status(
     db: Session = Depends(get_db),
 ) -> TaskDetailResponse:
     task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
+    if not task or task.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
     _ensure_can_modify(task, current_user)
@@ -548,7 +566,7 @@ async def add_comment(
     db: Session = Depends(get_db),
 ) -> TaskDetailResponse:
     task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
+    if not task or task.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
     _ensure_can_modify(task, current_user)
@@ -578,7 +596,7 @@ async def snooze_task(
     db: Session = Depends(get_db),
 ) -> TaskDetailResponse:
     task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
+    if not task or task.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
     _ensure_can_modify(task, current_user)
@@ -626,6 +644,80 @@ async def snooze_task(
     db.refresh(task)
 
     return await get_task(task.id, current_user=current_user, db=db)
+
+
+@tasks_router.post("/{task_id}/archive", response_model=TaskDetailResponse)
+async def archive_task(
+    task_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> TaskDetailResponse:
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task or task.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    _ensure_can_modify(task, current_user)
+
+    task.is_archived = True
+    db.commit()
+    db.refresh(task)
+    return await get_task(task.id, current_user=current_user, db=db)
+
+
+@tasks_router.post("/{task_id}/unarchive", response_model=TaskDetailResponse)
+async def unarchive_task(
+    task_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> TaskDetailResponse:
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task or task.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    _ensure_can_modify(task, current_user)
+
+    task.is_archived = False
+    db.commit()
+    db.refresh(task)
+    return await get_task(task.id, current_user=current_user, db=db)
+
+
+@tasks_router.post("/{task_id}/important", response_model=TaskDetailResponse)
+async def set_task_important(
+    task_id: str,
+    payload: TaskImportantRequest,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> TaskDetailResponse:
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task or task.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    _ensure_can_modify(task, current_user)
+
+    task.is_important = bool(payload.is_important)
+    db.commit()
+    db.refresh(task)
+    return await get_task(task.id, current_user=current_user, db=db)
+
+
+@tasks_router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(
+    task_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> None:
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task or task.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    _ensure_can_modify(task, current_user)
+
+    if getattr(task, "is_important", False):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Important tasks cannot be deleted")
+
+    task.deleted_at = datetime.now(timezone.utc)
+    db.commit()
 
 
 # ---- Notifications endpoints ----
