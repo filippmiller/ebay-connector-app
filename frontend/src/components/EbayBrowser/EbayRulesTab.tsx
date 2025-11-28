@@ -211,21 +211,21 @@ export const EbayRulesTab: React.FC = () => {
                   </td>
                   <td className="px-3 py-2 border-b align-top whitespace-nowrap space-x-2">
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       onClick={() => startEdit(w)}
                     >
                       Правка
                     </Button>
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       onClick={() => void handleRunOnce(w)}
                     >
                       Тест
                     </Button>
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       onClick={() => void handleDelete(w)}
                     >
