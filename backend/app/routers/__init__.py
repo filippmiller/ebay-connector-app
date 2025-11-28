@@ -42,4 +42,6 @@ from . import (
     integrations,
     admin_ai_integrations,
     ai_speech,
+    ebay_browse,
+    ebay_search_watches,
 )

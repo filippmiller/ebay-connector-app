@@ -2538,6 +2538,56 @@ class EbayScopeDefinition(Base):
     )
 
 
+class EbaySearchWatch(Base):
+    """User-defined eBay auto-search rule.
+
+    Stores per-user watch rules for periodically querying the eBay Browse API
+    and generating internal notifications when new matching listings appear.
+    """
+
+    __tablename__ = "ebay_search_watches"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+
+    # Human-readable name and core query parameters
+    name = Column(Text, nullable=False)
+    keywords = Column(Text, nullable=False)
+
+    # Optional upper bound for price + shipping in the listing currency.
+    max_total_price = Column(Numeric(14, 2), nullable=True)
+
+    # Simple hint for post-filtering by type of item (e.g. "laptop", "all").
+    category_hint = Column(String(50), nullable=True)
+
+    # List of case-insensitive keywords that must NOT appear in title/description
+    # (e.g. ["screen", "keyboard", "battery"] to exclude parts).
+    exclude_keywords = Column(JSONB, nullable=True)
+
+    marketplace_id = Column(String(20), nullable=False, default="EBAY_US")
+
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+
+    # Minimal interval between checks for this watch in seconds.
+    check_interval_sec = Column(Integer, nullable=False, default=60)
+
+    last_checked_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Small rolling window of recently seen itemIds to avoid duplicate
+    # notifications. Stored as JSON list of strings.
+    last_seen_item_ids = Column(JSONB, nullable=True)
+
+    # How to notify the user when new matches are found. Initial values:
+    # - "task" – create/append to an internal Task + TaskNotification
+    # - "none" – do not generate notifications (rule only for manual checks)
+    notification_mode = Column(String(20), nullable=False, default="task")
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="ebay_search_watches")
+
+
 class Task(Base):
     __tablename__ = "tasks"
 

@@ -49,6 +49,8 @@ from app.routers import (
     integrations,
     admin_ai_integrations,
     ai_speech,
+    ebay_browse,
+    ebay_search_watches,
 )
 from app.utils.logger import logger
 import os
@@ -148,6 +150,8 @@ app.include_router(admin_ai_overview.router)
 app.include_router(integrations.router)
 app.include_router(admin_ai_integrations.router)
 app.include_router(ai_speech.router)
+app.include_router(ebay_browse.router)
+app.include_router(ebay_search_watches.router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -263,8 +267,12 @@ async def startup_event():
             logger.info("✅ Auto-offer / Auto-buy planner worker started (runs every %s seconds)", 120)
 
             # DB migration workers: incremental MSSQL→Supabase sync for selected tables.
-            asyncio.create_task(run_db_migration_workers_loop())
+                asyncio.create_task(run_db_migration_workers_loop())
             logger.info("✅ DB migration worker loop started (runs every %s seconds)", 60)
+
+            # eBay search watch worker – polls Browse API for user-defined rules.
+            asyncio.create_task(run_search_watch_loop())
+            logger.info("✅ eBay search watch worker started (runs every %s seconds)", 60)
             
         except Exception as e:
             logger.error(f"⚠️  Failed to start background workers: {e}")

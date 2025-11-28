@@ -18,6 +18,7 @@ from app.workers.ebay_monitor_worker import run_monitoring_loop
 from app.workers.auto_offer_buy_worker import run_auto_offer_buy_loop
 from app.workers.gmail_sync_worker import run_gmail_sync_loop, run_gmail_sync_once
 from app.workers.db_migration_worker import run_db_migration_workers_loop
+from app.workers.ebay_search_watch_worker import run_search_watch_loop
 
 __all__ = [
     "refresh_expiring_tokens",
@@ -33,4 +34,5 @@ __all__ = [
     "run_gmail_sync_loop",
     "run_gmail_sync_once",
     "run_db_migration_workers_loop",
+    "run_search_watch_loop",
 ]
