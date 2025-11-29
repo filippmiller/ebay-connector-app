@@ -370,4 +370,14 @@ export const ebayApi = {
     );
     return response.data;
   },
+
+  async getAdminTokenHttpLogs(env: string, limit: number = 100): Promise<{ logs: EbayConnectLog[] }> {
+    const params = new URLSearchParams();
+    params.set('env', env);
+    params.set('limit', String(limit));
+    const response = await apiClient.get<{ logs: EbayConnectLog[] }>(
+      `/api/admin/ebay/tokens/logs?${params.toString()}`,
+    );
+    return response.data;
+  },
 };

@@ -36,6 +36,12 @@ const AdminWorkersPage: React.FC = () => {
   const [logModalError, setLogModalError] = useState<string | null>(null);
   const [logModalData, setLogModalData] = useState<EbayTokenRefreshLogResponse | null>(null);
 
+  // HTTP-level token request/response logs (from EbayConnectLog via /api/admin/ebay/tokens/logs)
+  const [httpLogsModalOpen, setHttpLogsModalOpen] = useState(false);
+  const [httpLogsLoading, setHttpLogsLoading] = useState(false);
+  const [httpLogsError, setHttpLogsError] = useState<string | null>(null);
+  const [httpLogs, setHttpLogs] = useState<any[]>([]);
+
   useEffect(() => {
     const loadAccountsAndTokens = async () => {
       try {
@@ -81,6 +87,22 @@ const AdminWorkersPage: React.FC = () => {
   const accountLabel = selectedAccount
     ? selectedAccount.house_name || selectedAccount.username || selectedAccount.id
     : "";
+
+  const openHttpLogsModal = async () => {
+    try {
+      setHttpLogsModalOpen(true);
+      setHttpLogsLoading(true);
+      setHttpLogsError(null);
+      // For production tokens, env must be "production"; endpoint is guarded by FEATURE_TOKEN_INFO on backend.
+      const resp = await ebayApi.getAdminTokenHttpLogs("production", 100);
+      setHttpLogs(resp.logs || []);
+    } catch (e: any) {
+      console.error("Failed to load token HTTP logs", e);
+      setHttpLogsError(e?.response?.data?.detail || e.message || "Failed to load token HTTP logs");
+    } finally {
+      setHttpLogsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -191,6 +213,13 @@ const AdminWorkersPage: React.FC = () => {
                           Last error: {workerStatus.last_error_message}
                         </div>
                       )}
+                      <button
+                        type="button"
+                        className="mt-1 inline-flex items-center text-[11px] text-blue-600 hover:text-blue-800 underline"
+                        onClick={openHttpLogsModal}
+                      >
+                        View raw HTTP token logs
+                      </button>
                     </div>
                   ) : (
                     <div className="text-[11px] text-gray-600">No worker heartbeat yet.</div>
@@ -384,6 +413,70 @@ const AdminWorkersPage: React.FC = () => {
                       </table>
                     )}
                   </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {httpLogsModalOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+              <div className="bg-white rounded shadow-lg max-w-5xl w-[90vw] max-h-[80vh] overflow-auto p-4 text-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="font-semibold text-sm">Token HTTP logs (request &amp; response)</h2>
+                  <button
+                    type="button"
+                    className="text-xs text-gray-600 hover:text-black"
+                    onClick={() => setHttpLogsModalOpen(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                {httpLogsLoading && (
+                  <div className="text-xs text-gray-600">Loading HTTP logs...</div>
+                )}
+                {httpLogsError && (
+                  <div className="text-xs text-red-600 mb-2">{httpLogsError}</div>
+                )}
+                {!httpLogsLoading && !httpLogsError && httpLogs.length === 0 && (
+                  <div className="text-xs text-gray-600">No token HTTP logs found.</div>
+                )}
+                {!httpLogsLoading && httpLogs.length > 0 && (
+                  <div className="space-y-3">
+                    {httpLogs.map((log, idx) => (
+                      <div key={log.id || idx} className="border rounded p-2 bg-gray-50">
+                        <div className="text-[11px] mb-1">
+                          <span className="font-semibold">{log.action}</span>{" "}
+                          {log.environment && (
+                            <span className="text-gray-600">· {log.environment}</span>
+                          )}
+                          {log.created_at && (
+                            <span className="text-gray-500">
+                              {" "}· {formatDateTimeLocal(log.created_at)}
+                            </span>
+                          )}
+                          {log.error && (
+                            <span className="ml-2 text-red-600">
+                              error: {String(log.error).slice(0, 200)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div>
+                            <div className="font-semibold text-[11px] mb-0.5">Request</div>
+                            <pre className="bg-white border rounded px-2 py-1 text-[10px] overflow-auto max-h-48">
+                              {JSON.stringify(log.request, null, 2)}
+                            </pre>
+                          </div>
+                          <div>
+                            <div className="font-semibold text-[11px] mb-0.5">Response</div>
+                            <pre className="bg-white border rounded px-2 py-1 text-[10px] overflow-auto max-h-48">
+                              {JSON.stringify(log.response, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
