@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import FixedHeader from "@/components/FixedHeader";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ebayApi, EbayTokenStatusAccount, TokenRefreshWorkerStatus, EbayTokenRefreshLogResponse } from "../api/ebay";
@@ -348,7 +348,7 @@ const AdminWorkersPage: React.FC = () => {
           {/* Token refresh log modal */}
           {logModalOpen && (
             <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-              <div className="bg-white rounded shadow-lg max-w-5xl w-[90vw] max-h-[80vh] overflow-auto p-4 text-xs resize">
+              <div className="bg-white rounded shadow-lg w-[95vw] max-w-[1400px] max-h-[90vh] min-h-[60vh] overflow-auto p-4 text-xs resize">
                 <div className="flex items-center justify-between mb-2">
                   <div className="font-semibold">Token refresh log</div>
                   <button
