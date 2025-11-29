@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import api from "../../lib/apiClient";
 import { SyncTerminal } from "../SyncTerminal";
+import { formatDateTimeLocal, formatRelativeTime } from "../../lib/dateUtils";
+import { useToast } from "@/hooks/use-toast";
 
 interface WorkerConfigItem {
   api_family: string;
@@ -71,6 +73,19 @@ interface RunAllWorkersResponse {
   results: RunAllWorkersResult[];
 }
 
+// Frontend-only representation of a single worker inside a "run-all" batch
+// with live status updated from /ebay/workers/logs/{run_id}.
+interface RunAllWorkerLiveStatus {
+  api_family: string;
+  run_id?: string | null;
+  phase: "pending" | "running" | "completed" | "error" | "skipped";
+  reason?: string | null;
+  summary?: {
+    total_fetched?: number | null;
+    total_stored?: number | null;
+  } | null;
+}
+
 interface EbayWorkersPanelProps {
   accountId: string;
   accountLabel: string;
@@ -135,6 +150,8 @@ const API_INFO: Record<string, { source: string; endpoint: string; destination: 
 };
 
 export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, accountLabel, ebayUserId }) => {
+  const { toast } = useToast();
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<WorkerConfigResponse | null>(null);
@@ -153,11 +170,31 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   const [runAllOpen, setRunAllOpen] = useState(false);
   const [runAllLoading, setRunAllLoading] = useState(false);
   const [runAllResult, setRunAllResult] = useState<RunAllWorkersResponse | null>(null);
+  const [runAllSessionWorkers, setRunAllSessionWorkers] = useState<RunAllWorkerLiveStatus[] | null>(null);
+  const [runAllSessionCompleted, setRunAllSessionCompleted] = useState(false);
   const [hoveredApi, setHoveredApi] = useState<string | null>(null);
 
   const deriveSyncRunId = (run: { id: string; api_family: string } | null | undefined): string | null => {
     if (!run || !run.id || !run.api_family) return null;
     return `worker_${run.api_family}_${run.id}`;
+  };
+
+  const attachTerminalToRun = async (run: { id: string; api_family: string } | null | undefined) => {
+    if (!run) return;
+    let syncRunId: string | null = deriveSyncRunId(run);
+    try {
+      const logsResp = await api.get(`/ebay/workers/logs/${run.id}`);
+      const summary = logsResp.data?.run?.summary as any;
+      syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
+      if (syncRunId) {
+        setActiveSyncRunId(syncRunId);
+        setActiveApiFamily(logsResp.data?.run?.api_family || run.api_family || null);
+      }
+    } catch (err) {
+      // Best-effort: if logs are not yet available, keep the terminal detached.
+      // eslint-disable-next-line no-console
+      console.error("Failed to attach workers terminal to run", err);
+    }
   };
 
   const fetchConfig = async () => {
@@ -211,6 +248,13 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     }
   };
 
+  const getNextRunForApi = (apiFamily: string): WorkerScheduleRun | null => {
+    if (!schedule) return null;
+    const worker = schedule.workers.find((w) => w.api_family === apiFamily);
+    if (!worker || !worker.runs || worker.runs.length === 0) return null;
+    return worker.runs[0];
+  };
+
   const fetchRecentRuns = async () => {
     if (!accountId) return;
     try {
@@ -228,20 +272,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
         const latest = runs[0];
         setSelectedRunId(latest.id);
         if (!activeSyncRunId) {
-          // Derive a deterministic sync_run_id so we can attach even while the
-          // worker run is still in progress.
-          let syncRunId: string | null = deriveSyncRunId(latest);
-          try {
-            const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
-            const summary = logsResp.data?.run?.summary as any;
-            syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
-          } catch (err) {
-            console.error("Failed to auto-attach workers terminal to latest run", err);
-          }
-          if (syncRunId) {
-            setActiveSyncRunId(syncRunId);
-            setActiveApiFamily(latest.api_family);
-          }
+          // Attach the terminal to the latest run so logs stream immediately.
+          await attachTerminalToRun(latest);
         }
       }
     } catch (e) {
@@ -307,6 +339,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       }
       if (resp.data?.status === "started" && resp.data?.run_id) {
         const runId = resp.data.run_id as string;
+        const runMeta = { id: runId, api_family: apiFamily };
         setActiveApiFamily(apiFamily);
         setSelectedRunId(runId);
         // Optimistically add this run to the recentRuns list so the dropdown
@@ -323,42 +356,20 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
           },
           ...prev,
         ]);
-        // Immediately attach the terminal to the deterministic sync_run_id so
-        // live progress is visible even before the worker finishes.
-        let syncRunId: string | null = deriveSyncRunId({ id: runId, api_family: apiFamily });
-        try {
-          const logsResp = await api.get(`/ebay/workers/logs/${runId}`);
-          const summary = logsResp.data?.run?.summary as any;
-          syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
-        } catch (err) {
-          console.error("Failed to load logs for new worker run", err);
-        }
-        if (syncRunId) {
-          setActiveSyncRunId(syncRunId);
-        } else {
-          setActiveSyncRunId(null);
-        }
+        // Attach the terminal so live progress is visible immediately.
+        await attachTerminalToRun(runMeta);
       } else if (resp.data?.status === "skipped" && resp.data?.run_id) {
         // Already running; attach terminal to the active run.
         const runId = resp.data.run_id as string;
         setActiveApiFamily(apiFamily);
         setSelectedRunId(runId);
-        let syncRunId: string | null = deriveSyncRunId({ id: runId, api_family: apiFamily });
-        try {
-          const logsResp = await api.get(`/ebay/workers/logs/${runId}`);
-          const summary = logsResp.data?.run?.summary as any;
-          syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
-        } catch (err) {
-          console.error("Failed to load logs for existing worker run", err);
-        }
-        if (syncRunId) {
-          setActiveSyncRunId(syncRunId);
-        }
+        await attachTerminalToRun({ id: runId, api_family: apiFamily });
       }
       // Refresh config + recent runs to pick up the latest state.
       fetchConfig();
       fetchRecentRuns();
     } catch (e: any) {
+      // eslint-disable-next-line no-console
       console.error("Failed to trigger run", e);
       setError(e?.response?.data?.detail || e.message || "Failed to trigger run");
     } finally {
@@ -385,14 +396,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
         setDetailsRunId(lastRun.id);
         const logsResp = await api.get(`/ebay/workers/logs/${lastRun.id}`);
         setDetailsData(logsResp.data);
-        // Pick up sync_run_id from worker run summary and wire terminal to
-        // the existing SyncTerminal which streams /ebay/sync/events/{run_id}.
-        const summary = logsResp.data?.run?.summary as any;
-        const syncRunId = summary?.sync_run_id || summary?.run_id || null;
-        if (syncRunId) {
-          setActiveSyncRunId(syncRunId);
-          setActiveApiFamily(apiFamily);
-        }
+        await attachTerminalToRun({ id: lastRun.id, api_family: apiFamily });
       }
     } catch (e: any) {
       console.error("Failed to load run details", e);
@@ -406,6 +410,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     if (!accountId) return;
     setRunAllLoading(true);
     setError(null);
+    setRunAllSessionWorkers(null);
+    setRunAllSessionCompleted(false);
     try {
       const resp = await api.post<RunAllWorkersResponse>(
         `/ebay/workers/run-all`,
@@ -417,24 +423,72 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       const data = resp.data;
       setRunAllResult(data);
 
-      // Optimistically inject started runs into recentRuns so the dropdown and
-      // terminal see them immediately, without waiting for the next poll.
-      const startedRuns = (data.results || []).filter((r) => r.status === "started" && r.run_id);
-      if (startedRuns.length > 0) {
-        setRecentRuns((prev) => {
-          const existingIds = new Set((prev || []).map((r: any) => r.id));
-          const synthetic = startedRuns
-            .filter((r) => !existingIds.has(r.run_id as string))
-            .map((r) => ({
-              id: r.run_id as string,
-              api_family: r.api_family,
-              status: "running",
-              started_at: new Date().toISOString(),
-              finished_at: null,
+      // Build a live session model for enabled workers only so the modal can
+      // track their status in real time.
+      if (config) {
+        const enabledApis = config.workers.filter((w) => w.enabled).map((w) => w.api_family);
+        const sessionWorkers: RunAllWorkerLiveStatus[] = enabledApis.map((apiFamily) => {
+          const r = data.results.find((res) => res.api_family === apiFamily);
+          if (!r) {
+            return {
+              api_family: apiFamily,
+              run_id: null,
+              phase: "pending",
+              reason: null,
               summary: null,
-            }));
-          return synthetic.length > 0 ? [...synthetic, ...prev] : prev;
+            };
+          }
+          let phase: RunAllWorkerLiveStatus["phase"] = "pending";
+          if (r.status === "started") {
+            phase = "running";
+          } else if (r.status === "error") {
+            phase = "error";
+          } else if (r.status === "skipped") {
+            // If we have a run_id but reason=already_running, treat as running; otherwise as skipped.
+            if (r.run_id && r.reason === "already_running") {
+              phase = "running";
+            } else {
+              phase = "skipped";
+            }
+          }
+          return {
+            api_family: apiFamily,
+            run_id: r.run_id ?? null,
+            phase,
+            reason: r.reason ?? null,
+            summary: null,
+          };
         });
+        setRunAllSessionWorkers(sessionWorkers);
+
+        // Optimistically inject started runs into recentRuns so the dropdown and
+        // terminal see them immediately, without waiting for the next poll.
+        const startedRuns = (data.results || []).filter((r) => r.status === "started" && r.run_id);
+        if (startedRuns.length > 0) {
+          setRecentRuns((prev) => {
+            const existingIds = new Set((prev || []).map((r: any) => r.id));
+            const synthetic = startedRuns
+              .filter((r) => !existingIds.has(r.run_id as string))
+              .map((r) => ({
+                id: r.run_id as string,
+                api_family: r.api_family,
+                status: "running",
+                started_at: new Date().toISOString(),
+                finished_at: null,
+                summary: null,
+              }));
+            return synthetic.length > 0 ? [...synthetic, ...prev] : prev;
+          });
+        }
+
+        // Attach terminal to the first started worker in the batch so logs are
+        // immediately visible in the bottom terminal.
+        const firstStarted = sessionWorkers.find((w) => w.phase === "running" && w.run_id);
+        if (firstStarted && firstStarted.run_id) {
+          void attachTerminalToRun({ id: firstStarted.run_id, api_family: firstStarted.api_family });
+          setSelectedRunId(firstStarted.run_id);
+          setActiveApiFamily(firstStarted.api_family);
+        }
       }
 
       // Refresh worker config, recent runs and schedule to pick up new state.
@@ -442,12 +496,94 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       fetchRecentRuns();
       fetchSchedule();
     } catch (e: any) {
+      // eslint-disable-next-line no-console
       console.error("Failed to run all workers", e);
-      setError(e?.response?.data?.detail || e.message || "Failed to run all workers");
+      const message = e?.response?.data?.detail || e.message || "Failed to run all workers";
+      setError(message);
+      toast({ title: "Run-all request failed", description: message, variant: "destructive" });
     } finally {
       setRunAllLoading(false);
     }
   };
+
+  // Poll worker run status for the current run-all session while the modal is
+  // open. This keeps the live modal in sync without requiring a full page
+  // reload.
+  useEffect(() => {
+    if (!runAllOpen || !runAllSessionWorkers || runAllSessionWorkers.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const hasActive = runAllSessionWorkers.some((w) => w.phase === "running" || w.phase === "pending");
+    if (!hasActive) {
+      setRunAllSessionCompleted(true);
+      return;
+    }
+
+    const pollOnce = async () => {
+      if (cancelled) return;
+      try {
+        const nextState: RunAllWorkerLiveStatus[] = [...runAllSessionWorkers];
+        for (const worker of runAllSessionWorkers) {
+          if (!worker.run_id || (worker.phase !== "running" && worker.phase !== "pending")) {
+            continue;
+          }
+          try {
+            const logsResp = await api.get(`/ebay/workers/logs/${worker.run_id}`);
+            const run = logsResp.data?.run;
+            const summary = run?.summary as any;
+            const idx = nextState.findIndex((w) => w.api_family === worker.api_family);
+            if (idx === -1) continue;
+            const updated: RunAllWorkerLiveStatus = { ...nextState[idx] };
+            if (run?.status === "completed") {
+              updated.phase = "completed";
+            } else if (run?.status === "error") {
+              updated.phase = "error";
+            } else if (run?.status === "running") {
+              updated.phase = "running";
+            }
+            if (summary) {
+              updated.summary = {
+                total_fetched: summary.total_fetched ?? null,
+                total_stored: summary.total_stored ?? null,
+              };
+            }
+            nextState[idx] = updated;
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error("Failed to poll worker run status", err);
+          }
+        }
+        if (!cancelled) {
+          setRunAllSessionWorkers(nextState);
+          const allDone = nextState.every((w) =>
+            w.phase === "completed" ||
+            w.phase === "error" ||
+            w.phase === "skipped" ||
+            !w.run_id,
+          );
+          if (allDone) {
+            setRunAllSessionCompleted(true);
+          }
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("Run-all status polling failed", err);
+      }
+    };
+
+    void pollOnce();
+    const id = window.setInterval(() => {
+      void pollOnce();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [runAllOpen, runAllSessionWorkers]);
 
   if (!accountId) {
     return <div className="mt-4 text-gray-500">Select an eBay account to see workers.</div>;
@@ -474,6 +610,24 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
               {ebayUserId && (
                 <div className="text-xs text-gray-500">eBay user id: {ebayUserId}</div>
               )}
+              <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-gray-500">
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+                  Last run OK
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-full bg-yellow-400" />
+                  Running
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+                  Last run error
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-full bg-gray-300" />
+                  Disabled / no runs
+                </span>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -579,6 +733,15 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                         {w.enabled ? "Enabled" : "Disabled"}
                       </span>
                     </div>
+                    {(() => {
+                      const nextRun = getNextRunForApi(w.api_family);
+                      if (!nextRun || !w.enabled) return null;
+                      return (
+                        <div className="text-[11px] text-gray-500 mb-1">
+                          Next run: {formatDateTimeLocal(nextRun.run_at)}
+                        </div>
+                      );
+                    })()}
                     {w.last_run_summary && (
                       <div className="text-[11px] text-gray-600 max-w-xs">
                         Last run: fetched {w.last_run_summary?.total_fetched ?? "–"}, stored {" "}
@@ -592,9 +755,23 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    <div>
-                      <div>Started: {w.last_run_started_at || "–"}</div>
-                      <div>Finished: {w.last_run_finished_at || "–"}</div>
+                    <div className="text-xs text-gray-700 space-y-0.5">
+                      <div>
+                        Started: {formatDateTimeLocal(w.last_run_started_at)}
+                        {formatRelativeTime(w.last_run_started_at) && (
+                          <span className="ml-1 text-[11px] text-gray-500">
+                            ({formatRelativeTime(w.last_run_started_at)})
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        Finished: {formatDateTimeLocal(w.last_run_finished_at)}
+                        {formatRelativeTime(w.last_run_finished_at) && (
+                          <span className="ml-1 text-[11px] text-gray-500">
+                            ({formatRelativeTime(w.last_run_finished_at)})
+                          </span>
+                        )}
+                      </div>
                       <div>Status: {w.last_run_status || "–"}</div>
                     </div>
                   </td>
@@ -691,9 +868,16 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     <tbody>
                       {w.runs.map((r, idx) => (
                         <tr key={idx} className="border-t">
-                          <td className="px-2 py-1 whitespace-nowrap">{r.run_at}</td>
-                          <td className="px-2 py-1 whitespace-nowrap">{r.window_from || "–"}</td>
-                          <td className="px-2 py-1 whitespace-nowrap">{r.window_to || "–"}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            {formatDateTimeLocal(r.run_at)}
+                            {formatRelativeTime(r.run_at) && (
+                              <span className="ml-1 text-[10px] text-gray-500">
+                                ({formatRelativeTime(r.run_at)})
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap">{r.window_from ? formatDateTimeLocal(r.window_from) : "–"}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">{r.window_to ? formatDateTimeLocal(r.window_to) : "–"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -723,37 +907,15 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     // Re-resolve latest run from recentRuns
                     if (recentRuns.length > 0) {
                       const latest = recentRuns[0];
-                      let syncRunId: string | null = deriveSyncRunId(latest);
-                      try {
-                        const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
-                        const summary = logsResp.data?.run?.summary as any;
-                        syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
-                      } catch (err) {
-                        console.error("Failed to load logs for latest worker run", err);
-                      }
-                      if (syncRunId) {
-                        setActiveSyncRunId(syncRunId);
-                        setActiveApiFamily(latest.api_family);
-                        setSelectedRunId(latest.id);
-                      }
+                      await attachTerminalToRun(latest);
+                      setSelectedRunId(latest.id);
                     }
                   } else {
                     setSelectedRunId(val);
                     // Try to find the run in the local recentRuns list so we can
                     // derive a sync_run_id even if summary is still null.
-                    const run = recentRuns.find((r) => r.id === val);
-                    let syncRunId: string | null = deriveSyncRunId(run);
-                    try {
-                      const logsResp = await api.get(`/ebay/workers/logs/${val}`);
-                      const summary = logsResp.data?.run?.summary as any;
-                      syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
-                      if (syncRunId) {
-                        setActiveSyncRunId(syncRunId);
-                        setActiveApiFamily(logsResp.data?.run?.api_family || null);
-                      }
-                    } catch (err) {
-                      console.error("Failed to load logs for selected worker run", err);
-                    }
+                    const run = recentRuns.find((r) => r.id === val) || null;
+                    await attachTerminalToRun(run);
                   }
                 }}
               >
@@ -761,14 +923,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                 {recentRuns.map((run) => {
                   let label = `${run.api_family}`;
                   if (run.started_at) {
-                    try {
-                      const d = new Date(run.started_at);
-                      const datePart = d.toISOString().slice(0, 10); // YYYY-MM-DD
-                      const timePart = d.toTimeString().slice(0, 8); // HH:MM:SS
-                      label += ` – ${datePart} ${timePart}`;
-                    } catch {
-                      label += ` – ${run.started_at}`;
-                    }
+                    label += ` – ${formatDateTimeLocal(run.started_at)}`;
                   }
                   if (run.status) {
                     label += ` – ${run.status}`;
@@ -852,6 +1007,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                 onClick={() => {
                   setRunAllOpen(false);
                   setRunAllResult(null);
+                  setRunAllSessionWorkers(null);
+                  setRunAllSessionCompleted(false);
                 }}
                 className="text-sm text-gray-600"
               >
@@ -884,18 +1041,107 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
             <div className="flex items-center justify-between mb-3">
               <button
                 onClick={handleRunAllConfirm}
-                disabled={runAllLoading || !config.workers_enabled || config.workers.filter((w) => w.enabled).length === 0}
+                disabled={
+                  runAllLoading ||
+                  !config.workers_enabled ||
+                  config.workers.filter((w) => w.enabled).length === 0 ||
+                  !!runAllSessionWorkers
+                }
                 className={`px-3 py-1 rounded text-xs font-semibold text-white ${
-                  runAllLoading ? 'bg-blue-400' : 'bg-blue-600'
+                  runAllLoading || runAllSessionWorkers ? "bg-blue-400" : "bg-blue-600"
                 }`}
               >
-                {runAllLoading ? 'Starting…' : 'Run ALL workers now'}
+                {runAllLoading
+                  ? "Starting…"
+                  : runAllSessionWorkers
+                  ? "Run in progress…"
+                  : "Run ALL workers now"}
               </button>
               {!config.workers_enabled && (
                 <div className="text-[11px] text-red-600">Global workers toggle is OFF. Turn it on to start workers.</div>
               )}
             </div>
-            {runAllResult && (
+            {runAllSessionWorkers && (
+              <div className="mt-2 border-t pt-2">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="font-semibold text-xs">Run-all live status</div>
+                  {runAllSessionCompleted ? (
+                    <span className="text-[11px] text-green-700">Done</span>
+                  ) : (
+                    <span className="text-[11px] text-gray-500">Updating every 3 seconds…</span>
+                  )}
+                </div>
+                <table className="min-w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="px-2 py-1 text-left">API</th>
+                      <th className="px-2 py-1 text-left">Status</th>
+                      <th className="px-2 py-1 text-left">Summary</th>
+                      <th className="px-2 py-1 text-left">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runAllSessionWorkers.map((w) => {
+                      let label = "Pending";
+                      let pillClass = "bg-gray-100 text-gray-800";
+                      if (w.phase === "running") {
+                        label = "Running";
+                        pillClass = "bg-blue-100 text-blue-800";
+                      } else if (w.phase === "completed") {
+                        label = "Completed";
+                        pillClass = "bg-green-100 text-green-800";
+                      } else if (w.phase === "error") {
+                        label = "Error";
+                        pillClass = "bg-red-100 text-red-800";
+                      } else if (w.phase === "skipped") {
+                        label = "Skipped";
+                        pillClass = "bg-gray-100 text-gray-700";
+                      }
+
+                      const summaryText = w.summary
+                        ? `fetched ${w.summary.total_fetched ?? "–"}, stored ${w.summary.total_stored ?? "–"}`
+                        : "";
+
+                      let details = "";
+                      if (w.phase === "error" && w.reason) {
+                        details = `Last error: ${w.reason}`;
+                      } else if (w.phase === "skipped" && w.reason) {
+                        if (w.reason === "disabled") {
+                          details = "Worker disabled in config";
+                        } else if (w.reason === "already_running") {
+                          details = "Already running – attached to existing run";
+                        } else if (w.reason === "workers_disabled") {
+                          details = "Global workers toggle is OFF";
+                        } else {
+                          details = w.reason;
+                        }
+                      }
+
+                      return (
+                        <tr key={w.api_family} className="border-t">
+                          <td className="px-2 py-1 whitespace-nowrap">{w.api_family}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${pillClass}`}>
+                              {label}
+                              {w.phase === "running" && (
+                                <span className="ml-1 inline-block h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap text-gray-700">
+                            {summaryText || "—"}
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap text-gray-600 max-w-xs truncate" title={details}>
+                            {details || (w.run_id ? `run_id: ${w.run_id}` : "—")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {!runAllSessionWorkers && runAllResult && (
               <div className="mt-2 border-t pt-2">
                 <div className="font-semibold text-xs mb-1">Run-all result</div>
                 <table className="min-w-full text-[11px]">

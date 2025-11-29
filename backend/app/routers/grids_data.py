@@ -261,6 +261,8 @@ async def get_grid_data(
     to_date: Optional[str] = Query(None, alias="to"),
     # Finances-specific filters
     transaction_type: Optional[str] = Query(None),
+    # Finances fees-specific filters
+    fee_type: Optional[str] = Query(None),
     # Messages-specific filters (mirroring /messages)
     folder: Optional[str] = Query(None),
     unread_only: bool = False,
@@ -471,6 +473,8 @@ async def get_grid_data(
                 sort_dir,
                 from_date=from_date,
                 to_date=to_date,
+                fee_type=fee_type,
+                search=search,
             )
         finally:
             db_sqla.close()
@@ -1915,6 +1919,8 @@ def _get_finances_fees_data(
     sort_dir: str,
     from_date: Optional[str],
     to_date: Optional[str],
+    fee_type: Optional[str] = None,
+    search: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Finances fees grid backed by ebay_finances_fees.
 
@@ -1934,6 +1940,16 @@ def _get_finances_fees_data(
     if to_date:
         where_clauses.append("f.created_at <= :to_date")
         params["to_date"] = to_date
+
+    if fee_type:
+        where_clauses.append("f.fee_type ILIKE :fee_type")
+        params["fee_type"] = f"%{fee_type}%"
+
+    if search:
+        # Lightweight global search across fee_type and transaction_id so the generic grid search
+        # box can locate rows by human-readable type or id.
+        where_clauses.append("(f.fee_type ILIKE :search OR f.transaction_id ILIKE :search)")
+        params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(where_clauses)
 

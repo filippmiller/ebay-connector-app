@@ -3,19 +3,18 @@ import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 
 export default function FinancialsPage() {
-  // Filters for the Finances fees grid (backed by Supabase table ebay_finances_fees)
+  // Filters for the Finances fees grid (backed by ebay_finances_fees via /api/grids/finances_fees).
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [feeType, setFeeType] = useState('');
 
   const financesFeesExtraParams = useMemo(() => {
     const params: Record<string, string> = {};
     if (fromDate) params.from = fromDate;
     if (toDate) params.to = toDate;
-    // search is currently handled client-side via the grid toolbar; keep this here for future backend wiring.
-    if (searchQuery) params.search = searchQuery;
+    if (feeType) params.fee_type = feeType;
     return params;
-  }, [fromDate, toDate, searchQuery]);
+  }, [fromDate, toDate, feeType]);
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -45,15 +44,22 @@ export default function FinancialsPage() {
                   onChange={(e) => setToDate(e.target.value)}
                 />
               </div>
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Search</label>
-                <input
-                  type="text"
-                  className="border rounded px-2 py-1 text-sm w-full"
-                  placeholder="Search across fee rows..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Fee type</label>
+                <select
+                  className="border rounded px-2 py-1 text-sm w-56"
+                  value={feeType}
+                  onChange={(e) => setFeeType(e.target.value)}
+                >
+                  <option value="">All types</option>
+                  <option value="FINAL_VALUE_FEE">FINAL_VALUE_FEE*</option>
+                  <option value="PROMOTED_LISTING_FEE">PROMOTED_LISTING_FEE*</option>
+                  <option value="SHIPPING_LABEL_FEE">SHIPPING_LABEL_FEE*</option>
+                  <option value="CHARITY">CHARITY / DONATION</option>
+                </select>
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Use the grid search box to search across IDs and text; use this dropdown to focus on specific fee types.
+                </p>
               </div>
             </div>
 
