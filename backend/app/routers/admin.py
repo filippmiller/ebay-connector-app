@@ -21,6 +21,7 @@ from ..services.ebay import ebay_service
 from ..services.ebay_connect_logger import ebay_connect_logger
 from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
 from ..config import settings
+from app.services.ebay_token_refresh_service import refresh_access_token_for_account
 
 FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
 
@@ -471,10 +472,24 @@ async def debug_refresh_ebay_token(
             "response": None,
         }
 
-    debug_payload = await ebay_service.debug_refresh_access_token_http(
-        token.refresh_token,
-        environment=env,
+    # Use the shared helper so that debug and worker flows share the same
+    # refresh logic (load token -> decrypt -> call eBay -> persist + log).
+    result = await refresh_access_token_for_account(
+        db,
+        account,
+        triggered_by="debug",
+        persist=True,
+        capture_http=True,
     )
+
+    debug_payload = result.get("http") or {
+        "environment": env,
+        "success": result.get("success", False),
+        "error": result.get("error"),
+        "error_description": result.get("error_message"),
+        "request": None,
+        "response": None,
+    }
 
     # Attach basic account context; the rest of the shape comes from the
     # shared debug_refresh_access_token_http helper.
@@ -767,22 +782,22 @@ async def refresh_ebay_access_token(
     if not token or not token.refresh_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_refresh_token")
 
-    # Execute refresh
+    # Execute refresh via the shared helper so behaviour matches the worker.
     try:
-        from datetime import timezone, timedelta
-        new_resp = await ebay_service.refresh_access_token(token.refresh_token)
-        # Update storage (access token only; refresh token remains long-lived)
-        token.access_token = new_resp.access_token
-        token.expires_at = datetime.now(timezone.utc) + (timedelta(seconds=new_resp.expires_in) if getattr(new_resp, 'expires_in', None) else timedelta(seconds=0))
-        token.last_refreshed_at = datetime.now(timezone.utc)
-        # If eBay rotated refresh token or returned its TTL, persist it
-        if getattr(new_resp, 'refresh_token', None):
-            token.refresh_token = new_resp.refresh_token
-        if getattr(new_resp, 'refresh_token_expires_in', None):
-            token.refresh_expires_at = datetime.now(timezone.utc) + timedelta(seconds=getattr(new_resp, 'refresh_token_expires_in'))
-        db.commit()
-        db.refresh(token)
-        # Log success (no secrets)
+        result = await refresh_access_token_for_account(
+            db,
+            account,
+            triggered_by="admin",
+            persist=True,
+            capture_http=False,
+        )
+        if not result.get("success"):
+            msg = result.get("error_message") or result.get("error") or "refresh_failed"
+            raise RuntimeError(msg)
+
+        # Reload token to compute TTL and log meta without exposing secrets.
+        token = db.query(EbayToken).filter(EbayToken.ebay_account_id == account.id).first() or token
+
         try:
             ebay_connect_logger.log_event(
                 user_id=current_user.id,
@@ -798,10 +813,10 @@ async def refresh_ebay_access_token(
                             "access_len": (len(token.access_token) if token and token.access_token else 0),
                             "refresh_len": (len(token.refresh_token) if token and token.refresh_token else 0),
                             "access_expires_at": token.expires_at.isoformat() if token.expires_at else None,
-                            "refresh_expires_at": token.refresh_expires_at.isoformat() if token.refresh_expires_at else None
+                            "refresh_expires_at": token.refresh_expires_at.isoformat() if getattr(token, "refresh_expires_at", None) else None,
                         }
-                    }
-                }
+                    },
+                },
             )
         except Exception:
             pass
@@ -813,7 +828,7 @@ async def refresh_ebay_access_token(
                 environment=env,
                 action="token_refresh_failed",
                 request={"method": "POST", "url": f"/api/admin/ebay/tokens/refresh?env={env}"},
-                error=str(e)
+                error=str(e),
             )
         except Exception:
             pass
@@ -821,7 +836,7 @@ async def refresh_ebay_access_token(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="refresh_failed")
 
     now = datetime.now(timezone.utc)
-    access_expires_at = token.expires_at if token.expires_at else None
+    access_expires_at = token.expires_at if token and token.expires_at else None
     ttl_sec = int((access_expires_at - now).total_seconds()) if access_expires_at else None
 
     return {

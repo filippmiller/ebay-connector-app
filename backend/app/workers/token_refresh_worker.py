@@ -17,6 +17,7 @@ from app.database import get_db
 from app.models_sqlalchemy.ebay_workers import BackgroundWorker, EbayTokenRefreshLog
 from app.services.ebay_account_service import ebay_account_service
 from app.services.ebay import ebay_service
+from app.services.ebay_token_refresh_service import refresh_access_token_for_account
 from app.utils.logger import logger
 
 WORKER_NAME = "token_refresh_worker"
@@ -91,129 +92,52 @@ async def refresh_expiring_tokens():
         errors = []
 
         for account in accounts:
-            token = None
-            refresh_log: Optional[EbayTokenRefreshLog] = None
             try:
-                token = ebay_account_service.get_token(db, account.id)
-
-                # Create a refresh log row early so even "no refresh token" cases
-                # have a traceable entry.
-                start_ts = datetime.now(timezone.utc)
-                old_expires_at = getattr(token, "expires_at", None)
-                refresh_log = EbayTokenRefreshLog(
-                    id=str(uuid.uuid4()),
-                    ebay_account_id=account.id,
-                    started_at=start_ts,
-                    old_expires_at=old_expires_at,
-                    triggered_by="scheduled",
+                logger.info(
+                    "[token-refresh-worker] Refreshing token for account %s (%s)",
+                    account.id,
+                    account.house_name,
                 )
-                db.add(refresh_log)
-                db.flush()
 
-                if not token or not token.refresh_token:
-                    logger.warning(
-                        "Account %s (%s) has no refresh token", account.id, account.house_name
+                result = await refresh_access_token_for_account(
+                    db,
+                    account,
+                    triggered_by="scheduled",
+                    persist=True,
+                    capture_http=False,
+                )
+
+                if result.get("success"):
+                    refreshed_count += 1
+                    logger.info(
+                        "[token-refresh-worker] SUCCESS account=%s house=%s",
+                        account.id,
+                        account.house_name,
                     )
-                    if refresh_log is not None:
-                        refresh_log.success = False
-                        refresh_log.error_code = "NO_REFRESH_TOKEN"
-                        refresh_log.error_message = "No refresh token available"
-                        refresh_log.finished_at = datetime.now(timezone.utc)
+                else:
+                    error_msg = result.get("error_message") or result.get("error") or "unknown_error"
+                    logger.warning(
+                        "[token-refresh-worker] FAILURE account=%s house=%s error=%s",
+                        account.id,
+                        account.house_name,
+                        error_msg,
+                    )
                     errors.append(
                         {
                             "account_id": account.id,
                             "house_name": account.house_name,
-                            "error": "No refresh token available",
+                            "error": error_msg,
                         }
                     )
-                    db.commit()
-                    continue
-
-                logger.info(
-                    "Refreshing token for account %s (%s)", account.id, account.house_name
-                )
-
-                # Use org_id as the logical user_id for connect logs
-                org_id = getattr(account, "org_id", None)
-                env = settings.EBAY_ENVIRONMENT or "sandbox"
-
-                new_token_data = await ebay_service.refresh_access_token(
-                    token.refresh_token,
-                    user_id=org_id,
-                    environment=env,
-                )
-
-                # Defensive log: type and public attributes only (no secrets)
-                try:
-                    attrs = [a for a in dir(new_token_data) if not a.startswith("_")]
-                    logger.info(
-                        "Token refresh response: type=%s, attrs=%s, has_refresh=%s",
-                        type(new_token_data).__name__,
-                        attrs,
-                        bool(getattr(new_token_data, "refresh_token", None)),
-                    )
-                except Exception:  # pragma: no cover - defensive
-                    logger.debug("Could not introspect token refresh response")
-
-                ebay_account_service.save_tokens(
-                    db,
-                    account.id,
-                    new_token_data.access_token,
-                    getattr(new_token_data, "refresh_token", None) or token.refresh_token,
-                    new_token_data.expires_in,
-                )
-
-                refreshed_count += 1
-                logger.info(
-                    "Successfully refreshed token for account %s (%s)",
-                    account.id,
-                    account.house_name,
-                )
-
-                if refresh_log is not None:
-                    finished_ts = datetime.now(timezone.utc)
-                    refresh_log.success = True
-                    refresh_log.finished_at = finished_ts
-                    try:
-                        # Mirror EbayAccountService.save_tokens expiry computation.
-                        refresh_log.new_expires_at = finished_ts + timedelta(
-                            seconds=int(getattr(new_token_data, "expires_in", 0) or 0)
-                        )
-                    except Exception:  # pragma: no cover - defensive
-                        refresh_log.new_expires_at = None
-                    db.commit()
 
             except Exception as e:  # noqa: BLE001
                 error_msg = str(e)
                 logger.error(
-                    "Failed to refresh token for account %s (%s): %s",
+                    "[token-refresh-worker] Exception refreshing token for account %s (%s): %s",
                     account.id,
                     account.house_name,
                     error_msg,
                 )
-
-                if token:
-                    token.refresh_error = error_msg
-                    db.commit()
-
-                if refresh_log is None:
-                    # Ensure we still capture an entry even if we failed early.
-                    refresh_log = EbayTokenRefreshLog(
-                        id=str(uuid.uuid4()),
-                        ebay_account_id=account.id,
-                        started_at=datetime.now(timezone.utc),
-                        triggered_by="scheduled",
-                    )
-                    db.add(refresh_log)
-
-                refresh_log.success = False
-                refresh_log.error_message = error_msg[:2000]
-                # Try to capture a short error code when possible.
-                status_code = getattr(e, "status_code", None)
-                if status_code is not None:
-                    refresh_log.error_code = str(status_code)
-                refresh_log.finished_at = datetime.now(timezone.utc)
-                db.commit()
 
                 errors.append(
                     {

@@ -54,6 +54,24 @@ const AdminWorkersPage: React.FC = () => {
   const [httpLogsError, setHttpLogsError] = useState<string | null>(null);
   const [httpLogs, setHttpLogs] = useState<any[]>([]);
 
+  const loadTokenStatusAndWorker = async () => {
+    try {
+      setTokenStatusLoading(true);
+      setTokenStatusError(null);
+      const [statusResp, workerResp] = await Promise.all([
+        ebayApi.getEbayTokenStatus(),
+        ebayApi.getTokenRefreshWorkerStatus(),
+      ]);
+      setTokenStatus(statusResp.accounts || []);
+      setWorkerStatus(workerResp);
+    } catch (e: any) {
+      console.error("Failed to load token/worker status", e);
+      setTokenStatusError(e?.response?.data?.detail || e.message || "Failed to load token status");
+    } finally {
+      setTokenStatusLoading(false);
+    }
+  };
+
   useEffect(() => {
     const loadAccountsAndTokens = async () => {
       try {
@@ -71,24 +89,10 @@ const AdminWorkersPage: React.FC = () => {
         setAccountsLoading(false);
       }
 
-      try {
-        setTokenStatusLoading(true);
-        setTokenStatusError(null);
-        const [statusResp, workerResp] = await Promise.all([
-          ebayApi.getEbayTokenStatus(),
-          ebayApi.getTokenRefreshWorkerStatus(),
-        ]);
-        setTokenStatus(statusResp.accounts || []);
-        setWorkerStatus(workerResp);
-      } catch (e: any) {
-        console.error("Failed to load token/worker status", e);
-        setTokenStatusError(e?.response?.data?.detail || e.message || "Failed to load token status");
-      } finally {
-        setTokenStatusLoading(false);
-      }
+      await loadTokenStatusAndWorker();
     };
 
-    loadAccountsAndTokens();
+    void loadAccountsAndTokens();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -124,6 +128,9 @@ const AdminWorkersPage: React.FC = () => {
       setDebugModalOpen(true);
       const data = await ebayApi.debugRefreshToken(accountId);
       setDebugModalData(data);
+      // After a successful debug refresh (which also persists tokens),
+      // refresh token status so the UI reflects the new TTL immediately.
+      void loadTokenStatusAndWorker();
     } catch (e: any) {
       console.error("Failed to run token refresh debug", e);
       setDebugModalError(
