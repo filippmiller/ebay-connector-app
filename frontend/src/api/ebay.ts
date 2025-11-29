@@ -127,6 +127,57 @@ export interface TestNotificationResponse {
   tokenType?: 'application' | 'user' | null;
 }
 
+export interface EbayTokenStatusAccount {
+  account_id: string;
+  account_name: string | null;
+  ebay_user_id: string | null;
+  status: 'ok' | 'expiring_soon' | 'expired' | 'error' | 'not_connected' | 'unknown';
+  expires_at: string | null;
+  expires_in_seconds: number | null;
+  has_refresh_token: boolean;
+  last_refresh_at: string | null;
+  last_refresh_success: boolean | null;
+  last_refresh_error: string | null;
+  refresh_failures_in_row: number;
+}
+
+export interface EbayTokenStatusResponse {
+  accounts: EbayTokenStatusAccount[];
+}
+
+export interface TokenRefreshWorkerStatus {
+  worker_name: string;
+  interval_seconds: number;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_status: string | null;
+  last_error_message: string | null;
+  runs_ok_in_row: number;
+  runs_error_in_row: number;
+  next_run_estimated_at: string | null;
+}
+
+export interface EbayTokenRefreshLogRow {
+  id: string;
+  started_at: string | null;
+  finished_at: string | null;
+  success: boolean | null;
+  error_code: string | null;
+  error_message: string | null;
+  old_expires_at: string | null;
+  new_expires_at: string | null;
+  triggered_by: string;
+}
+
+export interface EbayTokenRefreshLogResponse {
+  account: {
+    id: string;
+    ebay_user_id: string | null;
+    house_name: string | null;
+  };
+  logs: EbayTokenRefreshLogRow[];
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -293,6 +344,32 @@ export const ebayApi = {
   },
 
   async testNotificationTopic(topicId: string): Promise<TestNotificationResponse> {
+    const response = await apiClient.post<TestNotificationResponse>(
+      '/api/admin/notifications/test-topic',
+      { topicId },
+    );
+    return response.data;
+  },
+
+  async getEbayTokenStatus(): Promise<EbayTokenStatusResponse> {
+    const response = await apiClient.get<EbayTokenStatusResponse>('/api/admin/ebay/tokens/status');
+    return response.data;
+  },
+
+  async getTokenRefreshWorkerStatus(): Promise<TokenRefreshWorkerStatus> {
+    const response = await apiClient.get<TokenRefreshWorkerStatus>('/api/admin/workers/token-refresh/status');
+    return response.data;
+  },
+
+  async getEbayTokenRefreshLog(accountId: string, limit: number = 50): Promise<EbayTokenRefreshLogResponse> {
+    const params = new URLSearchParams();
+    params.set('account_id', accountId);
+    params.set('limit', String(limit));
+    const response = await apiClient.get<EbayTokenRefreshLogResponse>(
+      `/api/admin/ebay/tokens/refresh/log?${params.toString()}`,
+    );
+    return response.data;
+  },
     const response = await apiClient.post<TestNotificationResponse>(
       '/api/admin/notifications/test-topic',
       { topicId },

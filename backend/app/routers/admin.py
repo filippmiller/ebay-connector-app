@@ -8,7 +8,11 @@ from datetime import datetime, timezone, timedelta
 
 from ..models_sqlalchemy import get_db
 from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
-from ..models_sqlalchemy.ebay_workers import EbayWorkerRun
+from ..models_sqlalchemy.ebay_workers import (
+    EbayWorkerRun,
+    BackgroundWorker,
+    EbayTokenRefreshLog,
+)
 from ..services.auth import admin_required
 from ..models.user import User
 from ..utils.logger import logger
@@ -176,6 +180,232 @@ async def get_sync_jobs(
         "total": total,
         "limit": limit,
         "offset": offset
+    }
+
+
+@router.get("/ebay/tokens/status")
+async def get_ebay_token_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return per-account token status for the current org.
+
+    This aggregates information from ebay_accounts, ebay_tokens and the
+    ebay_token_refresh_log table so the Admin UI can quickly see which
+    accounts are healthy, expiring soon, expired, or in error.
+    """
+
+    now_utc = datetime.now(timezone.utc)
+
+    accounts = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.org_id == current_user.id)
+        .order_by(desc(EbayAccount.connected_at))
+        .all()
+    )
+
+    def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    results = []
+    for account in accounts:
+        token: Optional[EbayToken] = (
+            db.query(EbayToken)
+            .filter(EbayToken.ebay_account_id == account.id)
+            .order_by(desc(EbayToken.updated_at))
+            .first()
+        )
+
+        expires_at_utc: Optional[datetime] = (
+            _to_utc(token.expires_at) if token and token.expires_at else None
+        )
+        expires_in_seconds: Optional[int]
+        if expires_at_utc is not None:
+            expires_in_seconds = int((expires_at_utc - now_utc).total_seconds())
+        else:
+            expires_in_seconds = None
+
+        has_refresh_token = bool(token and token.refresh_token)
+        refresh_error = getattr(token, "refresh_error", None) if token else None
+
+        # Latest refresh attempt for this account
+        last_log: Optional[EbayTokenRefreshLog] = (
+            db.query(EbayTokenRefreshLog)
+            .filter(EbayTokenRefreshLog.ebay_account_id == account.id)
+            .order_by(EbayTokenRefreshLog.started_at.desc())
+            .first()
+        )
+        last_refresh_at: Optional[datetime] = None
+        last_refresh_success: Optional[bool] = None
+        last_refresh_error: Optional[str] = None
+
+        if last_log is not None:
+            last_refresh_at = last_log.finished_at or last_log.started_at
+            last_refresh_success = last_log.success
+            if not last_log.success:
+                last_refresh_error = last_log.error_message
+
+        # Count consecutive failures from the most recent logs (up to 10) so we
+        # can surface "3 failures in a row"-style hints in the UI.
+        recent_logs = (
+            db.query(EbayTokenRefreshLog)
+            .filter(EbayTokenRefreshLog.ebay_account_id == account.id)
+            .order_by(EbayTokenRefreshLog.started_at.desc())
+            .limit(10)
+            .all()
+        )
+        failures_in_row = 0
+        for log_row in recent_logs:
+            if log_row.success:
+                break
+            failures_in_row += 1
+
+        # Derive high-level status
+        if token is None:
+            status = "not_connected"
+        else:
+            if refresh_error:
+                status = "error"
+            elif expires_at_utc is None:
+                status = "unknown"
+            else:
+                if expires_in_seconds is not None and expires_in_seconds <= 0:
+                    status = "expired"
+                elif (
+                    expires_in_seconds is not None
+                    and expires_in_seconds <= 600  # 10 minutes
+                ):
+                    status = "expiring_soon"
+                else:
+                    status = "ok"
+
+        results.append(
+            {
+                "account_id": account.id,
+                "account_name": account.house_name,
+                "ebay_user_id": account.ebay_user_id,
+                "status": status,
+                "expires_at": expires_at_utc.isoformat() if expires_at_utc else None,
+                "expires_in_seconds": expires_in_seconds,
+                "has_refresh_token": has_refresh_token,
+                "last_refresh_at": last_refresh_at.isoformat()
+                if last_refresh_at
+                else None,
+                "last_refresh_success": last_refresh_success,
+                "last_refresh_error": last_refresh_error,
+                "refresh_failures_in_row": failures_in_row,
+            }
+        )
+
+    return {"accounts": results}
+
+
+@router.get("/workers/token-refresh/status")
+async def get_token_refresh_worker_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return heartbeat/status information for the token refresh worker."""
+
+    # BackgroundWorker is global, not per-org, but we still require admin auth.
+    worker: Optional[BackgroundWorker] = (
+        db.query(BackgroundWorker)
+        .filter(BackgroundWorker.worker_name == "token_refresh_worker")
+        .one_or_none()
+    )
+    if worker is None:
+        return {
+            "worker_name": "token_refresh_worker",
+            "interval_seconds": 600,
+            "last_started_at": None,
+            "last_finished_at": None,
+            "last_status": None,
+            "last_error_message": None,
+            "runs_ok_in_row": 0,
+            "runs_error_in_row": 0,
+            "next_run_estimated_at": None,
+        }
+
+    interval = worker.interval_seconds or 600
+    ref_time: Optional[datetime] = worker.last_started_at or worker.last_finished_at
+    next_run_estimated_at: Optional[str] = None
+    if ref_time is not None and interval:
+        try:
+            next_dt = ref_time + timedelta(seconds=interval)
+            next_run_estimated_at = next_dt.astimezone(timezone.utc).isoformat()
+        except Exception:  # pragma: no cover - defensive
+            next_run_estimated_at = None
+
+    return {
+        "worker_name": worker.worker_name,
+        "interval_seconds": interval,
+        "last_started_at": worker.last_started_at.isoformat()
+        if worker.last_started_at
+        else None,
+        "last_finished_at": worker.last_finished_at.isoformat()
+        if worker.last_finished_at
+        else None,
+        "last_status": worker.last_status,
+        "last_error_message": worker.last_error_message,
+        "runs_ok_in_row": worker.runs_ok_in_row,
+        "runs_error_in_row": worker.runs_error_in_row,
+        "next_run_estimated_at": next_run_estimated_at,
+    }
+
+
+@router.get("/ebay/tokens/refresh/log")
+async def get_ebay_token_refresh_log(
+    account_id: str = Query(..., description="eBay account id"),
+    limit: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return recent token refresh attempts for a single eBay account."""
+
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.id == account_id, EbayAccount.org_id == current_user.id)
+        .first()
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    logs = (
+        db.query(EbayTokenRefreshLog)
+        .filter(EbayTokenRefreshLog.ebay_account_id == account_id)
+        .order_by(EbayTokenRefreshLog.started_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "account": {
+            "id": account.id,
+            "ebay_user_id": account.ebay_user_id,
+            "house_name": account.house_name,
+        },
+        "logs": [
+            {
+                "id": row.id,
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+                "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+                "success": row.success,
+                "error_code": row.error_code,
+                "error_message": row.error_message,
+                "old_expires_at": row.old_expires_at.isoformat()
+                if row.old_expires_at
+                else None,
+                "new_expires_at": row.new_expires_at.isoformat()
+                if row.new_expires_at
+                else None,
+                "triggered_by": row.triggered_by,
+            }
+            for row in logs
+        ],
     }
 
 

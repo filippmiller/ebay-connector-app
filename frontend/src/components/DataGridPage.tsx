@@ -288,7 +288,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
 
   return (
     <div className={`flex flex-col h-full app-grid grid-density-${density} grid-theme-${colorScheme}`} style={{ fontSize: bodyFontSizePx, backgroundColor: gridBackgroundColor || undefined }}>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-3">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
           {(buttonLayout === 'left' || buttonLayout === 'split') && (
@@ -297,8 +297,8 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
             </button>
           )}
         </div>
-        <div className="flex items-center gap-3 text-sm">
-          <input className="px-2 py-1 border rounded-md text-xs bg-white placeholder:text-gray-400" placeholder="Search all columns" value={search} onChange={e => {
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 text-sm md:justify-end">
+          <input className="px-2 py-1 border rounded-md text-xs bg-white placeholder:text-gray-400 w-full md:w-56 lg:w-72" placeholder="Search all columns" value={search} onChange={e => {
             const value = e.target.value;
             setSearch(value);
             // Also apply client-side quick filter on the current page when possible.

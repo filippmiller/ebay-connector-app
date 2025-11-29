@@ -3,7 +3,7 @@ import FixedHeader from "@/components/FixedHeader";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ebayApi } from "../api/ebay";
+import { ebayApi, EbayTokenStatusAccount, TokenRefreshWorkerStatus, EbayTokenRefreshLogResponse } from "../api/ebay";
 import { EbayWorkersPanel } from "../components/workers/EbayWorkersPanel";
 
 interface EbayAccountWithToken {
@@ -23,8 +23,20 @@ const AdminWorkersPage: React.FC = () => {
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
+  // Token refresh visibility state
+  const [tokenStatus, setTokenStatus] = useState<EbayTokenStatusAccount[] | null>(null);
+  const [tokenStatusError, setTokenStatusError] = useState<string | null>(null);
+  const [tokenStatusLoading, setTokenStatusLoading] = useState(false);
+  const [workerStatus, setWorkerStatus] = useState<TokenRefreshWorkerStatus | null>(null);
+
+  // Per-account refresh log modal state
+  const [logModalOpen, setLogModalOpen] = useState(false);
+  const [logModalLoading, setLogModalLoading] = useState(false);
+  const [logModalError, setLogModalError] = useState<string | null>(null);
+  const [logModalData, setLogModalData] = useState<EbayTokenRefreshLogResponse | null>(null);
+
   useEffect(() => {
-    const loadAccounts = async () => {
+    const loadAccountsAndTokens = async () => {
       try {
         setAccountsLoading(true);
         setAccountsError(null);
@@ -39,10 +51,27 @@ const AdminWorkersPage: React.FC = () => {
       } finally {
         setAccountsLoading(false);
       }
+
+      try {
+        setTokenStatusLoading(true);
+        setTokenStatusError(null);
+        const [statusResp, workerResp] = await Promise.all([
+          ebayApi.getEbayTokenStatus(),
+          ebayApi.getTokenRefreshWorkerStatus(),
+        ]);
+        setTokenStatus(statusResp.accounts || []);
+        setWorkerStatus(workerResp);
+      } catch (e: any) {
+        console.error("Failed to load token/worker status", e);
+        setTokenStatusError(e?.response?.data?.detail || e.message || "Failed to load token status");
+      } finally {
+        setTokenStatusLoading(false);
+      }
     };
 
-    loadAccounts();
-  }, [selectedAccountId]);
+    loadAccountsAndTokens();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const selectedAccount = selectedAccountId
     ? accounts.find((a) => a.id === selectedAccountId) || null
@@ -106,6 +135,217 @@ const AdminWorkersPage: React.FC = () => {
               )}
             </CardContent>
           </Card>
+
+          {/* Token refresh visibility block */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Token refresh status</CardTitle>
+              <CardDescription className="text-sm text-gray-600">
+                Воркеры используют OAuth токены eBay. Этот блок показывает состояние
+                токенов по аккаунтам и сам токен-рефреш воркер.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {tokenStatusLoading && (
+                <div className="text-xs text-gray-600 mb-2">Loading token status...</div>
+              )}
+              {tokenStatusError && (
+                <div className="text-xs text-red-600 mb-2">{tokenStatusError}</div>
+              )}
+              {workerStatus && (
+                <div className="mb-3 p-2 border rounded bg-gray-50 text-xs">
+                  <div className="font-semibold mb-1">Token refresh worker</div>
+                  <div>Interval: every {workerStatus.interval_seconds} seconds</div>
+                  <div>Last started: {workerStatus.last_started_at || '–'}</div>
+                  <div>Last finished: {workerStatus.last_finished_at || '–'}</div>
+                  <div>Status: {workerStatus.last_status || '–'}</div>
+                  {workerStatus.last_error_message && (
+                    <div className="text-red-600 mt-1">
+                      Last error: {workerStatus.last_error_message}
+                    </div>
+                  )}
+                  {workerStatus.next_run_estimated_at && (
+                    <div className="mt-1 text-gray-700">
+                      Next run (estimated): {workerStatus.next_run_estimated_at}
+                    </div>
+                  )}
+                  <div className="mt-1 text-gray-600">
+                    OK in a row: {workerStatus.runs_ok_in_row} · Errors in a row: {workerStatus.runs_error_in_row}
+                  </div>
+                </div>
+              )}
+
+              {tokenStatus && tokenStatus.length > 0 && (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="min-w-full text-xs border">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="px-2 py-1 text-left">Account</th>
+                        <th className="px-2 py-1 text-left">eBay user</th>
+                        <th className="px-2 py-1 text-left">Status</th>
+                        <th className="px-2 py-1 text-left">Expires in</th>
+                        <th className="px-2 py-1 text-left">Last refresh</th>
+                        <th className="px-2 py-1 text-left">Failures in row</th>
+                        <th className="px-2 py-1 text-left">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tokenStatus.map((row) => {
+                        const ttl = row.expires_in_seconds;
+                        let ttlLabel = '–';
+                        if (typeof ttl === 'number') {
+                          if (ttl <= 0) ttlLabel = `${ttl} s`; else {
+                            const mins = Math.floor(ttl / 60);
+                            const secs = ttl % 60;
+                            ttlLabel = `${mins}m ${secs}s`;
+                          }
+                        }
+                        const colorByStatus: Record<string, string> = {
+                          ok: 'bg-green-100 text-green-800',
+                          expiring_soon: 'bg-yellow-100 text-yellow-800',
+                          expired: 'bg-red-100 text-red-800',
+                          error: 'bg-red-100 text-red-800',
+                          not_connected: 'bg-gray-100 text-gray-700',
+                          unknown: 'bg-gray-100 text-gray-700',
+                        };
+                        const statusLabelMap: Record<string, string> = {
+                          ok: 'OK',
+                          expiring_soon: 'Expiring soon',
+                          expired: 'Expired',
+                          error: 'Error',
+                          not_connected: 'Not connected',
+                          unknown: 'Unknown',
+                        };
+                        const statusClass = colorByStatus[row.status] || 'bg-gray-100 text-gray-700';
+                        return (
+                          <tr key={row.account_id} className="border-t">
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {row.account_name || row.account_id}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">{row.ebay_user_id || '–'}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${statusClass}`}>
+                                {statusLabelMap[row.status] || row.status}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">{ttlLabel}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {row.last_refresh_at || '–'}
+                              {row.last_refresh_error && (
+                                <div className="text-[10px] text-red-600 max-w-xs truncate">
+                                  {row.last_refresh_error}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap text-center">
+                              {row.refresh_failures_in_row}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              <button
+                                className="px-2 py-0.5 border rounded text-[11px] bg-white hover:bg-gray-50"
+                                onClick={async () => {
+                                  try {
+                                    setLogModalError(null);
+                                    setLogModalLoading(true);
+                                    setLogModalOpen(true);
+                                    const data = await ebayApi.getEbayTokenRefreshLog(row.account_id, 50);
+                                    setLogModalData(data);
+                                  } catch (e: any) {
+                                    console.error("Failed to load token refresh log", e);
+                                    setLogModalError(e?.response?.data?.detail || e.message || "Failed to load refresh log");
+                                  } finally {
+                                    setLogModalLoading(false);
+                                  }
+                                }}
+                              >
+                                View log
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {tokenStatus && tokenStatus.length === 0 && !tokenStatusLoading && !tokenStatusError && (
+                <div className="text-xs text-gray-600">No eBay accounts found for token status.</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Token refresh log modal */}
+          {logModalOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+              <div className="bg-white rounded shadow-lg max-w-3xl w-full max-h-[80vh] overflow-auto p-4 text-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold">Token refresh log</div>
+                  <button
+                    className="text-gray-600 text-sm"
+                    onClick={() => {
+                      setLogModalOpen(false);
+                      setLogModalData(null);
+                      setLogModalError(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+                {logModalLoading && <div className="mb-2">Loading...</div>}
+                {logModalError && (
+                  <div className="mb-2 text-red-600">{logModalError}</div>
+                )}
+                {logModalData && (
+                  <>
+                    <div className="mb-3 text-gray-700">
+                      Account: {logModalData.account.house_name || logModalData.account.id}{' '}
+                      {logModalData.account.ebay_user_id && (
+                        <span className="text-gray-500">(eBay user: {logModalData.account.ebay_user_id})</span>
+                      )}
+                    </div>
+                    {logModalData.logs.length === 0 && !logModalLoading && (
+                      <div className="text-gray-600">No refresh attempts recorded yet.</div>
+                    )}
+                    {logModalData.logs.length > 0 && (
+                      <table className="min-w-full text-[11px] border">
+                        <thead>
+                          <tr className="bg-gray-100">
+                            <th className="px-2 py-1 text-left">Started at</th>
+                            <th className="px-2 py-1 text-left">Finished at</th>
+                            <th className="px-2 py-1 text-left">Result</th>
+                            <th className="px-2 py-1 text-left">Error</th>
+                            <th className="px-2 py-1 text-left">Old expires</th>
+                            <th className="px-2 py-1 text-left">New expires</th>
+                            <th className="px-2 py-1 text-left">Triggered by</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {logModalData.logs.map((log) => (
+                            <tr key={log.id} className="border-t align-top">
+                              <td className="px-2 py-1 whitespace-nowrap">{log.started_at || '–'}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{log.finished_at || '–'}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">
+                                {log.success === null ? 'n/a' : log.success ? 'success' : 'error'}
+                                {log.error_code && (
+                                  <span className="ml-1 text-gray-500">[{log.error_code}]</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1 whitespace-pre-wrap max-w-xs">
+                                {log.error_message || '–'}
+                              </td>
+                              <td className="px-2 py-1 whitespace-nowrap">{log.old_expires_at || '–'}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{log.new_expires_at || '–'}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{log.triggered_by}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
 
           {selectedAccountId && selectedAccount && (
             <Card>

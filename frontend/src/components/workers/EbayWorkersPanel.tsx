@@ -497,19 +497,20 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
             </div>
           </div>
 
-          <table className="min-w-full text-sm border mt-4">
-            <thead>
-              <tr className="bg-gray-100">
-                <th className="px-3 py-2 text-left">API</th>
-                <th className="px-3 py-2 text-left">Status</th>
-                <th className="px-3 py-2 text-left">Last run</th>
-                <th className="px-3 py-2 text-left">Cursor</th>
-                <th className="px-3 py-2 text-left">Primary key</th>
-                <th className="px-3 py-2 text-left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {config.workers.map((w) => (
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-sm border">
+              <thead>
+                <tr className="bg-gray-100">
+                  <th className="px-3 py-2 text-left">API</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-left">Last run</th>
+                  <th className="px-3 py-2 text-left">Cursor</th>
+                  <th className="px-3 py-2 text-left">Primary key</th>
+                  <th className="px-3 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {config.workers.map((w) => (
                 <tr key={w.api_family} className="border-t">
                   <td className="px-3 py-2 font-medium align-top">
                     <div className="flex items-center gap-1">
@@ -638,8 +639,9 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                   </td>
                 </tr>
               ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
@@ -677,24 +679,26 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     </div>
                   )}
                 </div>
-                <table className="min-w-full text-[11px]">
-                  <thead>
-                    <tr className="bg-gray-50">
-                      <th className="px-2 py-1 text-left">Run at</th>
-                      <th className="px-2 py-1 text-left">Window from</th>
-                      <th className="px-2 py-1 text-left">Window to</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {w.runs.map((r, idx) => (
-                      <tr key={idx} className="border-t">
-                        <td className="px-2 py-1 whitespace-nowrap">{r.run_at}</td>
-                        <td className="px-2 py-1 whitespace-nowrap">{r.window_from || "–"}</td>
-                        <td className="px-2 py-1 whitespace-nowrap">{r.window_to || "–"}</td>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-[11px]">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="px-2 py-1 text-left">Run at</th>
+                        <th className="px-2 py-1 text-left">Window from</th>
+                        <th className="px-2 py-1 text-left">Window to</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {w.runs.map((r, idx) => (
+                        <tr key={idx} className="border-t">
+                          <td className="px-2 py-1 whitespace-nowrap">{r.run_at}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">{r.window_from || "–"}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">{r.window_to || "–"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ))}
           </div>

@@ -73,23 +73,25 @@ On error, the workers call `log_error(...)`, **do not advance the cursor**, and 
 **Worker:** `backend/app/services/ebay_workers/orders_worker.py`
 
 - Constants:
-  - `OVERLAP_MINUTES_DEFAULT = 30`
-  - `INITIAL_BACKFILL_DAYS_DEFAULT = 90`
-- Uses `compute_sync_window(state, overlap_minutes=30, initial_backfill_days=90)`.
+  - `OVERLAP_MINUTES_DEFAULT = 30`.
+  - `INITIAL_BACKFILL_DAYS_DEFAULT = 90` (kept in the signature but no longer used for backfill; behaviour is overlap-only).
+- Uses `compute_sync_window(state, overlap_minutes=30, initial_backfill_days=90)`, which now:
+  - If `cursor_value` exists and parses, returns `[cursor - 30 min, now]`.
+  - If `cursor_value` is missing or invalid, treats the cursor as `now` and still returns `[now - 30 min, now]`.
 - Delegates heavy lifting to `EbayService.sync_all_orders(...)`.
 
 **Service:** `EbayService.sync_all_orders`
 
 - Accepts `window_from` / `window_to` ISO strings from the worker.
 - Parses them to `start_dt` and `end_dt`:
-  - If missing/invalid, falls back to `end_dt = now_utc`, `start_dt = end_dt - 90 days`.
+  - If missing/invalid, falls back to `end_dt = now_utc`, `start_dt = end_dt - 90 days` (safety default; workers normally pass a narrow 30‑minute window).
 - Derives `start_iso` and `end_iso` in `YYYY-MM-DDTHH:MM:SS.000Z` format.
-- Builds Fulfillment search filter:
-  - `filter = "lastModifiedDate:[{start_iso}..{end_iso}]"`.
+- Builds Fulfillment search filter on **lower-case** `lastmodifieddate`:
+  - `filter = "lastmodifieddate:[{start_iso}..{end_iso}]"`.
 - Paginates with `limit=ORDERS_PAGE_LIMIT` and `offset` while staying inside this **fixed** time window.
 - For each page:
   - Inserts/updates via `PostgresEbayDatabase.batch_upsert_orders(...)`, keyed by `(order_id, user_id, ebay_account_id)`.
-- Returns a summary dict with `total_fetched`, `total_stored`, and `run_id`.
+- Returns a summary dict with `total_fetched`, `total_stored`, `run_id`, and the effective window used.
 
 ### Transactions (`transactions` API family)
 
