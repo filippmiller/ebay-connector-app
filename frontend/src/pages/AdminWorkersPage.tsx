@@ -89,13 +89,16 @@ const AdminWorkersPage: React.FC = () => {
         <div className="w-full mx-auto space-y-3">
           {/* Top row: title (2) + compact account selector (3) + compact token worker summary (4,5) */}
           <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 flex items-center gap-2">
               <h1 className="text-2xl font-semibold tracking-tight">eBay Workers</h1>
-              <p className="mt-1 text-xs text-gray-600 max-w-2xl">
-                Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно
-                включать/выключать воркеры по аккаунту, запускать их вручную и смотреть
-                подробные логи выполнения.
-              </p>
+              <span
+                className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-gray-300 text-[11px] font-semibold text-gray-600 cursor-default"
+                title={
+                  'Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно включать/выключать воркеры по аккаунту, запускать их вручную и смотреть подробные логи выполнения.'
+                }
+              >
+                i
+              </span>
             </div>
 
             <div className="flex flex-col md:flex-row gap-3 w-full xl:w-auto">
