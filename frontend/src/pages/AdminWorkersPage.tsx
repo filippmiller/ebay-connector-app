@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ebayApi, EbayTokenStatusAccount, TokenRefreshWorkerStatus, EbayTokenRefreshLogResponse } from "../api/ebay";
 import { EbayWorkersPanel } from "../components/workers/EbayWorkersPanel";
+import { formatDateTimeLocal, formatRelativeTime } from "../lib/dateUtils";
 
 interface EbayAccountWithToken {
   id: string;
@@ -85,14 +86,14 @@ const AdminWorkersPage: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
       {/* Reduce top padding so the header block "sticks" closer to the nav bar */}
-      <main className="w-full pt-14 px-4 sm:px-6 lg:px-10 py-6">
+      <main className="w-full pt-14 px-4 sm:px-6 lg:px-10 py-4">
         <div className="w-full mx-auto space-y-3">
-          {/* Top row: title (2) + compact account selector (3) + compact token worker summary (4,5) */}
-          <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
-            <div className="flex-1 min-w-0 flex items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight">eBay Workers</h1>
+          {/* Ultra-compact header row: title + account selection + token worker summary + per-account token status */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-sm">
+              <h1 className="text-lg font-semibold tracking-tight">eBay Workers</h1>
               <span
-                className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-gray-300 text-[11px] font-semibold text-gray-600 cursor-default"
+                className="inline-flex items-center justify-center h-4 w-4 rounded-full border border-gray-300 text-[10px] font-semibold text-gray-600 cursor-default"
                 title={
                   'Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно включать/выключать воркеры по аккаунту, запускать их вручную и смотреть подробные логи выполнения.'
                 }
@@ -101,11 +102,11 @@ const AdminWorkersPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-3 w-full xl:w-auto">
-              {/* Compact account selection (3) */}
-              <Card className="flex-1 min-w-[260px] p-0">
-                <CardHeader className="py-2 px-3 pb-1">
-                  <CardTitle className="text-sm font-semibold">Account selection</CardTitle>
+            <div className="flex flex-col lg:flex-row gap-2 items-stretch">
+              {/* Compact account selection */}
+              <Card className="flex-1 min-w-[220px] p-0">
+                <CardHeader className="py-1 px-3 pb-0">
+                  <CardTitle className="text-[12px] font-semibold">Account selection</CardTitle>
                 </CardHeader>
                 <CardContent className="py-1 px-3">
                   {accountsLoading && (
@@ -143,12 +144,9 @@ const AdminWorkersPage: React.FC = () => {
                 </CardContent>
               </Card>
 n              {/* Compact token refresh worker summary (4,5) */}
-              <Card className="flex-1 min-w-[260px] p-0">
-                <CardHeader className="py-2 px-3 pb-1">
-                  <CardTitle className="text-sm font-semibold">Token refresh status</CardTitle>
-                  <CardDescription className="text-[11px] text-gray-600">
-                    Состояние воркера, который обновляет eBay OAuth токены.
-                  </CardDescription>
+              <Card className="flex-1 min-w-[220px] p-0">
+                <CardHeader className="py-1 px-3 pb-0">
+                  <CardTitle className="text-[12px] font-semibold">Token refresh status</CardTitle>
                 </CardHeader>
                 <CardContent className="py-1 px-3">
                   {workerStatus ? (
@@ -157,17 +155,35 @@ const AdminWorkersPage: React.FC = () => {
                         <span className="font-semibold">Interval:</span> every {workerStatus.interval_seconds} seconds
                       </div>
                       <div>
-                        <span className="font-semibold">Last started:</span> {workerStatus.last_started_at || '–'}
+                        <span className="font-semibold">Last started:</span>{' '}
+                        {formatDateTimeLocal(workerStatus.last_started_at)}
+                        {workerStatus.last_started_at && formatRelativeTime(workerStatus.last_started_at) && (
+                          <span className="ml-1 text-[10px] text-gray-500">
+                            ({formatRelativeTime(workerStatus.last_started_at)})
+                          </span>
+                        )}
                       </div>
                       <div>
-                        <span className="font-semibold">Last finished:</span> {workerStatus.last_finished_at || '–'}
+                        <span className="font-semibold">Last finished:</span>{' '}
+                        {formatDateTimeLocal(workerStatus.last_finished_at)}
+                        {workerStatus.last_finished_at && formatRelativeTime(workerStatus.last_finished_at) && (
+                          <span className="ml-1 text-[10px] text-gray-500">
+                            ({formatRelativeTime(workerStatus.last_finished_at)})
+                          </span>
+                        )}
                       </div>
                       <div>
                         <span className="font-semibold">Status:</span> {workerStatus.last_status || '–'}
                       </div>
                       {workerStatus.next_run_estimated_at && (
                         <div>
-                          <span className="font-semibold">Next run:</span> {workerStatus.next_run_estimated_at}
+                          <span className="font-semibold">Next run:</span>{' '}
+                          {formatDateTimeLocal(workerStatus.next_run_estimated_at)}
+                          {formatRelativeTime(workerStatus.next_run_estimated_at) && (
+                            <span className="ml-1 text-[10px] text-gray-500">
+                              ({formatRelativeTime(workerStatus.next_run_estimated_at)})
+                            </span>
+                          )}
                         </div>
                       )}
                       {workerStatus.last_error_message && (
@@ -184,15 +200,12 @@ const AdminWorkersPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Token refresh visibility block – per-account table (6) */}
-          <Card>
-            <CardHeader className="py-2 px-3 pb-1">
-              <CardTitle className="text-sm font-semibold">Per-account token status</CardTitle>
-              <CardDescription className="text-[11px] text-gray-600">
-                Для каждого eBay аккаунта показывается срок жизни токена и последние попытки refresh.
-              </CardDescription>
+          {/* Per-account token status – now kept compact and aligned with the header row */}
+          <Card className="p-0">
+            <CardHeader className="py-1 px-3 pb-0 flex items-center justify-between">
+              <CardTitle className="text-[12px] font-semibold">Per-account token status</CardTitle>
             </CardHeader>
-            <CardContent className="py-2 px-3">
+            <CardContent className="py-1 px-3">
               {tokenStatusLoading && (
                 <div className="text-xs text-gray-600 mb-2">Loading token status...</div>
               )}
@@ -254,7 +267,12 @@ const AdminWorkersPage: React.FC = () => {
                             </td>
                             <td className="px-2 py-1 whitespace-nowrap">{ttlLabel}</td>
                             <td className="px-2 py-1 whitespace-nowrap">
-                              {row.last_refresh_at || '–'}
+                              {formatDateTimeLocal(row.last_refresh_at)}
+                              {row.last_refresh_at && formatRelativeTime(row.last_refresh_at) && (
+                                <span className="ml-1 text-[10px] text-gray-500">
+                                  ({formatRelativeTime(row.last_refresh_at)})
+                                </span>
+                              )}
                               {row.last_refresh_error && (
                                 <div className="text-[10px] text-red-600 max-w-xs truncate">
                                   {row.last_refresh_error}
@@ -301,7 +319,7 @@ const AdminWorkersPage: React.FC = () => {
           {/* Token refresh log modal */}
           {logModalOpen && (
             <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-              <div className="bg-white rounded shadow-lg max-w-3xl w-full max-h-[80vh] overflow-auto p-4 text-xs">
+              <div className="bg-white rounded shadow-lg max-w-5xl w-[90vw] max-h-[80vh] overflow-auto p-4 text-xs resize">
                 <div className="flex items-center justify-between mb-2">
                   <div className="font-semibold">Token refresh log</div>
                   <button
@@ -346,8 +364,8 @@ const AdminWorkersPage: React.FC = () => {
                         <tbody>
                           {logModalData.logs.map((log) => (
                             <tr key={log.id} className="border-t align-top">
-                              <td className="px-2 py-1 whitespace-nowrap">{log.started_at || '–'}</td>
-                              <td className="px-2 py-1 whitespace-nowrap">{log.finished_at || '–'}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{formatDateTimeLocal(log.started_at)}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{formatDateTimeLocal(log.finished_at)}</td>
                               <td className="px-2 py-1 whitespace-nowrap">
                                 {log.success === null ? 'n/a' : log.success ? 'success' : 'error'}
                                 {log.error_code && (
@@ -357,8 +375,8 @@ const AdminWorkersPage: React.FC = () => {
                               <td className="px-2 py-1 whitespace-pre-wrap max-w-xs">
                                 {log.error_message || '–'}
                               </td>
-                              <td className="px-2 py-1 whitespace-nowrap">{log.old_expires_at || '–'}</td>
-                              <td className="px-2 py-1 whitespace-nowrap">{log.new_expires_at || '–'}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{formatDateTimeLocal(log.old_expires_at)}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{formatDateTimeLocal(log.new_expires_at)}</td>
                               <td className="px-2 py-1 whitespace-nowrap">{log.triggered_by}</td>
                             </tr>
                           ))}
@@ -372,22 +390,24 @@ const AdminWorkersPage: React.FC = () => {
           )}
 
           {selectedAccountId && selectedAccount && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Workers for {accountLabel}</CardTitle>
-                <CardDescription className="text-sm text-gray-600">
-                  Управление отдельными воркерами (Orders, Transactions, Messages и т.д.) для выбранного
-                  eBay аккаунта.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <EbayWorkersPanel
-                  accountId={selectedAccountId}
-                  accountLabel={accountLabel}
-                  ebayUserId={selectedAccount.ebay_user_id}
-                />
-              </CardContent>
-            </Card>
+            <div className="mt-2">
+              <div className="flex items-center gap-2 mb-1 text-sm">
+                <span className="font-semibold">Workers for {accountLabel}</span>
+                <span
+                  className="inline-flex items-center justify-center h-4 w-4 rounded-full border border-gray-300 text-[10px] font-semibold text-gray-600 cursor-default"
+                  title={
+                    'Управление отдельными воркерами (Orders, Transactions, Messages и т.д.) для выбранного eBay аккаунта.'
+                  }
+                >
+                  i
+                </span>
+              </div>
+              <EbayWorkersPanel
+                accountId={selectedAccountId}
+                accountLabel={accountLabel}
+                ebayUserId={selectedAccount.ebay_user_id}
+              />
+            </div>
           )}
         </div>
       </main>

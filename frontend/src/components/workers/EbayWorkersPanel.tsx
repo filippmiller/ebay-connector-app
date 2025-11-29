@@ -230,6 +230,17 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
 
+  // Periodically refresh recent runs so the terminal stays attached to the
+  // latest background activity, even when the user does not press "Run now".
+  useEffect(() => {
+    if (!accountId) return;
+    const id = window.setInterval(() => {
+      void fetchRecentRuns();
+    }, 15000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId]);
+
   const fetchSchedule = async () => {
     if (!accountId) return;
     try {
@@ -266,13 +277,13 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       );
       const runs = resp.data.runs || [];
       setRecentRuns(runs);
-      // Auto-select and attach to the most recent run for the terminal if we
-      // don't already have an active sync run.
+      // Auto-select and attach to the most recent run for the terminal when no
+      // explicit run is selected yet. This keeps the terminal "live" even when
+      // workers are started automatically in the background.
       if (runs.length > 0 && (!selectedRunId || selectedRunId === "latest")) {
         const latest = runs[0];
         setSelectedRunId(latest.id);
         if (!activeSyncRunId) {
-          // Attach the terminal to the latest run so logs stream immediately.
           await attachTerminalToRun(latest);
         }
       }
@@ -776,8 +787,17 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     </div>
                   </td>
                   <td className="px-3 py-2">
-                    <div>Type: {w.cursor_type || "–"}</div>
-                    <div>Value: {w.cursor_value || "–"}</div>
+                    <div className="text-xs text-gray-700 space-y-0.5">
+                      <div>Type: {w.cursor_type || "–"}</div>
+                      <div>
+                        Cursor value: {w.cursor_value ? formatDateTimeLocal(w.cursor_value) : "–"}
+                        {w.cursor_value && formatRelativeTime(w.cursor_value) && (
+                          <span className="ml-1 text-[11px] text-gray-500">
+                            ({formatRelativeTime(w.cursor_value)})
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-xs text-gray-700 align-top max-w-xs">
                     {w.primary_dedup_key ? (
@@ -980,7 +1000,13 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     </div>
                     <div>
                       <span className="font-semibold">Window:</span>{' '}
-                      {detailsData.run.summary.window_from || "–"} .. {detailsData.run.summary.window_to || "–"}
+                      {detailsData.run.summary.window_from
+                        ? formatDateTimeLocal(detailsData.run.summary.window_from)
+                        : "–"}{' '}
+                      ..{' '}
+                      {detailsData.run.summary.window_to
+                        ? formatDateTimeLocal(detailsData.run.summary.window_to)
+                        : "–"}
                     </div>
                     <div>
                       <span className="font-semibold">Fetched / stored:</span>{' '}

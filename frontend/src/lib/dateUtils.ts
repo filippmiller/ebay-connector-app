@@ -1,7 +1,17 @@
 export function parseIsoDate(value?: string | null): Date | null {
   if (!value) return null;
   try {
-    const d = new Date(value);
+    let raw = value.trim();
+
+    // Normalise a couple of backend-specific ISO quirks so that the browser
+    // Date parser can understand them:
+    // - Some timestamps come through as "...+00:00Z" (duplicate UTC suffix).
+    // - We keep everything else as-is.
+    if (raw.endsWith("+00:00Z")) {
+      raw = raw.replace("+00:00Z", "Z");
+    }
+
+    const d = new Date(raw);
     if (Number.isNaN(d.getTime())) return null;
     return d;
   } catch {
