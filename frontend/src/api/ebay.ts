@@ -370,10 +370,4 @@ export const ebayApi = {
     );
     return response.data;
   },
-    const response = await apiClient.post<TestNotificationResponse>(
-      '/api/admin/notifications/test-topic',
-      { topicId },
-    );
-    return response.data;
-  },
 };
