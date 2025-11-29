@@ -5,6 +5,7 @@ from sqlalchemy import desc, or_, and_
 from typing import Optional, Any
 import os
 from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel
 
 from ..models_sqlalchemy import get_db
 from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
@@ -24,6 +25,17 @@ from ..config import settings
 FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+class TokenRefreshDebugRequest(BaseModel):
+    """Request body for /ebay/token/refresh-debug.
+
+    We keep this minimal on purpose: the endpoint derives everything else from
+    the account + DB state so that it always uses the same refresh token and
+    environment as the background worker.
+    """
+
+    ebay_account_id: str
 
 
 @router.get("/notifications/status")
@@ -406,6 +418,73 @@ async def get_ebay_token_refresh_log(
             }
             for row in logs
         ],
+    }
+
+
+@router.post("/ebay/token/refresh-debug")
+async def debug_refresh_ebay_token(
+    payload: TokenRefreshDebugRequest,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Run a one-off token refresh for an account and capture raw HTTP.
+
+    This uses the same request-building logic as the background token refresh
+    worker but *does not* write secrets to normal logs. Instead it returns a
+    structured payload with the exact HTTP request and response so the admin
+    UI can display it in a terminal-like view.
+    """
+
+    account_id = payload.ebay_account_id
+
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.id == account_id, EbayAccount.org_id == current_user.id)
+        .first()
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    token: Optional[EbayToken] = (
+        db.query(EbayToken)
+        .filter(EbayToken.ebay_account_id == account.id)
+        .order_by(EbayToken.updated_at.desc())
+        .first()
+    )
+
+    env = settings.EBAY_ENVIRONMENT or "sandbox"
+
+    if not token or not token.refresh_token:
+        # Nothing to call eBay with; return a structured error without making
+        # any external HTTP requests.
+        return {
+            "account": {
+                "id": account.id,
+                "ebay_user_id": account.ebay_user_id,
+                "house_name": account.house_name,
+            },
+            "environment": env,
+            "success": False,
+            "error": "no_refresh_token",
+            "error_description": "Account has no refresh token stored",
+            "request": None,
+            "response": None,
+        }
+
+    debug_payload = await ebay_service.debug_refresh_access_token_http(
+        token.refresh_token,
+        environment=env,
+    )
+
+    # Attach basic account context; the rest of the shape comes from the
+    # shared debug_refresh_access_token_http helper.
+    return {
+        "account": {
+            "id": account.id,
+            "ebay_user_id": account.ebay_user_id,
+            "house_name": account.house_name,
+        },
+        **debug_payload,
     }
 
 

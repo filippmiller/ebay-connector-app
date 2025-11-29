@@ -178,6 +178,32 @@ export interface EbayTokenRefreshLogResponse {
   logs: EbayTokenRefreshLogRow[];
 }
 
+export interface EbayTokenRefreshDebugHttp {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string | null;
+}
+
+export interface EbayTokenRefreshDebugResponse {
+  account: {
+    id: string;
+    ebay_user_id: string | null;
+    house_name: string | null;
+  };
+  environment: string;
+  success: boolean;
+  error: string | null;
+  error_description: string | null;
+  request: EbayTokenRefreshDebugHttp | null;
+  response: {
+    status_code: number | null;
+    reason: string | null;
+    headers: Record<string, string> | null;
+    body: string | null;
+  } | null;
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -367,6 +393,14 @@ export const ebayApi = {
     params.set('limit', String(limit));
     const response = await apiClient.get<EbayTokenRefreshLogResponse>(
       `/api/admin/ebay/tokens/refresh/log?${params.toString()}`,
+    );
+    return response.data;
+  },
+
+  async debugRefreshToken(accountId: string): Promise<EbayTokenRefreshDebugResponse> {
+    const response = await apiClient.post<EbayTokenRefreshDebugResponse>(
+      '/api/admin/ebay/token/refresh-debug',
+      { ebay_account_id: accountId },
     );
     return response.data;
   },

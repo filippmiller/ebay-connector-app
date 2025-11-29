@@ -3,7 +3,13 @@ import FixedHeader from "@/components/FixedHeader";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ebayApi, EbayTokenStatusAccount, TokenRefreshWorkerStatus, EbayTokenRefreshLogResponse } from "../api/ebay";
+import {
+  ebayApi,
+  EbayTokenStatusAccount,
+  TokenRefreshWorkerStatus,
+  EbayTokenRefreshLogResponse,
+  EbayTokenRefreshDebugResponse,
+} from "../api/ebay";
 import { EbayWorkersPanel } from "../components/workers/EbayWorkersPanel";
 import { formatDateTimeLocal, formatRelativeTime } from "../lib/dateUtils";
 
@@ -35,6 +41,12 @@ const AdminWorkersPage: React.FC = () => {
   const [logModalLoading, setLogModalLoading] = useState(false);
   const [logModalError, setLogModalError] = useState<string | null>(null);
   const [logModalData, setLogModalData] = useState<EbayTokenRefreshLogResponse | null>(null);
+
+  // Per-account on-demand debug refresh modal (full HTTP request/response)
+  const [debugModalOpen, setDebugModalOpen] = useState(false);
+  const [debugModalLoading, setDebugModalLoading] = useState(false);
+  const [debugModalError, setDebugModalError] = useState<string | null>(null);
+  const [debugModalData, setDebugModalData] = useState<EbayTokenRefreshDebugResponse | null>(null);
 
   // HTTP-level token request/response logs (from EbayConnectLog via /api/admin/ebay/tokens/logs)
   const [httpLogsModalOpen, setHttpLogsModalOpen] = useState(false);
@@ -104,6 +116,67 @@ const AdminWorkersPage: React.FC = () => {
     }
   };
 
+  const openTokenRefreshDebug = async (accountId: string) => {
+    try {
+      setDebugModalError(null);
+      setDebugModalData(null);
+      setDebugModalLoading(true);
+      setDebugModalOpen(true);
+      const data = await ebayApi.debugRefreshToken(accountId);
+      setDebugModalData(data);
+    } catch (e: any) {
+      console.error("Failed to run token refresh debug", e);
+      setDebugModalError(
+        e?.response?.data?.detail || e.message || "Failed to run token refresh debug",
+      );
+    } finally {
+      setDebugModalLoading(false);
+    }
+  };
+
+  const buildDebugTerminalText = (payload: EbayTokenRefreshDebugResponse): string => {
+    const parts: string[] = [];
+    const req = payload.request;
+    const res = payload.response;
+
+    parts.push("=== HTTP REQUEST ===");
+    if (req) {
+      const statusLine = `${req.method || "POST"} ${req.url || ""}`;
+      parts.push(statusLine);
+      if (req.headers) {
+        Object.entries(req.headers).forEach(([k, v]) => {
+          parts.push(`${k}: ${String(v)}`);
+        });
+      }
+      parts.push("");
+      if (req.body) {
+        parts.push(req.body);
+      }
+    } else {
+      parts.push("<no request captured>");
+    }
+
+    parts.push("");
+    parts.push("=== HTTP RESPONSE ===");
+    if (res) {
+      const statusLine = `HTTP/1.1 ${res.status_code ?? "?"}${res.reason ? ` ${res.reason}` : ""}`;
+      parts.push(statusLine);
+      if (res.headers) {
+        Object.entries(res.headers).forEach(([k, v]) => {
+          parts.push(`${k}: ${String(v)}`);
+        });
+      }
+      parts.push("");
+      if (res.body != null) {
+        parts.push(res.body);
+      }
+    } else {
+      parts.push("<no response captured>");
+    }
+
+    return parts.join("\n");
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
@@ -165,7 +238,7 @@ const AdminWorkersPage: React.FC = () => {
                   )}
                 </CardContent>
               </Card>
-n              {/* Compact token refresh worker summary (4,5) */}
+              {/* Compact token refresh worker summary (4,5) */}
               <Card className="flex-1 min-w-[220px] p-0">
                 <CardHeader className="py-1 px-3 pb-0">
                   <CardTitle className="text-[12px] font-semibold">Token refresh status</CardTitle>
@@ -319,17 +392,30 @@ const AdminWorkersPage: React.FC = () => {
                                     setLogModalError(null);
                                     setLogModalLoading(true);
                                     setLogModalOpen(true);
-                                    const data = await ebayApi.getEbayTokenRefreshLog(row.account_id, 50);
+                                    const data = await ebayApi.getEbayTokenRefreshLog(
+                                      row.account_id,
+                                      50,
+                                    );
                                     setLogModalData(data);
                                   } catch (e: any) {
                                     console.error("Failed to load token refresh log", e);
-                                    setLogModalError(e?.response?.data?.detail || e.message || "Failed to load refresh log");
+                                    setLogModalError(
+                                      e?.response?.data?.detail ||
+                                        e.message ||
+                                        "Failed to load refresh log",
+                                    );
                                   } finally {
                                     setLogModalLoading(false);
                                   }
                                 }}
                               >
                                 View log
+                              </button>
+                              <button
+                                className="ml-1 px-2 py-0.5 border rounded text-[11px] bg-white hover:bg-gray-50"
+                                onClick={() => void openTokenRefreshDebug(row.account_id)}
+                              >
+                                Refresh (debug)
                               </button>
                             </td>
                           </tr>
@@ -413,6 +499,98 @@ const AdminWorkersPage: React.FC = () => {
                       </table>
                     )}
                   </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {debugModalOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+              <div className="bg-white rounded shadow-lg max-w-5xl w-[95vw] max-h-[90vh] min-h-[60vh] overflow-auto p-4 text-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <div className="font-semibold text-sm">Token refresh (debug)</div>
+                    <div className="text-[11px] text-gray-600">
+                      This debug view shows full headers and tokens exactly as sent to eBay. Do not share this
+                      output outside the trusted team.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs text-gray-600 hover:text-black"
+                    onClick={() => {
+                      setDebugModalOpen(false);
+                      setDebugModalData(null);
+                      setDebugModalError(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+                {debugModalLoading && (
+                  <div className="mb-2 text-xs text-gray-600">Running refresh against eBay...</div>
+                )}
+                {debugModalError && <div className="mb-2 text-xs text-red-600">{debugModalError}</div>}
+                {debugModalData && (
+                  (() => {
+                    const text = buildDebugTerminalText(debugModalData);
+                    const accountName =
+                      debugModalData.account.house_name || debugModalData.account.id;
+                    return (
+                      <>
+                        <div className="mb-2 text-[11px] text-gray-700 flex items-center justify-between">
+                          <div>
+                            <span className="font-semibold">Account:</span>{" "}
+                            <span>
+                              {accountName}
+                              {debugModalData.account.ebay_user_id && (
+                                <span className="text-gray-500">
+                                  {" "}
+                                  (eBay user: {debugModalData.account.ebay_user_id})
+                                </span>
+                              )}
+                            </span>
+                            <span className="ml-2 text-gray-500">
+                              env: {debugModalData.environment}
+                            </span>
+                            <span className="ml-2">
+                              Result:{" "}
+                              {debugModalData.success ? (
+                                <span className="text-green-700 font-semibold">SUCCESS</span>
+                              ) : (
+                                <span className="text-red-700 font-semibold">ERROR</span>
+                              )}
+                              {debugModalData.error && (
+                                <span className="ml-1 text-gray-700">
+                                  [{debugModalData.error}]
+                                </span>
+                              )}
+                              {debugModalData.error_description && (
+                                <span className="ml-1 text-gray-600">
+                                  {" - "}
+                                  {debugModalData.error_description}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="px-2 py-0.5 border rounded text-[11px] bg-white hover:bg-gray-50"
+                            onClick={() => {
+                              if (navigator?.clipboard?.writeText) {
+                                void navigator.clipboard.writeText(text);
+                              }
+                            }}
+                          >
+                            Copy all
+                          </button>
+                        </div>
+                        <pre className="bg-black text-green-100 font-mono text-[11px] p-3 rounded h-[60vh] overflow-auto whitespace-pre-wrap">
+                          {text}
+                        </pre>
+                      </>
+                    );
+                  })()
                 )}
               </div>
             </div>

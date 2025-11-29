@@ -846,29 +846,28 @@ class EbayService:
         finally:
             settings.EBAY_ENVIRONMENT = original_env
 
-    async def refresh_access_token(
+    def _build_refresh_token_request_components(
         self,
         refresh_token: str,
         *,
-        user_id: Optional[str] = None,
         environment: Optional[str] = None,
-    ) -> EbayTokenResponse:
-        """Refresh an access token using a long-lived refresh token.
+    ) -> tuple[str, Dict[str, str], Dict[str, str], Dict[str, Any]]:
+        """Build common headers/body/payload for the refresh_token grant.
 
-        When user_id/environment are provided, this will also write a detailed
-        entry to ebay_connect_logs with the HTTP request/response used for
-        the refresh (credentials are masked in the request payload).
+        This helper is used both by the background worker and the admin debug
+        endpoint so that they generate *identical* HTTP requests to eBay's
+        /identity/v1/oauth2/token endpoint.
         """
         if not settings.ebay_client_id or not settings.ebay_cert_id:
             ebay_logger.log_ebay_event(
                 "token_refresh_error",
                 "eBay credentials not configured",
                 status="error",
-                error="EBAY_CLIENT_ID or EBAY_CERT_ID not set"
+                error="EBAY_CLIENT_ID or EBAY_CERT_ID not set",
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="eBay credentials not configured"
+                detail="eBay credentials not configured",
             )
 
         target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
@@ -878,7 +877,7 @@ class EbayService:
 
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {encoded_credentials}"
+            "Authorization": f"Basic {encoded_credentials}",
         }
 
         data = {
@@ -894,7 +893,9 @@ class EbayService:
         masked_body = {
             "grant_type": "refresh_token",
             # Only partially show the refresh token for safety
-            "refresh_token": refresh_token if len(refresh_token) <= 12 else f"{refresh_token[:6]}...{refresh_token[-4:]}",
+            "refresh_token": refresh_token
+            if len(refresh_token) <= 12
+            else f"{refresh_token[:6]}...{refresh_token[-4:]}",
         }
         request_payload = {
             "method": "POST",
@@ -902,6 +903,26 @@ class EbayService:
             "headers": masked_headers,
             "body": masked_body,
         }
+
+        return target_env, headers, data, request_payload
+
+    async def refresh_access_token(
+        self,
+        refresh_token: str,
+        *,
+        user_id: Optional[str] = None,
+        environment: Optional[str] = None,
+    ) -> EbayTokenResponse:
+        """Refresh an access token using a long-lived refresh token.
+
+        When user_id/environment are provided, this will also write a detailed
+        entry to ebay_connect_logs with the HTTP request/response used for
+        the refresh (credentials are masked in the request payload).
+        """
+        target_env, headers, data, request_payload = self._build_refresh_token_request_components(
+            refresh_token,
+            environment=environment,
+        )
 
         ebay_logger.log_ebay_event(
             "token_refresh_request",
@@ -949,7 +970,9 @@ class EbayService:
                             response={
                                 "status": response.status_code,
                                 "headers": dict(response.headers),
-                                "body": response_body if isinstance(response_body, (dict, list)) else str(response_body)[:5000],
+                                "body": response_body
+                                if isinstance(response_body, (dict, list))
+                                else str(response_body)[:5000],
                             },
                             error=str(error_detail)[:2000],
                         )
@@ -1015,6 +1038,112 @@ class EbayService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=error_msg,
             )
+
+    async def debug_refresh_access_token_http(
+        self,
+        refresh_token: str,
+        *,
+        environment: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Perform a refresh_token call and capture raw HTTP request/response.
+
+        This method is used exclusively by the admin debug endpoint. It shares
+        the same request-building logic with ``refresh_access_token`` but does
+        **not** write anything to normal logs or ebay_connect_logs and instead
+        returns a structured payload suitable for a "terminal"-style UI.
+        """
+        target_env, headers, data, _ = self._build_refresh_token_request_components(
+            refresh_token,
+            environment=environment,
+        )
+
+        # Urlencode the body for human-friendly display.
+        from urllib.parse import urlencode as _urlencode  # local import to avoid polluting namespace
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.token_url,
+                    headers=headers,
+                    data=data,
+                    timeout=30.0,
+                )
+        except httpx.RequestError as exc:
+            # Network-level error: we can still show the intended request.
+            request_text_body = _urlencode(data)
+            request_info = {
+                "method": "POST",
+                "url": self.token_url,
+                "headers": dict(headers),
+                "body": request_text_body,
+            }
+            return {
+                "environment": target_env,
+                "success": False,
+                "error": "request_error",
+                "error_description": str(exc),
+                "request": request_info,
+                "response": None,
+            }
+
+        # Build request details from the real httpx.Request object.
+        req = response.request
+        try:
+            raw_req_body = req.content or b""
+        except Exception:  # pragma: no cover - very defensive
+            raw_req_body = b""
+        try:
+            req_body_text = (
+                raw_req_body.decode("utf-8", errors="replace")
+                if isinstance(raw_req_body, (bytes, bytearray))
+                else str(raw_req_body)
+            )
+        except Exception:  # pragma: no cover - defensive
+            req_body_text = "<unable to decode request body>"
+
+        request_info = {
+            "method": req.method,
+            "url": str(req.url),
+            "headers": dict(req.headers),
+            "body": req_body_text,
+        }
+
+        # Build response details.
+        try:
+            resp_text = response.text
+        except Exception:  # pragma: no cover - defensive
+            resp_text = "<unable to read response body>"
+
+        response_info = {
+            "status_code": response.status_code,
+            "reason": response.reason_phrase,
+            "headers": dict(response.headers),
+            "body": resp_text,
+        }
+
+        error: Optional[str] = None
+        error_description: Optional[str] = None
+        if response.status_code != 200:
+            try:
+                body_json = response.json()
+                if isinstance(body_json, dict):
+                    err_val = body_json.get("error")
+                    if isinstance(err_val, str):
+                        error = err_val
+                    err_desc = body_json.get("error_description")
+                    if isinstance(err_desc, str):
+                        error_description = err_desc
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        return {
+            "environment": target_env,
+            "success": response.status_code == 200,
+            "error": error,
+            "error_description": error_description,
+            "request": request_info,
+            "response": response_info,
+        }
 
     async def _get_app_access_token_raw(
         self,
