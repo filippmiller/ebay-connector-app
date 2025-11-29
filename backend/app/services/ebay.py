@@ -12,6 +12,7 @@ from app.models.ebay import EbayTokenResponse
 from app.services.database import db
 from app.services.ebay_connect_logger import ebay_connect_logger
 from app.utils.logger import logger, ebay_logger
+from app.utils import crypto
 
 ORDERS_PAGE_LIMIT = 200          # Fulfillment API max
 TRANSACTIONS_PAGE_LIMIT = 200    # Finances API max
@@ -869,6 +870,30 @@ class EbayService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="eBay credentials not configured",
             )
+
+        # ------------------------------------------------------------------
+        # Ensure we never send an encrypted blob (ENC:v1:...) to eBay.
+        #
+        # Callers *should* pass the plain eBay refresh token obtained from the
+        # ORM property (EbayToken.refresh_token), which already performs
+        # decryption. However, for extra safety we defensively handle cases
+        # where an encrypted value accidentally reaches this layer.
+        # ------------------------------------------------------------------
+        original_token = refresh_token
+        if isinstance(refresh_token, str) and refresh_token.startswith("ENC:v1:"):
+            decrypted = crypto.decrypt(refresh_token)
+            if not isinstance(decrypted, str) or decrypted.startswith("ENC:v1:"):
+                logger.error(
+                    "Refresh token appears encrypted but could not be decrypted safely; aborting HTTP call",
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Internal error: refresh token decryption failed",
+                )
+            logger.warning(
+                "Received encrypted refresh token at HTTP layer; decrypting before calling eBay",
+            )
+            refresh_token = decrypted
 
         target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
 
