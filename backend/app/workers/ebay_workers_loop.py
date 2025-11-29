@@ -29,3 +29,7 @@ async def run_ebay_workers_loop(interval_seconds: int = 300) -> None:
     while True:
         await run_ebay_workers_once()
         await asyncio.sleep(interval_seconds)
+
+
+if __name__ == "__main__":
+    asyncio.run(run_ebay_workers_loop())
