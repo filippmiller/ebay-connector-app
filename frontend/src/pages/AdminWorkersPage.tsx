@@ -84,99 +84,120 @@ const AdminWorkersPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
-      <main className="w-full pt-16 px-4 sm:px-6 lg:px-10 py-8">
-        <div className="w-full mx-auto space-y-4">
-          <h1 className="text-3xl font-bold tracking-tight">eBay Workers</h1>
-          <p className="text-sm text-gray-600 max-w-2xl">
-            Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно
-            включать/выключать воркеры по аккаунту, запускать их вручную и смотреть
-            подробные логи выполнения.
-          </p>
+      {/* Reduce top padding so the header block "sticks" closer to the nav bar */}
+      <main className="w-full pt-14 px-4 sm:px-6 lg:px-10 py-6">
+        <div className="w-full mx-auto space-y-3">
+          {/* Top row: title (2) + compact account selector (3) + compact token worker summary (4,5) */}
+          <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <h1 className="text-2xl font-semibold tracking-tight">eBay Workers</h1>
+              <p className="mt-1 text-xs text-gray-600 max-w-2xl">
+                Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно
+                включать/выключать воркеры по аккаунту, запускать их вручную и смотреть
+                подробные логи выполнения.
+              </p>
+            </div>
 
+            <div className="flex flex-col md:flex-row gap-3 w-full xl:w-auto">
+              {/* Compact account selection (3) */}
+              <Card className="flex-1 min-w-[260px] p-0">
+                <CardHeader className="py-2 px-3 pb-1">
+                  <CardTitle className="text-sm font-semibold">Account selection</CardTitle>
+                </CardHeader>
+                <CardContent className="py-1 px-3">
+                  {accountsLoading && (
+                    <div className="text-xs text-gray-600">Loading eBay accounts...</div>
+                  )}
+                  {accountsError && (
+                    <div className="text-xs text-red-600 mb-1">{accountsError}</div>
+                  )}
+                  {accounts.length === 0 && !accountsLoading && !accountsError && (
+                    <div className="text-xs text-gray-600">
+                      Нет подключённых eBay аккаунтов. Сначала подключите аккаунт в разделе
+                      <span className="font-semibold"> Admin → eBay Connection</span>.
+                    </div>
+                  )}
+                  {accounts.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <Label className="text-[11px] text-gray-700">eBay account</Label>
+                      <Select
+                        value={selectedAccountId || accounts[0]?.id}
+                        onValueChange={(val) => setSelectedAccountId(val)}
+                      >
+                        <SelectTrigger className="h-8 w-48 text-[11px]">
+                          <SelectValue placeholder="Select eBay account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {accounts.map((acc) => (
+                            <SelectItem key={acc.id} value={acc.id}>
+                              {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+n              {/* Compact token refresh worker summary (4,5) */}
+              <Card className="flex-1 min-w-[260px] p-0">
+                <CardHeader className="py-2 px-3 pb-1">
+                  <CardTitle className="text-sm font-semibold">Token refresh status</CardTitle>
+                  <CardDescription className="text-[11px] text-gray-600">
+                    Состояние воркера, который обновляет eBay OAuth токены.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="py-1 px-3">
+                  {workerStatus ? (
+                    <div className="text-[11px] space-y-0.5">
+                      <div>
+                        <span className="font-semibold">Interval:</span> every {workerStatus.interval_seconds} seconds
+                      </div>
+                      <div>
+                        <span className="font-semibold">Last started:</span> {workerStatus.last_started_at || '–'}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Last finished:</span> {workerStatus.last_finished_at || '–'}
+                      </div>
+                      <div>
+                        <span className="font-semibold">Status:</span> {workerStatus.last_status || '–'}
+                      </div>
+                      {workerStatus.next_run_estimated_at && (
+                        <div>
+                          <span className="font-semibold">Next run:</span> {workerStatus.next_run_estimated_at}
+                        </div>
+                      )}
+                      {workerStatus.last_error_message && (
+                        <div className="text-red-600">
+                          Last error: {workerStatus.last_error_message}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-gray-600">No worker heartbeat yet.</div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {/* Token refresh visibility block – per-account table (6) */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-xl">Account selection</CardTitle>
-              <CardDescription className="text-sm text-gray-600">
-                Выберите eBay аккаунт, для которого хотите посмотреть и запустить воркеры.
+            <CardHeader className="py-2 px-3 pb-1">
+              <CardTitle className="text-sm font-semibold">Per-account token status</CardTitle>
+              <CardDescription className="text-[11px] text-gray-600">
+                Для каждого eBay аккаунта показывается срок жизни токена и последние попытки refresh.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {accountsLoading && (
-                <div className="text-sm text-gray-600">Loading eBay accounts...</div>
-              )}
-              {accountsError && (
-                <div className="text-sm text-red-600 mb-2">{accountsError}</div>
-              )}
-              {accounts.length === 0 && !accountsLoading && !accountsError && (
-                <div className="text-sm text-gray-600">
-                  Нет подключённых eBay аккаунтов. Сначала подключите аккаунт в разделе
-                  <span className="font-semibold"> Admin → eBay Connection</span>.
-                </div>
-              )}
-              {accounts.length > 0 && (
-                <div className="flex items-center gap-2 mb-2">
-                  <Label className="text-xs text-gray-700">eBay account</Label>
-                  <Select
-                    value={selectedAccountId || accounts[0]?.id}
-                    onValueChange={(val) => setSelectedAccountId(val)}
-                  >
-                    <SelectTrigger className="h-8 w-72 text-xs">
-                      <SelectValue placeholder="Select eBay account" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {accounts.map((acc) => (
-                        <SelectItem key={acc.id} value={acc.id}>
-                          {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Token refresh visibility block */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Token refresh status</CardTitle>
-              <CardDescription className="text-sm text-gray-600">
-                Воркеры используют OAuth токены eBay. Этот блок показывает состояние
-                токенов по аккаунтам и сам токен-рефреш воркер.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+            <CardContent className="py-2 px-3">
               {tokenStatusLoading && (
                 <div className="text-xs text-gray-600 mb-2">Loading token status...</div>
               )}
               {tokenStatusError && (
                 <div className="text-xs text-red-600 mb-2">{tokenStatusError}</div>
               )}
-              {workerStatus && (
-                <div className="mb-3 p-2 border rounded bg-gray-50 text-xs">
-                  <div className="font-semibold mb-1">Token refresh worker</div>
-                  <div>Interval: every {workerStatus.interval_seconds} seconds</div>
-                  <div>Last started: {workerStatus.last_started_at || '–'}</div>
-                  <div>Last finished: {workerStatus.last_finished_at || '–'}</div>
-                  <div>Status: {workerStatus.last_status || '–'}</div>
-                  {workerStatus.last_error_message && (
-                    <div className="text-red-600 mt-1">
-                      Last error: {workerStatus.last_error_message}
-                    </div>
-                  )}
-                  {workerStatus.next_run_estimated_at && (
-                    <div className="mt-1 text-gray-700">
-                      Next run (estimated): {workerStatus.next_run_estimated_at}
-                    </div>
-                  )}
-                  <div className="mt-1 text-gray-600">
-                    OK in a row: {workerStatus.runs_ok_in_row} · Errors in a row: {workerStatus.runs_error_in_row}
-                  </div>
-                </div>
-              )}
-
               {tokenStatus && tokenStatus.length > 0 && (
-                <div className="mt-2 overflow-x-auto">
+                <div className="mt-1 overflow-x-auto">
                   <table className="min-w-full text-xs border">
                     <thead>
                       <tr className="bg-gray-100">
