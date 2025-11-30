@@ -74,7 +74,11 @@ async def refresh_expiring_tokens():
             worker_row.last_error_message = None
             db.commit()
 
-        accounts = ebay_account_service.get_accounts_needing_refresh(db, threshold_minutes=5)
+        accounts = ebay_account_service.get_accounts_needing_refresh(
+            db,
+            threshold_minutes=15,
+            max_age_minutes=60,
+        )
 
         if not accounts:
             logger.info("No accounts need token refresh")
@@ -107,7 +111,10 @@ async def refresh_expiring_tokens():
                     capture_http=False,
                 )
 
-                if result.get("success"):
+                success = bool(result.get("success"))
+                error_msg = result.get("error_message") or result.get("error") or "unknown_error"
+
+                if success:
                     refreshed_count += 1
                     logger.info(
                         "[token-refresh-worker] SUCCESS account=%s house=%s",
@@ -115,13 +122,50 @@ async def refresh_expiring_tokens():
                         account.house_name,
                     )
                 else:
-                    error_msg = result.get("error_message") or result.get("error") or "unknown_error"
                     logger.warning(
-                        "[token-refresh-worker] FAILURE account=%s house=%s error=%s",
+                        "[token-refresh-worker] FAILURE account=%s house=%s ebay_user_id=%s error=%s",
                         account.id,
                         account.house_name,
+                        getattr(account, "ebay_user_id", None),
                         error_msg,
                     )
+                    # Detect hard 4xx-style errors (e.g. invalid_grant) on already
+                    # expired tokens so we can surface a clear reconnect signal in
+                    # logs/alerts.
+                    try:
+                        from app.models_sqlalchemy.models import EbayToken  # local import to avoid cycles
+
+                        token = (
+                            db.query(EbayToken)
+                            .filter(EbayToken.ebay_account_id == account.id)
+                            .order_by(EbayToken.updated_at.desc())
+                            .first()
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        token = None
+
+                    is_expired = False
+                    if token and getattr(token, "expires_at", None) is not None:
+                        try:
+                            expires_at = token.expires_at
+                            if expires_at.tzinfo is None:
+                                expires_at = expires_at.replace(tzinfo=timezone.utc)
+                            now_local = datetime.now(timezone.utc)
+                            is_expired = expires_at <= now_local
+                        except Exception:  # pragma: no cover - defensive
+                            is_expired = False
+
+                    err_lower = (str(error_msg) or "").lower()
+                    looks_like_4xx = "invalid_grant" in err_lower or "400" in err_lower
+
+                    if is_expired and looks_like_4xx:
+                        logger.critical(
+                            "[token-refresh-worker] CRITICAL: token EXPIRED and REFRESH FAILED for account %s (%s, ebay_user_id=%s) with what looks like a 4xx from eBay (e.g. invalid_grant). Manual reconnect required.",
+                            account.id,
+                            account.house_name,
+                            getattr(account, "ebay_user_id", None),
+                        )
+
                     errors.append(
                         {
                             "account_id": account.id,

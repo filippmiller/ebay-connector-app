@@ -298,12 +298,31 @@ async def get_ebay_token_status(
                 else:
                     status = "ok"
 
+        # Derive severity and whether a manual reconnect is required.
+        #
+        # - "ok": token valid for more than 60 minutes and no refresh_error
+        # - "warning": token valid but within the next 60 minutes
+        # - "error": token expired or has refresh_error / is not connected
+        err_lower = (str(refresh_error or last_refresh_error or "") or "").lower()
+        invalid_grant = "invalid_grant" in err_lower
+
+        if status in ("expired", "error", "not_connected"):
+            severity = "error"
+        elif expires_in_seconds is not None and expires_in_seconds <= 3600:
+            severity = "warning"
+        else:
+            severity = "ok"
+
+        requires_reconnect = bool(invalid_grant or status in ("expired", "not_connected"))
+
         results.append(
             {
                 "account_id": account.id,
                 "account_name": account.house_name,
                 "ebay_user_id": account.ebay_user_id,
                 "status": status,
+                "severity": severity,
+                "requires_reconnect": requires_reconnect,
                 "expires_at": expires_at_utc.isoformat() if expires_at_utc else None,
                 "expires_in_seconds": expires_in_seconds,
                 "has_refresh_token": has_refresh_token,

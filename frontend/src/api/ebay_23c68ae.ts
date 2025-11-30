@@ -127,30 +127,6 @@ export interface TestNotificationResponse {
   tokenType?: 'application' | 'user' | null;
 }
 
-export interface TokenRefreshPreviewResponse {
-  method: string;
-  url: string;
-  headers: Record<string, any>;
-  body_form: {
-    grant_type: string;
-    refresh_token: {
-      prefix: string | null;
-      suffix: string | null;
-      length: number;
-      starts_with_v: boolean;
-      contains_enc_prefix: boolean;
-    };
-  };
-  account?: {
-      id: string;
-      house_name?: string | null;
-      username?: string | null;
-      ebay_user_id?: string | null;
-  };
-  error?: string;
-  message?: string;
-}
-
 export interface EbayTokenStatusAccount {
   account_id: string;
   account_name: string | null;
@@ -418,13 +394,6 @@ export const ebayApi = {
     return response.data;
   },
 
-  async getTokenRefreshPreview(ebayAccountId: string): Promise<TokenRefreshPreviewResponse> {
-    const response = await apiClient.get<TokenRefreshPreviewResponse>(
-      `/api/admin/ebay/token/refresh-preview/${encodeURIComponent(ebayAccountId)}`,
-    );
-    return response.data;
-  },
-
   async getEbayTokenStatus(): Promise<EbayTokenStatusResponse> {
     const response = await apiClient.get<EbayTokenStatusResponse>('/api/admin/ebay/tokens/status');
     return response.data;
@@ -455,13 +424,6 @@ export const ebayApi = {
 
   async getWorkersLoopStatus(): Promise<WorkersLoopStatusResponse> {
     const response = await apiClient.get<WorkersLoopStatusResponse>('/api/admin/ebay/workers/loop-status');
-    return response.data;
-  },
-
-  async runEbayWorkersOnce(): Promise<{ status: string }> {
-    const response = await apiClient.post<{ status: string }>(
-      '/api/admin/ebay/workers/run-once',
-    );
     return response.data;
   },
 

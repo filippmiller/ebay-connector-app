@@ -296,32 +296,48 @@ class EbayAccountService:
             return "healthy"
     
     def get_accounts_needing_refresh(
-        self, 
-        db: Session, 
-        threshold_minutes: int = 5
+        self,
+        db: Session,
+        threshold_minutes: int = 15,
+        max_age_minutes: int = 60,
     ) -> List[EbayAccount]:
-        """Get accounts whose tokens need refresh"""
-        threshold = datetime.now(timezone.utc) + timedelta(minutes=threshold_minutes)
-        
-        tokens = db.query(EbayToken).filter(
-            or_(
-                EbayToken.expires_at <= threshold,
-                EbayToken.expires_at == None
-            )
-        ).all()
-        
+        """Get accounts whose tokens should be refreshed.
+
+        An account is a candidate when **either** of the following is true:
+
+        - The access token is close to expiry (``expires_at`` is null or within
+          ``threshold_minutes`` from now), OR
+        - The token has not been refreshed for at least ``max_age_minutes``
+          (``last_refreshed_at`` is null or older than that window).
+        """
+        now_utc = datetime.now(timezone.utc)
+        expiry_threshold = now_utc + timedelta(minutes=threshold_minutes)
+        max_age_cutoff = now_utc - timedelta(minutes=max_age_minutes)
+
+        close_to_expiry = or_(
+            EbayToken.expires_at.is_(None),
+            EbayToken.expires_at <= expiry_threshold,
+        )
+
+        too_old = or_(
+            EbayToken.last_refreshed_at.is_(None),
+            EbayToken.last_refreshed_at <= max_age_cutoff,
+        )
+
+        tokens = db.query(EbayToken).filter(or_(close_to_expiry, too_old)).all()
+
         account_ids = [t.ebay_account_id for t in tokens]
-        
+
         if not account_ids:
             return []
-        
+
         accounts = db.query(EbayAccount).filter(
             and_(
                 EbayAccount.id.in_(account_ids),
-                EbayAccount.is_active == True
+                EbayAccount.is_active == True,
             )
         ).all()
-        
+
         return accounts
     
     def record_health_check(
