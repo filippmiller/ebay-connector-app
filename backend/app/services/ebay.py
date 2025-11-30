@@ -858,6 +858,12 @@ class EbayService:
         This helper is used both by the background worker and the admin debug
         endpoint so that they generate *identical* HTTP requests to eBay's
         /identity/v1/oauth2/token endpoint.
+
+        The returned ``request_payload`` is used **only** for admin-only
+        diagnostics (connect logs + Workers UI). Per request from the
+        maintainer, it now contains the **exact** headers and body that are
+        sent to eBay, including the unmasked refresh token. Do not expose
+        these logs outside the trusted admin context.
         """
         if not settings.ebay_client_id or not settings.ebay_cert_id:
             ebay_logger.log_ebay_event(
@@ -910,23 +916,14 @@ class EbayService:
             "refresh_token": refresh_token,
         }
 
-        # Request payload for connect logs – mask secrets but keep full structure
-        masked_headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": "Basic **** (masked)",
-        }
-        masked_body = {
-            "grant_type": "refresh_token",
-            # Only partially show the refresh token for safety
-            "refresh_token": refresh_token
-            if len(refresh_token) <= 12
-            else f"{refresh_token[:6]}...{refresh_token[-4:]}",
-        }
+        # Admin diagnostics want a 1:1 view of what we actually send to eBay.
+        # ``request_payload`` therefore mirrors ``headers`` and ``data``
+        # exactly, with **no masking**.
         request_payload = {
             "method": "POST",
             "url": self.token_url,
-            "headers": masked_headers,
-            "body": masked_body,
+            "headers": headers,
+            "body": data,
         }
 
         return target_env, headers, data, request_payload
