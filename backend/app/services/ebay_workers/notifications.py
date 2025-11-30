@@ -19,6 +19,35 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+def _format_window_timestamp(value: Any) -> str:
+    """Format a window timestamp into a human-friendly UTC string.
+
+    The input is typically an ISO8601 string coming from worker summaries,
+    e.g. "2025-11-30T08:40:05+00:00" or "2025-11-30T08:40:05Z".
+
+    We normalise these into "YYYY-MM-DD HH:MM:SS UTC". If parsing fails we
+    simply return the original value converted to ``str``.
+    """
+
+    if value is None:
+        return "unknown"
+
+    raw = str(value).strip()
+    if not raw:
+        return "unknown"
+
+    try:
+        normalised = raw
+        # Align with other backend helpers: tolerate a trailing "Z" or
+        # explicit "+00:00" timezone information.
+        if normalised.endswith("Z"):
+            normalised = normalised.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalised)
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:  # noqa: BLE001
+        return raw
+
+
 def create_worker_run_notification(
     db: Session,
     *,
@@ -41,8 +70,10 @@ def create_worker_run_notification(
     try:
         total_fetched = _safe_int((summary or {}).get("total_fetched"))
         total_stored = _safe_int((summary or {}).get("total_stored"))
-        window_from = (summary or {}).get("window_from")
-        window_to = (summary or {}).get("window_to")
+        window_from_raw = (summary or {}).get("window_from")
+        window_to_raw = (summary or {}).get("window_to")
+        window_from = _format_window_timestamp(window_from_raw) if window_from_raw else None
+        window_to = _format_window_timestamp(window_to_raw) if window_to_raw else None
         sync_run_id = (summary or {}).get("sync_run_id")
         error_message = (summary or {}).get("error_message") or (summary or {}).get("error")
 
@@ -57,10 +88,12 @@ def create_worker_run_notification(
 
         lines = []
         if window_from or window_to:
-            lines.append(f"Window: {window_from or 'unknown'} → {window_to or 'unknown'}")
+            lines.append(f"Window: {window_from or 'unknown'}  {window_to or 'unknown'}")
         if total_fetched is not None or total_stored is not None:
-            lines.append(f"Fetched: {total_fetched if total_fetched is not None else '–'}; "
-                         f"Stored: {total_stored if total_stored is not None else '–'}")
+            lines.append(
+                f"Fetched: {total_fetched if total_fetched is not None else ''}; "
+                f"Stored: {total_stored if total_stored is not None else ''}",
+            )
         if sync_run_id:
             lines.append(f"Sync run id: {sync_run_id}")
         if not is_success and error_message:

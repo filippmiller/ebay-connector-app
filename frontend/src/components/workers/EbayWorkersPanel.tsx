@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import api from "../../lib/apiClient";
 import { SyncTerminal } from "../SyncTerminal";
 import { ebayApi, TokenRefreshPreviewResponse } from "../../api/ebay";
+import { formatDateTimeLocal } from "@/lib/dateUtils";
 
 interface WorkerConfigItem {
   api_family: string;
@@ -463,14 +464,17 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                   </td>
                   <td className="px-3 py-2">
                     <div>
-                      <div>Started: {w.last_run_started_at || "–"}</div>
-                      <div>Finished: {w.last_run_finished_at || "–"}</div>
+                      <div>Started: {w.last_run_started_at ? formatDateTimeLocal(w.last_run_started_at) : "–"}</div>
+                      <div>Finished: {w.last_run_finished_at ? formatDateTimeLocal(w.last_run_finished_at) : "–"}</div>
                       <div>Status: {w.last_run_status || "–"}</div>
                     </div>
                   </td>
                   <td className="px-3 py-2">
                     <div>Type: {w.cursor_type || "–"}</div>
-                    <div>Value: {w.cursor_value || "–"}</div>
+                    <div>
+                      Value:{" "}
+                      {w.cursor_value ? formatDateTimeLocal(w.cursor_value) : "–"}
+                    </div>
                   </td>
                   <td className="px-3 py-2 space-x-2">
                     <button
@@ -547,9 +551,9 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                   <tbody>
                     {w.runs.map((r, idx) => (
                       <tr key={idx} className="border-t">
-                        <td className="px-2 py-1 whitespace-nowrap">{r.run_at}</td>
-                        <td className="px-2 py-1 whitespace-nowrap">{r.window_from || "–"}</td>
-                        <td className="px-2 py-1 whitespace-nowrap">{r.window_to || "–"}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{formatDateTimeLocal(r.run_at)}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{r.window_from ? formatDateTimeLocal(r.window_from) : "–"}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{r.window_to ? formatDateTimeLocal(r.window_to) : "–"}</td>
                       </tr>
                     ))}
                   </tbody>
