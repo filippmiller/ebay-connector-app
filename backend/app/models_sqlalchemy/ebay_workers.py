@@ -105,3 +105,64 @@ class EbayWorkerGlobalConfig(Base):
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class BackgroundWorker(Base):
+    """Heartbeat + status row for long-running background workers.
+
+    This is intentionally generic so we can track not only the eBay token
+    refresh worker, but also other loops (health checks, Gmail ingest, etc.).
+    """
+
+    __tablename__ = "background_workers"
+
+    id = Column(String(36), primary_key=True)
+
+    worker_name = Column(String(128), nullable=False, unique=True, index=True)
+    interval_seconds = Column(Integer, nullable=True)
+
+    last_started_at = Column(DateTime(timezone=True), nullable=True)
+    last_finished_at = Column(DateTime(timezone=True), nullable=True)
+    last_status = Column(String(32), nullable=True)
+    last_error_message = Column(Text, nullable=True)
+
+    runs_ok_in_row = Column(Integer, nullable=False, server_default="0")
+    runs_error_in_row = Column(Integer, nullable=False, server_default="0")
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class EbayTokenRefreshLog(Base):
+    """Per-account token refresh attempts for observability/debugging.
+
+    Each row represents a single attempt to refresh an eBay OAuth token for a
+    given EbayAccount. This powers the admin UI for seeing recent refresh
+    history and diagnosing failures (e.g. invalid_grant, 401, no refresh
+    token, etc.).
+    """
+
+    __tablename__ = "ebay_token_refresh_log"
+
+    id = Column(String(36), primary_key=True)
+
+    ebay_account_id = Column(
+        String(36),
+        ForeignKey("ebay_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    success = Column(Boolean, nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    old_expires_at = Column(DateTime(timezone=True), nullable=True)
+    new_expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    triggered_by = Column(String(32), nullable=False, server_default="scheduled")
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -19,6 +19,15 @@ const FEATURE_TOKEN_INFO = (
   (typeof window !== 'undefined' && (localStorage.getItem('enable_token_info') === '1' || new URLSearchParams(window.location.search).get('tokeninfo') === '1'))
 );
 
+// Scopes that require special eBay approval and must not be requested in
+// regular user-consent flows (they cause `invalid_scope` errors).
+const FORBIDDEN_REQUEST_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope/buy.offer.auction',
+];
+
+const sanitizeScopes = (scopes: string[]): string[] =>
+  scopes.filter((s) => !FORBIDDEN_REQUEST_SCOPES.includes(s));
+
 // Catalog-backed seller scope set is loaded dynamically from GET /ebay/scopes.
 // This replaces the previous hardcoded MY_SCOPES list so that all tools use
 // the same canonical scope catalog as /ebay/auth/start.
@@ -261,10 +270,12 @@ export const EbayDebugger: React.FC = () => {
     const gen = async () => {
       if (!showReconnect || reconnectScopes.length === 0) return;
       try {
-        const baseScopes = catalogScopes.length
+        const rawBaseScopes = catalogScopes.length
           ? catalogScopes
           : ['https://api.ebay.com/oauth/api_scope'];
-        const union = Array.from(new Set([...(reconnectScopes || []), ...baseScopes]));
+        const baseScopes = sanitizeScopes(rawBaseScopes);
+        const requestedReconnect = sanitizeScopes(reconnectScopes || []);
+        const union = Array.from(new Set([...requestedReconnect, ...baseScopes]));
         const redirectUri = `${window.location.origin}/ebay/callback`;
         const { data } = await api.post(
           `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
@@ -1458,10 +1469,12 @@ export const EbayDebugger: React.FC = () => {
               <Button variant="outline" onClick={async ()=> {
                 try {
                   const redirectUri = `${window.location.origin}/ebay/callback`;
-                  const baseScopes = catalogScopes.length
+                  const rawBaseScopes = catalogScopes.length
                     ? catalogScopes
                     : ['https://api.ebay.com/oauth/api_scope'];
-                  const union = Array.from(new Set([...(reconnectScopes||[]), ...baseScopes]));
+                  const baseScopes = sanitizeScopes(rawBaseScopes);
+                  const requestedReconnect = sanitizeScopes(reconnectScopes || []);
+                  const union = Array.from(new Set([...requestedReconnect, ...baseScopes]));
                   const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
                   localStorage.setItem('ebay_oauth_environment', environment);
                   window.location.href = data.authorization_url;

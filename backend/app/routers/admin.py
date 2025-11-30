@@ -5,9 +5,15 @@ from sqlalchemy import desc, or_, and_
 from typing import Optional, Any
 import os
 from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel
 
 from ..models_sqlalchemy import get_db
 from ..models_sqlalchemy.models import SyncLog, EbayAccount, EbayToken, EbayAuthorization, EbayScopeDefinition, EbayEvent
+from ..models_sqlalchemy.ebay_workers import (
+    EbayWorkerRun,
+    BackgroundWorker,
+    EbayTokenRefreshLog,
+)
 from ..services.auth import admin_required
 from ..models.user import User
 from ..utils.logger import logger
@@ -16,10 +22,23 @@ from ..services.ebay_connect_logger import ebay_connect_logger
 from ..services.ebay_token_refresh_service import build_sanitized_refresh_preview_for_account
 from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
 from ..config import settings
+from app.services.ebay_token_refresh_service import refresh_access_token_for_account
+from app.workers.ebay_workers_loop import run_ebay_workers_once
 
 FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+class TokenRefreshDebugRequest(BaseModel):
+    """Request body for /ebay/token/refresh-debug.
+
+    We keep this minimal on purpose: the endpoint derives everything else from
+    the account + DB state so that it always uses the same refresh token and
+    environment as the background worker.
+    """
+
+    ebay_account_id: str
 
 
 @router.get("/notifications/status")
@@ -92,6 +111,50 @@ async def get_notifications_status(
             "topics": [],
         }
 
+@router.post("/cases/sync")
+async def admin_run_cases_sync_for_account(
+    account_id: str = Query(..., description="eBay account id"),
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Run the Post-Order cases worker once for an account (admin-only).
+
+    This wraps ``run_cases_worker_for_account`` so admins can trigger a cases
+    sync directly from the Admin area and immediately see the resulting
+    worker-run summary, including normalization statistics.
+    """
+
+    # Ensure the account belongs to the current org.
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.id == account_id, EbayAccount.org_id == current_user.id)
+        .first()
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    # Import here to avoid circular imports at module load time.
+    from app.services.ebay_workers.cases_worker import run_cases_worker_for_account
+
+    run_id = await run_cases_worker_for_account(account_id)
+    if not run_id:
+        # Worker may be disabled or a run lock could not be acquired.
+        return {"status": "skipped", "reason": "not_started"}
+
+    worker_run: Optional[EbayWorkerRun] = db.query(EbayWorkerRun).filter(EbayWorkerRun.id == run_id).first()
+    if not worker_run:
+        return {"status": "started", "run_id": run_id, "summary": None}
+
+    return {
+        "status": worker_run.status,
+        "run_id": worker_run.id,
+        "api_family": worker_run.api_family,
+        "started_at": worker_run.started_at.isoformat() if worker_run.started_at else None,
+        "finished_at": worker_run.finished_at.isoformat() if worker_run.finished_at else None,
+        "summary": worker_run.summary_json or {},
+    }
+
+
 @router.get("/sync-jobs")
 async def get_sync_jobs(
     endpoint: Optional[str] = Query(None),
@@ -132,6 +195,431 @@ async def get_sync_jobs(
         "total": total,
         "limit": limit,
         "offset": offset
+    }
+
+
+@router.get("/ebay/tokens/status")
+async def get_ebay_token_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return per-account token status for the current org.
+
+    This aggregates information from ebay_accounts, ebay_tokens and the
+    ebay_token_refresh_log table so the Admin UI can quickly see which
+    accounts are healthy, expiring soon, expired, or in error.
+    """
+
+    now_utc = datetime.now(timezone.utc)
+
+    accounts = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.org_id == current_user.id)
+        .order_by(desc(EbayAccount.connected_at))
+        .all()
+    )
+
+    def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    results = []
+    for account in accounts:
+        token: Optional[EbayToken] = (
+            db.query(EbayToken)
+            .filter(EbayToken.ebay_account_id == account.id)
+            .order_by(desc(EbayToken.updated_at))
+            .first()
+        )
+
+        expires_at_utc: Optional[datetime] = (
+            _to_utc(token.expires_at) if token and token.expires_at else None
+        )
+        expires_in_seconds: Optional[int]
+        if expires_at_utc is not None:
+            expires_in_seconds = int((expires_at_utc - now_utc).total_seconds())
+        else:
+            expires_in_seconds = None
+
+        has_refresh_token = bool(token and token.refresh_token)
+        refresh_error = getattr(token, "refresh_error", None) if token else None
+
+        # Latest refresh attempt for this account
+        last_log: Optional[EbayTokenRefreshLog] = (
+            db.query(EbayTokenRefreshLog)
+            .filter(EbayTokenRefreshLog.ebay_account_id == account.id)
+            .order_by(EbayTokenRefreshLog.started_at.desc())
+            .first()
+        )
+        last_refresh_at: Optional[datetime] = None
+        last_refresh_success: Optional[bool] = None
+        last_refresh_error: Optional[str] = None
+
+        if last_log is not None:
+            last_refresh_at = last_log.finished_at or last_log.started_at
+            last_refresh_success = last_log.success
+            if not last_log.success:
+                last_refresh_error = last_log.error_message
+
+        # Count consecutive failures from the most recent logs (up to 10) so we
+        # can surface "3 failures in a row"-style hints in the UI.
+        recent_logs = (
+            db.query(EbayTokenRefreshLog)
+            .filter(EbayTokenRefreshLog.ebay_account_id == account.id)
+            .order_by(EbayTokenRefreshLog.started_at.desc())
+            .limit(10)
+            .all()
+        )
+        failures_in_row = 0
+        for log_row in recent_logs:
+            if log_row.success:
+                break
+            failures_in_row += 1
+
+        # Derive high-level status
+        if token is None:
+            status = "not_connected"
+        else:
+            if refresh_error:
+                status = "error"
+            elif expires_at_utc is None:
+                status = "unknown"
+            else:
+                if expires_in_seconds is not None and expires_in_seconds <= 0:
+                    status = "expired"
+                elif (
+                    expires_in_seconds is not None
+                    and expires_in_seconds <= 600  # 10 minutes
+                ):
+                    status = "expiring_soon"
+                else:
+                    status = "ok"
+
+        results.append(
+            {
+                "account_id": account.id,
+                "account_name": account.house_name,
+                "ebay_user_id": account.ebay_user_id,
+                "status": status,
+                "expires_at": expires_at_utc.isoformat() if expires_at_utc else None,
+                "expires_in_seconds": expires_in_seconds,
+                "has_refresh_token": has_refresh_token,
+                "last_refresh_at": last_refresh_at.isoformat()
+                if last_refresh_at
+                else None,
+                "last_refresh_success": last_refresh_success,
+                "last_refresh_error": last_refresh_error,
+                "refresh_failures_in_row": failures_in_row,
+            }
+        )
+
+    return {"accounts": results}
+
+
+@router.get("/workers/token-refresh/status")
+async def get_token_refresh_worker_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return heartbeat/status information for the token refresh worker.
+
+    NOTE: This endpoint is kept for backwards compatibility with existing
+    frontend code. New clients should prefer
+    ``/api/admin/ebay/workers/loop-status``, which aggregates both the token
+    refresh and eBay workers loops.
+    """
+
+    # BackgroundWorker is global, not per-org, but we still require admin auth.
+    worker: Optional[BackgroundWorker] = (
+        db.query(BackgroundWorker)
+        .filter(BackgroundWorker.worker_name == "token_refresh_worker")
+        .one_or_none()
+    )
+    if worker is None:
+        return {
+            "worker_name": "token_refresh_worker",
+            "interval_seconds": 600,
+            "last_started_at": None,
+            "last_finished_at": None,
+            "last_status": None,
+            "last_error_message": None,
+            "runs_ok_in_row": 0,
+            "runs_error_in_row": 0,
+            "next_run_estimated_at": None,
+        }
+
+    interval = worker.interval_seconds or 600
+    ref_time: Optional[datetime] = worker.last_started_at or worker.last_finished_at
+    next_run_estimated_at: Optional[str] = None
+    if ref_time is not None and interval:
+        try:
+            next_dt = ref_time + timedelta(seconds=interval)
+            next_run_estimated_at = next_dt.astimezone(timezone.utc).isoformat()
+        except Exception:  # pragma: no cover - defensive
+            next_run_estimated_at = None
+
+    return {
+        "worker_name": worker.worker_name,
+        "interval_seconds": interval,
+        "last_started_at": worker.last_started_at.isoformat()
+        if worker.last_started_at
+        else None,
+        "last_finished_at": worker.last_finished_at.isoformat()
+        if worker.last_finished_at
+        else None,
+        "last_status": worker.last_status,
+        "last_error_message": worker.last_error_message,
+        "runs_ok_in_row": worker.runs_ok_in_row,
+        "runs_error_in_row": worker.runs_error_in_row,
+        "next_run_estimated_at": next_run_estimated_at,
+    }
+
+
+@router.post("/ebay/workers/run-once")
+async def run_ebay_workers_once_admin(
+    current_user: User = Depends(admin_required),
+):
+    """Trigger a single eBay workers cycle for all active accounts.
+
+    This does **not** start the long-running loop; it just runs one
+    on-demand iteration. The background loop will continue to run on its own
+    schedule when enabled in the main API process.
+    """
+    try:
+        # Fire-and-forget: let the background task run independently so the
+        # admin call returns immediately.
+        import asyncio
+
+        asyncio.create_task(run_ebay_workers_once())
+        return {"status": "started"}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Failed to trigger on-demand eBay workers cycle: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="run_once_failed")
+
+
+@router.get("/ebay/workers/loop-status")
+async def get_ebay_workers_loop_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return aggregated heartbeat for eBay data workers loop and token refresh loop.
+
+    This is the primary endpoint the Admin Workers UI should use to display
+    whether the long-running loops are healthy or stale.
+    """
+
+    loops: list[dict[str, Any]] = []
+
+    now = datetime.now(timezone.utc)
+
+    def _build_loop_payload(worker_name: str, loop_name: str, default_interval: int) -> dict[str, Any]:
+        worker: Optional[BackgroundWorker] = (
+            db.query(BackgroundWorker)
+            .filter(BackgroundWorker.worker_name == worker_name)
+            .one_or_none()
+        )
+        if worker is None:
+            interval = default_interval
+            last_started = None
+            last_finished = None
+            last_status = None
+            last_error = None
+        else:
+            interval = worker.interval_seconds or default_interval
+            last_started = worker.last_started_at
+            last_finished = worker.last_finished_at
+            last_status = worker.last_status
+            last_error = worker.last_error_message
+
+        # Consider a loop "stale" when we have never seen a finished run or the
+        # time since the last finished run exceeds 3x the configured interval.
+        stale = True
+        last_finished_iso: Optional[str] = None
+        last_started_iso: Optional[str] = None
+        last_success_at_iso: Optional[str] = None
+
+        if last_started is not None:
+            try:
+                last_started_iso = last_started.astimezone(timezone.utc).isoformat()
+            except Exception:  # pragma: no cover - defensive
+                last_started_iso = last_started.isoformat()
+
+        if last_finished is not None:
+            try:
+                last_finished_utc = last_finished.astimezone(timezone.utc)
+                last_finished_iso = last_finished_utc.isoformat()
+            except Exception:  # pragma: no cover - defensive
+                last_finished_utc = last_finished
+                last_finished_iso = last_finished.isoformat()
+
+            # If the last status was "ok", treat that finished_at as the last
+            # success timestamp.
+            if (last_status or "").lower() == "ok":
+                last_success_at_iso = last_finished_utc.isoformat()
+
+            try:
+                if interval and (now - last_finished_utc).total_seconds() <= 3 * interval:
+                    stale = False
+            except Exception:  # pragma: no cover - defensive
+                stale = True
+
+        return {
+            "loop_name": loop_name,
+            "worker_name": worker_name,
+            "interval_seconds": interval,
+            "last_started_at": last_started_iso,
+            "last_finished_at": last_finished_iso,
+            "last_success_at": last_success_at_iso,
+            "last_status": last_status,
+            "last_error_message": last_error,
+            "stale": stale,
+            # For now the authoritative host is the main API process. If we
+            # later move loops to dedicated services, this field can be
+            # derived from environment.
+            "source": "main_api",
+        }
+
+    # eBay data workers loop (every 5 minutes)
+    loops.append(_build_loop_payload("ebay_workers_loop", "ebay_workers", 300))
+    # Token refresh loop (every 10 minutes)
+    loops.append(_build_loop_payload("token_refresh_worker", "token_refresh", 600))
+
+    return {"loops": loops}
+
+
+@router.get("/ebay/tokens/refresh/log")
+async def get_ebay_token_refresh_log(
+    account_id: str = Query(..., description="eBay account id"),
+    limit: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return recent token refresh attempts for a single eBay account."""
+
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.id == account_id, EbayAccount.org_id == current_user.id)
+        .first()
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    logs = (
+        db.query(EbayTokenRefreshLog)
+        .filter(EbayTokenRefreshLog.ebay_account_id == account_id)
+        .order_by(EbayTokenRefreshLog.started_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "account": {
+            "id": account.id,
+            "ebay_user_id": account.ebay_user_id,
+            "house_name": account.house_name,
+        },
+        "logs": [
+            {
+                "id": row.id,
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+                "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+                "success": row.success,
+                "error_code": row.error_code,
+                "error_message": row.error_message,
+                "old_expires_at": row.old_expires_at.isoformat()
+                if row.old_expires_at
+                else None,
+                "new_expires_at": row.new_expires_at.isoformat()
+                if row.new_expires_at
+                else None,
+                "triggered_by": row.triggered_by,
+            }
+            for row in logs
+        ],
+    }
+
+
+@router.post("/ebay/token/refresh-debug")
+async def debug_refresh_ebay_token(
+    payload: TokenRefreshDebugRequest,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Run a one-off token refresh for an account and capture raw HTTP.
+
+    This uses the same request-building logic as the background token refresh
+    worker but *does not* write secrets to normal logs. Instead it returns a
+    structured payload with the exact HTTP request and response so the admin
+    UI can display it in a terminal-like view.
+    """
+
+    account_id = payload.ebay_account_id
+
+    account: Optional[EbayAccount] = (
+        db.query(EbayAccount)
+        .filter(EbayAccount.id == account_id, EbayAccount.org_id == current_user.id)
+        .first()
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    token: Optional[EbayToken] = (
+        db.query(EbayToken)
+        .filter(EbayToken.ebay_account_id == account.id)
+        .order_by(EbayToken.updated_at.desc())
+        .first()
+    )
+
+    env = settings.EBAY_ENVIRONMENT or "sandbox"
+
+    if not token or not token.refresh_token:
+        # Nothing to call eBay with; return a structured error without making
+        # any external HTTP requests.
+        return {
+            "account": {
+                "id": account.id,
+                "ebay_user_id": account.ebay_user_id,
+                "house_name": account.house_name,
+            },
+            "environment": env,
+            "success": False,
+            "error": "no_refresh_token",
+            "error_description": "Account has no refresh token stored",
+            "request": None,
+            "response": None,
+        }
+
+    # Use the shared helper so that debug and worker flows share the same
+    # refresh logic (load token -> decrypt -> call eBay -> persist + log).
+    result = await refresh_access_token_for_account(
+        db,
+        account,
+        triggered_by="debug",
+        persist=True,
+        capture_http=True,
+    )
+
+    debug_payload = result.get("http") or {
+        "environment": env,
+        "success": result.get("success", False),
+        "error": result.get("error"),
+        "error_description": result.get("error_message"),
+        "request": None,
+        "response": None,
+    }
+
+    # Attach basic account context; the rest of the shape comes from the
+    # shared debug_refresh_access_token_http helper.
+    return {
+        "account": {
+            "id": account.id,
+            "ebay_user_id": account.ebay_user_id,
+            "house_name": account.house_name,
+        },
+        **debug_payload,
     }
 
 
@@ -414,22 +902,22 @@ async def refresh_ebay_access_token(
     if not token or not token.refresh_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_refresh_token")
 
-    # Execute refresh
+    # Execute refresh via the shared helper so behaviour matches the worker.
     try:
-        from datetime import timezone, timedelta
-        new_resp = await ebay_service.refresh_access_token(token.refresh_token)
-        # Update storage (access token only; refresh token remains long-lived)
-        token.access_token = new_resp.access_token
-        token.expires_at = datetime.now(timezone.utc) + (timedelta(seconds=new_resp.expires_in) if getattr(new_resp, 'expires_in', None) else timedelta(seconds=0))
-        token.last_refreshed_at = datetime.now(timezone.utc)
-        # If eBay rotated refresh token or returned its TTL, persist it
-        if getattr(new_resp, 'refresh_token', None):
-            token.refresh_token = new_resp.refresh_token
-        if getattr(new_resp, 'refresh_token_expires_in', None):
-            token.refresh_expires_at = datetime.now(timezone.utc) + timedelta(seconds=getattr(new_resp, 'refresh_token_expires_in'))
-        db.commit()
-        db.refresh(token)
-        # Log success (no secrets)
+        result = await refresh_access_token_for_account(
+            db,
+            account,
+            triggered_by="admin",
+            persist=True,
+            capture_http=False,
+        )
+        if not result.get("success"):
+            msg = result.get("error_message") or result.get("error") or "refresh_failed"
+            raise RuntimeError(msg)
+
+        # Reload token to compute TTL and log meta without exposing secrets.
+        token = db.query(EbayToken).filter(EbayToken.ebay_account_id == account.id).first() or token
+
         try:
             ebay_connect_logger.log_event(
                 user_id=current_user.id,
@@ -445,10 +933,10 @@ async def refresh_ebay_access_token(
                             "access_len": (len(token.access_token) if token and token.access_token else 0),
                             "refresh_len": (len(token.refresh_token) if token and token.refresh_token else 0),
                             "access_expires_at": token.expires_at.isoformat() if token.expires_at else None,
-                            "refresh_expires_at": token.refresh_expires_at.isoformat() if token.refresh_expires_at else None
+                            "refresh_expires_at": token.refresh_expires_at.isoformat() if getattr(token, "refresh_expires_at", None) else None,
                         }
-                    }
-                }
+                    },
+                },
             )
         except Exception:
             pass
@@ -460,7 +948,7 @@ async def refresh_ebay_access_token(
                 environment=env,
                 action="token_refresh_failed",
                 request={"method": "POST", "url": f"/api/admin/ebay/tokens/refresh?env={env}"},
-                error=str(e)
+                error=str(e),
             )
         except Exception:
             pass
@@ -468,7 +956,7 @@ async def refresh_ebay_access_token(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="refresh_failed")
 
     now = datetime.now(timezone.utc)
-    access_expires_at = token.expires_at if token.expires_at else None
+    access_expires_at = token.expires_at if token and token.expires_at else None
     ttl_sec = int((access_expires_at - now).total_seconds()) if access_expires_at else None
 
     return {

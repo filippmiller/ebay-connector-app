@@ -2,8 +2,9 @@ import base64
 import httpx
 import asyncio
 import json
-from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List, Tuple, Iterable
+from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 from urllib.parse import urlencode
 from fastapi import HTTPException, status
 from app.config import settings
@@ -11,6 +12,7 @@ from app.models.ebay import EbayTokenResponse
 from app.services.database import db
 from app.services.ebay_connect_logger import ebay_connect_logger
 from app.utils.logger import logger, ebay_logger
+from app.utils import crypto
 
 ORDERS_PAGE_LIMIT = 200          # Fulfillment API max
 TRANSACTIONS_PAGE_LIMIT = 200    # Finances API max
@@ -24,6 +26,19 @@ TRANSACTIONS_CONCURRENCY = 5
 DISPUTES_CONCURRENCY = 5
 OFFERS_CONCURRENCY = 6
 MESSAGES_CONCURRENCY = 5
+
+
+@dataclass
+class _AppTokenCacheEntry:
+    access_token: str
+    expires_at: datetime  # UTC
+
+
+# In-memory cache for application access tokens, keyed by (environment, scopes_key).
+# scopes_key is a deterministic, normalized representation of the scopes list.
+_APP_TOKEN_CACHE: Dict[Tuple[str, str], _AppTokenCacheEntry] = {}
+# Safety margin (in seconds) subtracted from expires_in so we refresh a bit early.
+_APP_TOKEN_SAFETY_MARGIN_SECONDS = 120
 
 
 class EbayService:
@@ -832,30 +847,53 @@ class EbayService:
         finally:
             settings.EBAY_ENVIRONMENT = original_env
 
-    async def refresh_access_token(
+    def _build_refresh_token_request_components(
         self,
         refresh_token: str,
         *,
-        user_id: Optional[str] = None,
         environment: Optional[str] = None,
-    ) -> EbayTokenResponse:
-        """Refresh an access token using a long-lived refresh token.
+    ) -> tuple[str, Dict[str, str], Dict[str, str], Dict[str, Any]]:
+        """Build common headers/body/payload for the refresh_token grant.
 
-        When user_id/environment are provided, this will also write a detailed
-        entry to ebay_connect_logs with the HTTP request/response used for
-        the refresh (credentials are masked in the request payload).
+        This helper is used both by the background worker and the admin debug
+        endpoint so that they generate *identical* HTTP requests to eBay's
+        /identity/v1/oauth2/token endpoint.
         """
         if not settings.ebay_client_id or not settings.ebay_cert_id:
             ebay_logger.log_ebay_event(
                 "token_refresh_error",
                 "eBay credentials not configured",
                 status="error",
-                error="EBAY_CLIENT_ID or EBAY_CERT_ID not set"
+                error="EBAY_CLIENT_ID or EBAY_CERT_ID not set",
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="eBay credentials not configured"
+                detail="eBay credentials not configured",
             )
+
+        # ------------------------------------------------------------------
+        # Ensure we never send an encrypted blob (ENC:v1:...) to eBay.
+        #
+        # Callers *should* pass the plain eBay refresh token obtained from the
+        # ORM property (EbayToken.refresh_token), which already performs
+        # decryption. However, for extra safety we defensively handle cases
+        # where an encrypted value accidentally reaches this layer.
+        # ------------------------------------------------------------------
+        original_token = refresh_token
+        if isinstance(refresh_token, str) and refresh_token.startswith("ENC:v1:"):
+            decrypted = crypto.decrypt(refresh_token)
+            if not isinstance(decrypted, str) or decrypted.startswith("ENC:v1:"):
+                logger.error(
+                    "Refresh token appears encrypted but could not be decrypted safely; aborting HTTP call",
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Internal error: refresh token decryption failed",
+                )
+            logger.warning(
+                "Received encrypted refresh token at HTTP layer; decrypting before calling eBay",
+            )
+            refresh_token = decrypted
 
         target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
 
@@ -864,7 +902,7 @@ class EbayService:
 
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {encoded_credentials}"
+            "Authorization": f"Basic {encoded_credentials}",
         }
 
         data = {
@@ -880,7 +918,9 @@ class EbayService:
         masked_body = {
             "grant_type": "refresh_token",
             # Only partially show the refresh token for safety
-            "refresh_token": refresh_token if len(refresh_token) <= 12 else f"{refresh_token[:6]}...{refresh_token[-4:]}",
+            "refresh_token": refresh_token
+            if len(refresh_token) <= 12
+            else f"{refresh_token[:6]}...{refresh_token[-4:]}",
         }
         request_payload = {
             "method": "POST",
@@ -888,6 +928,26 @@ class EbayService:
             "headers": masked_headers,
             "body": masked_body,
         }
+
+        return target_env, headers, data, request_payload
+
+    async def refresh_access_token(
+        self,
+        refresh_token: str,
+        *,
+        user_id: Optional[str] = None,
+        environment: Optional[str] = None,
+    ) -> EbayTokenResponse:
+        """Refresh an access token using a long-lived refresh token.
+
+        When user_id/environment are provided, this will also write a detailed
+        entry to ebay_connect_logs with the HTTP request/response used for
+        the refresh (credentials are masked in the request payload).
+        """
+        target_env, headers, data, request_payload = self._build_refresh_token_request_components(
+            refresh_token,
+            environment=environment,
+        )
 
         ebay_logger.log_ebay_event(
             "token_refresh_request",
@@ -935,7 +995,9 @@ class EbayService:
                             response={
                                 "status": response.status_code,
                                 "headers": dict(response.headers),
-                                "body": response_body if isinstance(response_body, (dict, list)) else str(response_body)[:5000],
+                                "body": response_body
+                                if isinstance(response_body, (dict, list))
+                                else str(response_body)[:5000],
                             },
                             error=str(error_detail)[:2000],
                         )
@@ -1002,14 +1064,121 @@ class EbayService:
                 detail=error_msg,
             )
 
-    async def get_app_access_token(
+    async def debug_refresh_access_token_http(
         self,
-        scopes: Optional[List[str]] = None,
+        refresh_token: str,
+        *,
         environment: Optional[str] = None,
-    ) -> str:
-        """Obtain an application access token via client credentials grant.
+    ) -> Dict[str, Any]:
+        """Perform a refresh_token call and capture raw HTTP request/response.
 
-        By default, uses ["https://api.ebay.com/oauth/api_scope"].
+        This method is used exclusively by the admin debug endpoint. It shares
+        the same request-building logic with ``refresh_access_token`` but does
+        **not** write anything to normal logs or ebay_connect_logs and instead
+        returns a structured payload suitable for a "terminal"-style UI.
+        """
+        target_env, headers, data, _ = self._build_refresh_token_request_components(
+            refresh_token,
+            environment=environment,
+        )
+
+        # Urlencode the body for human-friendly display.
+        from urllib.parse import urlencode as _urlencode  # local import to avoid polluting namespace
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.token_url,
+                    headers=headers,
+                    data=data,
+                    timeout=30.0,
+                )
+        except httpx.RequestError as exc:
+            # Network-level error: we can still show the intended request.
+            request_text_body = _urlencode(data)
+            request_info = {
+                "method": "POST",
+                "url": self.token_url,
+                "headers": dict(headers),
+                "body": request_text_body,
+            }
+            return {
+                "environment": target_env,
+                "success": False,
+                "error": "request_error",
+                "error_description": str(exc),
+                "request": request_info,
+                "response": None,
+            }
+
+        # Build request details from the real httpx.Request object.
+        req = response.request
+        try:
+            raw_req_body = req.content or b""
+        except Exception:  # pragma: no cover - very defensive
+            raw_req_body = b""
+        try:
+            req_body_text = (
+                raw_req_body.decode("utf-8", errors="replace")
+                if isinstance(raw_req_body, (bytes, bytearray))
+                else str(raw_req_body)
+            )
+        except Exception:  # pragma: no cover - defensive
+            req_body_text = "<unable to decode request body>"
+
+        request_info = {
+            "method": req.method,
+            "url": str(req.url),
+            "headers": dict(req.headers),
+            "body": req_body_text,
+        }
+
+        # Build response details.
+        try:
+            resp_text = response.text
+        except Exception:  # pragma: no cover - defensive
+            resp_text = "<unable to read response body>"
+
+        response_info = {
+            "status_code": response.status_code,
+            "reason": response.reason_phrase,
+            "headers": dict(response.headers),
+            "body": resp_text,
+        }
+
+        error: Optional[str] = None
+        error_description: Optional[str] = None
+        if response.status_code != 200:
+            try:
+                body_json = response.json()
+                if isinstance(body_json, dict):
+                    err_val = body_json.get("error")
+                    if isinstance(err_val, str):
+                        error = err_val
+                    err_desc = body_json.get("error_description")
+                    if isinstance(err_desc, str):
+                        error_description = err_desc
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        return {
+            "environment": target_env,
+            "success": response.status_code == 200,
+            "error": error,
+            "error_description": error_description,
+            "request": request_info,
+            "response": response_info,
+        }
+
+    async def _get_app_access_token_raw(
+        self,
+        scopes: Optional[Iterable[str]] = None,
+        environment: Optional[str] = None,
+    ) -> Tuple[str, Optional[int]]:
+        """Low-level helper to obtain an AppToken and its TTL.
+
+        Returns (access_token, expires_in_seconds). Callers that do not care
+        about caching can ignore the second element.
         """
         target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
         original_env = settings.EBAY_ENVIRONMENT
@@ -1036,12 +1205,15 @@ class EbayService:
                 "Authorization": f"Basic {encoded_credentials}",
             }
 
+            scopes_list: List[str]
             if not scopes:
-                scopes = ["https://api.ebay.com/oauth/api_scope"]
+                scopes_list = ["https://api.ebay.com/oauth/api_scope"]
+            else:
+                scopes_list = list(scopes)
 
             # Normalize scopes: strip whitespace and drop empties.
-            scopes = [s.strip() for s in scopes if s and s.strip()]
-            scope_str = " ".join(scopes)
+            scopes_list = [s.strip() for s in scopes_list if s and s.strip()]
+            scope_str = " ".join(scopes_list)
 
             data = {
                 "grant_type": "client_credentials",
@@ -1058,7 +1230,7 @@ class EbayService:
                 "Requesting eBay application access token via client_credentials",
                 request_data={
                     "environment": target_env,
-                    "scopes": scopes,
+                    "scopes": scopes_list,
                     "url": self.token_url,
                     "headers": masked_headers,
                 },
@@ -1096,6 +1268,13 @@ class EbayService:
 
                 token_data = response_body if isinstance(response_body, dict) else response.json()
                 access_token = token_data.get("access_token")
+                expires_in: Optional[int] = None
+                try:
+                    if "expires_in" in token_data:
+                        expires_in = int(token_data.get("expires_in"))  # type: ignore[arg-type]
+                except Exception:
+                    expires_in = None
+
                 if not access_token:
                     logger.error("eBay app token response missing access_token field")
                     raise HTTPException(
@@ -1104,13 +1283,13 @@ class EbayService:
                     )
 
                 logger.info("Successfully obtained eBay application access token")
-                return str(access_token)
+                return str(access_token), expires_in
 
             except httpx.RequestError as e:
-                error_msg = f"HTTP request failed while obtaining app token: {str(e)}"
+                error_msg = f"HTTP request failed during app token request: {e}"
                 ebay_logger.log_ebay_event(
                     "app_token_error",
-                    "HTTP request error during app token retrieval",
+                    "HTTP request error during app token request",
                     status="error",
                     error=error_msg,
                 )
@@ -1122,6 +1301,49 @@ class EbayService:
         finally:
             settings.EBAY_ENVIRONMENT = original_env
 
+    async def get_browse_app_token(
+        self,
+        scopes: Optional[List[str]] = None,
+        environment: Optional[str] = None,
+    ) -> str:
+        """Return a cached AppToken suitable for Browse/read-only operations.
+
+        This helper wraps the client_credentials flow with a small in-memory
+        cache keyed by (environment, scopes). It is intended for read-heavy
+        paths such as Browse API calls used by Sniper/AI workers.
+        """
+        target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
+
+        # Normalize scopes deterministically for cache key purposes.
+        if not scopes:
+            scopes_list = ["https://api.ebay.com/oauth/api_scope"]
+        else:
+            scopes_list = [s.strip() for s in scopes if s and s.strip()]
+        scopes_key = " ".join(sorted(set(scopes_list)))
+
+        cache_key = (target_env, scopes_key)
+        now = datetime.now(timezone.utc)
+        entry = _APP_TOKEN_CACHE.get(cache_key)
+        if entry and entry.expires_at > now:
+            return entry.access_token
+
+        # Cache miss or expired entry: mint a new AppToken and cache it.
+        token, expires_in = await self._get_app_access_token_raw(
+            scopes=scopes_list,
+            environment=target_env,
+        )
+
+        ttl = expires_in or 3600  # fall back to a conservative 1h TTL if missing
+        safety = min(_APP_TOKEN_SAFETY_MARGIN_SECONDS, max(0, ttl // 2))
+        effective_ttl = max(0, ttl - safety)
+        expires_at = now + timedelta(seconds=effective_ttl)
+
+        _APP_TOKEN_CACHE[cache_key] = _AppTokenCacheEntry(
+            access_token=token,
+            expires_at=expires_at,
+        )
+
+        return token
     def save_user_tokens(
         self,
         user_id: str,
@@ -1468,10 +1690,11 @@ class EbayService:
     ) -> Dict[str, Any]:
         """Synchronize orders from eBay to database with pagination (limit=200).
 
-        If ``window_from``/``window_to`` are provided, they are used as a logical
-        time window for logging and for future filtering once the Fulfillment API
-        exposes stable filters; for now they are recorded in logs while the
-        underlying API still relies on its default 90-day window.
+        If ``window_from``/``window_to`` are provided, they define the inclusive
+        ``lastmodifieddate`` window used for Fulfillment search via an RSQL
+        filter (e.g. ``lastmodifieddate:[start..end]``). When the values are
+        missing or cannot be parsed, a conservative default of the last 90 days
+        ending at "now" (UTC) is applied.
 
         Args:
             user_id: User ID
@@ -1550,9 +1773,11 @@ class EbayService:
             # Persist context so PostgresEbayDatabase can tag rows
             from app.services.ebay_database import ebay_db
 
-            # Determine effective date window for logging. Fulfillment API does
-            # not yet accept a precise lastModifiedDate filter in this path, but
-            # workers compute a window and pass it through for observability.
+            # Determine effective date window for Fulfillment search and
+            # logging. Workers pass ``window_from``/``window_to`` based on a
+            # cursor with overlap (e.g. cursor - 30 minutes). We convert those
+            # into a concrete ``lastModifiedDate:[start..end]`` filter so that
+            # each run only refetches a narrow tail of orders.
             from datetime import datetime, timedelta, timezone
 
             now_utc = datetime.now(timezone.utc)
@@ -1574,6 +1799,11 @@ class EbayService:
                 start_dt = _parse_iso(window_from) or (end_dt - timedelta(days=90))
             else:
                 start_dt = end_dt - timedelta(days=90)
+
+            # Pre-compute ISO strings for the Fulfillment filter so we use a
+            # stable, millisecond-truncated representation.
+            start_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            end_iso = end_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
             event_logger.log_start(f"Starting Orders sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}")
             event_logger.log_info(f"=== WHO WE ARE ===")
@@ -1619,14 +1849,17 @@ class EbayService:
                     }
                 
                 current_page += 1
-                # For now we do not send any explicit status/date filter and instead
-                # rely on eBay's default time window. Once the exact filter
-                # semantics are finalized, we can re-introduce a canonical
-                # filter here (e.g. creationdate or lastmodifieddate ranges).
+                # Restrict search to the effective lastmodifieddate window so
+                # workers truly behave incrementally instead of always pulling
+                # the full 90-day default. NOTE: the Fulfillment API expects the
+                # field name to be all lower-case ("lastmodifieddate").
                 filter_params = {
                     "limit": limit,
                     "offset": offset,
                     "fieldGroups": "TAX_BREAKDOWN",
+                    "filter": (
+                        f"lastmodifieddate:[{start_iso}..{end_iso}]"
+                    ),
                 }
                 
                 # Check for cancellation BEFORE making the API request
@@ -1935,6 +2168,279 @@ class EbayService:
                 detail=error_msg,
             )
 
+    async def fetch_inquiries(
+        self,
+        access_token: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch buyer inquiries from the Post-Order Inquiry API.
+
+        This mirrors fetch_postorder_cases but targets /post-order/v2/inquiry/search
+        so workers can ingest the pre-case buyer disputes.
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        api_url = f"{settings.ebay_api_base_url}/post-order/v2/inquiry/search"
+        timeout_seconds = 30.0
+
+        headers = {
+            # Post-Order API expects OAuth user tokens in the IAF scheme, not Bearer.
+            "Authorization": f"IAF {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        }
+
+        params = filter_params or {}
+
+        ebay_logger.log_ebay_event(
+            "fetch_postorder_inquiries_request",
+            f"Fetching Post-Order inquiries from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "method": "GET",
+                "params": params,
+            },
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.get(api_url, headers=headers, params=params)
+
+            if response.status_code != 200:
+                correlation_id = (
+                    response.headers.get("X-EBAY-CORRELATION-ID")
+                    or response.headers.get("x-ebay-correlation-id")
+                )
+                try:
+                    error_body: Any = response.json()
+                except Exception:
+                    error_body = response.text
+
+                body_snippet = (
+                    str(error_body)[:2000]
+                    if not isinstance(error_body, (dict, list))
+                    else error_body
+                )
+
+                message = (
+                    f"EBAY Post-Order error {response.status_code} on GET "
+                    f"/post-order/v2/inquiry/search; "
+                    f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
+                )
+
+                ebay_logger.log_ebay_event(
+                    "fetch_postorder_inquiries_failed",
+                    "Failed to fetch Post-Order inquiries from eBay",
+                    response_data={
+                        "status_code": response.status_code,
+                        "correlation_id": correlation_id,
+                        "headers": dict(response.headers),
+                        "body": body_snippet,
+                    },
+                    status="error",
+                    error=message,
+                )
+                logger.error(message)
+                raise HTTPException(status_code=response.status_code, detail=message)
+
+            inquiries_data = response.json()
+
+            total = inquiries_data.get("total")
+            items = (
+                inquiries_data.get("inquiries")
+                or inquiries_data.get("inquirySummaries")
+                or inquiries_data.get("members")
+                or []
+            )
+
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiries_success",
+                "Successfully fetched Post-Order inquiries",
+                response_data={
+                    "total_inquiries": total if total is not None else len(items),
+                },
+                status="success",
+            )
+            logger.info("Successfully fetched Post-Order inquiries from eBay")
+            return inquiries_data
+
+        except httpx.TimeoutException as e:
+            message = (
+                f"Timeout calling EBAY Post-Order GET /post-order/v2/inquiry/search "
+                f"after {timeout_seconds}s: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiries_timeout",
+                "Timeout during Post-Order inquiries fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=message,
+            )
+        except httpx.RequestError as e:
+            message = (
+                "Network error calling EBAY Post-Order GET "
+                "/post-order/v2/inquiry/search: "
+                f"{str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiries_error",
+                "HTTP request error during Post-Order inquiries fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
+            )
+
+    async def fetch_inquiry_detail(
+        self,
+        access_token: str,
+        inquiry_id: str,
+    ) -> Dict[str, Any]:
+        """Fetch a single Post-Order inquiry by id.
+
+        This calls ``GET /post-order/v2/inquiry/{inquiryId}`` so that we can
+        store the full detailed object (including history, responses, etc.) in
+        ``ebay_inquiries.raw_json`` instead of only the search summary row.
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+        if not inquiry_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="inquiry_id is required",
+            )
+
+        api_url = f"{settings.ebay_api_base_url}/post-order/v2/inquiry/{inquiry_id}"
+        timeout_seconds = 30.0
+
+        headers = {
+            "Authorization": f"IAF {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        }
+
+        ebay_logger.log_ebay_event(
+            "fetch_postorder_inquiry_detail_request",
+            "Fetching Post-Order inquiry detail from eBay",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "method": "GET",
+                "inquiry_id": inquiry_id,
+            },
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.get(api_url, headers=headers)
+
+            if response.status_code != 200:
+                correlation_id = (
+                    response.headers.get("X-EBAY-CORRELATION-ID")
+                    or response.headers.get("x-ebay-correlation-id")
+                )
+                try:
+                    error_body: Any = response.json()
+                except Exception:
+                    error_body = response.text
+
+                body_snippet = (
+                    str(error_body)[:2000]
+                    if not isinstance(error_body, (dict, list))
+                    else error_body
+                )
+
+                message = (
+                    f"EBAY Post-Order error {response.status_code} on GET "
+                    f"/post-order/v2/inquiry/{inquiry_id}; "
+                    f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
+                )
+
+                ebay_logger.log_ebay_event(
+                    "fetch_postorder_inquiry_detail_failed",
+                    "Failed to fetch Post-Order inquiry detail from eBay",
+                    response_data={
+                        "status_code": response.status_code,
+                        "correlation_id": correlation_id,
+                        "headers": dict(response.headers),
+                        "body": body_snippet,
+                    },
+                    status="error",
+                    error=message,
+                )
+                logger.error(message)
+                raise HTTPException(status_code=response.status_code, detail=message)
+
+            data: Any
+            try:
+                data = response.json() or {}
+            except Exception:
+                data = {}
+
+            if not isinstance(data, dict):
+                data = {"raw": data}
+
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiry_detail_success",
+                "Successfully fetched Post-Order inquiry detail",
+                response_data={
+                    "inquiry_id": inquiry_id,
+                },
+                status="success",
+            )
+            logger.info("Successfully fetched Post-Order inquiry detail from eBay")
+            return data
+
+        except httpx.TimeoutException as e:
+            message = (
+                f"Timeout calling EBAY Post-Order GET /post-order/v2/inquiry/{inquiry_id} "
+                f"after {timeout_seconds}s: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiry_detail_timeout",
+                "Timeout during Post-Order inquiry detail fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=message,
+            )
+        except httpx.RequestError as e:
+            message = (
+                "Network error calling EBAY Post-Order GET "
+                f"/post-order/v2/inquiry/{inquiry_id}: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_inquiry_detail_error",
+                "HTTP request error during Post-Order inquiry detail fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
+            )
+
     async def fetch_postorder_cases(
         self,
         access_token: str,
@@ -2192,7 +2698,7 @@ class EbayService:
         if not access_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="eBay access token required"
+                detail="eBay access token required",
             )
         
         api_url = f"{settings.ebay_api_base_url}/sell/inventory/v1/offer"
@@ -2200,29 +2706,34 @@ class EbayService:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
-            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
         }
         
         # According to eBay API docs: sku is REQUIRED parameter
         # Allowed params: sku (required), limit (optional), offset (optional), format (optional), marketplace_id (optional)
         params = {
-            "sku": sku
+            "sku": sku,
         }
         
         # Add optional params from filter_params
         if filter_params:
-            allowed_optional_params = {'limit', 'offset', 'format', 'marketplace_id'}
+            allowed_optional_params = {"limit", "offset", "format", "marketplace_id"}
             for key, value in filter_params.items():
-                if key in allowed_optional_params and value is not None and value != '':
+                if key in allowed_optional_params and value is not None and value != "":
                     params[key] = value
         
         # Set defaults for pagination if not provided
-        if 'limit' not in params:
-            params['limit'] = 200  # Max allowed by eBay
-        if 'offset' not in params:
-            params['offset'] = 0
+        if "limit" not in params:
+            params["limit"] = 200  # Max allowed by eBay
+        if "offset" not in params:
+            params["offset"] = 0
         
-        logger.info(f"fetch_offers params: sku={sku}, limit={params.get('limit')}, offset={params.get('offset')}")
+        logger.info(
+            "fetch_offers params: sku=%s, limit=%s, offset=%s",
+            sku,
+            params.get("limit"),
+            params.get("offset"),
+        )
         
         ebay_logger.log_ebay_event(
             "fetch_offers_request",
@@ -2230,68 +2741,275 @@ class EbayService:
             request_data={
                 "environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
-                "params": params
-            }
+                "params": params,
+            },
         )
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    api_url,
-                    headers=headers,
-                    params=params,
-                    timeout=30.0
-                )
-                
-                if response.status_code != 200:
-                    error_detail = response.text
-                    try:
-                        error_json = response.json()
-                        error_detail = str(error_json)
-                    except:
-                        pass
-                    
-                    ebay_logger.log_ebay_event(
-                        "fetch_offers_failed",
-                        f"Failed to fetch offers: {response.status_code}",
-                        response_data={"error": error_detail},
-                        status="error",
-                        error=error_detail
-                    )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Failed to fetch offers: {error_detail}"
-                    )
-                
-                offers_data = response.json()
-                
-                ebay_logger.log_ebay_event(
-                    "fetch_offers_success",
-                    f"Successfully fetched offers from eBay",
-                    response_data={
-                        "total_offers": offers_data.get('total', 0)
-                    },
-                    status="success"
-                )
-                
-                logger.info(f"Successfully fetched offers from eBay")
-                
-                return offers_data
-                
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(api_url, headers=headers, params=params)
         except httpx.RequestError as e:
-            error_msg = f"HTTP request failed: {str(e)}"
+            error_msg = f"HTTP request failed: {e}"
             ebay_logger.log_ebay_event(
                 "fetch_offers_error",
                 "HTTP request error during offers fetch",
                 status="error",
-                error=error_msg
+                error=error_msg,
             )
             logger.error(error_msg)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg
+                detail=error_msg,
+            )
+        
+        if response.status_code != 200:
+            error_detail = response.text
+            try:
+                error_json = response.json()
+                error_detail = str(error_json)
+            except Exception:
+                pass
+        
+            ebay_logger.log_ebay_event(
+                "fetch_offers_failed",
+                f"Failed to fetch offers: {response.status_code}",
+                response_data={"error": error_detail},
+                status="error",
+                error=error_detail,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Failed to fetch offers: {error_detail}",
+            )
+        
+        offers_data = response.json()
+        
+        ebay_logger.log_ebay_event(
+            "fetch_offers_success",
+            "Successfully fetched offers from eBay",
+            response_data={
+                "total": offers_data.get("total", 0),
+                "count": len(offers_data.get("offers", [])),
+            },
+            status="success",
+        )
+        
+        logger.info(
+            "Successfully fetched %s offers for SKU %s from eBay",
+            len(offers_data.get("offers", [])),
+            sku,
+        )
+        
+        return offers_data
+
+    async def place_proxy_bid(
+        self,
+        access_token: str,
+        item_id: str,
+        *,
+        max_amount_value: str,
+        currency: str,
+        marketplace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Place a proxy bid on an auction listing via Buy Offer API.
+
+        This is a thin wrapper over
+        ``POST /buy/offer/v1_beta/bidding/{item_id}/place_proxy_bid``.
+        ``item_id`` is the RESTful item id returned by Browse/Feed APIs
+        (e.g. "v1|1234567890|0").
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
             )
 
+        base_url = settings.ebay_api_base_url.rstrip("/")
+        api_url = f"{base_url}/buy/offer/v1_beta/bidding/{item_id}/place_proxy_bid"
+
+        headers: Dict[str, Any] = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if marketplace_id:
+            headers["X-EBAY-C-MARKETPLACE-ID"] = marketplace_id
+
+        body = {
+            "maxAmount": {
+                "currency": currency,
+                "value": max_amount_value,
+            }
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
+                response = await client.post(api_url, headers=headers, json=body)
+        except httpx.RequestError as exc:
+            error_msg = f"HTTP request failed during placeProxyBid: {exc}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=error_msg,
+            )
+
+        try:
+            payload: Any = response.json()
+        except Exception:
+            payload = {}
+
+        if response.status_code not in (200, 201):
+            error_body = payload or response.text
+            logger.error(
+                "placeProxyBid failed: status=%s body=%s",
+                response.status_code,
+                error_body,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={
+                    "message": "placeProxyBid failed",
+                    "status_code": response.status_code,
+                    "body": error_body,
+                },
+            )
+
+        return payload
+
+    async def get_bidding_status(
+        self,
+        access_token: str,
+        item_id: str,
+        *,
+        marketplace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve bidding status for an auction via Buy Offer API.
+
+        Wrapper over ``GET /buy/offer/v1_beta/bidding/{item_id}``.
+        Returns the parsed JSON body on success and raises HTTPException on
+        non-2xx responses.
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        base_url = settings.ebay_api_base_url.rstrip("/")
+        api_url = f"{base_url}/buy/offer/v1_beta/bidding/{item_id}"
+
+        headers: Dict[str, Any] = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        if marketplace_id:
+            headers["X-EBAY-C-MARKETPLACE-ID"] = marketplace_id
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+                response = await client.get(api_url, headers=headers)
+        except httpx.RequestError as exc:
+            error_msg = f"HTTP request failed during get_bidding_status: {exc}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=error_msg,
+            )
+
+        try:
+            payload: Any = response.json()
+        except Exception:
+            payload = {}
+
+        if response.status_code != 200:
+            error_body = payload or response.text
+            logger.error(
+                "get_bidding_status failed: status=%s body=%s",
+                response.status_code,
+                error_body,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={
+                    "message": "getBidding failed",
+                    "status_code": response.status_code,
+                    "body": error_body,
+                },
+            )
+
+        return payload
+
+    async def bulk_publish_offers(
+        self,
+        access_token: str,
+        offer_ids: List[str],
+    ) -> Tuple[int, Dict[str, Any]]:
+        """Publish multiple existing offers as live listings.
+
+        Thin wrapper over ``POST /sell/inventory/v1/bulk_publish_offer``.
+        Returns ``(status_code, parsed_json_payload)``. On non-2xx/207
+        responses a HTTPException is raised so callers can surface a
+        structured error in their own traces.
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        if not offer_ids:
+            # Treat empty input as a no-op that still looks successful.
+            return 200, {"responses": []}
+
+        api_url = f"{settings.ebay_api_base_url}/sell/inventory/v1/bulk_publish_offer"
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        body = {"requests": [{"offerId": oid} for oid in offer_ids]}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(api_url, headers=headers, json=body)
+        except httpx.RequestError as e:
+            error_msg = f"HTTP request failed during bulk_publish_offer: {e}"
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg,
+            )
+
+        try:
+            payload: Any = response.json()
+        except Exception:
+            payload = {}
+
+        if response.status_code not in (200, 207):
+            error_body = payload or response.text
+            logger.error(
+                "bulk_publish_offer failed: status=%s body=%s",
+                response.status_code,
+                error_body,
+            )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={
+                    "message": "bulkPublishOffer failed",
+                    "status_code": response.status_code,
+                    "body": error_body,
+                },
+            )
+
+        if not isinstance(payload, dict):
+            payload = {}
+
+        return response.status_code, payload
 
     async def sync_all_transactions(
         self,
@@ -3250,6 +3968,214 @@ class EbayService:
         finally:
             event_logger.close()
 
+    async def sync_postorder_inquiries(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Sync Post-Order inquiries into ebay_inquiries.
+
+        Similar to sync_postorder_cases, this currently treats the time window as
+        metadata for logging and the worker cursor while the API call itself
+        fetches the latest inquiries available.
+        """
+        from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger
+        import time
+
+        event_logger = SyncEventLogger(user_id, "inquiries", run_id=run_id)
+        job_id = ebay_db.create_sync_job(user_id, "inquiries")
+        start_time = time.time()
+
+        try:
+            total_fetched = 0
+            total_stored = 0
+
+            event_logger.log_start(
+                f"Starting Post-Order inquiries sync from eBay ({settings.EBAY_ENVIRONMENT})",
+            )
+            logger.info(f"Starting Post-Order inquiries sync for user {user_id}")
+
+            await asyncio.sleep(0.3)
+
+            from app.services.sync_event_logger import is_cancelled
+
+            if is_cancelled(event_logger.run_id):
+                logger.info(
+                    f"Inquiries sync cancelled for run_id {event_logger.run_id} (before API request)",
+                )
+                event_logger.log_warning("Sync operation cancelled by user")
+                duration_ms = int((time.time() - start_time) * 1000)
+                event_logger.log_done(
+                    "Inquiries sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    duration_ms,
+                )
+                ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id,
+                }
+
+            event_logger.log_info("→ Requesting: GET /post-order/v2/inquiry/search")
+            request_start = time.time()
+            try:
+                inquiries_response = await self.fetch_inquiries(access_token)
+            except Exception:
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        f"Inquiries sync cancelled for run_id {event_logger.run_id} (after API error)",
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        "Inquiries sync cancelled: 0 fetched, 0 stored",
+                        0,
+                        0,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": 0,
+                        "total_stored": 0,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+                raise
+
+            request_duration = int((time.time() - request_start) * 1000)
+
+            inquiries = (
+                inquiries_response.get("inquiries")
+                or inquiries_response.get("inquirySummaries")
+                or inquiries_response.get("members")
+                or []
+            )
+            total_fetched = len(inquiries)
+
+            event_logger.log_http_request(
+                "GET",
+                "/post-order/v2/inquiry/search",
+                200,
+                request_duration,
+                total_fetched,
+            )
+            event_logger.log_info(
+                f"← Response: 200 OK ({request_duration}ms) - Received {total_fetched} inquiries",
+            )
+
+            await asyncio.sleep(0.2)
+
+            stored = 0
+            for inquiry in inquiries:
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        f"Inquiries sync cancelled for run_id {event_logger.run_id} (during storage)",
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        f"Inquiries sync cancelled: {total_fetched} fetched, {stored} stored",
+                        total_fetched,
+                        stored,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", total_fetched, stored)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": stored,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                # Prefer detailed inquiry payload when available so raw_json carries
+                # the full timeline/state from the Post-Order API.
+                detail_payload: Dict[str, Any] = inquiry
+                inquiry_id = (
+                    inquiry.get("inquiryId")
+                    or inquiry.get("inquiry_id")
+                )
+                if inquiry_id:
+                    try:
+                        detail_payload = await self.fetch_inquiry_detail(access_token, inquiry_id)
+                    except HTTPException as http_exc:  # pragma: no cover - defensive
+                        # Log a warning but fall back to the summary row so the
+                        # grid remains populated.
+                        try:
+                            detail = http_exc.detail  # type: ignore[assignment]
+                        except Exception:
+                            detail = str(http_exc)
+                        event_logger.log_warning(
+                            f"Failed to fetch inquiry detail for {inquiry_id}: {detail}",
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        event_logger.log_warning(
+                            f"Unexpected error fetching inquiry detail for {inquiry_id}: {exc}",
+                        )
+
+                try:
+                    ok = ebay_db.upsert_inquiry(  # type: ignore[attr-defined]
+                        user_id,
+                        detail_payload,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=ebay_user_id,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Inquiries sync: failed to upsert inquiry payload: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    ok = False
+
+                if ok:
+                    stored += 1
+
+            total_stored = stored
+            duration_ms = int((time.time() - start_time) * 1000)
+            ebay_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
+
+            event_logger.log_done(
+                f"Inquiries sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                total_fetched,
+                total_stored,
+                duration_ms,
+            )
+
+            logger.info(
+                "Inquiries sync completed: fetched=%s, stored=%s",
+                total_fetched,
+                total_stored,
+            )
+
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "job_id": job_id,
+                "run_id": event_logger.run_id,
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            event_logger.log_error(f"Inquiries sync failed: {error_msg}", e)
+            logger.error(f"Inquiries sync failed: {error_msg}")
+            ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
+            raise
+        finally:
+            event_logger.close()
+
     async def sync_postorder_cases(
         self,
         user_id: str,
@@ -3279,6 +4205,9 @@ class EbayService:
         try:
             total_fetched = 0
             total_stored = 0
+            normalized_full = 0
+            normalized_partial = 0
+            normalization_errors = 0
 
             event_logger.log_start(
                 f"Starting Post-Order cases sync from eBay ({settings.EBAY_ENVIRONMENT})",
@@ -3376,32 +4305,64 @@ class EbayService:
                     }
 
                 # Store all Post-Order cases (no filtering by issue type)
-                if ebay_db.upsert_case(  # type: ignore[attr-defined]
-                    user_id,
-                    c,
-                    ebay_account_id=ebay_account_id,
-                    ebay_user_id=ebay_user_id,
-                ):
+                try:
+                    ok = ebay_db.upsert_case(  # type: ignore[attr-defined]
+                        user_id,
+                        c,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=ebay_user_id,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    normalization_errors += 1
+                    logger.warning(
+                        "Cases sync: failed to upsert case payload (case data error): %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    ok = False
+
+                if ok:
                     stored += 1
+                    # Heuristic: treat rows with both itemId and transactionId
+                    # present as "fully" normalized; otherwise partial.
+                    item_id = c.get("itemId") or c.get("item_id")
+                    txn_id = c.get("transactionId") or c.get("transaction_id")
+                    if item_id and txn_id:
+                        normalized_full += 1
+                    else:
+                        normalized_partial += 1
+                else:
+                    normalization_errors += 1
 
             total_stored = stored
             duration_ms = int((time.time() - start_time) * 1000)
             ebay_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
 
             event_logger.log_done(
-                f"Cases sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms",
+                f"Cases sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms"
+                f" (normalized_full={normalized_full}, normalized_partial={normalized_partial}, "
+                f"normalization_errors={normalization_errors})",
                 total_fetched,
                 total_stored,
                 duration_ms,
             )
             logger.info(
-                f"Cases sync completed: fetched={total_fetched}, stored={total_stored}",
+                "Cases sync completed: fetched=%s, stored=%s, normalized_full=%s, "
+                "normalized_partial=%s, normalization_errors=%s",
+                total_fetched,
+                total_stored,
+                normalized_full,
+                normalized_partial,
+                normalization_errors,
             )
 
             return {
                 "status": "completed",
                 "total_fetched": total_fetched,
                 "total_stored": total_stored,
+                "normalized_full": normalized_full,
+                "normalized_partial": normalized_partial,
+                "normalization_errors": normalization_errors,
                 "job_id": job_id,
                 "run_id": event_logger.run_id,
             }
@@ -4974,6 +5935,7 @@ class EbayService:
         from app.models_sqlalchemy import SessionLocal
         from app.models_sqlalchemy.models import Message as SqlMessage
         from app.services.message_parser import parse_ebay_message_html
+        from sqlalchemy.exc import IntegrityError
         import time
 
         event_logger = SyncEventLogger(user_id, "messages", run_id=run_id)
@@ -5287,19 +6249,79 @@ class EbayService:
                                     pass
 
                             body_html = msg.get("text", "") or ""
-                            parsed_body = None
+                            parsed_body: Optional[Dict[str, Any]] = None
+                            normalized: Dict[str, Any] = {}
+                            preview_text: Optional[str] = None
+                            listing_id = msg.get("itemid")
+                            order_id: Optional[str] = None
+                            transaction_id: Optional[str] = None
+                            is_case_related = False
+                            message_topic: Optional[str] = None
+                            case_event_type: Optional[str] = None
+                            has_attachments = False
+                            attachments_meta: List[Any] = []
+
                             try:
                                 if body_html:
+                                    # Primary rich parser used by the legacy /messages grid.
                                     parsed = parse_ebay_message_html(
                                         body_html,
                                         our_account_username=ebay_user_id or "seller",
                                     )
-                                    # Store as plain JSON for the parsed_body JSONB column.
-                                    parsed_body = parsed.dict(exclude_none=True)
+                                    # Use pydantic JSON serialization to avoid HttpUrl issues.
+                                    parsed_body = json.loads(parsed.json(exclude_none=True))
+                                    # Use preview from the rich parser when available.
+                                    preview_text = parsed.previewText or None
                             except Exception as parse_err:
                                 # Parsing errors should never break ingestion; log and continue.
                                 logger.warning(
-                                    f"Failed to parse eBay message body for {message_id}: {parse_err}"
+                                    f"Failed to parse eBay message body for {message_id} via rich parser: {parse_err}"
+                                )
+
+                            # Best-effort normalized view on top of the same HTML, reusing
+                            # the lighter-weight message_body_parser.
+                            try:
+                                from app.ebay.message_body_parser import parse_ebay_message_body
+
+                                normalized_body = parse_ebay_message_body(
+                                    body_html,
+                                    our_account_username=ebay_user_id or "seller",
+                                )
+                                if parsed_body is None:
+                                    # normalized_body already JSON-serializable
+                                    parsed_body = normalized_body
+                                else:
+                                    # Merge normalized block into existing parsed_body
+                                    if normalized_body.get("normalized"):
+                                        parsed_body["normalized"] = normalized_body["normalized"]
+
+                                norm = normalized_body.get("normalized") or {}
+                                normalized = norm
+                                # Map normalized fields into dedicated columns when present.
+                                order_id = norm.get("orderId") or order_id
+                                listing_id = norm.get("itemId") or listing_id
+                                transaction_id = norm.get("transactionId") or transaction_id
+
+                                message_topic = norm.get("topic") or None
+                                case_event_type = norm.get("caseEventType") or None
+                                # Simple heuristic: CASE/RETURN/INQUIRY/PAYMENT_DISPUTE
+                                if message_topic in {"CASE", "RETURN", "INQUIRY", "PAYMENT_DISPUTE"}:
+                                    is_case_related = True
+
+                                # Attachments: outer attachments list can be synced into
+                                # attachments_meta if present and well-formed.
+                                attachments = norm.get("attachments") or []
+                                if isinstance(attachments, list) and attachments:
+                                    has_attachments = True
+                                    # Store as-is; structure is documented in the spec.
+                                    attachments_meta = attachments
+
+                                # Prefer normalized summaryText as preview when available.
+                                if norm.get("summaryText"):
+                                    preview_text = norm.get("summaryText")
+                            except Exception as parse_err:
+                                logger.warning(
+                                    f"Failed to build normalized view for eBay message {message_id}: {parse_err}"
                                 )
 
                             db_message = SqlMessage(
@@ -5317,15 +6339,47 @@ class EbayService:
                                 is_archived=msg.get("folderid") == "2",
                                 direction=direction,
                                 message_date=message_date,
-                                order_id=None,
-                                listing_id=msg.get("itemid"),
+                                message_at=message_date,
+                                order_id=order_id,
+                                listing_id=listing_id,
+                                case_id=normalized.get("caseId"),
+                                case_type=normalized.get("caseType"),
+                                inquiry_id=normalized.get("inquiryId"),
+                                return_id=normalized.get("ReturnId"),
+                                payment_dispute_id=normalized.get("paymentDisputeId"),
+                                transaction_id=transaction_id,
+                                is_case_related=is_case_related,
+                                message_topic=message_topic,
+                                case_event_type=case_event_type,
                                 raw_data=str(msg),
                                 parsed_body=parsed_body,
+                                has_attachments=has_attachments,
+                                attachments_meta=attachments_meta,
+                                preview_text=preview_text,
                             )
-                            db_session.add(db_message)
-                            total_stored += 1
 
-                        db_session.commit()
+                            try:
+                                db_session.add(db_message)
+                                db_session.commit()
+                                total_stored += 1
+                            except IntegrityError as ie:
+                                # Duplicate per (ebay_account_id, user_id, message_id) – safe to ignore.
+                                db_session.rollback()
+                                logger.info(
+                                    "Duplicate ebay_message skipped (account=%s, user=%s, message_id=%s): %s",
+                                    ebay_account_id,
+                                    user_id,
+                                    message_id,
+                                    str(ie),
+                                )
+                            except Exception as e:
+                                db_session.rollback()
+                                error_msg = (
+                                    f"Error inserting ebay_message {message_id} in batch {batch_index} for folder {folder_name}: {str(e)}"
+                                )
+                                event_logger.log_error(error_msg, e)
+                                await asyncio.sleep(0.5)
+                                continue
 
                     except Exception as e:
                         db_session.rollback()

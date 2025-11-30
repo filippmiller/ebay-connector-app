@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal
 import csv
 import io
+from typing import Iterable
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
 from sqlalchemy.orm import Session
@@ -127,12 +128,81 @@ async def update_category(
 # --- Bank statements upload & rows ---
 
 
+def _normalize_header(name: str) -> str:
+    """Normalize CSV/XLSX header names to improve auto-mapping.
+
+    This makes the CSV/XLSX parser a bit more tolerant to different export
+    formats (Google Sheets, various banks, etc.).
+    """
+
+    return " ".join(name.strip().split()).lower()
+
+
+def _iter_dict_rows_from_csv(text: str) -> Iterable[Dict[str, Any]]:
+    reader = csv.DictReader(io.StringIO(text))
+    for raw in reader:
+        # Normalize keys to a stable form while keeping the original variants
+        normalized: Dict[str, Any] = {}
+        for k, v in raw.items():
+            key_norm = _normalize_header(k) if isinstance(k, str) else k
+            normalized[key_norm] = v.strip() if isinstance(v, str) else v
+        yield normalized
+
+
 def _parse_csv_rows(file_bytes: bytes) -> List[Dict[str, Any]]:
     text = file_bytes.decode("utf-8", errors="ignore")
-    reader = csv.DictReader(io.StringIO(text))
     rows: List[Dict[str, Any]] = []
-    for idx, raw in enumerate(reader, start=1):
-        rows.append({"__index__": idx, **{k.strip(): (v.strip() if isinstance(v, str) else v) for k, v in raw.items()}})
+    for idx, raw in enumerate(_iter_dict_rows_from_csv(text), start=1):
+        rows.append({"__index__": idx, **raw})
+    return rows
+
+
+def _parse_xlsx_rows(file_bytes: bytes) -> List[Dict[str, Any]]:
+    """Best-effort XLSX parser used for bank/ledger imports.
+
+    We avoid overfitting to a single template and instead:
+    - read the first sheet,
+    - treat the first non-empty row as headers,
+    - normalize header names similarly to CSV,
+    - return a list of row dicts.
+    """
+
+    try:
+        from openpyxl import load_workbook  # type: ignore
+    except Exception as exc:  # pragma: no cover - import error is surfaced at runtime
+        raise RuntimeError(
+            "XLSX support requires the 'openpyxl' dependency; "
+            "please ensure it is installed in the backend environment."
+        ) from exc
+
+    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = wb.active
+
+    rows: List[Dict[str, Any]] = []
+    header_row: List[str] = []
+
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+        vals = [cell for cell in row]
+        # Skip completely empty rows at the top
+        if not any(vals) and not header_row:
+            continue
+        if not header_row:
+            header_row = [str(v) if v is not None else "" for v in vals]
+            continue
+
+        normalized: Dict[str, Any] = {}
+        for col_idx, raw_val in enumerate(vals):
+            if col_idx >= len(header_row):
+                continue
+            key = header_row[col_idx]
+            if not isinstance(key, str) or not key.strip():
+                continue
+            key_norm = _normalize_header(key)
+            normalized[key_norm] = raw_val
+
+        if normalized:
+            rows.append({"__index__": len(rows) + 1, **normalized})
+
     return rows
 
 
@@ -173,25 +243,61 @@ async def upload_bank_statement(
     db.add(stmt_file)
 
     ext = (file.filename or "").lower()
-    is_table_like = ext.endswith(".csv") or ext.endswith(".txt")
+    content_type = (file.content_type or "").lower()
+    is_csv_like = ext.endswith(".csv") or ext.endswith(".txt")
+    is_xlsx_like = ext.endswith(".xlsx") or ext.endswith(".xls")
+    is_pdf_like = ext.endswith(".pdf") or "pdf" in content_type
 
-    if is_table_like:
+    if is_pdf_like:
+        # Explicitly mark PDF statements as not yet supported for parsing so the
+        # UI can distinguish them from generic "uploaded" files. Real parsing
+        # will be implemented in a future iteration using
+        # app.services.accounting_parsers.pdf_parser.
+        logger.warning(
+            "Bank statement %s uploaded as PDF; parsing is not implemented yet, "
+            "use CSV/XLSX export for now",
+            stmt.id,
+        )
+        stmt.status = "error_pdf_not_supported"
+    elif is_csv_like or is_xlsx_like:
         try:
-            parsed = _parse_csv_rows(file_bytes)
+            parsed = _parse_xlsx_rows(file_bytes) if is_xlsx_like else _parse_csv_rows(file_bytes)
             for row in parsed:
-                amount_raw = row.get("amount") or row.get("Amount") or row.get("AMOUNT")
+                # The header normalizer stores keys in lower-case form, so we
+                # first try those and then fall back to a few common variants
+                # used by legacy exports.
+                amount_raw = (
+                    row.get("amount")
+                    or row.get("transaction amount")
+                    or row.get("debit")
+                    or row.get("credit")
+                    or row.get("Amount")
+                    or row.get("AMOUNT")
+                )
                 try:
                     amount_val = Decimal(str(amount_raw)) if amount_raw not in (None, "") else Decimal("0")
                 except Exception:
                     amount_val = Decimal("0")
 
-                bal_raw = row.get("balance") or row.get("Balance") or row.get("BALANCE")
+                bal_raw = (
+                    row.get("balance")
+                    or row.get("running balance")
+                    or row.get("Balance")
+                    or row.get("BALANCE")
+                )
                 try:
                     bal_val = Decimal(str(bal_raw)) if bal_raw not in (None, "") else None
                 except Exception:
                     bal_val = None
 
-                op_date_raw = row.get("date") or row.get("Date") or row.get("operation_date")
+                op_date_raw = (
+                    row.get("date")
+                    or row.get("transaction date")
+                    or row.get("operation date")
+                    or row.get("posting date")
+                    or row.get("Date")
+                    or row.get("operation_date")
+                )
                 op_date: Optional[date] = None
                 if op_date_raw:
                     try:
@@ -199,14 +305,21 @@ async def upload_bank_statement(
                     except Exception:
                         op_date = None
 
+                description_raw = (
+                    row.get("description")
+                    or row.get("transaction description")
+                    or row.get("details")
+                    or row.get("memo")
+                    or row.get("Description")
+                    or row.get("DESC")
+                    or ""
+                )
+
                 db_row = AccountingBankRow(
                     bank_statement_id=stmt.id,
                     row_index=row.get("__index__"),
                     operation_date=op_date,
-                    description_raw=row.get("description")
-                    or row.get("Description")
-                    or row.get("DESC")
-                    or "",
+                    description_raw=description_raw,
                     amount=amount_val,
                     balance_after=bal_val,
                     currency=row.get("currency") or row.get("Currency") or currency,
@@ -219,7 +332,7 @@ async def upload_bank_statement(
 
             stmt.status = "parsed"
         except Exception as e:
-            logger.warning(f"Failed to auto-parse bank statement CSV: {e}")
+            logger.warning(f"Failed to auto-parse bank statement table file: {e}")
             stmt.status = "uploaded"
     else:
         # PDF and other formats: only store file, no parsing yet
@@ -444,24 +557,90 @@ async def commit_bank_rows(
     if not rows:
         return {"created": 0}
 
+    def _make_dedupe_key(
+        *,
+        txn_date: date,
+        direction: str,
+        amount_abs: Decimal,
+        description: str,
+        currency: Optional[str],
+        account_name: Optional[str],
+    ) -> str:
+        """Create a deterministic dedupe key for ledger transactions.
+
+        This is computed purely in Python and **not** stored in the database;
+        we use it to search for an existing AccountingTransaction that matches
+        the same logical movement of money. This keeps the behaviour
+        idempotent across repeated imports without requiring a schema change.
+        """
+
+        import hashlib
+
+        desc_norm = " ".join((description or "").strip().lower().split())
+        parts = [
+            txn_date.isoformat(),
+            direction,
+            f"{amount_abs:.2f}",
+            desc_norm,
+            (currency or "").upper(),
+            (account_name or ""),
+        ]
+        raw = "|".join(parts)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
     created_count = 0
     for r in rows:
         amount = Decimal(str(r.amount)) if r.amount is not None else Decimal("0")
         if amount == 0:
             continue
         direction = "in" if amount > 0 else "out"
+        amount_abs = abs(amount)
+        txn_date_val: date = r.operation_date or stmt.statement_period_start or date.today()
+        account_name_val = default_account_name or f"{stmt.bank_name} ****{stmt.account_last4}".strip()
+        description_val = r.description_clean or r.description_raw or ""
+
+        # Compute an in-memory dedupe key and search for an existing transaction
+        # that matches the same logical movement. This protects against
+        # duplicate ledger entries when the same statement (or its fragment) is
+        # uploaded and committed multiple times.
+        dedupe_key = _make_dedupe_key(
+            txn_date=txn_date_val,
+            direction=direction,
+            amount_abs=amount_abs,
+            description=description_val,
+            currency=stmt.currency,
+            account_name=account_name_val,
+        )
+
+        existing = (
+            db.query(AccountingTransaction)
+            .filter(
+                AccountingTransaction.date == txn_date_val,
+                AccountingTransaction.direction == direction,
+                AccountingTransaction.amount == amount_abs,
+                AccountingTransaction.account_name == account_name_val,
+                AccountingTransaction.description == description_val,
+                AccountingTransaction.source_type == "bank_statement",
+            )
+            .first()
+        )
+        if existing:
+            # Mark the bank row as matched, but do not create a duplicate
+            # AccountingTransaction.
+            r.match_status = "matched_to_transaction"
+            r.updated_by_user_id = current_user.id
+            continue
 
         txn = AccountingTransaction(
-            date=r.operation_date or stmt.statement_period_start or date.today(),
-            amount=abs(amount),
+            date=txn_date_val,
+            amount=amount_abs,
             direction=direction,
             source_type="bank_statement",
             source_id=r.id,
-            account_name=default_account_name
-            or f"{stmt.bank_name} ****{stmt.account_last4}".strip(),
+            account_name=account_name_val,
             account_id=None,
             counterparty=None,
-            description=r.description_clean or r.description_raw,
+            description=description_val,
             expense_category_id=r.expense_category_id,
             is_personal=mark_as_personal,
             is_internal_transfer=mark_as_internal_transfer,
@@ -713,6 +892,10 @@ async def list_transactions(
     storage_id: Optional[str] = None,
     is_personal: Optional[bool] = None,
     is_internal_transfer: Optional[bool] = None,
+    direction_filter: Optional[str] = Query(None, alias="direction"),
+    min_amount: Optional[Decimal] = None,
+    max_amount: Optional[Decimal] = None,
+    account_name: Optional[str] = None,
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db_sqla),
@@ -734,8 +917,32 @@ async def list_transactions(
         query = query.filter(AccountingTransaction.is_personal == is_personal)
     if is_internal_transfer is not None:
         query = query.filter(AccountingTransaction.is_internal_transfer == is_internal_transfer)
+    if direction_filter in {"in", "out"}:
+        query = query.filter(AccountingTransaction.direction == direction_filter)
+    if min_amount is not None:
+        query = query.filter(AccountingTransaction.amount >= min_amount)
+    if max_amount is not None:
+        query = query.filter(AccountingTransaction.amount <= max_amount)
+    if account_name:
+        like = f"%{account_name}%"
+        query = query.filter(AccountingTransaction.account_name.ilike(like))
 
     total = query.count()
+
+    # Aggregate totals for ledger-style overview (Total In / Total Out / Net)
+    sums = (
+        db.query(
+            func.sum(func.case([(AccountingTransaction.direction == "in", AccountingTransaction.amount)], else_=0)),
+            func.sum(func.case([(AccountingTransaction.direction == "out", AccountingTransaction.amount)], else_=0)),
+        )
+        .select_from(AccountingTransaction)
+        .filter(query.whereclause if query.whereclause is not None else True)
+        .one()
+    )
+    total_in = sums[0] or Decimal("0")
+    total_out = sums[1] or Decimal("0")
+    net = (total_in or Decimal("0")) - (total_out or Decimal("0"))
+
     rows = (
         query.order_by(AccountingTransaction.date.desc(), AccountingTransaction.id.desc())
         .offset(offset)
@@ -769,6 +976,9 @@ async def list_transactions(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "total_in": float(total_in),
+        "total_out": float(total_out),
+        "net": float(net),
     }
 
 

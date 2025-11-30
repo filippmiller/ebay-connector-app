@@ -4,9 +4,34 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import func
+from sqlalchemy.sql import text as sa_text
+from sqlalchemy.sql.sqltypes import (
+    String,
+    Text,
+    CHAR,
+    VARCHAR,
+    Unicode,
+    UnicodeText,
+    Integer,
+    BigInteger,
+    Numeric,
+    Float,
+    Boolean as SA_Boolean,
+    DateTime as SA_DateTime,
+    Date as SA_Date,
+)
 
 from app.models_sqlalchemy import get_db
-from app.models_sqlalchemy.models import Inventory, InventoryStatus, SqItem
+from app.models_sqlalchemy.models import (
+    Inventory,
+    InventoryStatus,
+    PartsDetail,
+    PartsDetailStatus,
+    SqItem,
+    SKU,
+    TblPartsInventory,
+)
 from app.services.auth import get_current_user
 from app.models.user import User
 from app.utils.logger import logger
@@ -80,6 +105,264 @@ class ListingCommitItemResponse(BaseModel):
 class ListingCommitResponse(BaseModel):
     created_count: int
     items: List[ListingCommitItemResponse]
+    parts_detail_ids: List[int] = Field(
+        default_factory=list,
+        description=(
+            "IDs of parts_detail rows created for this commit. "
+            "Used by the eBay listing debug worker to target fresh candidates."
+        ),
+    )
+
+
+from datetime import datetime
+
+
+def _get_or_create_simple_sku(db: Session, sq: SqItem) -> int:
+    """Return ID from simplified SKU table for a given SqItem.
+
+    The Supabase `inventory` table uses a foreign key to the modern `sku`
+    table (SKU model). Historically we tried to leave `sku_id` NULL when
+    committing listings directly from the legacy SQ catalog, but the real
+    production schema has a NOT NULL constraint on `inventory.sku_id`.
+
+    To keep referential integrity without changing the DB schema, we lazily
+    create a minimal `SKU` row for any SqItem that does not yet have a
+    corresponding simplified SKU entry, keyed by the numeric SKU value.
+    """
+    from decimal import Decimal
+
+    if sq.sku is None:
+        raise HTTPException(status_code=400, detail={"error": "sq_item_missing_sku", "id": sq.id})
+
+    try:
+        sku_code_str = str(int(sq.sku))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail={"error": "sq_item_invalid_sku", "id": sq.id, "sku": str(sq.sku)})
+
+    existing = db.query(SKU).filter(SKU.sku_code == sku_code_str).first()
+    if existing:
+        return existing.id
+
+    # Derive a minimal but useful simplified SKU from the SQ catalog row.
+    price_val: float = 0.0
+    if sq.price is not None:
+        if isinstance(sq.price, Decimal):
+            price_val = float(sq.price)
+        else:
+            try:
+                price_val = float(sq.price)
+            except Exception:
+                price_val = 0.0
+
+    category_str = None
+    if sq.category is not None:
+        try:
+            category_str = str(int(sq.category))
+        except Exception:
+            category_str = str(sq.category)
+
+    simple_sku = SKU(
+        sku_code=sku_code_str,
+        model=None,
+        category=category_str,
+        condition=None,
+        part_number=sq.part_number,
+        price=price_val,
+        title=sq.part,
+        description=sq.description,
+        brand=getattr(sq, "brand", None),
+        image_url=sq.pic_url1,
+    )
+
+    db.add(simple_sku)
+    db.flush()  # assign ID
+    return simple_sku.id
+
+
+def _insert_legacy_inventory_row(
+    db: Session,
+    sq: SqItem,
+    storage_value: str,
+    status_key: str,
+    username: str,
+    next_id: int,
+    item_payload: DraftListingItemPayload,
+    status_id_map: Dict[str, int],
+) -> int:
+    """Insert a row into legacy tbl_parts_inventory with explicit ID.
+
+    ID is computed outside as MAX(ID)+1, then incremented per-row within the
+    same commit batch so that new rows appear at the end of tbl_parts_inventory
+    exactly as in the legacy flow.
+    """
+
+    table = TblPartsInventory.__table__
+
+    insert_data: Dict[str, Any] = {"ID": next_id}
+
+    # Case-insensitive column lookup
+    cols_by_lower = {c.name.lower(): c for c in table.columns}
+
+    # SKU
+    sku_val = None
+    if sq.sku is not None:
+        try:
+            sku_val = int(sq.sku)
+        except Exception:
+            try:
+                sku_val = int(str(sq.sku))
+            except Exception:
+                sku_val = None
+    if sku_val is not None:
+        for key in ["sku", "skucode", "overstocksku"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = sku_val
+                break
+
+    # Quantity
+    qty = item_payload.quantity or 1
+    for key in ["quantity", "qty", "overstockqty"]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = qty
+            break
+
+    # Storage ID
+    for key in [
+        "storageid",
+        "storage_id",
+        "storage",
+        "alternativestorage",
+        "alternative_storage",
+        "storagealias",
+        "storage_alias",
+    ]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = storage_value
+            break
+
+    # Title / overview title
+    #
+    # В legacy-таблице tbl_parts_inventory нет колонки "Title"; фактическая
+    # колонка, куда бизнес ожидает видеть заголовок из SKU/LISTING, называется
+    # "OverrideTitle". Поэтому в первую очередь пытаемся заполнить именно её,
+    # а затем уже любые более общие текстовые колонки, если они присутствуют.
+    title_val = (item_payload.title or sq.part or sq.description or "").strip()
+    if title_val:
+        for key in [
+            "overridetitle",  # canonical target: OverrideTitle
+            "override_title",
+            "overviewtitle",
+            "title",
+            "part",
+            "itemtitle",
+        ]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = title_val
+                break
+
+    # Description
+    desc_val = (sq.description or "").strip()
+    if desc_val:
+        for key in ["overviewdescription", "description", "overdescription", "overdescription1"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = desc_val
+                break
+
+    # Category
+    if sq.category is not None:
+        try:
+            cat_val: Any = int(sq.category)
+        except Exception:
+            cat_val = sq.category
+        for key in ["categoryid", "category", "overstockcategoryid"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = cat_val
+                break
+
+    # Price
+    price_val = None
+    if item_payload.price is not None:
+        price_val = float(item_payload.price)
+    elif sq.price is not None:
+        try:
+            price_val = float(sq.price)
+        except Exception:
+            price_val = None
+    if price_val is not None:
+        for key in ["price", "overstockprice", "buyprice"]:
+            col = cols_by_lower.get(key)
+            if col is not None:
+                insert_data[col.name] = price_val
+                break
+
+    # Author
+    for key in ["author", "user", "overstockuser"]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = username
+            break
+
+    # Legacy numeric status (StatusSKU) from tbl_parts_inventorystatus
+    # Map our logical UI status key ("awaiting_moderation" / "checked")
+    # to the InventoryStatus_ID value, when the lookup table is available.
+    if status_id_map:
+        # Normalise key: "awaiting_moderation" -> "awaiting moderation"
+        base_label = status_key.replace("_", " ").strip().lower()
+        status_id = status_id_map.get(base_label)
+        if status_id is None:
+            # Fallback: try partial matches to tolerate minor spelling/case
+            # differences between UI labels and legacy dictionary entries.
+            for label, sid in status_id_map.items():
+                if base_label in label or label in base_label:
+                    status_id = sid
+                    break
+        if status_id is not None:
+            status_col = cols_by_lower.get("statussku")
+            if status_col is not None:
+                insert_data[status_col.name] = status_id
+
+    # Rec created
+    now = datetime.utcnow()
+    for key in ["reccreated", "record_created", "created", "overstockcreated"]:
+        col = cols_by_lower.get(key)
+        if col is not None:
+            insert_data[col.name] = now
+            break
+
+    # Fill NOT NULL columns without defaults with safe placeholders
+    string_types = (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)
+
+    for col in table.columns:
+        if col.name in insert_data:
+            continue
+        if col.nullable:
+            continue
+        if col.default is not None or col.server_default is not None:
+            continue
+
+        t = col.type
+        if isinstance(t, (Integer, BigInteger, Numeric, Float)):
+            insert_data[col.name] = 0
+        elif isinstance(t, string_types):
+            insert_data[col.name] = ""
+        elif isinstance(t, SA_Boolean):
+            insert_data[col.name] = False
+        elif isinstance(t, SA_DateTime):
+            insert_data[col.name] = now
+        elif isinstance(t, SA_Date):
+            insert_data[col.name] = now.date()
+        else:
+            insert_data[col.name] = None
+
+    stmt = table.insert().values(**insert_data)
+    db.execute(stmt)
+    return next_id
 
 
 @router.post("/commit", response_model=ListingCommitResponse)
@@ -98,19 +381,70 @@ async def commit_listing_items(
     _ = ALLOWED_LISTING_STATUS_MAP[payload.default_status]
 
     # Fetch all referenced SQ catalog rows in one query using sku (logical sku_code).
-    sku_codes = {item.sku_code for item in payload.items}
-    sq_rows = db.query(SqItem).filter(SqItem.sku.in_(sku_codes)).all()
-    sq_by_code: Dict[str, SqItem] = {s.sku: s for s in sq_rows if s.sku}
+    # SqItem.sku is stored as a NUMERIC column, but the API contract exposes
+    # sku_code as a string. Normalise everything to a canonical string key
+    # based on the integer SKU value so lookups are robust.
+    normalised_codes: Dict[str, str] = {}
+    for item in payload.items:
+        try:
+            key = str(int(item.sku_code))
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "invalid_sku_code", "sku_code": item.sku_code},
+            )
+        normalised_codes[key] = item.sku_code
 
-    missing = [code for code in sku_codes if code not in sq_by_code]
+    sq_rows = db.query(SqItem).filter(SqItem.sku.in_([int(k) for k in normalised_codes.keys()])).all()
+
+    sq_by_code: Dict[str, SqItem] = {}
+    for s in sq_rows:
+        if s.sku is None:
+            continue
+        try:
+            key = str(int(s.sku))
+        except (TypeError, ValueError):
+            continue
+        sq_by_code[key] = s
+
+    missing = [orig for key, orig in normalised_codes.items() if key not in sq_by_code]
     if missing:
         raise HTTPException(status_code=400, detail={"error": "unknown_sku_codes", "codes": missing})
 
     created_items: List[ListingCommitItemResponse] = []
+    parts_detail_ids: List[int] = []
 
     try:
+        # Lookup legacy StatusSKU numeric codes from tbl_parts_inventorystatus.
+        # This allows us to map UI statuses (awaiting_moderation, checked)
+        # onto the legacy numeric codes used by tbl_parts_inventory.
+        status_id_map: Dict[str, int] = {}
+        try:
+            status_sql = sa_text(
+                'SELECT "InventoryStatus_ID" AS id, "InventoryStatus_Name" AS name '
+                'FROM "tbl_parts_inventorystatus"'
+            )
+            result = db.execute(status_sql)
+            for row in result:
+                try:
+                    label_norm = str(row.name).strip().lower()
+                    status_id_map[label_norm] = int(row.id)
+                except Exception:
+                    continue
+        except Exception:
+            status_id_map = {}
+
+        # Compute starting legacy inventory ID once (MAX(ID)+1)
+        legacy_table = TblPartsInventory.__table__
+        try:
+            max_id = db.query(func.max(legacy_table.c.ID)).scalar()
+        except Exception:
+            max_id = None
+        next_legacy_id = int(max_id or 0) + 1
+
         for item in payload.items:
-            sq = sq_by_code[item.sku_code]
+            key = str(int(item.sku_code))
+            sq = sq_by_code[key]
 
             # Resolve storage: per-row overrides global
             storage_value: Optional[str] = item.storage or payload.storage
@@ -124,18 +458,24 @@ async def commit_listing_items(
             status_key = (item.status or payload.default_status)
             status_enum = ALLOWED_LISTING_STATUS_MAP[status_key]
 
-            # Map SQ catalog row  inventory logical fields.
-            # Note: Inventory.sku_id points to the simplified SKU table and is
-            # left NULL here because we are sourcing from sq_items instead.
+            # Map SQ catalog row → inventory logical fields.
+            # Ensure we always have a valid inventory.sku_id by resolving or
+            # creating a corresponding simplified SKU row.
+            inv_title = item.title or getattr(sq, "title", None) or sq.part
+            inv_price = (
+                float(item.price)
+                if item.price is not None
+                else (float(sq.price) if sq.price is not None else None)
+            )
+
             inv = Inventory(
-                sku_id=None,
-                sku_code=sq.sku,
+                sku_id=_get_or_create_simple_sku(db, sq),
                 model=sq.model,
                 category=sq.category,
                 condition=None,
                 part_number=sq.part_number,
-                title=item.title or sq.title or sq.part,
-                price_value=item.price if item.price is not None else (float(sq.price) if sq.price is not None else None),
+                title=inv_title,
+                price_value=inv_price,
                 price_currency=None,
                 status=status_enum,
                 photo_count=0,
@@ -149,10 +489,57 @@ async def commit_listing_items(
             db.add(inv)
             db.flush()  # assign ID
 
+            # Create a minimal parts_detail row in Supabase to feed the listing worker.
+            #
+            # We avoid any new schema and populate only the fields that the
+            # debug/live worker actually uses (sku, storage, price/title,
+            # status_sku, and basic audit fields). Account linkage
+            # (username/ebay_id) can be filled in later by dedicated tools.
+            sku_str = key
+            parts_status = (
+                PartsDetailStatus.CHECKED.value
+                if status_key == "checked"
+                else PartsDetailStatus.AWAITING_MODERATION.value
+            )
+
+            pd_row = PartsDetail(
+                sku=sku_str,
+                override_sku=sku_str,
+                storage=storage_value,
+                warehouse_id=item.warehouse_id,
+                status_sku=parts_status,
+                status_updated_at=datetime.utcnow(),
+                status_updated_by=current_user.username,
+                override_title=inv_title,
+                override_price=inv_price,
+                listing_time_updated=datetime.utcnow(),
+                record_created_by=current_user.username,
+            )
+            db.add(pd_row)
+            db.flush()  # assign ID
+            parts_detail_ids.append(pd_row.id)
+
+            # Link the Inventory row to its corresponding parts_detail row so
+            # that Inventory updates can drive the listing worker lifecycle.
+            inv.parts_detail_id = pd_row.id
+
+            # Also mirror into legacy tbl_parts_inventory
+            _insert_legacy_inventory_row(
+                db=db,
+                sq=sq,
+                storage_value=storage_value,
+                status_key=status_key,
+                username=current_user.username,
+                next_id=next_legacy_id,
+                item_payload=item,
+                status_id_map=status_id_map,
+            )
+            next_legacy_id += 1
+
             created_items.append(
                 ListingCommitItemResponse(
                     inventory_id=inv.id,
-                    sku_code=sq.sku,
+                    sku_code=str(int(sq.sku)) if sq.sku is not None else "",
                     storage=inv.storage,
                     status=inv.status.value if inv.status else "",
                 )
@@ -168,4 +555,8 @@ async def commit_listing_items(
         logger.error("listing.commit failed user=%s error=%s", current_user.id, str(e))
         raise HTTPException(status_code=400, detail={"error": "commit_failed", "message": str(e)})
 
-    return ListingCommitResponse(created_count=len(created_items), items=created_items)
+    return ListingCommitResponse(
+        created_count=len(created_items),
+        items=created_items,
+        parts_detail_ids=parts_detail_ids,
+    )

@@ -8,6 +8,15 @@ export type GridColorScheme = 'default' | 'blue' | 'dark' | 'highContrast';
 export type GridHeaderStyle = 'default' | 'bold' | 'accent';
 export type GridButtonLayout = 'left' | 'right' | 'split';
 
+export interface ColumnStyle {
+  /** Optional numeric font size level (1-10) for this column's cells. */
+  fontSizeLevel?: number;
+  /** Optional font weight override for this column's cells. */
+  fontWeight?: 'normal' | 'bold';
+  /** Optional text color (e.g. #111827) for this column's cells. */
+  textColor?: string;
+}
+
 export interface GridThemeConfig {
   density: GridDensity;
   /** Legacy body font size preset (small/medium/large). Still used as a fallback. */
@@ -27,6 +36,8 @@ export interface GridThemeConfig {
   headerFontSize?: GridFontSize;
   /** Optional text color for column headers (e.g. #111827). */
   headerTextColor?: string;
+  /** Optional per-column style overrides keyed by column name. */
+  columnStyles?: Record<string, ColumnStyle>;
   // Allow forward-compatible flags without tightening the type too much
   [key: string]: unknown;
 }
@@ -82,6 +93,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
   const [theme, setThemeState] = useState<GridThemeConfig>(DEFAULT_THEME);
 
   const fetchPrefs = useCallback(async (): Promise<void> => {
+    console.log(`[useGridPreferences] ${gridKey}: fetchPrefs called, setting loading=true`);
     setLoading(true);
     setError(null);
     try {
@@ -91,7 +103,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       });
       const availableCols = resp.data.available_columns || [];
       const colsCfg = resp.data.columns || null;
-      
+
       // Ensure we have at least some columns
       if (availableCols.length === 0) {
         console.warn(`Grid ${gridKey}: available_columns is empty from /api/grid/preferences`);
@@ -101,6 +113,9 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         setColumnsState(colsCfg);
         setThemeState({ ...DEFAULT_THEME, ...(resp.data.theme || {}) });
         setError(null);
+        console.log(`[useGridPreferences] ${gridKey}: SUCCESS - ${availableCols.length} columns loaded`);
+        console.log(`[useGridPreferences] ${gridKey}: Loaded columns config:`, JSON.stringify(colsCfg, null, 2));
+        setLoading(false);
         return; // Success, exit early
       }
     } catch (e: any) {
@@ -113,12 +128,12 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       const legacyResp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
       const layout = legacyResp.data;
       const colsMeta = layout.available_columns || [];
-      
+
       if (colsMeta.length === 0) {
         console.warn(`Grid ${gridKey}: available_columns is empty from legacy layout endpoint`);
         throw new Error('Empty columns from legacy endpoint');
       }
-      
+
       const allowedNames = colsMeta.map((c) => c.name);
       const visible = (layout.visible_columns || allowedNames).filter((name) => allowedNames.includes(name));
       const colsCfg: GridColumnsConfig = {
@@ -182,13 +197,15 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         setThemeState(DEFAULT_THEME);
       }
     } finally {
+      console.log(`[useGridPreferences] ${gridKey}: finally block - setting loading=false`);
       setLoading(false);
     }
   }, [gridKey]);
 
   useEffect(() => {
     void fetchPrefs();
-  }, [fetchPrefs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setColumns = useCallback((partial: Partial<GridColumnsConfig>) => {
     setColumnsState((prev) => {
@@ -227,12 +244,27 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     async (columnsOverride?: GridColumnsConfig) => {
       if (!columns && !columnsOverride) return;
       const cols = columnsOverride || columns!;
-      try {
-        await api.post<GridPreferencesResponse>('/api/grid/preferences', {
-          grid_key: gridKey,
-          columns: cols,
-          theme,
+      const payload = {
+        grid_key: gridKey,
+        columns: cols,
+        theme,
+      };
+      if (gridKey === 'finances_fees') {
+        // Temporary targeted debug for width persistence investigation
+        // eslint-disable-next-line no-console
+        console.log('[useGridPreferences] finances_fees save() widths:', {
+          visible: cols.visible,
+          order: cols.order,
+          widths: cols.widths,
+          sort: cols.sort,
         });
+      }
+      try {
+        const response = await api.post<GridPreferencesResponse>('/api/grid/preferences', payload);
+        if (gridKey === 'finances_fees') {
+          // eslint-disable-next-line no-console
+          console.log('[useGridPreferences] finances_fees save() response.columns.widths:', response.data.columns.widths);
+        }
       } catch (e) {
         console.error('Failed to save grid preferences', e);
       }

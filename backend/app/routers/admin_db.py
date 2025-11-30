@@ -222,6 +222,18 @@ async def get_table_rows(
     table_name: str,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    search_column: str | None = Query(
+        None,
+        description=(
+            "Optional column name to apply a server-side filter on. "
+            "When provided together with search_value, only rows where "
+            "CAST(column AS text) ILIKE '%value%' are returned."
+        ),
+    ),
+    search_value: str | None = Query(
+        None,
+        description="Optional substring to search for within search_column (case-insensitive).",
+    ),
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -231,6 +243,11 @@ async def get_table_rows(
     - If table has created_at: ORDER BY created_at DESC
     - Else if single-column primary key: ORDER BY pk DESC
     - Else: ORDER BY 1 DESC
+
+    When search_column/search_value are provided, a WHERE clause of the form
+    CAST("column" AS text) ILIKE '%value%' is applied. This still scans the whole
+    table on the Postgres side, but only for a single column, which is much safer
+    than global LIKE across all columns.
     """
 
     tbl = _validate_table_name(db, table_name)
@@ -276,10 +293,39 @@ async def get_table_rows(
         else:
             order_by = '1'
 
+        # Optional per-column filter.
+        where_clause = 'TRUE'
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if search_column and search_value:
+            # Validate that the requested column actually exists on this table to avoid SQL injection.
+            cols_sql = text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = :schema AND table_name = :table AND column_name = :column
+                LIMIT 1
+                """
+            )
+            col_exists = bool(
+                conn.execute(
+                    cols_sql,
+                    {"schema": schema, "table": table_name, "column": search_column},
+                ).scalar()
+            )
+            if not col_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unknown column {search_column!r} for table {schema}.{table_name}",
+                )
+
+            where_clause = f'CAST("{search_column}" AS text) ILIKE :pattern'
+            params["pattern"] = f"%{search_value}%"
+
         rows_sql = text(
-            f"SELECT * FROM {schema}.\"{table_name}\" ORDER BY {order_by} DESC LIMIT :limit OFFSET :offset"
+            f"SELECT * FROM {schema}.\"{table_name}\" WHERE {where_clause} ORDER BY {order_by} DESC LIMIT :limit OFFSET :offset"
         )
-        rows_result = conn.execute(rows_sql, {"limit": limit, "offset": offset}).mappings().all()
+        rows_result = conn.execute(rows_sql, params).mappings().all()
 
         # Total estimate from pg_class
         est_sql = text(
@@ -403,10 +449,9 @@ async def truncate_table(
     tbl = _validate_table_name(db, table_name)
     schema = tbl["schema"]
 
-    conn = engine.connect()
-    try:
+    # Use an explicit transaction so that TRUNCATE is committed even if autocommit
+    # behaviour changes in SQLAlchemy/psycopg settings.
+    with engine.begin() as conn:
         sql = text(f'TRUNCATE TABLE {schema}."{table_name}" RESTART IDENTITY CASCADE')
         conn.execute(sql)
-        return {"status": "ok", "schema": schema, "name": table_name}
-    finally:
-        conn.close()
+    return {"status": "ok", "schema": schema, "name": table_name}

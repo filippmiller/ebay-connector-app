@@ -31,6 +31,8 @@ const getNotificationLabel = (n: TaskNotificationItem): string => {
       return `New comment on: ${title}`;
     case 'reminder_fired':
       return `Reminder: ${title}`;
+    case 'ebay_watch_match':
+      return `eBay match: ${title}`;
     default:
       return title;
   }
@@ -49,6 +51,9 @@ const getNotificationSubtitle = (n: TaskNotificationItem): string => {
   }
   if (n.kind === 'reminder_fired') {
     return 'Reminder is due';
+  }
+  if (n.kind === 'ebay_watch_match') {
+    return 'Новый лот, найденный авто-поиском eBay';
   }
   return '';
 };

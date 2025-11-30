@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -102,6 +103,240 @@ async def search_models(
     ]
 
     return {"items": items, "total": len(items)}
+
+
+@router.get("/parts-models")
+async def list_parts_models(
+    search: Optional[str] = Query(None, description="Search term for model name"),
+    brand_id: Optional[int] = Query(None, description="Filter by brand ID"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> dict:
+    """List/search parts models from tbl_parts_models table.
+    
+    Returns full model records including all condition scores for the Models modal grid.
+    """
+    
+    table = tbl_parts_models_table
+    if table is None:
+        return {"items": [], "total": 0}
+    
+    # Build query dynamically using raw SQL for maximum compatibility
+    where_clauses = []
+    params = {}
+    
+    if search:
+        where_clauses.append('LOWER("Model") LIKE :search')
+        params['search'] = f'%{search.lower()}%'
+    
+    if brand_id is not None:
+        where_clauses.append('"Brand_ID" = :brand_id')
+        params['brand_id'] = brand_id
+    
+    where_clause = ' AND '.join(where_clauses) if where_clauses else '1=1'
+    
+    # Count total
+    count_query = text(f'SELECT COUNT(*) FROM "tbl_parts_models" WHERE {where_clause}')
+    total = db.execute(count_query, params).scalar() or 0
+    
+    # Fetch paginated results
+    fetch_query = text(f'''
+        SELECT 
+            "ID" as id,
+            "Model_ID" as model_id,
+            "Brand_ID" as brand_id,
+            "Model" as model,
+            "oc_filter_Model_ID" as oc_filter_model_id,
+            "oc_filter_Model_ID2" as oc_filter_model_id2,
+            "BuyingPrice" as buying_price,
+            "working",
+            "motherboard",
+            "battery",
+            "hdd",
+            "keyboard",
+            "memory",
+            "screen",
+            "casing",
+            "drive",
+            "damage",
+            "cd",
+            "adapter",
+            "record_created",
+            "do_not_buy"
+        FROM "tbl_parts_models"
+        WHERE {where_clause}
+        ORDER BY "Model" ASC
+        LIMIT :limit OFFSET :offset
+    ''')
+    
+    params['limit'] = limit
+    params['offset'] = offset
+    
+    rows = db.execute(fetch_query, params).fetchall()
+    
+    items = []
+    for row in rows:
+        items.append({
+            'id': row.id,
+            'model_id': row.model_id,
+            'brand_id': row.brand_id,
+            'model': row.model or '',
+            'oc_filter_model_id': row.oc_filter_model_id,
+            'oc_filter_model_id2': row.oc_filter_model_id2,
+            'buying_price': row.buying_price or 0,
+            'working': row.working or 0,
+            'motherboard': row.motherboard or 0,
+            'battery': row.battery or 0,
+            'hdd': row.hdd or 0,
+            'keyboard': row.keyboard or 0,
+            'memory': row.memory or 0,
+            'screen': row.screen or 0,
+            'casing': row.casing or 0,
+            'drive': row.drive or 0,
+            'damage': row.damage or 0,
+            'cd': row.cd or 0,
+            'adapter': row.adapter or 0,
+            'record_created': row.record_created.isoformat() if row.record_created else None,
+            'do_not_buy': row.do_not_buy or False,
+        })
+    
+    return {"items": items, "total": total}
+
+
+@router.post("/parts-models")
+async def create_parts_model(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> dict:
+    """Create a new parts model in ``tbl_parts_models``.
+
+    This endpoint is used by the SKU → Models → Add Model flow. It inserts a
+    single row into the legacy laptop models dictionary table and returns the
+    fully-populated row so the UI can immediately select it.
+    """
+
+    table = tbl_parts_models_table
+    if table is None:
+        raise HTTPException(
+            status_code=503,
+            detail="tbl_parts_models table not available in this environment",
+        )
+
+    # Validate required field – model name is the only strictly required
+    # attribute today. All scoring/price fields are optional and default to 0.
+    model_name = (payload.get("model") or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="Model name is required")
+
+    # Compute the next numeric ID explicitly. The legacy tbl_parts_models table
+    # has a NOT NULL "ID" column without a PostgreSQL sequence/identity in some
+    # environments, so we emulate the old behaviour with MAX(ID) + 1.
+    try:
+        max_id = db.execute(select(func.max(table.c.ID))).scalar()
+        next_id = int(max_id or 0) + 1
+    except Exception as e:  # pragma: no cover - defensive logging in prod
+        logger.exception("Failed to compute next ID for tbl_parts_models", exc_info=e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: failed to compute next ID for tbl_parts_models: {e}",
+        )
+
+    # Prepare insert with safe defaults for all NOT NULL fields.
+    insert_data = {
+        "ID": next_id,
+        "Model_ID": payload.get("model_id") or 0,
+        "Brand_ID": payload.get("brand_id") or 0,
+        "Model": model_name,
+        "oc_filter_Model_ID": payload.get("oc_filter_model_id") or 0,
+        "oc_filter_Model_ID2": payload.get("oc_filter_model_id2") or 0,
+        "BuyingPrice": payload.get("buying_price", 0) or 0,
+        "working": payload.get("working", 0) or 0,
+        "motherboard": payload.get("motherboard", 0) or 0,
+        "battery": payload.get("battery", 0) or 0,
+        "hdd": payload.get("hdd", 0) or 0,
+        "keyboard": payload.get("keyboard", 0) or 0,
+        "memory": payload.get("memory", 0) or 0,
+        "screen": payload.get("screen", 0) or 0,
+        "casing": payload.get("casing", 0) or 0,
+        "drive": payload.get("drive", 0) or 0,
+        "damage": payload.get("damage", 0) or 0,
+        "cd": payload.get("cd", 0) or 0,
+        "adapter": payload.get("adapter", 0) or 0,
+        "do_not_buy": bool(payload.get("do_not_buy", False)),
+    }
+
+    # Use SQLAlchemy Core against the reflected legacy table instead of
+    # hand-written SQL to avoid quoting/RETURNING issues across environments.
+    insert_stmt = (
+        table.insert()
+        .values(**insert_data)
+        .returning(
+            table.c.ID.label("id"),
+            table.c.Model_ID.label("model_id"),
+            table.c.Brand_ID.label("brand_id"),
+            table.c.Model.label("model"),
+            table.c.oc_filter_Model_ID.label("oc_filter_model_id"),
+            table.c.oc_filter_Model_ID2.label("oc_filter_model_id2"),
+            table.c.BuyingPrice.label("buying_price"),
+            table.c.working,
+            table.c.motherboard,
+            table.c.battery,
+            table.c.hdd,
+            table.c.keyboard,
+            table.c.memory,
+            table.c.screen,
+            table.c.casing,
+            table.c.drive,
+            table.c.damage,
+            table.c.cd,
+            table.c.adapter,
+            table.c.record_created,
+            table.c.do_not_buy,
+        )
+    )
+
+    try:
+        result = db.execute(insert_stmt)
+        row = result.fetchone()
+        db.commit()
+
+        if not row:
+            raise HTTPException(status_code=500, detail="Failed to create model")
+
+        return {
+            "id": row.id,
+            "model_id": row.model_id,
+            "brand_id": row.brand_id,
+            "model": row.model or "",
+            "oc_filter_model_id": row.oc_filter_model_id,
+            "oc_filter_model_id2": row.oc_filter_model_id2,
+            "buying_price": row.buying_price or 0,
+            "working": row.working or 0,
+            "motherboard": row.motherboard or 0,
+            "battery": row.battery or 0,
+            "hdd": row.hdd or 0,
+            "keyboard": row.keyboard or 0,
+            "memory": row.memory or 0,
+            "screen": row.screen or 0,
+            "casing": row.casing or 0,
+            "drive": row.drive or 0,
+            "damage": row.damage or 0,
+            "cd": row.cd or 0,
+            "adapter": row.adapter or 0,
+            "record_created": row.record_created.isoformat() if row.record_created else None,
+            "do_not_buy": bool(row.do_not_buy),
+        }
+    except HTTPException:
+        # Preserve explicit HTTP errors (validation, missing table, etc.).
+        db.rollback()
+        raise
+    except Exception as e:  # pragma: no cover - defensive logging for prod only
+        db.rollback()
+        logger.exception("Failed to create parts model", exc_info=e)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
 @router.get("/items", response_model=SqItemListResponse)
@@ -212,42 +447,115 @@ async def get_sq_item(
 
 @router.post("/items", response_model=SqItemRead)
 async def create_sq_item(
-    payload: SqItemCreate,
+    payload: dict,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> SqItemRead:
     """Create a new SQ catalog item for the SKU popup form.
 
-    The implementation mirrors the legacy semantics as closely as possible:
+    Вместо строгой Pydantic-модели на вход (``SqItemCreate``) мы принимаем
+    произвольный словарь и валидируем только те поля, которые действительно
+    обязательны для формы SKU. Это устраняет HTTP 422 из FastAPI при
+    неидеальном типе/значении и делает валидацию полностью управляемой
+    приложением.
 
-    * If ``sku`` is empty, the next numeric SKU is generated as ``MAX(SKU) + 1``.
-    * ``Title`` is required and limited to 80 characters.
-    * ``Price`` must be positive.
-    * An internal category is required unless ``external_category_flag`` is set
-      ("eBay category" mode).
-    * Audit / status fields are initialised with sensible defaults.
+    Правила:
+    * ``title`` обязателен, не более 80 символов.
+    * ``model`` обязателен (но текстово, без связи с tbl_parts_models).
+    * ``price`` > 0.
+    * ``condition_id`` обязателен.
+    * ``shipping_group`` обязателен.
+    * При внутренней категории (``external_category_flag`` == False)
+      ``category`` также обязательна.
+    * Остальные поля опциональны и прокидываются как есть.
     """
 
     now = datetime.now(timezone.utc)
 
+    # Normalise payload keys for easier access
+    # NOTE: payload уже JSON-словарь из FastAPI, без дополнительной модели.
+    title = (payload.get("title") or "").strip()
+    model = (payload.get("model") or "").strip()
+    raw_price = payload.get("price")
+    condition_id = payload.get("condition_id")
+    shipping_group = (payload.get("shipping_group") or "").strip()
+    external_category_flag = bool(payload.get("external_category_flag"))
+    category = payload.get("category")
+    model_id = payload.get("model_id")
+
+    # Canonical mapping: the legacy SKU_catalog table uses the ``Part``
+    # column for the short human-friendly title. Ensure we always copy
+    # the validated ``title`` into ``part`` when the client does not
+    # provide an explicit part value, so that an empty Internal part
+    # name field in the form cannot wipe out the title.
+    existing_part = (payload.get("part") or "").strip()
+    if title and not existing_part:
+        payload["part"] = title
+
     # --- High-level validation mirroring the UI rules ----------------------
-    title = (payload.title or "").strip() if payload.title is not None else ""
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
     if len(title) > 80:
         raise HTTPException(status_code=400, detail="Title must be at most 80 characters")
 
-    if payload.price is None or payload.price <= 0:
+    if not model:
+        raise HTTPException(status_code=400, detail="Model is required")
+
+    # Robust parsing of price: поддерживаем числа и строки вида "123.45" или "123,45".
+    try:
+        if raw_price is None:
+            price_val = None
+        elif isinstance(raw_price, (int, float, Decimal)):
+            price_val = Decimal(str(raw_price))
+        elif isinstance(raw_price, str):
+            cleaned = raw_price.strip().replace(",", ".")
+            price_val = Decimal(cleaned)
+        else:
+            raise ValueError(f"Unsupported price type: {type(raw_price)!r}")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Price must be a valid number (got {raw_price!r} of type {type(raw_price).__name__})",
+        )
+
+    if price_val is None or price_val <= 0:
         raise HTTPException(status_code=400, detail="Price must be greater than 0")
 
+    if not shipping_group:
+        raise HTTPException(status_code=400, detail="Shipping group is required")
+
+    if condition_id is None:
+        raise HTTPException(status_code=400, detail="Condition is required")
+
     # When not using external/eBay category, internal category is required.
-    if not payload.external_category_flag:
-        if payload.category is None or str(payload.category).strip() == "":
+    if not external_category_flag:
+        if category is None or str(category).strip() == "":
             raise HTTPException(status_code=400, detail="Internal category is required")
 
-    data = payload.model_dump(exclude_unset=True)
+    # Patch back the normalised / converted values into payload
+    payload = dict(payload)
+    payload["title"] = title
+    payload["model"] = model
+    payload["price"] = price_val
+    payload["shipping_group"] = shipping_group
+    payload["condition_id"] = int(condition_id)
+
+    # Model_ID is NOT NULL in the legacy SKU_catalog table и должен ссылаться
+    # на реальную запись в tbl_parts_models. Если model_id отсутствует или не
+    # парсится в число – это ошибка клиента.
+    if model_id is None:
+        raise HTTPException(status_code=400, detail="Model ID is required (select model from catalog)")
+    try:
+        payload["model_id"] = int(model_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Model ID must be numeric")
+    if not external_category_flag:
+        payload["category"] = str(category).strip()
+
     item = SqItem()
-    for key, value in data.items():
+    for key, value in payload.items():
+        # SQLAlchemy / Postgres спокойно проигнорируют неизвестные атрибуты
+        # (они просто не будут замаплены на колонки), поэтому сетим всё как есть.
         setattr(item, key, value)
 
     # --- Auto-generated numeric SKU ----------------------------------------
@@ -307,6 +615,23 @@ async def create_sq_item(
     if item.listing_duration_in_days is None:
         item.listing_duration_in_days = None
 
+    # --- Ensure ID for legacy SKU_catalog table -----------------------------
+    # В прод-таблице "SKU_catalog" колонка "ID" помечена NOT NULL, но в некоторых
+    # средах для неё нет sequence/identity. SQLAlchemy ожидает, что БД сама
+    # сгенерирует ID, но Postgres выбрасывает NotNullViolation. Чтобы не
+    # трогать схему в проде, мы эмитируем старое поведение: ID = MAX(ID) + 1.
+    if item.id is None:
+        try:
+            max_id = db.query(func.max(SqItem.id)).scalar()
+            next_id = int(max_id or 0) + 1
+            item.id = next_id
+        except Exception as exc:  # pragma: no cover - защитный лог только для прод
+            logger.exception("Failed to compute next ID for SKU_catalog", exc_info=exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database error: failed to compute next ID for SKU_catalog: {exc}",
+            )
+
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -336,6 +661,16 @@ async def update_sq_item(
     old_price = item.price
 
     data = payload.model_dump(exclude_unset=True)
+
+    # Same Part/Title semantics as in create_sq_item: if the client
+    # sends a non-empty title but leaves part empty/unspecified, treat
+    # the title as the canonical Part value on SKU_catalog.
+    if "title" in data:
+        title_val = (data.get("title") or "").strip()
+        existing_part = (data.get("part") or "").strip()
+        if title_val and not existing_part:
+            data["part"] = title_val
+
     for key, value in data.items():
         setattr(item, key, value)
 

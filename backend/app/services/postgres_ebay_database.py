@@ -677,6 +677,180 @@ class PostgresEbayDatabase:
         finally:
             session.close()
 
+    def upsert_inquiry(
+        self,
+        user_id: str,
+        inquiry_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a Post-Order inquiry in ebay_inquiries.
+
+        This stores normalized identifiers and timestamps while preserving the
+        full raw JSON payload in raw_json. It mirrors the style of upsert_case
+        and upsert_dispute so repeated runs are idempotent.
+        """
+        session = self._get_session()
+
+        try:
+            inquiry_id = inquiry_data.get("inquiryId") or inquiry_data.get("inquiry_id")
+            if not inquiry_id:
+                logger.error("Inquiry data missing inquiryId")
+                return False
+
+            now = datetime.utcnow()
+
+            order_id = inquiry_data.get("orderId") or inquiry_data.get("order_id")
+            item_id = inquiry_data.get("itemId") or inquiry_data.get("item_id")
+            transaction_id = inquiry_data.get("transactionId") or inquiry_data.get("transaction_id")
+
+            buyer_username = inquiry_data.get("buyer") or inquiry_data.get("buyer_username")
+            seller_username = inquiry_data.get("seller") or inquiry_data.get("seller_username")
+
+            status = inquiry_data.get("status") or inquiry_data.get("inquiryStatus")
+
+            # Derive a coarse issue_type (INR/OTHER) from any available reason field.
+            raw_reason = (
+                inquiry_data.get("reason")
+                or inquiry_data.get("inquiryReason")
+                or inquiry_data.get("caseType")
+                or ""
+            )
+            issue_type: Optional[str] = None
+            if isinstance(raw_reason, str):
+                r_upper = raw_reason.upper()
+                if "NOT_RECEIVED" in r_upper or "ITEM NOT RECEIVED" in r_upper or "INR" in r_upper:
+                    issue_type = "INR"
+
+            # Monetary amount (if present) – shape may mirror claimAmount.value/currency.
+            claim_amount_obj = (
+                inquiry_data.get("claimAmount")
+                or inquiry_data.get("inquiryAmount")
+                or inquiry_data.get("disputeAmount")
+            )
+            if isinstance(claim_amount_obj, dict):
+                claim_amount_value, claim_amount_currency = self._parse_money(claim_amount_obj)
+            else:
+                claim_amount_value = None
+                claim_amount_currency = None
+
+            # Timestamps – try both flat and nested value shapes.
+            opened_raw = (
+                inquiry_data.get("creationDate")
+                or inquiry_data.get("openedDate")
+                or inquiry_data.get("openDate")
+            )
+            last_update_raw = inquiry_data.get("lastModifiedDate") or inquiry_data.get("lastUpdateDate")
+
+            # Reuse the same parsing semantics as other ingestion helpers.
+            opened_at = self._parse_datetime(opened_raw)
+            last_update_at = self._parse_datetime(last_update_raw)
+
+            desired_outcome = (
+                inquiry_data.get("preferredOutcome")
+                or inquiry_data.get("desiredOutcome")
+                or None
+            )
+
+            # Log into unified ebay_events inbox (best-effort).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="post_order_api",
+                    topic="INQUIRY_UPDATED",
+                    entity_type="INQUIRY",
+                    entity_id=inquiry_id,
+                    ebay_account=ebay_user_id or ebay_account_id,
+                    event_time=opened_raw,
+                    publish_time=None,
+                    headers={
+                        "worker": "inquiries_worker",
+                        "api_family": "inquiries",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
+                    payload=inquiry_data,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for inquiry %s", inquiry_id, exc_info=True)
+
+            query = text(
+                """
+                INSERT INTO ebay_inquiries
+                (inquiry_id, user_id, ebay_account_id, ebay_user_id,
+                 order_id, item_id, transaction_id,
+                 buyer_username, seller_username,
+                 status, issue_type,
+                 opened_at, last_update_at,
+                 claim_amount_value, claim_amount_currency,
+                 desired_outcome, raw_json,
+                 created_at, updated_at)
+                VALUES (:inquiry_id, :user_id, :ebay_account_id, :ebay_user_id,
+                        :order_id, :item_id, :transaction_id,
+                        :buyer_username, :seller_username,
+                        :status, :issue_type,
+                        :opened_at, :last_update_at,
+                        :claim_amount_value, :claim_amount_currency,
+                        :desired_outcome, :raw_json,
+                        :created_at, :updated_at)
+                ON CONFLICT (inquiry_id, user_id)
+                DO UPDATE SET
+                    order_id = EXCLUDED.order_id,
+                    item_id = EXCLUDED.item_id,
+                    transaction_id = EXCLUDED.transaction_id,
+                    buyer_username = EXCLUDED.buyer_username,
+                    seller_username = EXCLUDED.seller_username,
+                    status = EXCLUDED.status,
+                    issue_type = EXCLUDED.issue_type,
+                    opened_at = EXCLUDED.opened_at,
+                    last_update_at = EXCLUDED.last_update_at,
+                    claim_amount_value = EXCLUDED.claim_amount_value,
+                    claim_amount_currency = EXCLUDED.claim_amount_currency,
+                    desired_outcome = EXCLUDED.desired_outcome,
+                    raw_json = EXCLUDED.raw_json,
+                    ebay_account_id = EXCLUDED.ebay_account_id,
+                    ebay_user_id = EXCLUDED.ebay_user_id,
+                    updated_at = EXCLUDED.updated_at
+                """
+            )
+
+            session.execute(
+                query,
+                {
+                    "inquiry_id": inquiry_id,
+                    "user_id": user_id,
+                    "ebay_account_id": ebay_account_id,
+                    "ebay_user_id": ebay_user_id,
+                    "order_id": order_id,
+                    "item_id": item_id,
+                    "transaction_id": transaction_id,
+                    "buyer_username": buyer_username,
+                    "seller_username": seller_username,
+                    "status": status,
+                    "issue_type": issue_type,
+                    "opened_at": opened_at,
+                    "last_update_at": last_update_at,
+                    "claim_amount_value": claim_amount_value,
+                    "claim_amount_currency": claim_amount_currency,
+                    "desired_outcome": desired_outcome,
+                    "raw_json": json.dumps(inquiry_data),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+            session.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error upserting inquiry: {str(e)}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
     def upsert_case(
         self,
         user_id: str,
@@ -684,7 +858,16 @@ class PostgresEbayDatabase:
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
     ) -> bool:
-        """Insert or update a Post-Order case in ebay_cases."""
+        """Insert or update a Post-Order case in ebay_cases.
+
+        Pipeline overview (Post-Order cases only): the cases worker calls
+        ``EbayService.sync_postorder_cases``, which fetches cases from
+        ``GET /post-order/v2/casemanagement/search`` and passes each payload
+        here. This helper normalizes identifiers, buyer/seller usernames,
+        monetary amounts and key timestamps into explicit ebay_cases columns
+        while also storing the full raw JSON payload in ``case_data`` for
+        archival/debugging.
+        """
         session = self._get_session()
 
         try:
@@ -700,6 +883,46 @@ class PostgresEbayDatabase:
             case_status = case_data.get("status") or case_data.get("caseStatus")
             open_date = case_data.get("openDate") or case_data.get("open_date")
             close_date = case_data.get("closeDate") or case_data.get("close_date")
+
+            # Normalized identifiers and denormalized API fields.
+            item_id = case_data.get("itemId") or case_data.get("item_id")
+            if item_id is not None:
+                item_id = str(item_id)
+
+            transaction_id = case_data.get("transactionId") or case_data.get("transaction_id")
+            if transaction_id is not None:
+                transaction_id = str(transaction_id)
+
+            buyer_username = case_data.get("buyer") or case_data.get("buyer_username")
+            seller_username = case_data.get("seller") or case_data.get("seller_username")
+
+            case_status_enum = case_data.get("caseStatusEnum") or case_data.get("case_status_enum")
+
+            claim_amount_obj = case_data.get("claimAmount") or case_data.get("claim_amount")
+            if isinstance(claim_amount_obj, dict):
+                claim_amount_value, claim_amount_currency = self._parse_money(claim_amount_obj)
+            else:
+                claim_amount_value, claim_amount_currency = (None, None)
+
+            respond_by_raw = self._safe_get(case_data, "respondByDate", "value") or case_data.get("respondByDate")
+            creation_raw = self._safe_get(case_data, "creationDate", "value") or case_data.get("creationDate")
+            last_modified_raw = self._safe_get(case_data, "lastModifiedDate", "value") or case_data.get(
+                "lastModifiedDate",
+            )
+
+            respond_by = self._parse_datetime(respond_by_raw if isinstance(respond_by_raw, str) else None)
+            creation_date_api = self._parse_datetime(creation_raw if isinstance(creation_raw, str) else None)
+            last_modified_date_api = self._parse_datetime(
+                last_modified_raw if isinstance(last_modified_raw, str) else None,
+            )
+
+            if item_id is None or transaction_id is None:
+                logger.warning(
+                    "Post-Order case %s missing itemId or transactionId (item_id=%r, transaction_id=%r)",
+                    case_id,
+                    item_id,
+                    transaction_id,
+                )
 
             # Log into unified ebay_events inbox (best-effort, never fail on error).
             try:
@@ -731,10 +954,20 @@ class PostgresEbayDatabase:
                 (case_id, user_id, ebay_account_id, ebay_user_id,
                  order_id, case_type, case_status,
                  open_date, close_date, case_data,
+                 item_id, transaction_id,
+                 buyer_username, seller_username,
+                 case_status_enum,
+                 claim_amount_value, claim_amount_currency,
+                 respond_by, creation_date_api, last_modified_date_api,
                  created_at, updated_at)
                 VALUES (:case_id, :user_id, :ebay_account_id, :ebay_user_id,
                         :order_id, :case_type, :case_status,
                         :open_date, :close_date, :case_data,
+                        :item_id, :transaction_id,
+                        :buyer_username, :seller_username,
+                        :case_status_enum,
+                        :claim_amount_value, :claim_amount_currency,
+                        :respond_by, :creation_date_api, :last_modified_date_api,
                         :created_at, :updated_at)
                 ON CONFLICT (case_id, user_id)
                 DO UPDATE SET
@@ -744,6 +977,16 @@ class PostgresEbayDatabase:
                     open_date = EXCLUDED.open_date,
                     close_date = EXCLUDED.close_date,
                     case_data = EXCLUDED.case_data,
+                    item_id = EXCLUDED.item_id,
+                    transaction_id = EXCLUDED.transaction_id,
+                    buyer_username = EXCLUDED.buyer_username,
+                    seller_username = EXCLUDED.seller_username,
+                    case_status_enum = EXCLUDED.case_status_enum,
+                    claim_amount_value = EXCLUDED.claim_amount_value,
+                    claim_amount_currency = EXCLUDED.claim_amount_currency,
+                    respond_by = EXCLUDED.respond_by,
+                    creation_date_api = EXCLUDED.creation_date_api,
+                    last_modified_date_api = EXCLUDED.last_modified_date_api,
                     ebay_account_id = EXCLUDED.ebay_account_id,
                     ebay_user_id = EXCLUDED.ebay_user_id,
                     updated_at = EXCLUDED.updated_at
@@ -763,6 +1006,16 @@ class PostgresEbayDatabase:
                     "open_date": open_date,
                     "close_date": close_date,
                     "case_data": json.dumps(case_data),
+                    "item_id": item_id,
+                    "transaction_id": transaction_id,
+                    "buyer_username": buyer_username,
+                    "seller_username": seller_username,
+                    "case_status_enum": case_status_enum,
+                    "claim_amount_value": claim_amount_value,
+                    "claim_amount_currency": claim_amount_currency,
+                    "respond_by": respond_by,
+                    "creation_date_api": creation_date_api,
+                    "last_modified_date_api": last_modified_date_api,
                     "created_at": now,
                     "updated_at": now,
                 },

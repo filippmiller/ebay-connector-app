@@ -15,7 +15,6 @@ import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SyncTerminal } from '../components/SyncTerminal';
 import { EbayDebugger } from '../components/EbayDebugger';
-import { EbayWorkersPanel } from '../components/workers/EbayWorkersPanel';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
 import { Link as LinkIcon, Loader2, Copy } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
@@ -26,6 +25,15 @@ const DEFAULT_SCOPES = [
   'https://api.ebay.com/oauth/api_scope',
   'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
 ];
+
+// Scopes that require special eBay approval and must not be requested in
+// regular user-consent flows (they cause `invalid_scope` errors).
+const FORBIDDEN_REQUEST_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope/buy.offer.auction',
+];
+
+const sanitizeScopes = (scopes: string[]): string[] =>
+  scopes.filter((s) => !FORBIDDEN_REQUEST_SCOPES.includes(s));
 
 export const EbayConnectionPage: React.FC = () => {
   const navigate = useNavigate();
@@ -110,9 +118,14 @@ export const EbayConnectionPage: React.FC = () => {
   const [preflightSubmitting, setPreflightSubmitting] = useState(false);
 
   // Derived scope previews for the pre-flight modal
-  const baseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
-  const extraScopes = (extraScopesInput || '').trim().split(/\s+/).filter(Boolean);
+  const rawBaseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
+  const baseScopes = sanitizeScopes(rawBaseScopes);
+  const extraScopesRaw = (extraScopesInput || '').trim().split(/\s+/).filter(Boolean);
+  const extraScopes = sanitizeScopes(extraScopesRaw);
   const finalScopesPreview = Array.from(new Set([...baseScopes, ...extraScopes]));
+  const forbiddenInPreview = rawBaseScopes
+    .concat(extraScopesRaw)
+    .filter((s) => FORBIDDEN_REQUEST_SCOPES.includes(s));
 
   // Compact: collapse Connection Request Preview details by default
   const [showRequestPreview, setShowRequestPreview] = useState(false);
@@ -543,7 +556,6 @@ export const EbayConnectionPage: React.FC = () => {
               <TabsTrigger value="connection" className="text-sm px-3 py-1">eBay Connection</TabsTrigger>
               <TabsTrigger value="accounts" className="text-sm px-3 py-1">eBay Accounts</TabsTrigger>
               <TabsTrigger value="sync" className="text-sm px-3 py-1">Sync Data</TabsTrigger>
-              <TabsTrigger value="workers" className="text-sm px-3 py-1">Workers</TabsTrigger>
               <TabsTrigger value="debugger" className="text-sm px-3 py-1">🔧 API Debugger</TabsTrigger>
               <TabsTrigger value="terminal" className="text-sm px-3 py-1">Connection Terminal</TabsTrigger>
             </TabsList>
@@ -687,7 +699,7 @@ export const EbayConnectionPage: React.FC = () => {
                         new URLSearchParams({
                           response_type: 'code',
                           redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
-                          scope: (availableScopes.length ? availableScopes : DEFAULT_SCOPES).join(' '),
+                          scope: baseScopes.join(' '),
                           state: 'generated server-side',
                         }).entries()
                       ).map(([key, value]) => (
@@ -704,7 +716,7 @@ export const EbayConnectionPage: React.FC = () => {
                           const qs = new URLSearchParams({
                             response_type: 'code',
                             redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
-                            scope: (availableScopes.length ? availableScopes : DEFAULT_SCOPES).join(' '),
+                            scope: baseScopes.join(' '),
                             state: 'generated server-side',
                             client_id: 'configured server-side'
                           }).toString();
@@ -866,8 +878,15 @@ export const EbayConnectionPage: React.FC = () => {
                       </div>
                       <p className="text-xs text-gray-500">
                         This is the exact union of the base catalog scopes and any additional scopes you
-                        entered above. It is what will be sent when you proceed to eBay.
+                        entered above, after removing scopes that eBay will not grant without special approval.
+                        It is what will be sent when you proceed to eBay.
                       </p>
+                      {forbiddenInPreview.length > 0 && (
+                        <p className="text-xs text-amber-700">
+                          The following scopes are present in the catalog but will <span className="font-semibold">not</span>{' '}
+                          be requested automatically: {forbiddenInPreview.join(', ')}.
+                        </p>
+                      )}
                       <ScrollArea className="max-h-40 rounded border p-2 bg-slate-100">
                         <div className="flex flex-wrap gap-1">
                           {finalScopesPreview.length > 0 ? (
@@ -1392,58 +1411,6 @@ export const EbayConnectionPage: React.FC = () => {
                   </AlertDescription>
                 </Alert>
               )}
-            </TabsContent>
-
-            {/* Workers tab */}
-            <TabsContent value="workers" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-xl">eBay Workers</CardTitle>
-                  <CardDescription className="text-sm text-gray-600">
-                    Background jobs that continuously sync data from eBay into Supabase.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {accounts.length === 0 ? (
-                    <div className="text-sm text-gray-600">
-                      No eBay accounts yet. Connect an account first.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Label className="text-xs text-gray-700">eBay account</Label>
-                        <Select
-                          value={selectedConnectAccountId || accounts[0]?.id}
-                          onValueChange={(val) => setSelectedConnectAccountId(val)}
-                        >
-                          <SelectTrigger className="h-8 w-72 text-xs">
-                            <SelectValue placeholder="Select eBay account" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {accounts.map((acc) => (
-                              <SelectItem key={acc.id} value={acc.id}>
-                                {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {selectedConnectAccountId && (
-                        <EbayWorkersPanel
-                          accountId={selectedConnectAccountId}
-                          accountLabel={
-                            (accounts.find(a => a.id === selectedConnectAccountId)?.house_name) ||
-                            (accounts.find(a => a.id === selectedConnectAccountId)?.username) ||
-                            selectedConnectAccountId
-                          }
-                          ebayUserId={accounts.find(a => a.id === selectedConnectAccountId)?.ebay_user_id}
-                        />
-                      )}
-                    </>
-                  )}
-                </CardContent>
-              </Card>
             </TabsContent>
 
             {/* API Debugger tab */}

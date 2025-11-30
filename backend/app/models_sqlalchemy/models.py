@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Dat
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy.exc import NoSuchTableError
+from sqlalchemy.exc import NoSuchTableError, OperationalError
 from datetime import datetime
 import enum
 import uuid
@@ -139,19 +139,26 @@ class User(Base):
     username = Column(String(100), nullable=False)
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.user)
+    # Soft-activation flag; inactive users cannot access the application.
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    # When True, the user is forced to pick a new password on next login.
+    must_change_password = Column(Boolean, nullable=False, default=False)
     
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     ebay_connected = Column(Boolean, default=False)
-    ebay_access_token = Column(Text, nullable=True)  # Production token
-    ebay_refresh_token = Column(Text, nullable=True)  # Production refresh token
+    # Underlying columns store encrypted values when written through the
+    # properties below; the physical column names remain unchanged.
+    _ebay_access_token = Column("ebay_access_token", Text, nullable=True)
+    _ebay_refresh_token = Column("ebay_refresh_token", Text, nullable=True)
     ebay_token_expires_at = Column(DateTime, nullable=True)  # Production token expires
     ebay_environment = Column(String(20), default="sandbox")
     
     # Sandbox tokens (separate from production)
-    ebay_sandbox_access_token = Column(Text, nullable=True)
-    ebay_sandbox_refresh_token = Column(Text, nullable=True)
+    _ebay_sandbox_access_token = Column("ebay_sandbox_access_token", Text, nullable=True)
+    _ebay_sandbox_refresh_token = Column("ebay_sandbox_refresh_token", Text, nullable=True)
     ebay_sandbox_token_expires_at = Column(DateTime, nullable=True)
     
     sync_logs = relationship("SyncLog", back_populates="user")
@@ -161,6 +168,81 @@ class User(Base):
         Index('idx_user_email', 'email'),
         Index('idx_user_role', 'role'),
     )
+
+    # ------------------------------------------------------------------
+    # Encrypted eBay token accessors (per-user legacy tokens)
+    # ------------------------------------------------------------------
+    @property
+    def ebay_access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_access_token.setter
+    def ebay_access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_access_token = None
+        else:
+            self._ebay_access_token = crypto.encrypt(value)
+
+    @property
+    def ebay_refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_refresh_token.setter
+    def ebay_refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_refresh_token = None
+        else:
+            self._ebay_refresh_token = crypto.encrypt(value)
+
+    @property
+    def ebay_sandbox_access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_sandbox_access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_sandbox_access_token.setter
+    def ebay_sandbox_access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_sandbox_access_token = None
+        else:
+            self._ebay_sandbox_access_token = crypto.encrypt(value)
+
+    @property
+    def ebay_sandbox_refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._ebay_sandbox_refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @ebay_sandbox_refresh_token.setter
+    def ebay_sandbox_refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._ebay_sandbox_refresh_token = None
+        else:
+            self._ebay_sandbox_refresh_token = crypto.encrypt(value)
 
 
 class Buying(Base):
@@ -341,6 +423,11 @@ class Inventory(Base):
     buyer_info = Column(Text, nullable=True)
     tracking_number = Column(String(100), nullable=True, index=True)
     raw_payload = Column(JSONB, nullable=True)
+
+    # Optional link to parts_detail row used by the eBay listing worker.
+    # This is populated when listings are committed from the ListingPage and
+    # allows Inventory status changes to keep PartsDetail.status_sku in sync.
+    parts_detail_id = Column(Integer, nullable=True, index=True)
     
     sku = relationship("SKU", back_populates="inventory_items")
     warehouse = relationship("Warehouse", back_populates="inventory_items")
@@ -365,8 +452,235 @@ class Inventory(Base):
     )
 
 
+class PartsDetailStatus(str, enum.Enum):
+    """High-level business status for parts_detail.sku/listing lifecycle.
+
+    This is a thin semantic layer over the legacy numeric StatusSKU codes from
+    the historical MSSQL schema. We intentionally keep the enum small and map
+    concrete numeric codes in application logic where needed.
+    """
+
+    AWAITING_MODERATION = "AwaitingModeration"
+    CHECKED = "Checked"
+    LISTED_ACTIVE = "ListedActive"
+    ENDED = "Ended"
+    CANCELLED = "Cancelled"
+    PUBLISH_ERROR = "PublishError"
+
+
+class PartsDetail(Base):
+    """Supabase/Postgres equivalent of legacy dbo.tbl_parts_detail.
+
+    Only the core columns required by the first implementation of the eBay
+    listing worker are modelled here. Additional legacy columns can be added
+    incrementally as we migrate more behaviour.
+    """
+
+    __tablename__ = "parts_detail"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Identity & warehouse
+    sku = Column(String(100), nullable=True, index=True)
+    sku2 = Column(String(100), nullable=True)
+    override_sku = Column(String(100), nullable=True)
+    storage = Column(String(100), nullable=True, index=True)
+    alt_storage = Column(String(100), nullable=True)
+    storage_alias = Column(String(100), nullable=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)
+
+    # eBay account & linkage
+    item_id = Column(String(100), nullable=True, index=True)
+    ebay_id = Column(String(64), nullable=True, index=True)  # internal account/site id
+    username = Column(String(100), nullable=True, index=True)  # eBay username
+    global_ebay_id_for_relist = Column(String(64), nullable=True)
+    global_ebay_id_for_relist_flag = Column(Boolean, nullable=True)
+
+    # Status fields (stored as string; PartsDetailStatus is a semantic helper enum)
+    status_sku = Column(String(32), nullable=True, index=True)
+    listing_status = Column(String(50), nullable=True, index=True)
+    status_updated_at = Column(DateTime(timezone=True), nullable=True)
+    status_updated_by = Column(String(100), nullable=True)
+    listing_status_updated_at = Column(DateTime(timezone=True), nullable=True)
+    listing_status_updated_by = Column(String(100), nullable=True)
+
+    # Listing lifetime
+    listing_start_time = Column(DateTime(timezone=True), nullable=True)
+    listing_end_time = Column(DateTime(timezone=True), nullable=True)
+    listing_time_updated = Column(DateTime(timezone=True), nullable=True)
+    item_listed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Prices & overrides
+    override_price = Column(Numeric(14, 2), nullable=True)
+    price_to_change = Column(Numeric(14, 2), nullable=True)
+    price_to_change_one_time = Column(Numeric(14, 2), nullable=True)
+    override_price_flag = Column(Boolean, nullable=True)
+    price_to_change_flag = Column(Boolean, nullable=True)
+    price_to_change_one_time_flag = Column(Boolean, nullable=True)
+
+    # Best Offer
+    best_offer_enabled_flag = Column(Boolean, nullable=True)
+    best_offer_auto_accept_price_flag = Column(Boolean, nullable=True)
+    best_offer_auto_accept_price_value = Column(Numeric(14, 2), nullable=True)
+    best_offer_auto_accept_price_percent = Column(Numeric(5, 2), nullable=True)
+    best_offer_min_price_flag = Column(Boolean, nullable=True)
+    best_offer_min_price_value = Column(Numeric(14, 2), nullable=True)
+    best_offer_min_price_percent = Column(Numeric(5, 2), nullable=True)
+    best_offer_mode = Column(String(20), nullable=True)
+    best_offer_to_change_flag = Column(Boolean, nullable=True)
+    active_best_offer_flag = Column(Boolean, nullable=True)
+    active_best_offer_manual_flag = Column(Boolean, nullable=True)
+
+    # Title, description, pictures
+    override_title = Column(Text, nullable=True)
+    override_description = Column(Text, nullable=True)
+    override_condition_id = Column(Integer, nullable=True)
+    condition_description_to_change = Column(Text, nullable=True)
+    override_pic_url_1 = Column(Text, nullable=True)
+    override_pic_url_2 = Column(Text, nullable=True)
+    override_pic_url_3 = Column(Text, nullable=True)
+    override_pic_url_4 = Column(Text, nullable=True)
+    override_pic_url_5 = Column(Text, nullable=True)
+    override_pic_url_6 = Column(Text, nullable=True)
+    override_pic_url_7 = Column(Text, nullable=True)
+    override_pic_url_8 = Column(Text, nullable=True)
+    override_pic_url_9 = Column(Text, nullable=True)
+    override_pic_url_10 = Column(Text, nullable=True)
+    override_pic_url_11 = Column(Text, nullable=True)
+    override_pic_url_12 = Column(Text, nullable=True)
+
+    # eBay API ACK / errors
+    verify_ack = Column(String(20), nullable=True)
+    verify_timestamp = Column(DateTime(timezone=True), nullable=True)
+    verify_error = Column(Text, nullable=True)
+    add_ack = Column(String(20), nullable=True)
+    add_timestamp = Column(DateTime(timezone=True), nullable=True)
+    add_error = Column(Text, nullable=True)
+    revise_ack = Column(String(20), nullable=True)
+    revise_timestamp = Column(DateTime(timezone=True), nullable=True)
+    revise_error = Column(Text, nullable=True)
+
+    # Batch / queue flags
+    batch_error_flag = Column(Boolean, nullable=True, index=True)
+    batch_error_message = Column(JSONB, nullable=True)
+    batch_success_flag = Column(Boolean, nullable=True, index=True)
+    batch_success_message = Column(JSONB, nullable=True)
+    mark_as_listed_queue_flag = Column(Boolean, nullable=True, index=True)
+    mark_as_listed_queue_updated_at = Column(DateTime(timezone=True), nullable=True)
+    mark_as_listed_queue_updated_by = Column(String(100), nullable=True)
+    listing_price_batch_flag = Column(Boolean, nullable=True)
+    cancel_listing_queue_flag = Column(Boolean, nullable=True)
+    cancel_listing_queue_flag_updated_at = Column(DateTime(timezone=True), nullable=True)
+    cancel_listing_queue_flag_updated_by = Column(String(100), nullable=True)
+    relist_listing_queue_flag = Column(Boolean, nullable=True)
+    relist_listing_queue_flag_updated_at = Column(DateTime(timezone=True), nullable=True)
+    relist_listing_queue_flag_updated_by = Column(String(100), nullable=True)
+    freeze_listing_queue_flag = Column(Boolean, nullable=True)
+
+    # Event flags
+    relist_flag = Column(Boolean, nullable=True)
+    relist_quantity = Column(Integer, nullable=True)
+    relist_listing_flag = Column(Boolean, nullable=True)
+    relist_listing_flag_updated_at = Column(DateTime(timezone=True), nullable=True)
+    relist_listing_flag_updated_by = Column(String(100), nullable=True)
+    cancel_listing_flag = Column(Boolean, nullable=True)
+    cancel_listing_status_sku = Column(String(50), nullable=True)
+    cancel_listing_interface = Column(String(50), nullable=True)
+    freeze_listing_flag = Column(Boolean, nullable=True)
+    phantom_cancel_listing_flag = Column(Boolean, nullable=True)
+    ended_for_relist_flag = Column(Boolean, nullable=True)
+    just_sold_flag = Column(Boolean, nullable=True)
+    return_flag = Column(Boolean, nullable=True)
+    loss_flag = Column(Boolean, nullable=True)
+
+    # Audit
+    # Use server_default=func.now() instead of datetime.utcnow function object to
+    # satisfy SQLAlchemy 2.x ArgumentError expectations.
+    record_created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    record_created_by = Column(String(100), nullable=True)
+    record_updated_at = Column(DateTime(timezone=True), nullable=True)
+    record_updated_by = Column(String(100), nullable=True)
+
+    logs = relationship("PartsDetailLog", back_populates="part_detail", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_parts_detail_sku", "sku"),
+        Index("idx_parts_detail_item_id", "item_id"),
+        Index("idx_parts_detail_status_sku", "status_sku"),
+        Index("idx_parts_detail_listing_status", "listing_status"),
+        Index("idx_parts_detail_username", "username"),
+        Index("idx_parts_detail_ebay_id", "ebay_id"),
+    )
+
+
+class PartsDetailLog(Base):
+    """High-level audit log for PartsDetail changes and worker events."""
+
+    __tablename__ = "parts_detail_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    part_detail_id = Column(Integer, ForeignKey("parts_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Linkage / snapshot identifiers
+    sku = Column(String(100), nullable=True, index=True)
+    model_id = Column(Integer, nullable=True)
+
+    # Product snapshot
+    part = Column(Text, nullable=True)
+    price = Column(Numeric(14, 2), nullable=True)
+    previous_price = Column(Numeric(14, 2), nullable=True)
+    price_updated_at = Column(DateTime(timezone=True), nullable=True)
+    market = Column(String(50), nullable=True)
+    category = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
+    shipping_type = Column(String(50), nullable=True)
+    shipping_group = Column(String(50), nullable=True)
+    condition_id = Column(Integer, nullable=True)
+    pic_url_1 = Column(Text, nullable=True)
+    pic_url_2 = Column(Text, nullable=True)
+    pic_url_3 = Column(Text, nullable=True)
+    pic_url_4 = Column(Text, nullable=True)
+    pic_url_5 = Column(Text, nullable=True)
+    pic_url_6 = Column(Text, nullable=True)
+    pic_url_7 = Column(Text, nullable=True)
+    pic_url_8 = Column(Text, nullable=True)
+    pic_url_9 = Column(Text, nullable=True)
+    pic_url_10 = Column(Text, nullable=True)
+    pic_url_11 = Column(Text, nullable=True)
+    pic_url_12 = Column(Text, nullable=True)
+    weight = Column(Numeric(12, 3), nullable=True)
+    part_number = Column(String(100), nullable=True)
+
+    # Flags & statuses
+    alert_flag = Column(Boolean, nullable=True)
+    alert_message = Column(Text, nullable=True)
+    record_status = Column(String(50), nullable=True)
+    record_status_flag = Column(Boolean, nullable=True)
+    checked_status = Column(String(50), nullable=True)
+    checked_at = Column(DateTime(timezone=True), nullable=True)
+    checked_by = Column(String(100), nullable=True)
+    one_time_auction = Column(Boolean, nullable=True)
+
+    # Audit
+    record_created_at = Column(DateTime(timezone=True), nullable=True)
+    record_created_by = Column(String(100), nullable=True)
+    record_updated_at = Column(DateTime(timezone=True), nullable=True)
+    record_updated_by = Column(String(100), nullable=True)
+    log_created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    log_created_by = Column(String(100), nullable=True)
+
+    part_detail = relationship("PartsDetail", back_populates="logs")
+
+    __table_args__ = (
+        Index("idx_parts_detail_log_part_detail_id", "part_detail_id"),
+        Index("idx_parts_detail_log_sku", "sku"),
+        Index("idx_parts_detail_log_checked_status", "checked_status"),
+    )
+
+
 # Attempt reflection of the legacy Supabase inventory table at import time,
-# but never crash the app if it is missing in the current environment.
+# but never crash the app if it is missing in the current environment or the
+# database is temporarily unreachable.
 try:
     tbl_parts_inventory_table = Table(
         "tbl_parts_inventory",  # REAL table name, do not change
@@ -384,9 +698,10 @@ try:
     pk_cols = list(pk_info.get("constrained_columns") or [])
     if not pk_cols and "ID" in tbl_parts_inventory_table.c:
         pk_cols = ["ID"]
-except NoSuchTableError:
+except (NoSuchTableError, OperationalError) as exc:
     logger.warning(
-        "tbl_parts_inventory not found in database; TblPartsInventory will be abstract in this environment",
+        "tbl_parts_inventory reflection failed (%s); TblPartsInventory will be abstract in this environment",
+        type(exc).__name__,
     )
     tbl_parts_inventory_table = None
     pk_cols = []
@@ -417,33 +732,36 @@ else:
 
 
 # Optional reflection of the legacy models dictionary table used for the
-# SKU create/edit form typeahead (tbl_parts_models). Missing tables are
-# tolerated so that local/dev environments without the legacy schema still
-# boot cleanly.
+# SKU create/edit form typeahead (tbl_parts_models). Missing tables and
+# transient connection errors are tolerated so that environments without the
+# legacy schema still boot cleanly.
 try:
     tbl_parts_models_table = Table(
         "tbl_parts_models",  # REAL table name provided by legacy system
         Base.metadata,
         autoload_with=engine,
     )
-except NoSuchTableError:
+except (NoSuchTableError, OperationalError) as exc:
     logger.warning(
-        "tbl_parts_models not found in database; model search endpoint will return an empty result set",
+        "tbl_parts_models reflection failed (%s); model search endpoint will return an empty result set",
+        type(exc).__name__,
     )
     tbl_parts_models_table = None
 
 
 # Optional reflection of legacy internal categories table used for the
-# Internal category dropdown when available (tbl_parts_category).
+# Internal category dropdown when available (tbl_parts_category). Missing
+# tables and transient connection errors are tolerated.
 try:
     tbl_parts_category_table = Table(
         "tbl_parts_category",  # REAL table name in Postgres
         Base.metadata,
         autoload_with=engine,
     )
-except NoSuchTableError:
+except (NoSuchTableError, OperationalError) as exc:
     logger.warning(
-        "tbl_parts_category not found; falling back to sq_internal_categories for internal category list",
+        "tbl_parts_category reflection failed (%s); falling back to sq_internal_categories for internal category list",
+        type(exc).__name__,
     )
     tbl_parts_category_table = None
 
@@ -469,16 +787,12 @@ class SqItem(Base):
     part_id = Column("Part_ID", BigInteger, nullable=True)  # [Part_ID]
     sku = Column("SKU", Numeric(18, 0), nullable=True)  # [SKU]
     sku2 = Column("SKU2", Text, nullable=True)  # [SKU2]
+    # Legacy schema stores only the numeric Model_ID on SKU_catalog.
+    # The human-readable model label lives in tbl_parts_models and is
+    # surfaced via higher-level joins; there is no "Model" text column
+    # on SKU_catalog itself.
     model_id = Column("Model_ID", BigInteger, nullable=True)  # [Model_ID]
-    # Legacy table does not expose a textual model field; we keep a synthetic
-    # attribute so downstream code can access `item.model`, but it is not
-    # backed by a real column on SKU_catalog.
-    model = None  # Convenience display field for model name/code (no backing column)
-    part = Column("Part", Text, nullable=True)  # [Part]
-    # Optional short human-readable title for the listing (added by modern app).
-    # The underlying column is created via Alembic migration using
-    # `ALTER TABLE "SKU_catalog" ADD COLUMN IF NOT EXISTS "Title" text`.
-    title = Column("Title", Text, nullable=True)  # [Title]
+    part = Column("Part", Text, nullable=True)  # [Part] – legacy text field used as logical "title"
 
     # Pricing
     price = Column("Price", Numeric(12, 2), nullable=True)  # [Price]
@@ -579,16 +893,29 @@ class SqItem(Base):
     clone_sku_updated = Column("CloneSKU_updated", DateTime(timezone=True), nullable=True)  # [CloneSKU_updated]
     clone_sku_updated_by = Column("CloneSKU_updated_by", Text, nullable=True)  # [CloneSKU_updated_by]
 
-    # Synthetic fields for the modern app that are not present in legacy
-    # SKU_catalog schema. They are kept as plain attributes so Pydantic
-    # models and business logic can still access them but they do not
-    # generate invalid SQL against the legacy table.
-    title = None
+    # Synthetic / convenience attributes that do not correspond 1:1 to legacy
+    # SKU_catalog columns.
+    #
+    # - ``title`` is exposed as a property alias over the legacy ``Part``
+    #   column so the modern UI can talk in terms of "Title" while the
+    #   database continues to use ``Part`` as the canonical text field.
+    # - ``model`` is populated by higher-level code (joins to
+    #   ``tbl_parts_models``) and is *not* stored on SKU_catalog; only
+    #   ``model_id`` is persisted.
+    model = None
     brand = None
     warehouse_id = None
     storage_alias = None
 
     warehouse = None
+
+    @property
+    def title(self):  # type: ignore[override]
+        return self.part
+
+    @title.setter
+    def title(self, value):  # type: ignore[override]
+        self.part = value
 
     # Legacy SKU_catalog already has its own indexes at the database level.
     # Declaring ORM Index objects with lower-case logical names (e.g. 'sku')
@@ -725,6 +1052,117 @@ class EbayConnectLog(Base):
         Index('idx_ebay_connect_logs_user_env', 'user_id', 'environment'),
         Index('idx_ebay_connect_logs_action', 'action'),
         Index('idx_ebay_connect_logs_created', 'created_at'),
+    )
+
+
+class SecurityEvent(Base):
+    """Append-only log of security-relevant events (auth, settings, alerts).
+
+    Examples of event_type values:
+    - login_success
+    - login_failed
+    - login_blocked
+    - session_invalidated
+    - settings_changed
+    - security_alert
+    """
+
+    __tablename__ = "security_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=True, index=True)
+    ip_address = Column(String(64), nullable=True, index=True)
+    user_agent = Column(Text, nullable=True)
+
+    event_type = Column(String(50), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+
+    # Flexible metadata payload stored in the "metadata" column; must never contain raw passwords or tokens.
+    metadata_json = Column("metadata", JSONB, nullable=True)
+
+    user = relationship("User", backref="security_events")
+
+    __table_args__ = (
+        Index('idx_security_events_user_time', 'user_id', 'created_at'),
+        Index('idx_security_events_ip_time', 'ip_address', 'created_at'),
+    )
+
+
+class LoginAttempt(Base):
+    """Canonical record of each login attempt and block decision.
+
+    Rows are written for both successful and failed login attempts, and can
+    be queried by email+IP to compute progressive delays.
+    """
+
+    __tablename__ = "login_attempts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+
+    # Identifier used at login time; may or may not correspond to a real user.
+    email = Column(String(255), nullable=False, index=True)
+
+    # Optional linkage to the canonical user row when available.
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=True, index=True)
+
+    ip_address = Column(String(64), nullable=True, index=True)
+    user_agent = Column(Text, nullable=True)
+
+    success = Column(Boolean, nullable=False, default=False, index=True)
+    reason = Column(String(100), nullable=True)
+
+    # Whether a block was applied as a result of this attempt and until when.
+    block_applied = Column(Boolean, nullable=False, default=False)
+    block_until = Column(DateTime(timezone=True), nullable=True)
+
+    metadata_json = Column("metadata", JSONB, nullable=True)
+
+    user = relationship("User", backref="login_attempts")
+
+    __table_args__ = (
+        Index('idx_login_attempts_email_ip_time', 'email', 'ip_address', 'created_at'),
+    )
+
+
+class SecuritySettings(Base):
+    """Singleton row storing brute-force and session security parameters.
+
+    The application should treat this table as a single-record configuration
+    store, loading row id=1 (or creating it with defaults when absent).
+    """
+
+    __tablename__ = "security_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Brute-force / login protections
+    max_failed_attempts = Column(Integer, nullable=False, default=3)
+    initial_block_minutes = Column(Integer, nullable=False, default=1)
+    progressive_delay_step_minutes = Column(Integer, nullable=False, default=2)
+    max_delay_minutes = Column(Integer, nullable=False, default=30)
+
+    enable_captcha = Column(Boolean, nullable=False, default=False)
+    captcha_after_failures = Column(Integer, nullable=False, default=3)
+
+    # Session lifetime and idle timeout (applied to JWT expiry and middleware).
+    session_ttl_minutes = Column(Integer, nullable=False, default=60 * 12)  # 12 hours
+    session_idle_timeout_minutes = Column(Integer, nullable=False, default=60)  # 1 hour
+
+    # Simple alert thresholds; used by future anomaly detection/alerting.
+    bruteforce_alert_threshold_per_ip = Column(Integer, nullable=False, default=50)
+    bruteforce_alert_threshold_per_user = Column(Integer, nullable=False, default=50)
+
+    alert_email_enabled = Column(Boolean, nullable=False, default=False)
+    alert_channel = Column(String(50), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_security_settings_updated_at', 'updated_at'),
     )
 
 
@@ -957,6 +1395,393 @@ class UiTweakSettings(Base):
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class AiRule(Base):
+    """Persisted AI analytics rule, typically a reusable SQL condition fragment.
+
+    These rules are created from natural-language descriptions in the admin
+    AI Rules UI and later reused by analytics and monitoring workers (e.g.
+    "good computer" profitability profiles).
+    """
+
+    __tablename__ = "ai_rules"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(Text, nullable=False)
+    # Raw SQL condition fragment or full WHERE clause (read-only, validated at use).
+    rule_sql = Column(Text, nullable=False)
+    # Optional free-form description or original natural-language prompt.
+    description = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+
+
+class AiQueryLog(Base):
+    """Append-only log of AI-powered admin analytics queries.
+
+    Each row captures the natural-language prompt, the generated SQL, and the
+    number of rows returned so we can audit and debug the AI Query Engine.
+    """
+
+    __tablename__ = "ai_query_log"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    prompt = Column(Text, nullable=False)
+    sql = Column(Text, nullable=False)
+    row_count = Column(Integer, nullable=True)
+
+    executed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+class AiEbayCandidate(Base):
+    """Candidate eBay listing discovered by the monitoring worker.
+
+    Each row represents a potentially profitable listing for a given model
+    discovered via the eBay Browse/Search API.
+    """
+
+    __tablename__ = "ai_ebay_candidates"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    ebay_item_id = Column(Text, nullable=False, unique=True)
+    model_id = Column(Text, nullable=False, index=True)
+
+    title = Column(Text, nullable=True)
+    price = Column(Numeric(14, 2), nullable=True)
+    shipping = Column(Numeric(14, 2), nullable=True)
+    condition = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+
+    predicted_profit = Column(Numeric(14, 2), nullable=True)
+    roi = Column(Numeric(10, 4), nullable=True)
+
+    matched_rule = Column(Boolean, nullable=True)
+    rule_name = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_ai_ebay_candidates_model_id", "model_id"),
+    )
+
+
+class AiEbayAction(Base):
+    """Planned auto-offer / auto-buy action for a discovered eBay candidate.
+
+    This table is populated by the auto-offer/auto-buy worker and can be
+    reviewed in the admin UI before enabling live execution.
+    """
+
+    __tablename__ = "ai_ebay_actions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    ebay_item_id = Column(Text, nullable=False)
+    model_id = Column(Text, nullable=False, index=True)
+
+    # 'offer' | 'buy_now'
+    action_type = Column(Text, nullable=False)
+
+    # Planned amount we intend to pay or offer (same currency as original_price).
+    offer_amount = Column(Numeric(14, 2), nullable=True)
+    original_price = Column(Numeric(14, 2), nullable=True)
+    shipping = Column(Numeric(14, 2), nullable=True)
+
+    predicted_profit = Column(Numeric(14, 2), nullable=True)
+    roi = Column(Numeric(10, 4), nullable=True)
+
+    rule_name = Column(Text, nullable=True)
+
+    # 'draft' | 'ready' | 'executed' | 'failed'
+    status = Column(Text, nullable=False, default="draft")
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_ai_ebay_actions_model_id", "model_id"),
+        Index("uq_ai_ebay_actions_item_type", "ebay_item_id", "action_type", unique=True),
+    )
+
+
+class IntegrationProvider(Base):
+    """Catalog entry for an external integration provider (Gmail, Slack, etc.)."""
+
+    __tablename__ = "integrations_providers"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(64), nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+    auth_type = Column(String(32), nullable=False)
+    default_scopes = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    accounts = relationship("IntegrationAccount", back_populates="provider")
+
+
+class IntegrationAccount(Base):
+    """Concrete connected account for a given provider and owner.
+
+    Example: Filipp's main Gmail account, a client's Slack workspace, etc.
+    """
+
+    __tablename__ = "integrations_accounts"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    provider_id = Column(String(36), ForeignKey("integrations_providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    external_account_id = Column(Text, nullable=False)  # e.g. email for Gmail
+    display_name = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False, default="active", index=True)
+
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    meta = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    provider = relationship("IntegrationProvider", back_populates="accounts")
+    owner = relationship("User")
+    credentials = relationship("IntegrationCredentials", back_populates="account", uselist=False)
+    email_messages = relationship("EmailMessage", back_populates="integration_account")
+    training_pairs = relationship("AiEmailTrainingPair", back_populates="integration_account")
+
+
+class IntegrationCredentials(Base):
+    """Encrypted credentials for a single IntegrationAccount.
+
+    Access and refresh tokens are stored encrypted at rest using the shared
+    crypto helper (AES-GCM derived from the application secret key).
+    """
+
+    __tablename__ = "integrations_credentials"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    integration_account_id = Column(
+        String(36),
+        ForeignKey("integrations_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    _access_token = Column("access_token", Text, nullable=True)
+    _refresh_token = Column("refresh_token", Text, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    scopes = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    account = relationship("IntegrationAccount", back_populates="credentials")
+
+    # ------------------------------------------------------------------
+    # Encrypted token accessors
+    # ------------------------------------------------------------------
+    @property
+    def access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @access_token.setter
+    def access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._access_token = None
+        else:
+            self._access_token = crypto.encrypt(value)
+
+    @property
+    def refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @refresh_token.setter
+    def refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._refresh_token = None
+        else:
+            self._refresh_token = crypto.encrypt(value)
+
+
+class EmailMessage(Base):
+    """Normalized email message fetched from an external provider.
+
+    This table is provider-agnostic; Gmail is simply the first concrete
+    implementation via the Integrations module.
+    """
+
+    __tablename__ = "emails_messages"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    integration_account_id = Column(
+        String(36),
+        ForeignKey("integrations_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    external_id = Column(Text, nullable=False)
+    thread_id = Column(Text, nullable=True, index=True)
+
+    direction = Column(String(16), nullable=False)  # incoming | outgoing
+
+    from_address = Column(Text, nullable=True)
+    to_addresses = Column(JSONB, nullable=True)
+    cc_addresses = Column(JSONB, nullable=True)
+    bcc_addresses = Column(JSONB, nullable=True)
+
+    subject = Column(Text, nullable=True)
+    body_text = Column(Text, nullable=True)
+    body_html = Column(Text, nullable=True)
+
+    sent_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    raw_headers = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    integration_account = relationship("IntegrationAccount", back_populates="email_messages")
+    client_pairs = relationship(
+        "AiEmailTrainingPair",
+        back_populates="client_message",
+        foreign_keys="AiEmailTrainingPair.client_message_id",
+    )
+    reply_pairs = relationship(
+        "AiEmailTrainingPair",
+        back_populates="our_reply_message",
+        foreign_keys="AiEmailTrainingPair.our_reply_message_id",
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_emails_messages_account_external_id",
+            "integration_account_id",
+            "external_id",
+            unique=True,
+        ),
+    )
+
+
+class AiEmailTrainingPair(Base):
+    """Paired client question and our reply extracted from email threads.
+
+    These rows power the AI email training dataset once approved in the
+    admin UI.
+    """
+
+    __tablename__ = "ai_training_pairs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    integration_account_id = Column(
+        String(36),
+        ForeignKey("integrations_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    thread_id = Column(Text, nullable=True, index=True)
+
+    client_message_id = Column(
+        String(36),
+        ForeignKey("emails_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    our_reply_message_id = Column(
+        String(36),
+        ForeignKey("emails_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    client_text = Column(Text, nullable=False)
+    our_reply_text = Column(Text, nullable=False)
+
+    status = Column(String(32), nullable=False, default="new", index=True)
+    labels = Column(JSONB, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    integration_account = relationship("IntegrationAccount", back_populates="training_pairs")
+    client_message = relationship("EmailMessage", foreign_keys=[client_message_id], back_populates="client_pairs")
+    our_reply_message = relationship("EmailMessage", foreign_keys=[our_reply_message_id], back_populates="reply_pairs")
+
+
+class AiProvider(Base):
+    """AI provider configuration, including encrypted API keys (e.g. OpenAI).
+
+    This table starts with a single provider_code="openai" row but is generic
+    enough to support additional providers in the future.
+    """
+
+    __tablename__ = "ai_providers"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    provider_code = Column(Text, nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+
+    owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    _api_key = Column("api_key", Text, nullable=True)
+    model_default = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # ------------------------------------------------------------------
+    # Encrypted API key accessors
+    # ------------------------------------------------------------------
+    @property
+    def api_key(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._api_key
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @api_key.setter
+    def api_key(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._api_key = None
+        else:
+            self._api_key = crypto.encrypt(value)
 
 
 class AccountingExpenseCategory(Base):
@@ -1200,8 +2025,9 @@ class EbayToken(Base):
     
     id = Column(String(36), primary_key=True)
     ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=False)
-    access_token = Column(Text, nullable=True)
-    refresh_token = Column(Text, nullable=True)
+    # Physical columns holding encrypted blobs when written via properties.
+    _access_token = Column("access_token", Text, nullable=True)
+    _refresh_token = Column("refresh_token", Text, nullable=True)
     token_type = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     refresh_expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -1216,6 +2042,45 @@ class EbayToken(Base):
         Index('idx_ebay_tokens_account_id', 'ebay_account_id'),
         Index('idx_ebay_tokens_expires_at', 'expires_at'),
     )
+
+    # ------------------------------------------------------------------
+    # Encrypted token accessors (per-account tokens in ebay_tokens)
+    # ------------------------------------------------------------------
+    @property
+    def access_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._access_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @access_token.setter
+    def access_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._access_token = None
+        else:
+            self._access_token = crypto.encrypt(value)
+
+    @property
+    def refresh_token(self) -> str | None:
+        from app.utils import crypto
+
+        raw = self._refresh_token
+        if raw is None:
+            return None
+        return crypto.decrypt(raw)
+
+    @refresh_token.setter
+    def refresh_token(self, value: str | None) -> None:
+        from app.utils import crypto
+
+        if value is None or value == "":
+            self._refresh_token = None
+        else:
+            self._refresh_token = crypto.encrypt(value)
 
 
 class EbayAuthorization(Base):
@@ -1455,6 +2320,115 @@ class EbayBuyerLog(Base):
     )
 
 
+class EbaySnipeStatus(str, enum.Enum):
+    """Lifecycle states for a sniper entry.
+
+    pending   – (legacy) created but not fully scheduled; in v2 we generally
+                move new snipes directly into "scheduled" once fire_at is
+                computed.
+    scheduled – fully validated, has a concrete fire_at and is waiting for the
+                worker to execute.
+    bidding   – worker is actively attempting to place a bid for this snipe.
+    executed_stub – internal/testing state used by the stub worker
+                     implementation; real bidding will eventually use
+                     "bidding" + terminal states instead.
+    won       – auction finished and the snipe won.
+    lost      – auction finished and the snipe lost.
+    error     – a worker or eBay API error occurred; see result_message.
+    cancelled – user cancelled the snipe before execution.
+    """
+
+    pending = "pending"
+    scheduled = "scheduled"
+    bidding = "bidding"
+    executed_stub = "executed_stub"
+    won = "won"
+    lost = "lost"
+    error = "error"
+    cancelled = "cancelled"
+
+
+class EbaySnipe(Base):
+    """Internal Bidnapper-like sniper entry.
+
+    Stores a scheduled last-second bid for an eBay auction along with cached
+    item metadata and execution result fields.
+
+    In Sniper v2, each row also has a concrete fire_at timestamp that represents
+    the exact moment when the worker should attempt to place the bid. Storing
+    fire_at explicitly makes worker queries simpler and avoids recomputing the
+    schedule expression on every tick.
+    """
+
+    __tablename__ = "ebay_snipes"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False, index=True)
+    ebay_account_id = Column(String(36), ForeignKey('ebay_accounts.id', ondelete='CASCADE'), nullable=True, index=True)
+
+    item_id = Column(String(100), nullable=False, index=True)
+    title = Column(Text, nullable=True)
+    image_url = Column(Text, nullable=True)
+
+    end_time = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    # Exact scheduled execution time (end_time - seconds_before_end). This is
+    # computed in application code whenever a snipe is created or its timing
+    # parameters change so that workers can simply query on fire_at.
+    fire_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    max_bid_amount = Column(Numeric(14, 2), nullable=False)
+    currency = Column(CHAR(3), nullable=False, default="USD")
+    seconds_before_end = Column(Integer, nullable=False, default=5)
+
+    status = Column(String(32), nullable=False, default=EbaySnipeStatus.pending.value, index=True)
+
+    current_bid_at_creation = Column(Numeric(14, 2), nullable=True)
+    result_price = Column(Numeric(14, 2), nullable=True)
+    result_message = Column(Text, nullable=True)
+
+    # Optional free-form user note describing the intent/context of the snipe.
+    comment = Column(Text, nullable=True)
+
+    # True once at least one bid attempt was made for this snipe. This is a
+    # denormalised helper flag; detailed history lives in EbaySnipeLog.
+    has_bid = Column(Boolean, nullable=False, default=False)
+
+    contingency_group_id = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="ebay_snipes")
+    ebay_account = relationship("EbayAccount", backref="snipes")
+    logs = relationship("EbaySnipeLog", back_populates="snipe", cascade="all, delete-orphan")
+
+
+class EbaySnipeLog(Base):
+    """Per-snipe audit log for sniper executions and eBay responses."""
+
+    __tablename__ = "ebay_snipe_logs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    snipe_id = Column(String(36), ForeignKey("ebay_snipes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    event_type = Column(String(50), nullable=False)
+    status = Column(String(50), nullable=True)
+    ebay_bid_id = Column(String(100), nullable=True)
+    correlation_id = Column(String(100), nullable=True)
+    http_status = Column(Integer, nullable=True)
+
+    # Raw payload or structured summary of the eBay interaction. Stored as
+    # text for now; callers may persist JSON-serialised content when needed.
+    payload = Column(Text, nullable=True)
+
+    # Short human-readable summary suitable for direct display in the UI.
+    message = Column(Text, nullable=True)
+
+    snipe = relationship("EbaySnipe", back_populates="logs")
+
+
 class Message(Base):
     __tablename__ = "ebay_messages"
     
@@ -1469,16 +2443,45 @@ class Message(Base):
     subject = Column(Text, nullable=True)
     body = Column(Text, nullable=True)
     message_type = Column(String(50), nullable=True)
+
+    # Flags and direction
     is_read = Column(Boolean, default=False)
     is_flagged = Column(Boolean, default=False)
     is_archived = Column(Boolean, default=False)
     direction = Column(String(20), nullable=True)
+
+    # Timestamps
     message_date = Column(DateTime(timezone=True), nullable=True)
+    # Optional canonical timestamptz used by new code paths when present.
+    message_at = Column(DateTime(timezone=True), nullable=True)
     read_date = Column(DateTime(timezone=True), nullable=True)
+
+    # Order / item linkage
     order_id = Column(String(100), nullable=True)
     listing_id = Column(String(100), nullable=True)
+
+    # Case / dispute linkage
+    case_id = Column(Text, nullable=True)
+    case_type = Column(Text, nullable=True)
+    inquiry_id = Column(Text, nullable=True)
+    return_id = Column(Text, nullable=True)
+    payment_dispute_id = Column(Text, nullable=True)
+    transaction_id = Column(Text, nullable=True)
+
+    # Classification and topic
+    is_case_related = Column(Boolean, nullable=False, default=False)
+    message_topic = Column(Text, nullable=True)
+    case_event_type = Column(Text, nullable=True)
+
+    # Raw + parsed representations
     raw_data = Column(Text, nullable=True)
     parsed_body = Column(JSONB, nullable=True)
+
+    # Attachments and preview
+    has_attachments = Column(Boolean, nullable=False, default=False)
+    attachments_meta = Column(JSONB, nullable=False, default=list)
+    preview_text = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -1535,6 +2538,56 @@ class EbayScopeDefinition(Base):
     )
 
 
+class EbaySearchWatch(Base):
+    """User-defined eBay auto-search rule.
+
+    Stores per-user watch rules for periodically querying the eBay Browse API
+    and generating internal notifications when new matching listings appear.
+    """
+
+    __tablename__ = "ebay_search_watches"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+
+    # Human-readable name and core query parameters
+    name = Column(Text, nullable=False)
+    keywords = Column(Text, nullable=False)
+
+    # Optional upper bound for price + shipping in the listing currency.
+    max_total_price = Column(Numeric(14, 2), nullable=True)
+
+    # Simple hint for post-filtering by type of item (e.g. "laptop", "all").
+    category_hint = Column(String(50), nullable=True)
+
+    # List of case-insensitive keywords that must NOT appear in title/description
+    # (e.g. ["screen", "keyboard", "battery"] to exclude parts).
+    exclude_keywords = Column(JSONB, nullable=True)
+
+    marketplace_id = Column(String(20), nullable=False, default="EBAY_US")
+
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+
+    # Minimal interval between checks for this watch in seconds.
+    check_interval_sec = Column(Integer, nullable=False, default=60)
+
+    last_checked_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Small rolling window of recently seen itemIds to avoid duplicate
+    # notifications. Stored as JSON list of strings.
+    last_seen_item_ids = Column(JSONB, nullable=True)
+
+    # How to notify the user when new matches are found. Initial values:
+    # - "task" – create/append to an internal Task + TaskNotification
+    # - "none" – do not generate notifications (rule only for manual checks)
+    notification_mode = Column(String(20), nullable=False, default="task")
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="ebay_search_watches")
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -1554,6 +2607,10 @@ class Task(Base):
     snooze_until = Column(DateTime(timezone=True), nullable=True)
 
     is_popup = Column(Boolean, nullable=False, server_default="true")
+
+    # Archiving / importance flags
+    is_archived = Column(Boolean, nullable=False, default=False, server_default="false")
+    is_important = Column(Boolean, nullable=False, default=False, server_default="false")
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

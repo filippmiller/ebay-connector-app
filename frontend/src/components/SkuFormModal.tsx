@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
+import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -20,6 +14,9 @@ import { Button } from '@/components/ui/button';
 import api from '@/lib/apiClient';
 import { useToast } from '@/hooks/use-toast';
 import { useSqDictionaries } from '@/hooks/useSqDictionaries';
+import { ModelsModal } from '@/components/ModelsModal';
+import type { PartsModel } from '@/types/partsModel';
+import { Plus } from 'lucide-react';
 
 export type SkuFormMode = 'create' | 'edit';
 
@@ -45,6 +42,7 @@ interface HtmlEditorProps {
 interface SkuFormState {
   title: string;
   model: string;
+  modelId: number | null;
   // SKU & category
   autoSku: boolean;
   sku: string;
@@ -91,6 +89,7 @@ interface SkuFormState {
 const EMPTY_FORM: SkuFormState = {
   title: '',
   model: '',
+  modelId: null,
   autoSku: true,
   sku: '',
   categoryType: 'internal',
@@ -203,6 +202,9 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
   const [modelSearchLoading, setModelSearchLoading] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
 
+  // Models modal state for browsing/creating models
+  const [showModelsModal, setShowModelsModal] = useState(false);
+
   // Derived counters
   const titleRemaining = useMemo(() => 80 - (form.title?.length ?? 0), [form.title]);
   const conditionDescRemaining = useMemo(
@@ -254,6 +256,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
         setForm({
           title: item.title || '',
           model: item.model || '',
+          modelId: item.model_id != null ? Number(item.model_id) : null,
           autoSku: !item.sku,
           sku: item.sku != null ? String(item.sku) : '',
           categoryType: external ? 'ebay' : 'internal',
@@ -288,7 +291,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           alertEnabled: Boolean(item.alert_flag),
           alertMessage: item.alert_message || '',
         });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (e: any) {
         toast({
           title: 'Failed to load SKU',
@@ -346,6 +349,10 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
   const handleModelInputChange = (value: string) => {
     handleChange('model', value);
+    // Когда пользователь вручную меняет текст модели, сбрасываем связанный modelId
+    // до тех пор, пока он не выберет конкретную модель из выпадающего списка
+    // или модалки Models.
+    handleChange('modelId', null as unknown as number | null);
     if (!value.trim()) {
       setModelOptions([]);
       setModelDropdownOpen(false);
@@ -377,11 +384,23 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
   };
 
   const handleSelectModel = (option: ModelOption) => {
+    const numericId = typeof option.id === 'number' ? option.id : Number(option.id);
     setForm((prev) => ({
       ...prev,
       model: option.label,
+      modelId: Number.isNaN(numericId) ? null : numericId,
     }));
     setModelDropdownOpen(false);
+  };
+
+  const handlePartsModelSelected = (partsModel: PartsModel) => {
+    // When a model is selected from ModelsModal, update the form
+    setForm((prev) => ({
+      ...prev,
+      model: partsModel.model,
+      modelId: partsModel.id,
+    }));
+    setShowModelsModal(false);
   };
 
   const validate = (): boolean => {
@@ -395,6 +414,8 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
     if (!form.model.trim()) {
       nextErrors.model = 'Model is required';
+    } else if (form.modelId == null) {
+      nextErrors.model = 'Select model from catalog';
     }
 
     if (!form.autoSku && !form.sku.trim()) {
@@ -440,6 +461,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     const payload: any = {
       title: form.title.trim(),
       model: form.model.trim(),
+      model_id: form.modelId != null ? form.modelId : undefined,
       // SKU: omit when autoSku is enabled so backend generates next number.
       sku: form.autoSku ? undefined : form.sku.trim() || undefined,
       // Internal category uses the numeric/string code stored in SqInternalCategory.code
@@ -506,7 +528,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
       } else {
         onSaved(saved.id ?? 0);
       }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       const detail = e?.response?.data?.detail ?? e?.message ?? 'Save failed';
       toast({ title: 'Failed to save SKU', description: String(detail), variant: 'destructive' });
@@ -518,598 +540,614 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
   const disabled = saving || dictionariesLoading || (mode === 'edit' && loadingItem);
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose();
-      }}
-    >
-      <DialogContent className="max-w-5xl max-w-[95vw] w-full max-h-[90vh] min-w-[720px] min-h-[420px] flex flex-col resize-both overflow-auto text-sm">
-        <DialogHeader>
-          <DialogTitle className="ui-page-title">{mode === 'create' ? 'Create SKU' : 'Edit SKU'}</DialogTitle>
-          <DialogDescription className="ui-micro-label">
-            Fill in the main business fields for the SQ catalog item. Description fields accept raw HTML and will be
-            stored as-is in the database.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DraggableResizableDialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) onClose();
+        }}
+        title={mode === 'create' ? 'Create SKU' : 'Edit SKU'}
+      >
+        <div className="flex flex-col h-full text-sm p-4">
 
-        <div className="flex-1 overflow-y-auto pr-1 space-y-2 text-sm">
-          {/* Title & Model */}
-          <section className="border rounded-md p-2 space-y-1.5 bg-gray-50/60">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="ui-section-title">Title &amp; Model</h3>
-              <span className="text-xs text-gray-500">
-                {titleRemaining} characters left
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium mb-1">Title *</label>
-                <Input
-                  value={form.title}
-                  maxLength={80}
-                  onChange={(e) => handleChange('title', e.target.value)}
-                  className="h-9 text-sm max-w-xl"
-                  placeholder="Short human-friendly title (max 80 chars)"
-                />
-                {errors.title && <p className="mt-1 text-xs text-red-600">{errors.title}</p>}
-              </div>
-              <div className="relative">
-                <label className="block text-sm font-medium mb-1">Model *</label>
-                <Input
-                  value={form.model}
-                  onChange={(e) => handleModelInputChange(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void runModelSearch(form.model);
-                    }
-                  }}
-                  onFocus={() => {
-                    if (modelOptions.length) setModelDropdownOpen(true);
-                  }}
-                  onBlur={() => {
-                    // Delay closing slightly so clicks on results still register.
-                    setTimeout(() => setModelDropdownOpen(false), 150);
-                  }}
-                  className="h-9 text-sm pr-8"
-                  placeholder="Type a keyword and press Enter to search models…"
-                />
-                {modelDropdownOpen && (
-                  <div className="absolute z-20 mt-1 w-full rounded-md border bg-white shadow-sm max-h-56 overflow-auto text-xs">
-                    {modelSearchLoading && (
-                      <div className="px-2 py-1 text-gray-500">Searching…</div>
-                    )}
-                    {!modelSearchLoading && modelOptions.length === 0 && (
-                      <div className="px-2 py-1 text-gray-500">No matches</div>
-                    )}
-                    {modelOptions.map((option) => (
-                      <button
-                        key={String(option.id)}
-                        type="button"
-                        className="block w-full px-2 py-1 text-left hover:bg-gray-100"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          handleSelectModel(option);
-                        }}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {errors.model && <p className="mt-1 text-xs text-red-600">{errors.model}</p>}
-              </div>
-            </div>
-          </section>
 
-          {/* SKU & Category */}
-          <section className="border rounded-md p-2 space-y-2">
-            <h3 className="ui-section-title">SKU &amp; Category</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium">SKU</label>
-                <div className="flex items-center gap-2">
+          <div className="flex-1 overflow-y-auto pr-1 space-y-2 text-sm">
+            {/* Title & Model */}
+            <section className="border rounded-md p-2 space-y-1.5 bg-gray-50/60">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="ui-section-title">Title &amp; Model</h3>
+                <span className="text-xs text-gray-500">
+                  {titleRemaining} characters left
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium mb-1">Title *</label>
                   <Input
-                    value={form.sku}
-                    onChange={(e) => handleChange('sku', e.target.value.replace(/[^0-9]/g, ''))}
-                    disabled={form.autoSku}
-                    className="h-8 text-sm max-w-[140px]"
-                    placeholder={form.autoSku ? 'Auto on save' : 'Numeric SKU'}
+                    value={form.title}
+                    maxLength={80}
+                    onChange={(e) => handleChange('title', e.target.value)}
+                    className="h-9 text-sm max-w-xl"
+                    placeholder="Short human-friendly title (max 80 chars)"
                   />
-                  <label className="flex items-center gap-1 text-xs">
-                    <Checkbox
-                      checked={form.autoSku}
-                      onCheckedChange={(checked) => handleChange('autoSku', Boolean(checked))}
+                  {errors.title && <p className="mt-1 text-xs text-red-600">{errors.title}</p>}
+                </div>
+                <div className="relative">
+                  <label className="block text-sm font-medium mb-1">Model *</label>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      value={form.model}
+                      onChange={(e) => handleModelInputChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void runModelSearch(form.model);
+                        }
+                      }}
+                      onFocus={() => {
+                        if (modelOptions.length) setModelDropdownOpen(true);
+                      }}
+                      onBlur={() => {
+                        // Delay closing slightly so clicks on results still register.
+                        setTimeout(() => setModelDropdownOpen(false), 150);
+                      }}
+                      className="h-9 text-sm pr-8 flex-1"
+                      placeholder="Type a keyword and press Enter to search models…"
                     />
-                    <span>Auto Generated</span>
-                  </label>
-                </div>
-                {errors.sku && <p className="mt-1 text-xs text-red-600">{errors.sku}</p>}
-              </div>
-
-              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Category type</label>
-                  <div className="flex items-center gap-4 text-xs">
-                    <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        className="h-3 w-3"
-                        checked={form.categoryType === 'internal'}
-                        onChange={() => handleChange('categoryType', 'internal')}
-                      />
-                      <span>Internal</span>
-                    </label>
-                    <label className="flex items-center gap-1">
-                      <input
-                        type="radio"
-                        className="h-3 w-3"
-                        checked={form.categoryType === 'ebay'}
-                        onChange={() => handleChange('categoryType', 'ebay')}
-                      />
-                      <span>eBay</span>
-                    </label>
-                  </div>
-                </div>
-
-                {form.categoryType === 'internal' ? (
-                  <div>
-                    <label className="text-sm font-medium mb-1 block">Internal category *</label>
-                    <Select
-                      value={form.internalCategoryCode}
-                      onValueChange={(value) => handleChange('internalCategoryCode', value)}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-9 w-9 p-0 shrink-0"
+                      onClick={() => setShowModelsModal(true)}
+                      title="Browse models catalog"
                     >
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select category'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {dictionaries?.internal_categories && dictionaries.internal_categories.length > 0 ? (
-                          dictionaries.internal_categories.map((c) => (
-                        <SelectItem key={c.id} value={c.code}>
-                          {c.label}
-                        </SelectItem>
-                          ))
-                        ) : (
-                          <SelectItem value="__empty" disabled>
-                            No categories found (0 rows in tbl_parts_category)
-                          </SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
-                    {errors.category && (
-                      <p className="mt-1 text-xs text-red-600">{errors.category}</p>
-                    )}
+                      <Plus className="h-4 w-4" />
+                    </Button>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 items-center">
-                    <div>
-                      <label className="text-sm font-medium mb-1 block">External category ID</label>
-                      <Input
-                        value={form.externalCategoryId}
-                        onChange={(e) => handleChange('externalCategoryId', e.target.value)}
-                        className="h-8 text-sm max-w-[160px]"
-                        placeholder="eBay category ID"
-                      />
+                  {modelDropdownOpen && (
+                    <div className="absolute z-20 mt-1 w-full rounded-md border bg-white shadow-sm max-h-56 overflow-auto text-xs">
+                      {modelSearchLoading && (
+                        <div className="px-2 py-1 text-gray-500">Searching…</div>
+                      )}
+                      {!modelSearchLoading && modelOptions.length === 0 && (
+                        <div className="px-2 py-1 text-gray-500">No matches</div>
+                      )}
+                      {modelOptions.map((option) => (
+                        <button
+                          key={String(option.id)}
+                          type="button"
+                          className="block w-full px-2 py-1 text-left hover:bg-gray-100"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSelectModel(option);
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
-                    <div>
-                      <label className="text-sm font-medium mb-1 block">External category name</label>
-                      <Input
-                        value={form.externalCategoryName}
-                        onChange={(e) => handleChange('externalCategoryName', e.target.value)}
-                        className="h-8 text-sm"
-                        placeholder="Category name"
-                      />
-                    </div>
-                    {errors.externalCategory && (
-                      <p className="mt-1 text-xs text-red-600 col-span-2">
-                        {errors.externalCategory}
-                      </p>
-                    )}
-                  </div>
-                )}
+                  )}
+                  {errors.model && <p className="mt-1 text-xs text-red-600">{errors.model}</p>}
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
 
-          {/* Images */}
-          <section className="border rounded-md p-2 space-y-1.5">
-            <h3 className="ui-section-title">Images (Pic#1–Pic#12)</h3>
-            {/* On wide screens this becomes 2 rows × 6 columns so images only
+            {/* SKU & Category */}
+            <section className="border rounded-md p-2 space-y-2">
+              <h3 className="ui-section-title">SKU &amp; Category</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium">SKU</label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={form.sku}
+                      onChange={(e) => handleChange('sku', e.target.value.replace(/[^0-9]/g, ''))}
+                      disabled={form.autoSku}
+                      className="h-8 text-sm max-w-[140px]"
+                      placeholder={form.autoSku ? 'Auto on save' : 'Numeric SKU'}
+                    />
+                    <label className="flex items-center gap-1 text-xs">
+                      <Checkbox
+                        checked={form.autoSku}
+                        onCheckedChange={(checked) => handleChange('autoSku', Boolean(checked))}
+                      />
+                      <span>Auto Generated</span>
+                    </label>
+                  </div>
+                  {errors.sku && <p className="mt-1 text-xs text-red-600">{errors.sku}</p>}
+                </div>
+
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium mb-1 block">Category type</label>
+                    <div className="flex items-center gap-4 text-xs">
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="radio"
+                          className="h-3 w-3"
+                          checked={form.categoryType === 'internal'}
+                          onChange={() => handleChange('categoryType', 'internal')}
+                        />
+                        <span>Internal</span>
+                      </label>
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="radio"
+                          className="h-3 w-3"
+                          checked={form.categoryType === 'ebay'}
+                          onChange={() => handleChange('categoryType', 'ebay')}
+                        />
+                        <span>eBay</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {form.categoryType === 'internal' ? (
+                    <div>
+                      <label className="text-sm font-medium mb-1 block">Internal category *</label>
+                      <Select
+                        value={form.internalCategoryCode}
+                        onValueChange={(value) => handleChange('internalCategoryCode', value)}
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select category'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {dictionaries?.internal_categories && dictionaries.internal_categories.length > 0 ? (
+                            dictionaries.internal_categories.map((c) => (
+                              <SelectItem key={c.id} value={c.code}>
+                                {c.label}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="__empty" disabled>
+                              No categories found (0 rows in tbl_parts_category)
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      {errors.category && (
+                        <p className="mt-1 text-xs text-red-600">{errors.category}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 items-center">
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">External category ID</label>
+                        <Input
+                          value={form.externalCategoryId}
+                          onChange={(e) => handleChange('externalCategoryId', e.target.value)}
+                          className="h-8 text-sm max-w-[160px]"
+                          placeholder="eBay category ID"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">External category name</label>
+                        <Input
+                          value={form.externalCategoryName}
+                          onChange={(e) => handleChange('externalCategoryName', e.target.value)}
+                          className="h-8 text-sm"
+                          placeholder="Category name"
+                        />
+                      </div>
+                      {errors.externalCategory && (
+                        <p className="mt-1 text-xs text-red-600 col-span-2">
+                          {errors.externalCategory}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            {/* Images */}
+            <section className="border rounded-md p-2 space-y-1.5">
+              <h3 className="ui-section-title">Images (Pic#1–Pic#12)</h3>
+              {/* On wide screens this becomes 2 rows × 6 columns so images only
                 take two lines of space. On smaller screens they wrap
                 naturally. */}
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-1">
-              {form.pics.map((value, idx) => (
-                <div key={idx} className="flex items-center gap-1 text-xs">
-                  <span className="text-gray-600 whitespace-nowrap">Pic#{idx + 1}</span>
-                  <Input
-                    className="h-7 text-[11px] font-mono flex-1 min-w-0"
-                    placeholder="https://…"
-                    value={value}
-                    onChange={(e) => handlePicChange(idx, e.target.value)}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="whitespace-nowrap px-1 text-[11px]"
-                    onClick={() => handlePreviewPic(idx)}
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-1">
+                {form.pics.map((value, idx) => (
+                  <div key={idx} className="flex items-center gap-1 text-xs">
+                    <span className="text-gray-600 whitespace-nowrap">Pic#{idx + 1}</span>
+                    <Input
+                      className="h-7 text-[11px] font-mono flex-1 min-w-0"
+                      placeholder="https://…"
+                      value={value}
+                      onChange={(e) => handlePicChange(idx, e.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="whitespace-nowrap px-1 text-[11px]"
+                      onClick={() => handlePreviewPic(idx)}
+                    >
+                      Preview
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Shipping */}
+            <section className="border rounded-md p-2 space-y-2">
+              <h3 className="ui-section-title">Shipping</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Shipping group *</label>
+                  <Select
+                    value={form.shippingGroupCode}
+                    onValueChange={(value) => handleChange('shippingGroupCode', value)}
                   >
-                    Preview
-                  </Button>
+                    <SelectTrigger className="h-8 text-sm max-w-[200px]">
+                      <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select group'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {dictionaries?.shipping_groups && dictionaries.shipping_groups.length > 0 ? (
+                        dictionaries.shipping_groups.map((g) => (
+                          <SelectItem key={g.id} value={g.code}>
+                            {g.label}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="__empty" disabled>
+                          No shipping groups found (0 rows in tbl_internalshippinggroups)
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {errors.shippingGroupCode && (
+                    <p className="mt-1 text-xs text-red-600">{errors.shippingGroupCode}</p>
+                  )}
                 </div>
-              ))}
-            </div>
-          </section>
-
-          {/* Shipping */}
-          <section className="border rounded-md p-2 space-y-2">
-            <h3 className="ui-section-title">Shipping</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
-              <div>
-                <label className="text-sm font-medium mb-1 block">Shipping group *</label>
-                <Select
-                  value={form.shippingGroupCode}
-                  onValueChange={(value) => handleChange('shippingGroupCode', value)}
-                >
-                  <SelectTrigger className="h-8 text-sm max-w-[200px]">
-                    <SelectValue placeholder={dictionariesLoading && !dictionaries ? 'Loading…' : 'Select group'} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {dictionaries?.shipping_groups && dictionaries.shipping_groups.length > 0 ? (
-                      dictionaries.shipping_groups.map((g) => (
-                      <SelectItem key={g.id} value={g.code}>
-                        {g.label}
-                      </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="__empty" disabled>
-                        No shipping groups found (0 rows in tbl_internalshippinggroups)
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                {errors.shippingGroupCode && (
-                  <p className="mt-1 text-xs text-red-600">{errors.shippingGroupCode}</p>
-                )}
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Shipping type</label>
-                <Select
-                  value={form.shippingType}
-                  onValueChange={(value) => handleChange('shippingType', value as 'Flat' | 'Calculated')}
-                >
-                  <SelectTrigger className="h-8 text-sm max-w-[160px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Flat">Flat</SelectItem>
-                    <SelectItem value="Calculated">Calculated</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center mt-5 gap-2">
-                <Checkbox
-                  checked={form.domesticOnly}
-                  onCheckedChange={(checked) => handleChange('domesticOnly', Boolean(checked))}
-                />
-                <span className="text-xs">Domestic only shipping</span>
-              </div>
-            </div>
-          </section>
-
-          {/* Identifiers & condition */}
-          <section className="border rounded-md p-2.5 space-y-2">
-            <h3 className="ui-section-title">Identifiers &amp; condition</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">UPC / EAN / ISBN</label>
-                <Input
-                  value={form.upc}
-                  onChange={(e) => handleChange('upc', e.target.value)}
-                  disabled={form.upcDoesNotApply}
-                  className="h-8 text-xs"
-                />
-                <label className="mt-1 flex items-center gap-1 text-[11px]">
-                  <Checkbox
-                    checked={form.upcDoesNotApply}
-                    onCheckedChange={(checked) => handleChange('upcDoesNotApply', Boolean(checked))}
-                  />
-                  <span>Does not apply</span>
-                </label>
-              </div>
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">Part number</label>
-                <Input
-                  value={form.partNumber}
-                  onChange={(e) => handleChange('partNumber', e.target.value)}
-                  className="h-8 text-xs font-mono"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">Internal part name</label>
-                <Input
-                  value={form.part}
-                  onChange={(e) => handleChange('part', e.target.value)}
-                  className="h-8 text-xs"
-                  placeholder="e.g. LCD COMPLETE"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">MPN</label>
-                <Input
-                  value={form.mpn}
-                  onChange={(e) => handleChange('mpn', e.target.value)}
-                  className="h-8 text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">Condition *</label>
-                <Select
-                  value={form.conditionId}
-                  onValueChange={(value) => handleChange('conditionId', value)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(dictionaries?.conditions || []).map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.conditionId && (
-                  <p className="mt-1 text-[11px] text-red-600">{errors.conditionId}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">Grade (optional)</label>
-                <Input
-                  value={form.gradeId}
-                  onChange={(e) => handleChange('gradeId', e.target.value.replace(/[^0-9]/g, ''))}
-                  className="h-8 text-xs"
-                  placeholder="Numeric grade ID"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 mt-1">
-                <Checkbox
-                  checked={form.hasColor}
-                  onCheckedChange={(checked) => handleChange('hasColor', Boolean(checked))}
-                />
-                <Input
-                  value={form.colorValue}
-                  onChange={(e) => handleChange('colorValue', e.target.value)}
-                  disabled={!form.hasColor}
-                  className="h-8 text-xs flex-1"
-                  placeholder="Color value"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 mt-1">
-                <Checkbox
-                  checked={form.hasEpid}
-                  onCheckedChange={(checked) => handleChange('hasEpid', Boolean(checked))}
-                />
-                <Input
-                  value={form.epidValue}
-                  onChange={(e) => handleChange('epidValue', e.target.value)}
-                  disabled={!form.hasEpid}
-                  className="h-8 text-xs flex-1"
-                  placeholder="ePID value"
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* Price & weight */}
-          <section className="border rounded-md p-2 space-y-2">
-            <h3 className="ui-section-title">Price &amp; weight</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-              <div>
-                <label className="text-sm font-medium mb-1 block">Price *</label>
-                <Input
-                  value={form.price}
-                  onChange={(e) => handleChange('price', e.target.value)}
-                  className="h-8 text-sm max-w-[120px]"
-                  placeholder="0.00"
-                />
-                {errors.price && <p className="mt-1 text-xs text-red-600">{errors.price}</p>}
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex-1 max-w-[160px]">
-                  <label className="text-sm font-medium mb-1 block">Weight</label>
-                  <Input
-                    value={form.weight}
-                    onChange={(e) => handleChange('weight', e.target.value)}
-                    className="h-8 text-sm"
-                    placeholder="Numeric"
-                  />
-                </div>
-                <div className="w-24 mt-5">
-                  <Select value={form.unit} onValueChange={(v) => handleChange('unit', v)}>
-                    <SelectTrigger className="h-8 text-sm">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Shipping type</label>
+                  <Select
+                    value={form.shippingType}
+                    onValueChange={(value) => handleChange('shippingType', value as 'Flat' | 'Calculated')}
+                  >
+                    <SelectTrigger className="h-8 text-sm max-w-[160px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="oz">oz</SelectItem>
-                      <SelectItem value="lb">lb</SelectItem>
-                      <SelectItem value="g">g</SelectItem>
-                      <SelectItem value="kg">kg</SelectItem>
+                      <SelectItem value="Flat">Flat</SelectItem>
+                      <SelectItem value="Calculated">Calculated</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Listing settings */}
-          <section className="border rounded-md p-3 space-y-3">
-            <h3 className="ui-section-title">Listing settings</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">Listing type</label>
-                <Select
-                  value={form.listingType}
-                  onValueChange={(value) => handleChange('listingType', value)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(dictionaries?.listing_types || []).map((t) => (
-                      <SelectItem key={t.code} value={t.code}>
-                        {t.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">Listing duration</label>
-                <Select
-                  value={form.listingDuration}
-                  onValueChange={(value) => handleChange('listingDuration', value)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(dictionaries?.listing_durations || []).map((d) => (
-                      <SelectItem key={d.code} value={d.code}>
-                        {d.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-medium mb-1 block">Site</label>
-                <Select
-                  value={form.siteId}
-                  onValueChange={(value) => handleChange('siteId', value)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(dictionaries?.sites || []).map((s) => (
-                      <SelectItem key={s.site_id} value={String(s.site_id)}>
-                        {s.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2 mt-4">
-                <label className="flex items-center gap-1 text-[11px]">
+                <div className="flex items-center mt-5 gap-2">
                   <Checkbox
-                    checked={form.oneTimeAuction}
-                    onCheckedChange={(checked) => handleChange('oneTimeAuction', Boolean(checked))}
+                    checked={form.domesticOnly}
+                    onCheckedChange={(checked) => handleChange('domesticOnly', Boolean(checked))}
                   />
-                  <span>One time auction</span>
-                </label>
-                <label className="flex items-center gap-1 text-[11px]">
-                  <Checkbox
-                    checked={form.useMotors}
-                    onCheckedChange={(checked) => handleChange('useMotors', Boolean(checked))}
-                  />
-                  <span>Use eBay Motors site</span>
-                </label>
+                  <span className="text-xs">Domestic only shipping</span>
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
 
-          {/* Descriptions */}
-          <section className="border rounded-md p-2 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="ui-section-title">Descriptions &amp; templates</h3>
-              <span className="text-xs text-gray-500">
-                Condition description: {conditionDescRemaining} characters left (max 1000)
-              </span>
-            </div>
-            <div className="space-y-2">
-              <div className="space-y-1 max-w-xl">
-                <label className="text-sm font-medium block">Condition description</label>
-                <Textarea
-                  value={form.conditionDescription}
-                  onChange={(e) => handleChange('conditionDescription', e.target.value)}
-                  maxLength={1000}
-                  className="min-h-[70px] text-sm"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium block">Description (HTML, WYSIWYG)</label>
-                <HtmlEditor value={form.description} onChange={(html) => handleChange('description', html)} />
-                <p className="text-xs text-gray-500">
-                  Full listing description. HTML is stored as-is; use the toolbar to adjust headings, fonts, colors,
-                  and lists.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {/* Advanced flags */}
-          <section className="border rounded-md p-2.5 space-y-2 bg-gray-50/60">
-            <h3 className="ui-section-title">Advanced</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
-              <div>
-                <label className="flex items-center gap-1 text-[11px] mb-1">
-                  <Checkbox
-                    checked={form.alertEnabled}
-                    onCheckedChange={(checked) => handleChange('alertEnabled', Boolean(checked))}
+            {/* Identifiers & condition */}
+            <section className="border rounded-md p-2.5 space-y-2">
+              <h3 className="ui-section-title">Identifiers &amp; condition</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">UPC / EAN / ISBN</label>
+                  <Input
+                    value={form.upc}
+                    onChange={(e) => handleChange('upc', e.target.value)}
+                    disabled={form.upcDoesNotApply}
+                    className="h-8 text-xs"
                   />
-                  <span>Enable alert</span>
-                </label>
-                <Textarea
-                  value={form.alertMessage}
-                  onChange={(e) => handleChange('alertMessage', e.target.value)}
-                  disabled={!form.alertEnabled}
-                  className="min-h-[70px] text-xs"
-                  placeholder="Internal alert message for this SKU"
-                />
+                  <label className="mt-1 flex items-center gap-1 text-[11px]">
+                    <Checkbox
+                      checked={form.upcDoesNotApply}
+                      onCheckedChange={(checked) => handleChange('upcDoesNotApply', Boolean(checked))}
+                    />
+                    <span>Does not apply</span>
+                  </label>
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">Part number</label>
+                  <Input
+                    value={form.partNumber}
+                    onChange={(e) => handleChange('partNumber', e.target.value)}
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">Internal part name</label>
+                  <Input
+                    value={form.part}
+                    onChange={(e) => handleChange('part', e.target.value)}
+                    className="h-8 text-xs"
+                    placeholder="e.g. LCD COMPLETE"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">MPN</label>
+                  <Input
+                    value={form.mpn}
+                    onChange={(e) => handleChange('mpn', e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">Condition *</label>
+                  <Select
+                    value={form.conditionId}
+                    onValueChange={(value) => handleChange('conditionId', value)}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(dictionaries?.conditions || []).map((c) => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {errors.conditionId && (
+                    <p className="mt-1 text-[11px] text-red-600">{errors.conditionId}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">Grade (optional)</label>
+                  <Input
+                    value={form.gradeId}
+                    onChange={(e) => handleChange('gradeId', e.target.value.replace(/[^0-9]/g, ''))}
+                    className="h-8 text-xs"
+                    placeholder="Numeric grade ID"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 mt-1">
+                  <Checkbox
+                    checked={form.hasColor}
+                    onCheckedChange={(checked) => handleChange('hasColor', Boolean(checked))}
+                  />
+                  <Input
+                    value={form.colorValue}
+                    onChange={(e) => handleChange('colorValue', e.target.value)}
+                    disabled={!form.hasColor}
+                    className="h-8 text-xs flex-1"
+                    placeholder="Color value"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 mt-1">
+                  <Checkbox
+                    checked={form.hasEpid}
+                    onCheckedChange={(checked) => handleChange('hasEpid', Boolean(checked))}
+                  />
+                  <Input
+                    value={form.epidValue}
+                    onChange={(e) => handleChange('epidValue', e.target.value)}
+                    disabled={!form.hasEpid}
+                    className="h-8 text-xs flex-1"
+                    placeholder="ePID value"
+                  />
+                </div>
               </div>
-              <div className="text-[11px] text-gray-600 space-y-1">
-                <p>
-                  Record status, checked flags, clone metadata and other low-level audit fields are managed automatically on
-                  the backend and are not editable here.
-                </p>
+            </section>
+
+            {/* Price & weight */}
+            <section className="border rounded-md p-2 space-y-2">
+              <h3 className="ui-section-title">Price &amp; weight</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Price *</label>
+                  <Input
+                    value={form.price}
+                    onChange={(e) => handleChange('price', e.target.value)}
+                    className="h-8 text-sm max-w-[120px]"
+                    placeholder="0.00"
+                  />
+                  {errors.price && <p className="mt-1 text-xs text-red-600">{errors.price}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 max-w-[160px]">
+                    <label className="text-sm font-medium mb-1 block">Weight</label>
+                    <Input
+                      value={form.weight}
+                      onChange={(e) => handleChange('weight', e.target.value)}
+                      className="h-8 text-sm"
+                      placeholder="Numeric"
+                    />
+                  </div>
+                  <div className="w-24 mt-5">
+                    <Select value={form.unit} onValueChange={(v) => handleChange('unit', v)}>
+                      <SelectTrigger className="h-8 text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="oz">oz</SelectItem>
+                        <SelectItem value="lb">lb</SelectItem>
+                        <SelectItem value="g">g</SelectItem>
+                        <SelectItem value="kg">kg</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+
+            {/* Listing settings */}
+            <section className="border rounded-md p-3 space-y-3">
+              <h3 className="ui-section-title">Listing settings</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">Listing type</label>
+                  <Select
+                    value={form.listingType}
+                    onValueChange={(value) => handleChange('listingType', value)}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(dictionaries?.listing_types || []).map((t) => (
+                        <SelectItem key={t.code} value={t.code}>
+                          {t.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">Listing duration</label>
+                  <Select
+                    value={form.listingDuration}
+                    onValueChange={(value) => handleChange('listingDuration', value)}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(dictionaries?.listing_durations || []).map((d) => (
+                        <SelectItem key={d.code} value={d.code}>
+                          {d.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium mb-1 block">Site</label>
+                  <Select
+                    value={form.siteId}
+                    onValueChange={(value) => handleChange('siteId', value)}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(dictionaries?.sites || []).map((s) => (
+                        <SelectItem key={s.site_id} value={String(s.site_id)}>
+                          {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2 mt-4">
+                  <label className="flex items-center gap-1 text-[11px]">
+                    <Checkbox
+                      checked={form.oneTimeAuction}
+                      onCheckedChange={(checked) => handleChange('oneTimeAuction', Boolean(checked))}
+                    />
+                    <span>One time auction</span>
+                  </label>
+                  <label className="flex items-center gap-1 text-[11px]">
+                    <Checkbox
+                      checked={form.useMotors}
+                      onCheckedChange={(checked) => handleChange('useMotors', Boolean(checked))}
+                    />
+                    <span>Use eBay Motors site</span>
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            {/* Descriptions */}
+            <section className="border rounded-md p-2 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="ui-section-title">Descriptions &amp; templates</h3>
+                <span className="text-xs text-gray-500">
+                  Condition description: {conditionDescRemaining} characters left (max 1000)
+                </span>
+              </div>
+              <div className="space-y-2">
+                <div className="space-y-1 max-w-xl">
+                  <label className="text-sm font-medium block">Condition description</label>
+                  <Textarea
+                    value={form.conditionDescription}
+                    onChange={(e) => handleChange('conditionDescription', e.target.value)}
+                    maxLength={1000}
+                    className="min-h-[70px] text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium block">Description (HTML, WYSIWYG)</label>
+                  <HtmlEditor value={form.description} onChange={(html) => handleChange('description', html)} />
+                  <p className="text-xs text-gray-500">
+                    Full listing description. HTML is stored as-is; use the toolbar to adjust headings, fonts, colors,
+                    and lists.
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {/* Advanced flags */}
+            <section className="border rounded-md p-2.5 space-y-2 bg-gray-50/60">
+              <h3 className="ui-section-title">Advanced</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+                <div>
+                  <label className="flex items-center gap-1 text-[11px] mb-1">
+                    <Checkbox
+                      checked={form.alertEnabled}
+                      onCheckedChange={(checked) => handleChange('alertEnabled', Boolean(checked))}
+                    />
+                    <span>Enable alert</span>
+                  </label>
+                  <Textarea
+                    value={form.alertMessage}
+                    onChange={(e) => handleChange('alertMessage', e.target.value)}
+                    disabled={!form.alertEnabled}
+                    className="min-h-[70px] text-xs"
+                    placeholder="Internal alert message for this SKU"
+                  />
+                </div>
+                <div className="text-[11px] text-gray-600 space-y-1">
+                  <p>
+                    Record status, checked flags, clone metadata and other low-level audit fields are managed automatically on
+                    the backend and are not editable here.
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="mt-3 flex justify-end gap-2 text-xs">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onClose}
+              disabled={disabled}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="bg-green-600 hover:bg-green-700 text-white"
+              onClick={() => {
+                void handleSubmit();
+              }}
+              disabled={disabled}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
         </div>
+      </DraggableResizableDialog>
 
-        <div className="mt-3 flex justify-end gap-2 text-xs">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onClose}
-            disabled={disabled}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="bg-green-600 hover:bg-green-700 text-white"
-            onClick={() => {
-              void handleSubmit();
-            }}
-            disabled={disabled}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      {/* Models Browse/Create Modal */}
+      <ModelsModal
+        isOpen={showModelsModal}
+        onClose={() => setShowModelsModal(false)}
+        onModelSelected={handlePartsModelSelected}
+      />
+    </>
   );
 }

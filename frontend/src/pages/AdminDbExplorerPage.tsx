@@ -125,6 +125,8 @@ interface MssqlColumnInfo {
   defaultValue: string | null;
 }
 
+// NOTE (2025-11-27): AdminDbExplorerPage includes per-column search for large tables
+// and a safe TRUNCATE action wired to /api/admin/db/tables/{name}/truncate.
 const AdminDbExplorerPage: React.FC = () => {
   const [activeDb, setActiveDb] = useState<DbMode>('supabase');
   const [tables, setTables] = useState<TableInfo[]>([]);
@@ -134,10 +136,14 @@ const AdminDbExplorerPage: React.FC = () => {
   const [schema, setSchema] = useState<TableSchemaResponse | null>(null);
   const [rows, setRows] = useState<RowsResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'structure' | 'data'>('structure');
+  // Client-side filter for table structure (column list)
+  const [columnSearch, setColumnSearch] = useState('');
   const [dataSortColumn, setDataSortColumn] = useState<string | null>(null);
   const [dataSortDirection, setDataSortDirection] = useState<'asc' | 'desc'>('desc');
   const [rowsLimit, setRowsLimit] = useState(50);
   const [rowsOffset, setRowsOffset] = useState(0);
+  const [dataSearchColumn, setDataSearchColumn] = useState<string | null>(null);
+  const [dataSearchValue, setDataSearchValue] = useState('');
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -149,6 +155,8 @@ const AdminDbExplorerPage: React.FC = () => {
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
   const [truncateLoading, setTruncateLoading] = useState(false);
   const [mssqlDatabase, setMssqlDatabase] = useState('DB_A28F26_parts');
+  // Per-column pixel widths for the DB Explorer data grid only.
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
 
   // Migration console state
   const [migrationCommandText, setMigrationCommandText] = useState('');
@@ -275,9 +283,17 @@ const AdminDbExplorerPage: React.FC = () => {
     setError(null);
     try {
       if (activeDb === 'supabase') {
-        const resp = await api.get<RowsResponse>(`/api/admin/db/tables/${encodeURIComponent(table.name)}/rows`, {
-          params: { limit, offset },
-        });
+        const resp = await api.get<RowsResponse>(
+          `/api/admin/db/tables/${encodeURIComponent(table.name)}/rows`,
+          {
+            params: {
+              limit,
+              offset,
+              search_column: dataSearchColumn || undefined,
+              search_value: dataSearchValue.trim() || undefined,
+            },
+          },
+        );
         setRows(resp.data);
       } else {
         const resp = await api.post<MssqlTablePreviewResponse>('/api/admin/mssql/table-preview', {
@@ -339,6 +355,33 @@ const AdminDbExplorerPage: React.FC = () => {
       setDataSortDirection('asc');
       return column;
     });
+  };
+
+  /**
+   * Start a simple mouse-driven column resize interaction for the DB Explorer data grid.
+   * This only affects the in-memory layout of this page and does not touch any shared grid code.
+   */
+  const beginColumnResize = (columnName: string, clientX: number) => {
+    const MIN_WIDTH = 80;
+    const MAX_WIDTH = 600;
+
+    // Start from the last saved width (if any); otherwise fall back to a reasonable default.
+    const startWidth = columnWidths[columnName] ?? 160;
+    const startX = clientX;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const delta = event.clientX - startX;
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + delta));
+      setColumnWidths((prev) => ({ ...prev, [columnName]: next }));
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   };
 
   useEffect(() => {
@@ -466,6 +509,12 @@ const AdminDbExplorerPage: React.FC = () => {
     }
   };
 
+  const handleApplyDataSearch = () => {
+    if (!selectedTable) return;
+    setRowsOffset(0);
+    loadRows(selectedTable, rowsLimit, 0);
+  };
+
   const handleLoadMore = () => {
     if (!selectedTable || !rows) return;
     const newOffset = rowsOffset + rowsLimit;
@@ -524,6 +573,30 @@ const AdminDbExplorerPage: React.FC = () => {
     if (!schema) {
       return <div className="text-sm text-gray-500">No structure loaded.</div>;
     }
+
+    // Apply client-side filter + alphabetical sort for columns
+    const q = columnSearch.trim();
+    let cols = schema.columns;
+    if (q) {
+      const pattern = q.replace(/\*/g, '.*');
+      let re: RegExp;
+      try {
+        re = new RegExp(pattern, 'i');
+      } catch {
+        // If user typed an invalid regex, fall back to simple case-insensitive substring
+        const qLower = q.toLowerCase();
+        cols = cols.filter((c) => c.name.toLowerCase().includes(qLower));
+        re = null as unknown as RegExp; // not used below
+      }
+      if (typeof re !== 'undefined' && re !== (null as unknown as RegExp)) {
+        cols = cols.filter((c) => re.test(c.name));
+      }
+    }
+
+    const visible = [...cols].sort((a, b) =>
+      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }),
+    );
+
     return (
       <table className="min-w-full border text-sm">
         <thead className="bg-gray-100">
@@ -537,7 +610,7 @@ const AdminDbExplorerPage: React.FC = () => {
           </tr>
         </thead>
         <tbody>
-          {schema.columns.map((col) => (
+          {visible.map((col) => (
             <tr key={col.name}>
               <td className="px-2 py-1 border font-mono text-xs">{col.name}</td>
               <td className="px-2 py-1 border text-xs">{col.data_type}</td>
@@ -595,55 +668,118 @@ const AdminDbExplorerPage: React.FC = () => {
         <div className="flex items-center justify-between text-xs text-gray-600">
           <div>
             Rows {rowsOffset + 1}–{rowsOffset + rows.rows.length} (limit {rowsLimit}
-            {rows.total_estimate != null && `, estimate ~${Math.round(rows.total_estimate)}`} )
+            {rows.total_estimate != null ? `, estimate ~${Math.round(rows.total_estimate)}` : ''} )
           </div>
-          <div className="flex items-center gap-2">
-            <span>Limit:</span>
-            <select
-              className="border rounded px-1 py-0.5 text-xs"
-              value={rowsLimit}
-              onChange={(e) => handleChangeLimit(Number(e.target.value) || 50)}
-            >
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-            </select>
+          <div className="flex items-center gap-4">
+            {/* Per-column search (Supabase only for now) */}
+            {activeDb === 'supabase' && schema && (
+              <div className="flex items-center gap-1">
+                <span>Search column:</span>
+                <select
+                  className="border rounded px-1 py-0.5 text-[11px] max-w-[140px]"
+                  value={dataSearchColumn || ''}
+                  onChange={(e) => setDataSearchColumn(e.target.value || null)}
+                >
+                  <option value="">(all)</option>
+                  {schema.columns.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  className="border rounded px-1 py-0.5 text-[11px] max-w-[160px]"
+                  placeholder="substring, e.g. 2022-08-26"
+                  value={dataSearchValue}
+                  onChange={(e) => setDataSearchValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleApplyDataSearch();
+                    }
+                  }}
+                />
+                <button
+                  className="px-2 py-0.5 border rounded bg-white hover:bg-gray-50"
+                  onClick={handleApplyDataSearch}
+                  disabled={!dataSearchColumn || !dataSearchValue.trim()}
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span>Limit:</span>
+              <select
+                className="border rounded px-1 py-0.5 text-xs"
+                value={rowsLimit}
+                onChange={(e) => handleChangeLimit(Number(e.target.value) || 50)}
+              >
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+              </select>
+            </div>
           </div>
         </div>
         <div className="overflow-auto border rounded max-h-[60vh]">
-          <table className="min-w-full text-xs table-fixed">
-            <thead className="bg-gray-100">
+          <table
+            id="db-explorer-data-table"
+            className="min-w-full text-xs table-auto"
+          >
+            <thead className="bg-gray-100 sticky top-0 z-10">
               <tr>
-                {columns.map((col) => (
-                  <th
-                    key={col}
-                    className="px-2 py-1 border text-left font-mono text-[11px] cursor-pointer select-none"
-                    onClick={() => handleDataHeaderClick(col)}
-                  >
-                    {col}
-                    {dataSortColumn === col && (dataSortDirection === 'asc' ? ' ▲' : ' ▼')}
-                  </th>
-                ))}
+                {columns.map((col) => {
+                  const width = columnWidths[col];
+                  return (
+                    <th
+                      key={col}
+                      data-column-name={col}
+                      className="relative px-2 py-1 border text-left font-mono text-[11px] cursor-pointer select-none bg-gray-100"
+                      style={width ? { width } : undefined}
+                      onClick={() => handleDataHeaderClick(col)}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate">
+                          {col}
+                          {dataSortColumn === col && (dataSortDirection === 'asc' ? ' ▲' : ' ▼')}
+                        </span>
+                        <span
+                          className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize select-none"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            beginColumnResize(col, e.clientX);
+                          }}
+                        />
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
               {sortedRows.map((row, idx) => (
                 <tr key={idx} className="border-t">
-                  {columns.map((col) => (
-                    <td
-                      key={col}
-                      className="px-2 py-1 border whitespace-nowrap max-w-xs overflow-x-auto text-[11px] font-mono"
-                    >
-                      <div className="inline-block whitespace-pre select-text">
-                        {row[col] === null || row[col] === undefined
-                          ? ''
-                          : typeof row[col] === 'object'
-                          ? JSON.stringify(row[col], null, 2)
-                          : String(row[col])}
-                      </div>
-                    </td>
-                  ))}
+                  {columns.map((col) => {
+                    const width = columnWidths[col];
+                    return (
+                      <td
+                        key={col}
+                        className="px-2 py-1 border whitespace-nowrap max-w-xs overflow-x-auto text-[11px] font-mono"
+                        style={width ? { width } : undefined}
+                      >
+                        <div className="inline-block whitespace-pre select-text">
+                          {row[col] === null || row[col] === undefined
+                            ? ''
+                            : typeof row[col] === 'object'
+                            ? JSON.stringify(row[col], null, 2)
+                            : String(row[col])}
+                        </div>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -967,6 +1103,20 @@ const AdminDbExplorerPage: React.FC = () => {
                         )}
                       </>
                     )}
+                  </div>
+                )}
+
+                {/* Column filter for structure tab */}
+                {activeTab === 'structure' && (
+                  <div className="mt-2 mb-1 flex items-center gap-2 text-xs">
+                    <span className="text-gray-600">Filter columns:</span>
+                    <input
+                      type="text"
+                      value={columnSearch}
+                      onChange={(e) => setColumnSearch(e.target.value)}
+                      placeholder="e.g. title, *date*, id"
+                      className="border rounded px-2 py-1 text-xs max-w-xs"
+                    />
                   </div>
                 )}
 

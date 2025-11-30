@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 
 class UserRole(str, Enum):
@@ -16,6 +16,8 @@ class User(BaseModel):
     hashed_password: str
     role: UserRole = UserRole.USER
     is_active: bool = True
+    # When True, user must change password on next login.
+    must_change_password: bool = False
     created_at: datetime
     ebay_connected: bool = False
     ebay_access_token: Optional[str] = None  # Production token
@@ -47,6 +49,8 @@ class UserResponse(BaseModel):
     username: str
     role: UserRole
     is_active: bool
+    # When True, the user is forced to change password on next login.
+    must_change_password: bool = False
     created_at: datetime
     ebay_connected: bool
 
@@ -64,3 +68,9 @@ class PasswordReset(BaseModel):
     email: EmailStr
     reset_token: str
     new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_new_password: str

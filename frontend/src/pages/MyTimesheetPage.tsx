@@ -14,7 +14,14 @@ export default function MyTimesheetPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const resp = await getMyTimesheets({ page: 1, pageSize: 50 });
+      const now = new Date();
+      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      const resp = await getMyTimesheets({
+        from: fourteenDaysAgo.toISOString(),
+        to: now.toISOString(),
+        page: 1,
+        pageSize: 100,
+      });
       if (resp.success && resp.data) {
         const items = resp.data.items || [];
         setEntries(items);

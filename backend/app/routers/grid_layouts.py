@@ -177,6 +177,7 @@ ACCOUNTING_TRANSACTIONS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="date", label="Date", type="date", width_default=140),
   ColumnMeta(name="direction", label="Direction", type="string", width_default=100),
   ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
+  ColumnMeta(name="signed_amount", label="Amount (±)", type="money", width_default=120),
   ColumnMeta(name="account_name", label="Account", type="string", width_default=180),
   ColumnMeta(name="counterparty", label="Counterparty", type="string", width_default=200),
   ColumnMeta(name="expense_category_id", label="Category", type="string", width_default=140),
@@ -198,7 +199,13 @@ CASES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
   ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
   ColumnMeta(name="respond_by_date", label="Respond by", type="datetime", width_default=180),
-  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  ColumnMeta(name="ebay_user_id", label="eBay user ID", type="string", width_default=220),
+  # Normalized Post-Order case fields (ebay_cases)
+  ColumnMeta(name="item_id", label="Item ID", type="string", width_default=200),
+  ColumnMeta(name="transaction_id", label="Transaction ID", type="string", width_default=220),
+  ColumnMeta(name="case_status_enum", label="Case status (API)", type="string", width_default=160),
+  ColumnMeta(name="creation_date_api", label="Created (API)", type="datetime", width_default=200),
+  ColumnMeta(name="last_modified_date_api", label="Updated (API)", type="datetime", width_default=200),
 ]
 
 FINANCES_COLUMNS_META: List[ColumnMeta] = [
@@ -227,6 +234,24 @@ FINANCES_FEES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="amount_value", label="Amount", type="money", width_default=140),
   ColumnMeta(name="amount_currency", label="Currency", type="string", width_default=80),
   ColumnMeta(name="raw_payload", label="Raw payload", type="string", width_default=400),
+]
+
+SNIPER_SNIPES_COLUMNS_META: List[ColumnMeta] = [
+  ColumnMeta(name="status", label="Status", type="string", width_default=120),
+  ColumnMeta(name="has_bid", label="Bid placed", type="boolean", width_default=110),
+  ColumnMeta(name="ebay_account_id", label="eBay account", type="string", width_default=200),
+  ColumnMeta(name="item_id", label="Item ID", type="string", width_default=180),
+  ColumnMeta(name="title", label="Title", type="string", width_default=260),
+  ColumnMeta(name="max_bid_amount", label="Max bid", type="money", width_default=120),
+  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
+  ColumnMeta(name="end_time", label="End time", type="datetime", width_default=180),
+  ColumnMeta(name="seconds_before_end", label="Seconds before end", type="number", width_default=140),
+  ColumnMeta(name="comment", label="Comment", type="string", width_default=260),
+  ColumnMeta(name="current_bid_at_creation", label="Current bid at creation", type="money", width_default=150),
+  ColumnMeta(name="result_price", label="Result price", type="money", width_default=120),
+  ColumnMeta(name="result_message", label="Result message", type="string", width_default=260),
+  ColumnMeta(name="created_at", label="Created at", type="datetime", width_default=180),
+  ColumnMeta(name="updated_at", label="Updated at", type="datetime", width_default=180),
 ]
 
 # Buying grid: logical view over ebay_buyer (legacy tbl_ebay_buyer equivalent).
@@ -355,7 +380,7 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "amount",
             "currency",
             "respond_by_date",
-            "ebay_account_id",
+            "ebay_user_id",
         ],
         "sort": {"column": "open_date", "direction": "desc"},
     },
@@ -385,6 +410,22 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "amount_value",
             "amount_currency",
             "raw_payload",
+        ],
+        "sort": {"column": "created_at", "direction": "desc"},
+    },
+    "sniper_snipes": {
+        "visible_columns": [
+            "status",
+            "has_bid",
+            "ebay_account_id",
+            "item_id",
+            "title",
+            "max_bid_amount",
+            "currency",
+            "end_time",
+            "seconds_before_end",
+            "comment",
+            "created_at",
         ],
         "sort": {"column": "created_at", "direction": "desc"},
     },
@@ -438,6 +479,25 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "date",
             "direction",
             "amount",
+            "account_name",
+            "counterparty",
+            "expense_category_id",
+            "storage_id",
+            "source_type",
+            "is_personal",
+            "is_internal_transfer",
+            "description",
+        ],
+        "sort": {"column": "date", "direction": "desc"},
+    },
+    "ledger_transactions": {
+        # Ledger grid reuses the same projection as accounting_transactions but
+        # is conceptually the central money-movement view used by the
+        # Accounting → Ledger tab.
+        "visible_columns": [
+            "date",
+            "direction",
+            "signed_amount",
             "account_name",
             "counterparty",
             "expense_category_id",
@@ -533,6 +593,8 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return FINANCES_COLUMNS_META
     if grid_key == "finances_fees":
         return FINANCES_FEES_COLUMNS_META
+    if grid_key == "sniper_snipes":
+        return SNIPER_SNIPES_COLUMNS_META
     if grid_key == "buying":
         return BUYING_COLUMNS_META
     if grid_key == "accounting_bank_statements":
@@ -540,6 +602,12 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
     if grid_key == "accounting_cash_expenses":
         return ACCOUNTING_CASH_EXPENSES_COLUMNS_META
     if grid_key == "accounting_transactions":
+        return ACCOUNTING_TRANSACTIONS_COLUMNS_META
+    if grid_key == "ledger_transactions":
+        # For now the Ledger grid uses the same column set as
+        # accounting_transactions. If we later extend AccountingTransaction with
+        # more ledger-specific fields (e.g. tags or bank account mapping), this
+        # alias makes it easy to add a dedicated ColumnMeta list.
         return ACCOUNTING_TRANSACTIONS_COLUMNS_META
     return []
 

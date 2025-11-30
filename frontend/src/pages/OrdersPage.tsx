@@ -62,7 +62,7 @@ export const OrdersPage = () => {
           <h1 className="text-2xl font-bold mb-4">Orders</h1>
 
           {stats && (
-            <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div className="bg-blue-50 p-4 rounded-lg">
                 <div className="text-sm text-gray-600">Total Orders</div>
                 <div className="text-2xl font-bold">{stats.total_orders || 0}</div>
@@ -85,7 +85,7 @@ export const OrdersPage = () => {
             </div>
           )}
 
-          <div className="flex gap-4 mt-4">
+          <div className="flex flex-col md:flex-row gap-3 md:gap-4 mt-4">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
               <Input
@@ -97,7 +97,7 @@ export const OrdersPage = () => {
             </div>
 
             <select
-              className="px-4 py-2 border rounded-md"
+              className="px-4 py-2 border rounded-md w-full md:w-auto"
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
             >
@@ -108,7 +108,7 @@ export const OrdersPage = () => {
               <option value="CANCELLED">Cancelled</option>
             </select>
 
-            <Button variant="outline">
+            <Button variant="outline" className="w-full md:w-auto">
               <Download className="h-4 w-4 mr-2" />
               Export
             </Button>

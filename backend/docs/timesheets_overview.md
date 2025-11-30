@@ -42,7 +42,7 @@ The new `timesheets` table stores per-user time entries:
 
 Constraints and indexes:
 
-- `timesheets_consistent_time_chk` – ensures either both `start_time`/`end_time` are null, or both non-null with `end_time > start_time`.
+- `timesheets_consistent_time_chk` – ensures either both `start_time`/`end_time` are null, or `start_time` is set with `end_time` still null (open timer), or both non-null with `end_time > start_time`.
 - `idx_timesheets_user_start` on `(user_id, start_time DESC)`.
 - `idx_timesheets_delete_flag` on `delete_flag`.
 - Trigger `trg_timesheets_set_record_updated` keeps `record_updated` in sync on updates.
@@ -123,3 +123,93 @@ The JSON contracts for users, timesheet entries, pagination, and error envelopes
   - Can view records for all users.
   - Can create and edit entries for any user.
   - Are responsible for fixing mistakes and handling missed clock-ins.
+
+## End-to-end architecture
+
+Timesheets span the legacy MSSQL data, the new Postgres schema, FastAPI backend, and the React frontend.
+
+**Storage and schema**
+
+- Legacy table: `dbo.tbl_Timesheet` (source system). See `docs/timesheets_schema_mapping.md` for column-by-column mapping.
+- Migration layer: Alembic migration `20251117_timesheets_001.py` creates the new `timesheets` table and backfills from legacy when available.
+- Primary table: `public.timesheets` (SQLAlchemy model `app.db_models.timesheet.Timesheet`).
+- Each row may contain `legacy_id` pointing back to the original `tbl_Timesheet.ID`.
+
+**Backend services**
+
+- API router: `app.routers.timesheets` mounted at `/api/timesheets`.
+- Dependencies:
+  - `get_db()` – SQLAlchemy session.
+  - `get_current_active_user()` – JWT-based auth from `app.services.auth`.
+- Key functions:
+  - `start_timesheet()` – worker start; validates that there is no open entry and then inserts a new row.
+  - `stop_timesheet()` – worker stop; finds the latest open row and finalizes it with `end_time` and `duration_minutes`.
+  - `list_my_timesheets()` – worker history; filters by `user_id` and optional `from`/`to` range.
+  - `admin_list_timesheets()` – admin grid; multi-user listing with filters.
+  - `admin_add_timesheet()` – admin manual insertion.
+  - `admin_patch_timesheet()` – admin editing / soft delete.
+- DTOs:
+  - `TimesheetEntry` – canonical JSON contract for a timesheet row (camelCase field names).
+  - `Pagination` – standard paginated response wrapper.
+  - `Envelope` – `{ success, data, error }` wrapper used across endpoints.
+
+**Frontend integration**
+
+- API client: `frontend/src/api/timesheets.ts` wraps the HTTP endpoints and exposes typed helpers:
+  - `startTimesheet(description?)` → `POST /api/timesheets/start`.
+  - `stopTimesheet(description?)` → `POST /api/timesheets/stop`.
+  - `getMyTimesheets({ from, to, page, pageSize })` → `GET /api/timesheets/my`.
+  - `adminListTimesheets`, `adminAddTimesheet`, `adminPatchTimesheet` for admin use.
+- Worker UI:
+  - `frontend/src/pages/MyTimesheetPage.tsx` renders the **My Timesheet** worker view.
+  - It uses `startTimesheet` / `stopTimesheet` and calls `getMyTimesheets` with a **14-day window** (`from = now-14d`, `to = now`).
+  - The page detects the active entry by checking for `endTime === null && !deleteFlag`.
+- Admin UI:
+  - `frontend/src/pages/AdminTimesheetsPage.tsx` implements the admin grid, add/edit/delete controls, and filters.
+- Navigation:
+  - Header component `frontend/src/components/FixedHeader.tsx` renders a small **clock icon** button near the build info.
+  - Clicking the clock runs `navigate('/timesheets/my')` and takes the current user to their own timesheet page.
+  - The same header uses the logged-in user from `useAuth()` to decide which admin tabs to show.
+
+## Request/response flow examples
+
+### Worker starts a timer from the nav clock
+
+1. User clicks the clock icon in the fixed header.
+2. `FixedHeader` calls `navigate('/timesheets/my')` (client-side route change).
+3. `MyTimesheetPage` loads and immediately invokes `loadData()`:
+   - Computes `now` and `fourteenDaysAgo`.
+   - Calls `getMyTimesheets({ from, to, page: 1, pageSize: 100 })`.
+   - Backend `list_my_timesheets()` filters rows for the current `user_id` and date range and returns a paginated `TimesheetEntry` list.
+4. User optionally types a description and clicks **Start Time**.
+5. Frontend calls `startTimesheet(description)` → `POST /api/timesheets/start`.
+6. Backend `start_timesheet()`:
+   - Checks for an open timer entry for this user.
+   - Inserts a new `timesheets` row with `start_time = now`, `end_time = NULL`, and initial audit fields.
+   - Returns `Envelope(success=True, data=TimesheetEntry, error=None)`.
+7. Frontend clears the description and reloads data to show the new active entry.
+
+### Worker stops a timer
+
+1. On the **My Timesheet** page, user clicks **Stop Time**.
+2. Frontend calls `stopTimesheet(description)` → `POST /api/timesheets/stop`.
+3. Backend `stop_timesheet()`:
+   - Finds the most recent open entry (`end_time IS NULL`) for this user.
+   - Sets `end_time = now` and recomputes `duration_minutes`.
+   - Optionally updates `description`.
+   - Updates audit columns and commits the transaction.
+4. Frontend reloads the last 14 days and shows the closed entry in the **Recent entries** table.
+
+### Admin edits an entry
+
+1. Admin navigates to `/timesheets/admin` and uses filters as needed.
+2. Frontend calls `adminListTimesheets()` → `GET /api/timesheets`.
+3. Backend `admin_list_timesheets()` checks that `current_user.role == 'admin'` and then returns paginated `TimesheetEntry` items.
+4. Admin uses **Edit** on a row and saves changes.
+5. Frontend calls `adminPatchTimesheet(id, payload)` → `PATCH /api/timesheets/admin/{id}`.
+6. Backend `admin_patch_timesheet()`:
+   - Applies partial updates (start, end, rate, description, deleteFlag).
+   - Validates that `end_time > start_time` when both are set and recomputes `duration_minutes`.
+   - Updates `record_updated`/`record_updated_by` and returns the updated `TimesheetEntry`.
+
+These flows should give future maintainers and agents enough context to safely evolve the timesheet system without re-reading the entire codebase.

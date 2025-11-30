@@ -17,13 +17,5 @@ export const authApi = {
     return response.data;
   },
 
-  async requestPasswordReset(email: string): Promise<{ message: string; reset_token?: string }> {
-    const response = await apiClient.post('/auth/password-reset/request', { email });
-    return response.data;
-  },
-
-  async resetPassword(email: string, reset_token: string, new_password: string): Promise<{ message: string }> {
-    const response = await apiClient.post('/auth/password-reset/confirm', { email, reset_token, new_password });
-    return response.data;
-  },
+  // Public password reset endpoints are disabled; admins reset passwords via admin UI.
 };

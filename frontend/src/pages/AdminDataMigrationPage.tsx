@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import api from '@/lib/apiClient';
 
-type MainTab = 'mssql-database' | 'temp';
+type MainTab = 'mssql-database' | 'temp' | 'worker';
 type DetailTab = 'columns' | 'preview';
 
 interface MssqlConnectionConfig {
@@ -40,6 +40,14 @@ interface MssqlTablePreviewResponse {
   rows: any[][];
   limit: number;
   offset: number;
+}
+
+// Minimal Supabase table info used by the Migration Worker tab.
+// This matches the shape returned by /api/admin/db/tables for our purposes.
+interface TableInfo {
+  schema: string;
+  name: string;
+  row_estimate?: number | null;
 }
 
 interface SelectedTable {
@@ -79,10 +87,19 @@ const AdminDataMigrationPage: React.FC = () => {
             >
               Dual-DB Migration Studio
             </Button>
+            <Button
+              variant={activeTab === 'worker' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('worker')}
+            >
+              Worker
+            </Button>
           </div>
 
           <div className="flex-1 min-h-0">
-            {activeTab === 'mssql-database' ? <MssqlDatabaseTab /> : <DualDbMigrationStudioShell />}
+            {activeTab === 'mssql-database' && <MssqlDatabaseTab />}
+            {activeTab === 'temp' && <DualDbMigrationStudioShell />}
+            {activeTab === 'worker' && <MigrationWorkerTab />}
           </div>
         </div>
       </div>
@@ -1592,6 +1609,909 @@ const DualDbMigrationStudioShell: React.FC = () => {
               </table>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+interface MigrationWorkerState {
+  id: number;
+  source_database: string;
+  source_schema: string;
+  source_table: string;
+  target_schema: string;
+  target_table: string;
+  pk_column: string;
+  worker_enabled: boolean;
+  interval_seconds: number;
+  owner_user_id?: string | null;
+  notify_on_success: boolean;
+  notify_on_error: boolean;
+  last_run_started_at?: string | null;
+  last_run_finished_at?: string | null;
+  last_run_status?: string | null;
+  last_error?: string | null;
+  last_source_row_count?: number | null;
+  last_target_row_count?: number | null;
+  last_inserted_count?: number | null;
+  last_max_pk_source?: number | null;
+  last_max_pk_target?: number | null;
+}
+
+interface MigrationWorkerPreview {
+  source_database: string;
+  source_schema: string;
+  source_table: string;
+  target_schema: string;
+  target_table: string;
+  pk_column: string;
+  source_row_count: number;
+  target_row_count: number;
+  rows_to_copy: number;
+  source_max_pk: number | null;
+  target_max_pk: number | null;
+}
+
+const MigrationWorkerTab: React.FC = () => {
+  const [workers, setWorkers] = React.useState<MigrationWorkerState[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [savingId, setSavingId] = React.useState<number | null>(null);
+  const [runningId, setRunningId] = React.useState<number | null>(null);
+
+  // Simple in-page "terminal" log of worker runs (since page load)
+  const [logLines, setLogLines] = React.useState<string[]>([]);
+  const lastRunSnapshotRef = React.useRef<Map<number, string>>(new Map());
+
+  // Run-once confirmation modal
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [previewWorker, setPreviewWorker] = React.useState<MigrationWorkerState | null>(null);
+  const [previewData, setPreviewData] = React.useState<MigrationWorkerPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+
+  // New worker dialog state
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [createBusy, setCreateBusy] = React.useState(false);
+  const [createSourceDatabase, setCreateSourceDatabase] = React.useState('DB_A28F26_parts');
+  const [createSourceSchema, setCreateSourceSchema] = React.useState('dbo');
+  const [createSourceTable, setCreateSourceTable] = React.useState('');
+  const [createTargetSchema, setCreateTargetSchema] = React.useState('public');
+  const [createTargetTable, setCreateTargetTable] = React.useState('');
+  const [createPkColumn, setCreatePkColumn] = React.useState('');
+  const [createIntervalSeconds, setCreateIntervalSeconds] = React.useState(300);
+  const [createRunImmediately, setCreateRunImmediately] = React.useState(true);
+
+  // MSSQL connection & schema for the New Worker dialog
+  const [createMssqlTestOk, setCreateMssqlTestOk] = React.useState<boolean | null>(null);
+  const [createMssqlTestMessage, setCreateMssqlTestMessage] = React.useState<string | null>(null);
+  const [createMssqlSchemaTree, setCreateMssqlSchemaTree] = React.useState<MssqlSchemaTreeResponse | null>(null);
+  const [createMssqlSchemaLoading, setCreateMssqlSchemaLoading] = React.useState(false);
+  const [createMssqlSchemaError, setCreateMssqlSchemaError] = React.useState<string | null>(null);
+  const [createMssqlTableSearch, setCreateMssqlTableSearch] = React.useState('');
+
+  // Supabase tables for the New Worker dialog
+  const [createSupabaseTables, setCreateSupabaseTables] = React.useState<TableInfo[]>([]);
+  const [createSupabaseLoading, setCreateSupabaseLoading] = React.useState(false);
+  const [createSupabaseError, setCreateSupabaseError] = React.useState<string | null>(null);
+  const [createSupabaseSearch, setCreateSupabaseSearch] = React.useState('');
+
+  const buildCreateMssqlConfig = (): MssqlConnectionConfig => ({
+    host: '',
+    port: 1433,
+    database: createSourceDatabase,
+    username: '',
+    password: '',
+    encrypt: true,
+  });
+
+  const resetCreateForm = () => {
+    setCreateSourceDatabase('DB_A28F26_parts');
+    setCreateSourceTable('');
+    setCreateTargetSchema('public');
+    setCreateTargetTable('');
+    setCreatePkColumn('');
+    setCreateIntervalSeconds(300);
+    setCreateRunImmediately(true);
+    setCreateMssqlTestOk(null);
+    setCreateMssqlTestMessage(null);
+    setCreateMssqlSchemaTree(null);
+    setCreateMssqlSchemaError(null);
+    setCreateMssqlTableSearch('');
+    setCreateSupabaseError(null);
+    setCreateSupabaseSearch('');
+  };
+
+  const loadWorkers = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await api.get<MigrationWorkerState[]>('/api/admin/db-migration/worker/state');
+      setWorkers(resp.data);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to load workers');
+      setWorkers([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadCreateSupabaseTables = async () => {
+    if (createSupabaseTables.length > 0) return;
+    setCreateSupabaseLoading(true);
+    setCreateSupabaseError(null);
+    try {
+      const resp = await api.get<TableInfo[]>('/api/admin/db/tables');
+      setCreateSupabaseTables(resp.data);
+    } catch (e: any) {
+      setCreateSupabaseError(e?.response?.data?.detail || e.message || 'Failed to load Supabase tables');
+      setCreateSupabaseTables([]);
+    } finally {
+      setCreateSupabaseLoading(false);
+    }
+  };
+
+  const loadCreateMssqlSchemaTree = async () => {
+    if (!createSourceDatabase.trim()) {
+      setCreateMssqlSchemaError('Enter MSSQL database name first');
+      setCreateMssqlSchemaTree(null);
+      return;
+    }
+    setCreateMssqlSchemaLoading(true);
+    setCreateMssqlSchemaError(null);
+    try {
+      const cfg = buildCreateMssqlConfig();
+      const resp = await api.post<MssqlSchemaTreeResponse>('/api/admin/mssql/schema-tree', cfg);
+      setCreateMssqlSchemaTree(resp.data);
+      setCreateMssqlTestOk(true);
+      setCreateMssqlTestMessage('Connection OK. Schema tree loaded.');
+    } catch (e: any) {
+      setCreateMssqlSchemaTree(null);
+      const msg = e?.response?.data?.detail || e.message || 'Failed to load MSSQL schema tree';
+      setCreateMssqlSchemaError(msg);
+    } finally {
+      setCreateMssqlSchemaLoading(false);
+    }
+  };
+
+  const handleCreateTestConnection = async () => {
+    setCreateMssqlTestOk(null);
+    setCreateMssqlTestMessage(null);
+    setCreateMssqlSchemaTree(null);
+    setCreateMssqlSchemaError(null);
+    if (!createSourceDatabase.trim()) {
+      setCreateMssqlTestOk(false);
+      setCreateMssqlTestMessage('Enter MSSQL database name first');
+      return;
+    }
+    try {
+      const cfg = buildCreateMssqlConfig();
+      const resp = await api.post<{ ok: boolean; error?: string; message?: string }>(
+        '/api/admin/mssql/test-connection',
+        cfg,
+      );
+      if (resp.data.ok) {
+        setCreateMssqlTestOk(true);
+        setCreateMssqlTestMessage(resp.data.message || 'Connection successful. Loading schema tree...');
+        await loadCreateMssqlSchemaTree();
+      } else {
+        setCreateMssqlTestOk(false);
+        setCreateMssqlTestMessage(resp.data.error || 'Connection failed');
+      }
+    } catch (e: any) {
+      setCreateMssqlTestOk(false);
+      const msg = e?.response?.data?.detail || e.message || 'Connection failed';
+      setCreateMssqlTestMessage(msg);
+    }
+  };
+
+  const createMssqlTableOptions: SelectedTable[] = React.useMemo(() => {
+    if (!createMssqlSchemaTree) return [];
+    const all: SelectedTable[] = [];
+    createMssqlSchemaTree.schemas.forEach((s) => {
+      s.tables.forEach((t) => {
+        all.push({ schema: s.name, name: t.name });
+      });
+    });
+    const q = createMssqlTableSearch.trim().toLowerCase();
+    if (!q) return all.slice(0, 50);
+    return all.filter((t) => `${t.schema}.${t.name}`.toLowerCase().includes(q)).slice(0, 50);
+  }, [createMssqlSchemaTree, createMssqlTableSearch]);
+
+  const createSupabaseTableOptions: TableInfo[] = React.useMemo(() => {
+    const all = createSupabaseTables;
+    const q = createSupabaseSearch.trim().toLowerCase();
+    if (!q) return all.slice(0, 50);
+    return all
+      .filter((t) => `${t.schema}.${t.name}`.toLowerCase().includes(q) || t.name.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [createSupabaseTables, createSupabaseSearch]);
+
+  React.useEffect(() => {
+    void loadWorkers();
+  }, []);
+
+  // Periodically refresh workers so background loop activity is visible.
+  React.useEffect(() => {
+    const id = window.setInterval(() => {
+      void loadWorkers();
+    }, 15000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Derive log lines whenever worker state changes (per-page history).
+  React.useEffect(() => {
+    const snapshots = lastRunSnapshotRef.current;
+    const newLines: string[] = [];
+
+    const fmt = (value?: string | null) => formatDateTime(value) || 'n/a';
+
+    for (const w of workers) {
+      const sig = `${w.last_run_finished_at || ''}|${w.last_inserted_count ?? ''}|${
+        w.last_run_status || ''
+      }`;
+      const prev = snapshots.get(w.id);
+      if (sig && sig !== prev && w.last_run_status) {
+        snapshots.set(w.id, sig);
+        const when = fmt(w.last_run_finished_at || w.last_run_started_at);
+        const line =
+          `${when} — worker #${w.id} ${w.source_database}.${w.source_schema}.${w.source_table} → ` +
+          `${w.target_schema}.${w.target_table}; ` +
+          `inserted +${w.last_inserted_count ?? 0} rows; ` +
+          `src=${w.last_source_row_count ?? 'n/a'}, tgt=${w.last_target_row_count ?? 'n/a'}; ` +
+          `max_pk_src=${w.last_max_pk_source ?? 'n/a'}, max_pk_tgt=${w.last_max_pk_target ?? 'n/a'}.`;
+        newLines.push(line);
+      }
+    }
+
+    if (newLines.length) {
+      setLogLines((prev) => {
+        const merged = [...prev, ...newLines];
+        // Ограничимся последними ~200 строками, чтобы не раздувать состояние.
+        return merged.slice(-200);
+      });
+    }
+  }, [workers]);
+
+  const formatDateTime = (value?: string | null): string => {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mi = pad(d.getMinutes());
+    const ss = pad(d.getSeconds());
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+  };
+
+  const handleOpenCreate = () => {
+    resetCreateForm();
+    setError(null);
+    setCreateOpen(true);
+    // Preload Supabase table list for nicer UX
+    void loadCreateSupabaseTables();
+  };
+
+  const handleSubmitCreate = async () => {
+    if (!createSourceDatabase.trim()) {
+      setError('MSSQL database is required.');
+      return;
+    }
+    if (!createSourceSchema.trim() || !createSourceTable.trim()) {
+      setError('Select a MSSQL table from the list (test connection first).');
+      return;
+    }
+    if (!createTargetTable.trim()) {
+      setError('Supabase target table is required.');
+      return;
+    }
+    setCreateBusy(true);
+    setError(null);
+    try {
+      // Upsert worker (will auto-detect PK if createPkColumn is empty)
+      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', {
+        source_database: createSourceDatabase.trim(),
+        source_schema: createSourceSchema.trim() || 'dbo',
+        source_table: createSourceTable.trim(),
+        target_schema: createTargetSchema.trim() || 'public',
+        target_table: createTargetTable.trim(),
+        pk_column: createPkColumn.trim() || undefined,
+        worker_enabled: true,
+        interval_seconds: createIntervalSeconds || 300,
+        owner_user_id: undefined,
+        notify_on_success: true,
+        notify_on_error: true,
+      });
+      const worker = resp.data;
+      // Optionally run an initial catch-up immediately
+      if (createRunImmediately) {
+        try {
+          await api.post('/api/admin/db-migration/worker/run-once', { id: worker.id, batch_size: 5000 });
+        } catch (e: any) {
+          // Не считаем это фатальной ошибкой создания; просто покажем сообщение.
+          setError(
+            e?.response?.data?.detail ||
+              e?.message ||
+              'Worker was created, but initial run failed. Check logs for details.',
+          );
+        }
+      }
+      await loadWorkers();
+      setCreateOpen(false);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to create worker');
+    } finally {
+      setCreateBusy(false);
+    }
+  };
+
+  const handleToggleEnabled = async (worker: MigrationWorkerState, enabled: boolean) => {
+    setSavingId(worker.id);
+    setError(null);
+    try {
+      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', {
+        id: worker.id,
+        source_database: worker.source_database,
+        source_schema: worker.source_schema,
+        source_table: worker.source_table,
+        target_schema: worker.target_schema,
+        target_table: worker.target_table,
+        pk_column: worker.pk_column,
+        worker_enabled: enabled,
+        interval_seconds: worker.interval_seconds,
+        owner_user_id: worker.owner_user_id,
+        notify_on_success: worker.notify_on_success,
+        notify_on_error: worker.notify_on_error,
+      });
+      setWorkers((prev) => prev.map((w) => (w.id === worker.id ? resp.data : w)));
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to update worker');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleIntervalChange = async (worker: MigrationWorkerState, nextInterval: number) => {
+    if (!nextInterval || nextInterval <= 0) return;
+    setSavingId(worker.id);
+    setError(null);
+    try {
+      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', {
+        id: worker.id,
+        source_database: worker.source_database,
+        source_schema: worker.source_schema,
+        source_table: worker.source_table,
+        target_schema: worker.target_schema,
+        target_table: worker.target_table,
+        pk_column: worker.pk_column,
+        worker_enabled: worker.worker_enabled,
+        interval_seconds: nextInterval,
+        owner_user_id: worker.owner_user_id,
+        notify_on_success: worker.notify_on_success,
+        notify_on_error: worker.notify_on_error,
+      });
+      setWorkers((prev) => prev.map((w) => (w.id === worker.id ? resp.data : w)));
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to update interval');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleRunOnce = async (worker: MigrationWorkerState) => {
+    setPreviewWorker(worker);
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewData(null);
+    try {
+      const resp = await api.post<MigrationWorkerPreview>('/api/admin/db-migration/worker/preview', {
+        id: worker.id,
+      });
+      setPreviewData(resp.data);
+    } catch (e: any) {
+      setPreviewError(e?.response?.data?.detail || e.message || 'Failed to load worker preview');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleConfirmRunOnce = async () => {
+    if (!previewWorker) return;
+    const workerId = previewWorker.id;
+    // Закрываем модалку сразу, а сам прогон выполняем в фоне, чтобы не блокировать экран.
+    setPreviewOpen(false);
+    setRunningId(workerId);
+    setError(null);
+    try {
+      // Цикл: вызываем run-once несколько раз подряд, пока ещё есть новые строки.
+      // Каждый HTTP-запрос ограничен по времени на бэкенде (max_seconds),
+      // поэтому лучше сделать несколько коротких прогонов, чем один длинный.
+      // Защитимся от бесконечного цикла верхней границей итераций.
+      const maxPasses = 200;
+      for (let i = 0; i < maxPasses; i += 1) {
+        const resp = await api.post<any>('/api/admin/db-migration/worker/run-once', {
+          id: workerId,
+          batch_size: 5000,
+        });
+        const inserted = resp.data?.rows_inserted ?? 0;
+        await loadWorkers();
+        if (!inserted || inserted <= 0) {
+          break;
+        }
+      }
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e.message || 'Failed to run worker');
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between mb-1">
+        <div>
+          <h2 className="text-sm font-semibold">Migration Workers</h2>
+          <p className="text-xs text-gray-600">
+            MSSQL→Supabase incremental workers for append-only tables. Each worker periodically pulls new rows based on a
+            numeric primary key and appends them into the target table.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={handleOpenCreate}>
+          New worker
+        </Button>
+      </div>
+      {error && <div className="text-xs text-red-600 mb-2">{error}</div>}
+      {loading ? (
+        <div className="text-sm text-gray-500">Loading workers...</div>
+      ) : workers.length === 0 ? (
+        <div className="text-sm text-gray-500">No workers configured yet.</div>
+      ) : (
+        <div className="border rounded bg-white overflow-auto max-h-[60vh] text-xs">
+          <table className="min-w-full text-[11px]">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="px-2 py-1 border text-left">ID</th>
+                <th className="px-2 py-1 border text-left">Source</th>
+                <th className="px-2 py-1 border text-left">Target</th>
+                <th className="px-2 py-1 border text-left">PK column</th>
+                <th className="px-2 py-1 border text-left">Enabled</th>
+                <th className="px-2 py-1 border text-left">Interval (sec)</th>
+                <th className="px-2 py-1 border text-left">Notify OK</th>
+                <th className="px-2 py-1 border text-left">Notify errors</th>
+                <th className="px-2 py-1 border text-left">Last status</th>
+                <th className="px-2 py-1 border text-left">Last run</th>
+                <th className="px-2 py-1 border text-left">Last counts</th>
+                <th className="px-2 py-1 border text-left">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workers.map((w) => (
+                <tr key={w.id} className="border-t align-top">
+                  <td className="px-2 py-1 border whitespace-nowrap">{w.id}</td>
+                  <td className="px-2 py-1 border whitespace-pre text-[11px] font-mono">
+                    {w.source_database}\n{w.source_schema}.{w.source_table}
+                  </td>
+                  <td className="px-2 py-1 border whitespace-pre text-[11px] font-mono">
+                    {w.target_schema}.{w.target_table}
+                  </td>
+                  <td className="px-2 py-1 border font-mono">{w.pk_column}</td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="checkbox"
+                      checked={w.worker_enabled}
+                      disabled={savingId === w.id}
+                      onChange={(e) => handleToggleEnabled(w, e.target.checked)}
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="number"
+                      min={30}
+                      className="w-20 border rounded px-1 py-0.5 text-[11px]"
+                      value={w.interval_seconds}
+                      disabled={savingId === w.id}
+                      onChange={(e) => handleIntervalChange(w, Number(e.target.value) || w.interval_seconds)}
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="checkbox"
+                      checked={w.notify_on_success}
+                      disabled={savingId === w.id}
+                      onChange={(e) =>
+                        handleToggleEnabled(
+                          { ...w, notify_on_success: e.target.checked },
+                          w.worker_enabled,
+                        )
+                      }
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <input
+                      type="checkbox"
+                      checked={w.notify_on_error}
+                      disabled={savingId === w.id}
+                      onChange={(e) =>
+                        handleToggleEnabled(
+                          { ...w, notify_on_error: e.target.checked },
+                          w.worker_enabled,
+                        )
+                      }
+                    />
+                  </td>
+                  <td className="px-2 py-1 border">
+                    {w.last_run_status ? (
+                      <span
+                        className={
+                          w.last_run_status === 'ok'
+                            ? 'text-green-700'
+                            : w.last_run_status === 'error'
+                            ? 'text-red-700'
+                            : 'text-gray-700'
+                        }
+                      >
+                        {w.last_run_status}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">never</span>
+                    )}
+                    {w.last_error && (
+                      <div className="text-[10px] text-red-600 mt-0.5 max-w-xs truncate" title={w.last_error}>
+                        {w.last_error}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 border text-[10px] text-gray-600">
+                    {w.last_run_started_at && (
+                      <div>start: {formatDateTime(w.last_run_started_at)}</div>
+                    )}
+                    {w.last_run_finished_at && (
+                      <div>finish: {formatDateTime(w.last_run_finished_at)}</div>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 border text-[10px] text-gray-700">
+                    {w.last_source_row_count != null && (
+                      <div>src: {w.last_source_row_count}</div>
+                    )}
+                    {w.last_target_row_count != null && (
+                      <div>tgt: {w.last_target_row_count}</div>
+                    )}
+                    {w.last_inserted_count != null && (
+                      <div>+{w.last_inserted_count} rows</div>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 border">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[11px]"
+                      disabled={runningId === w.id}
+                      onClick={() => {
+                        void handleRunOnce(w);
+                      }}
+                    >
+                      {runningId === w.id ? 'Running…' : 'Run once now'}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Simple "terminal" log of worker runs */}
+      {logLines.length > 0 && (
+        <div className="mt-3 border rounded bg-black text-green-200 text-[11px] font-mono max-h-60 overflow-auto p-2">
+          {logLines.map((line, idx) => (
+            <div key={idx}>{line}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Run-once confirmation dialog */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Confirm worker run</DialogTitle>
+            <DialogDescription>
+              Короткий отчёт перед запуском инкрементальной миграции.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-xs">
+            {previewError && <div className="text-red-600">{previewError}</div>}
+            {previewLoading && <div className="text-gray-500">Loading preview…</div>}
+            {!previewLoading && previewData && (
+              <>
+                <p>
+                  Копируем из
+                  {' '}
+                  <span className="font-mono">
+                    {previewData.source_database}.{previewData.source_schema}.{previewData.source_table}
+                  </span>
+                  {' '}
+                  в
+                  {' '}
+                  <span className="font-mono">
+                    {previewData.target_schema}.{previewData.target_table}
+                  </span>
+                  .
+                </p>
+                <p>
+                  В source найдено
+                  {' '}
+                  <span className="font-mono">{previewData.source_row_count}</span>
+                  {' '}
+                  записей. В target найдено
+                  {' '}
+                  <span className="font-mono">{previewData.target_row_count}</span>
+                  {' '}
+                  записей.
+                </p>
+                <p>
+                  Нужно домигрировать примерно
+                  {' '}
+                  <span className="font-mono">{previewData.rows_to_copy}</span>
+                  {' '}
+                  записей (pk &gt; MAX(pk) в целевой таблице).
+                </p>
+                <p>
+                  MAX(pk) в source:
+                  {' '}
+                  <span className="font-mono">{previewData.source_max_pk ?? 'n/a'}</span>
+                  ; MAX(pk) в target:
+                  {' '}
+                  <span className="font-mono">{previewData.target_max_pk ?? 'n/a'}</span>
+                  .
+                </p>
+                <p className="text-[11px] text-gray-600">
+                  ВАЖНО: worker всегда берёт MAX(pk) из целевой таблицы и копирует только строки, где pk &gt; этот MAX(pk).
+                  Уже существующие записи не перезаписываются.
+                </p>
+              </>
+            )}
+          </div>
+          <DialogFooter className="flex justify-end gap-2 mt-3">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setPreviewOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={previewLoading || !previewData || runningId === previewWorker?.id}
+              onClick={() => {
+                void handleConfirmRunOnce();
+              }}
+            >
+              {runningId === previewWorker?.id ? 'Running…' : 'Start migration'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Create migration worker</DialogTitle>
+            <DialogDescription>
+              Set up an incremental MSSQL→Supabase worker for an append-only table. The worker will periodically pull
+              new rows based on a numeric primary key.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-xs">
+            {/* MSSQL connection */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px]">MSSQL database</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createSourceDatabase}
+                  onChange={(e) => setCreateSourceDatabase(e.target.value)}
+                  placeholder="DB_A28F26_parts"
+                />
+                <div className="mt-1 flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => void handleCreateTestConnection()}>
+                    Test & load tables
+                  </Button>
+                  {createMssqlTestOk === true && (
+                    <span className="text-[11px] text-green-700">{createMssqlTestMessage || 'OK'}</span>
+                  )}
+                  {createMssqlTestOk === false && (
+                    <span className="text-[11px] text-red-700">{createMssqlTestMessage || 'Connection failed'}</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <Label className="text-[11px]">MSSQL schema</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createSourceSchema}
+                  onChange={(e) => setCreateSourceSchema(e.target.value || 'dbo')}
+                  placeholder="dbo"
+                />
+                <p className="mt-1 text-[11px] text-gray-500">Used when selecting a table from MSSQL.</p>
+              </div>
+            </div>
+
+            {/* Source & target table selection */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px]">MSSQL table</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createMssqlTableSearch}
+                  onChange={(e) => setCreateMssqlTableSearch(e.target.value)}
+                  placeholder="Start typing to search tables, e.g. 'fees'"
+                />
+                {createMssqlSchemaLoading && (
+                  <p className="mt-1 text-[11px] text-gray-500">Loading MSSQL schema...</p>
+                )}
+                {createMssqlSchemaError && (
+                  <p className="mt-1 text-[11px] text-red-600">{createMssqlSchemaError}</p>
+                )}
+                {createMssqlSchemaTree && createMssqlTableOptions.length > 0 && (
+                  <div className="mt-1 max-h-40 overflow-auto border rounded bg-white text-[11px]">
+                    {createMssqlTableOptions.map((t) => {
+                      const key = `${t.schema}.${t.name}`;
+                      const isSelected = t.schema === createSourceSchema && t.name === createSourceTable;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          className={`w-full text-left px-2 py-0.5 border-b border-dotted border-gray-100 hover:bg-blue-50 ${
+                            isSelected ? 'bg-blue-100 font-semibold' : ''
+                          }`}
+                          onClick={() => {
+                            setCreateSourceSchema(t.schema);
+                            setCreateSourceTable(t.name);
+                            setCreateMssqlTableSearch(`${t.schema}.${t.name}`);
+                          }}
+                        >
+                          <span className="font-mono">{t.schema}.{t.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {createSourceTable && (
+                  <p className="mt-1 text-[11px] text-gray-600">
+                    Selected: {createSourceSchema}.{createSourceTable}
+                  </p>
+                )}
+              </div>
+              <div>
+                <Label className="text-[11px]">Supabase target table</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createSupabaseSearch}
+                  onChange={(e) => setCreateSupabaseSearch(e.target.value)}
+                  placeholder="Start typing to search tables, e.g. 'fees'"
+                />
+                {createSupabaseLoading && (
+                  <p className="mt-1 text-[11px] text-gray-500">Loading Supabase tables...</p>
+                )}
+                {createSupabaseError && (
+                  <p className="mt-1 text-[11px] text-red-600">{createSupabaseError}</p>
+                )}
+                {createSupabaseTableOptions.length > 0 && (
+                  <div className="mt-1 max-h-40 overflow-auto border rounded bg-white text-[11px]">
+                    {createSupabaseTableOptions.map((t) => {
+                      const key = `${t.schema}.${t.name}`;
+                      const isSelected = t.schema === createTargetSchema && t.name === createTargetTable;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          className={`w-full text-left px-2 py-0.5 border-b border-dotted border-gray-100 hover:bg-blue-50 ${
+                            isSelected ? 'bg-blue-100 font-semibold' : ''
+                          }`}
+                          onClick={() => {
+                            setCreateTargetSchema(t.schema);
+                            setCreateTargetTable(t.name);
+                            setCreateSupabaseSearch(`${t.schema}.${t.name}`);
+                          }}
+                        >
+                          <span className="font-mono">{t.schema}.{t.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {createTargetTable && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Schema: {createTargetSchema || 'public'}. Table: {createTargetTable}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Supabase schema + PK */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px]">Supabase schema</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createTargetSchema}
+                  onChange={(e) => setCreateTargetSchema(e.target.value || 'public')}
+                  placeholder="public"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px]">Primary key column (optional)</Label>
+                <Input
+                  className="mt-1 h-7 text-[11px]"
+                  value={createPkColumn}
+                  onChange={(e) => setCreatePkColumn(e.target.value)}
+                  placeholder="FeeID (leave blank to auto-detect)"
+                />
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Must be a numeric, monotonically increasing column. If left blank, the system will try to auto-detect a
+                  single-column primary key in MSSQL.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+              <div>
+                <Label className="text-[11px]">Run every (seconds)</Label>
+                <Input
+                  type="number"
+                  min={30}
+                  className="mt-1 h-7 text-[11px] w-32"
+                  value={createIntervalSeconds}
+                  onChange={(e) => setCreateIntervalSeconds(Number(e.target.value) || 300)}
+                />
+                <p className="mt-1 text-[11px] text-gray-500">e.g. 300 = every 5 minutes.</p>
+              </div>
+              <div className="flex items-center gap-2 mt-4">
+                <input
+                  id="create-worker-run-immediately"
+                  type="checkbox"
+                  className="h-3 w-3"
+                  checked={createRunImmediately}
+                  onChange={(e) => setCreateRunImmediately(e.target.checked)}
+                />
+                <label htmlFor="create-worker-run-immediately" className="text-[11px] text-gray-700">
+                  Run initial catch-up immediately after creating the worker
+                </label>
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              On each run, the worker will read MAX(pk) from the Supabase table, then fetch rows from MSSQL where
+              pk &gt; MAX(pk) and insert them using ON CONFLICT(pk) DO NOTHING.
+            </p>
+          </div>
+          <DialogFooter className="flex justify-end gap-2 mt-3">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (!createBusy) setCreateOpen(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={createBusy}
+              onClick={() => {
+                void handleSubmitCreate();
+              }}
+            >
+              {createBusy ? 'Creating…' : 'Create worker'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

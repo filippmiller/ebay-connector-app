@@ -15,10 +15,12 @@ from app.utils.logger import logger
 from .state import get_or_create_sync_state, mark_sync_run_result
 from .runs import start_run, complete_run, fail_run
 from .logger import log_start, log_page, log_done, log_error
+from .notifications import create_worker_run_notification
 
 
 TRANSACTIONS_LIMIT = 200
-OVERLAP_MINUTES_DEFAULT = 60
+# 30-minute overlap so each run re-validates a small tail around the cursor.
+OVERLAP_MINUTES_DEFAULT = 30
 INITIAL_BACKFILL_DAYS_DEFAULT = 90
 
 
@@ -156,17 +158,27 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
             # Advance cursor to window_to (underlying sync now respects this time window)
             mark_sync_run_result(db, state, cursor_value=to_iso, error=None)
 
+            summary = {
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "duration_ms": duration_ms,
+                "window_from": from_iso,
+                "window_to": to_iso,
+                "sync_run_id": sync_run_id,
+            }
+
             complete_run(
                 db,
                 run,
-                summary={
-                    "total_fetched": total_fetched,
-                    "total_stored": total_stored,
-                    "duration_ms": duration_ms,
-                    "window_from": from_iso,
-                    "window_to": to_iso,
-                    "sync_run_id": sync_run_id,
-                },
+                summary=summary,
+            )
+
+            create_worker_run_notification(
+                db,
+                account=account,
+                api_family="transactions",
+                run_status="completed",
+                summary=summary,
             )
 
             return run_id
@@ -184,16 +196,27 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
                 stage="transactions_worker",
             )
             mark_sync_run_result(db, state, cursor_value=None, error=msg)
+            error_summary = {
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "duration_ms": duration_ms,
+                "window_from": from_iso,
+                "window_to": to_iso,
+                "sync_run_id": sync_run_id,
+                "error_message": msg,
+            }
             fail_run(
                 db,
                 run,
                 error_message=msg,
-                summary={
-                    "total_fetched": total_fetched,
-                    "total_stored": total_stored,
-                    "duration_ms": duration_ms,
-                    "sync_run_id": sync_run_id,
-                },
+                summary=error_summary,
+            )
+            create_worker_run_notification(
+                db,
+                account=account,
+                api_family="transactions",
+                run_status="error",
+                summary=error_summary,
             )
             logger.error(f"Transactions worker for account={ebay_account_id} failed: {msg}")
             return run_id

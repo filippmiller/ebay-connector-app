@@ -11,12 +11,30 @@ class Settings(BaseSettings):
     # Increased from 30 minutes to 300 minutes (~5 hours) to support long-running admin tasks.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 300
     DEBUG: bool = False
+
+    # Optional OpenAI configuration for internal analytics/AI features.
+    # OPENAI_API_KEY must be provided via environment in production; when missing,
+    # AI-driven admin features (AI Grid, AI Rules builder) will return a clear
+    # error instead of failing with a generic 500.
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_API_BASE_URL: str = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+
+    # Optional Deepgram API key for high-quality speech-to-text.
+    # This key is ONLY used on the backend; it is never exposed to the frontend.
+    DEEPGRAM_API_KEY: Optional[str] = None
     
     @property
     def secret_key(self) -> str:
         return self.JWT_SECRET or self.SECRET_KEY
     
     EBAY_ENVIRONMENT: str = "sandbox"
+
+    # Mode for the eBay listing worker. When set to "stub" (default), the
+    # worker uses in-memory stubbed responses and never calls live eBay APIs.
+    # When set to "live", the worker will resolve eBay accounts/tokens and
+    # call real Inventory/Offers APIs for debug runs.
+    ebay_listing_mode: str = "stub"  # "stub" or "live"
     
     EBAY_SANDBOX_CLIENT_ID: Optional[str] = None
     EBAY_SANDBOX_DEV_ID: Optional[str] = None
@@ -38,7 +56,20 @@ class Settings(BaseSettings):
     # destination verification challenges (32–80 chars, [A-Za-z0-9_-]).
     EBAY_NOTIFICATION_DESTINATION_URL: Optional[str] = None
     EBAY_NOTIFICATION_VERIFICATION_TOKEN: Optional[str] = None
-    
+
+    # Gmail OAuth configuration for the Integrations module.
+    #
+    # GMAIL_OAUTH_REDIRECT_BASE_URL should be the public base URL for backend
+    # API routes, typically including the /api prefix, e.g.
+    #   https://api.yourdomain.com/api
+    # The Gmail OAuth callback path will then be appended as
+    #   {GMAIL_OAUTH_REDIRECT_BASE_URL}/integrations/gmail/callback
+    GMAIL_CLIENT_ID: Optional[str] = None
+    GMAIL_CLIENT_SECRET: Optional[str] = None
+    GMAIL_OAUTH_REDIRECT_BASE_URL: Optional[str] = None
+    # Space-separated list of scopes; default to read-only Gmail access.
+    GMAIL_OAUTH_SCOPES: str = "https://www.googleapis.com/auth/gmail.readonly"
+
     # DATABASE_URL must be provided via environment from Railway (Supabase/Postgres)
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     

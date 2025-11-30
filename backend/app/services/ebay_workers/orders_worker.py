@@ -15,10 +15,13 @@ from app.utils.logger import logger
 from .state import get_or_create_sync_state, mark_sync_run_result
 from .runs import start_run, complete_run, fail_run, heartbeat
 from .logger import log_start, log_page, log_done, log_error
+from .notifications import create_worker_run_notification
 
 
 ORDERS_LIMIT = 200
-OVERLAP_MINUTES_DEFAULT = 60
+# Use a 30-minute overlap to re-check a small window and avoid gaps while
+# keeping each incremental run narrow.
+OVERLAP_MINUTES_DEFAULT = 30
 INITIAL_BACKFILL_DAYS_DEFAULT = 90
 
 
@@ -168,17 +171,29 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
             # still refetch some orders next time, but upserts keep it idempotent.
             mark_sync_run_result(db, state, cursor_value=to_iso, error=None)
 
+            summary = {
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "duration_ms": duration_ms,
+                "window_from": from_iso,
+                "window_to": to_iso,
+                "sync_run_id": sync_run_id,
+            }
+
             complete_run(
                 db,
                 run,
-                summary={
-                    "total_fetched": total_fetched,
-                    "total_stored": total_stored,
-                    "duration_ms": duration_ms,
-                    "window_from": from_iso,
-                    "window_to": to_iso,
-                    "sync_run_id": sync_run_id,
-                },
+                summary=summary,
+            )
+
+            # Best-effort notification so the owner sees a concise completion
+            # summary in the existing Task notifications UI.
+            create_worker_run_notification(
+                db,
+                account=account,
+                api_family="orders",
+                run_status="completed",
+                summary=summary,
             )
 
             return run_id
@@ -196,16 +211,28 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
                 stage="orders_worker",
             )
             mark_sync_run_result(db, state, cursor_value=None, error=msg)
+            error_summary = {
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "duration_ms": duration_ms,
+                "window_from": from_iso,
+                "window_to": to_iso,
+                "sync_run_id": sync_run_id,
+                "error_message": msg,
+            }
             fail_run(
                 db,
                 run,
                 error_message=msg,
-                summary={
-                    "total_fetched": total_fetched,
-                    "total_stored": total_stored,
-                    "duration_ms": duration_ms,
-                    "sync_run_id": sync_run_id,
-                },
+                summary=error_summary,
+            )
+            # Notify owner about the failure without affecting the worker result.
+            create_worker_run_notification(
+                db,
+                account=account,
+                api_family="orders",
+                run_status="error",
+                summary=error_summary,
             )
             logger.error(f"Orders worker for account={ebay_account_id} failed: {msg}")
             return run_id

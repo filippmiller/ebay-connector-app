@@ -469,11 +469,16 @@ function TransactionsTab() {
   const [sourceType, setSourceType] = useState('');
   const [storageId, setStorageId] = useState('');
   const [categoryId, setCategoryId] = useState('');
+  const [direction, setDirection] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+  const [accountName, setAccountName] = useState('');
   const [isPersonal, setIsPersonal] = useState<boolean | null>(null);
   const [isInternal, setIsInternal] = useState<boolean | null>(null);
   const [categories, setCategories] = useState<AccountingCategory[]>([]);
   const [selectedRow, setSelectedRow] = useState<any | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [totals, setTotals] = useState<{ total_in: number; total_out: number; net: number } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -490,10 +495,31 @@ function TransactionsTab() {
     if (sourceType) params.source_type = sourceType;
     if (storageId) params.storage_id = storageId;
     if (categoryId) params.category_id = Number(categoryId);
+    if (direction) params.direction = direction;
+    if (minAmount) params.min_amount = Number(minAmount);
+    if (maxAmount) params.max_amount = Number(maxAmount);
+    if (accountName) params.account_name = accountName;
     if (isPersonal !== null) params.is_personal = isPersonal;
     if (isInternal !== null) params.is_internal_transfer = isInternal;
     return params;
-  }, [dateFrom, dateTo, sourceType, storageId, categoryId, isPersonal, isInternal, refreshKey]);
+  }, [dateFrom, dateTo, sourceType, storageId, categoryId, direction, minAmount, maxAmount, accountName, isPersonal, isInternal, refreshKey]);
+
+  // Fetch aggregated totals for the current filter so the tab behaves like a Ledger view.
+  useEffect(() => {
+    const fetchTotals = async () => {
+      try {
+        const { data } = await api.get('/api/accounting/transactions', { params: { ...extraParams, limit: 1, offset: 0 } });
+        if (typeof data.total_in === 'number' && typeof data.total_out === 'number' && typeof data.net === 'number') {
+          setTotals({ total_in: data.total_in, total_out: data.total_out, net: data.net });
+        } else {
+          setTotals(null);
+        }
+      } catch {
+        setTotals(null);
+      }
+    };
+    void fetchTotals();
+  }, [extraParams]);
 
   const handleSaveSelected = async () => {
     if (!selectedRow) return;
@@ -509,6 +535,24 @@ function TransactionsTab() {
   return (
     <div className="flex-1 flex flex-col gap-4">
       <Card className="p-4 flex flex-col gap-3">
+        {totals && (
+          <div className="grid grid-cols-3 gap-4 text-xs mb-2">
+            <div>
+              <div className="text-gray-500">Total In</div>
+              <div className="font-semibold text-emerald-700">{totals.total_in.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Total Out</div>
+              <div className="font-semibold text-red-700">{totals.total_out.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Net</div>
+              <div className={totals.net >= 0 ? 'font-semibold text-emerald-700' : 'font-semibold text-red-700'}>
+                {totals.net.toFixed(2)}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
           <div>
             <Label className="block text-xs mb-1">From</Label>
@@ -525,6 +569,43 @@ function TransactionsTab() {
           <div>
             <Label className="block text-xs mb-1">Storage ID</Label>
             <Input value={storageId} onChange={(e) => setStorageId(e.target.value)} />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Direction</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={direction}
+              onChange={(e) => setDirection(e.target.value)}
+            >
+              <option value="">All</option>
+              <option value="in">In</option>
+              <option value="out">Out</option>
+            </select>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Amount range</Label>
+            <div className="flex gap-1">
+              <Input
+                className="w-1/2"
+                type="number"
+                step="0.01"
+                placeholder="Min"
+                value={minAmount}
+                onChange={(e) => setMinAmount(e.target.value)}
+              />
+              <Input
+                className="w-1/2"
+                type="number"
+                step="0.01"
+                placeholder="Max"
+                value={maxAmount}
+                onChange={(e) => setMaxAmount(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Account</Label>
+            <Input value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder="Account name contains..." />
           </div>
           <div>
             <Label className="block text-xs mb-1">Category</Label>
@@ -617,8 +698,8 @@ function TransactionsTab() {
 
       <div className="flex-1 min-h-0">
         <DataGridPage
-          gridKey="accounting_transactions"
-          title="Accounting Transactions"
+          gridKey="ledger_transactions"
+          title="Ledger Transactions"
           extraParams={extraParams}
           onRowClick={(row) => setSelectedRow(row)}
         />
@@ -673,9 +754,9 @@ export default function AccountingPage() {
           className="flex-1 flex flex-col"
         >
           <TabsList>
-            <TabsTrigger value="bank-statements">Bank Statements</TabsTrigger>
+            <TabsTrigger value="bank-statements">Statements</TabsTrigger>
             <TabsTrigger value="cash">Cash Expenses</TabsTrigger>
-            <TabsTrigger value="transactions">Transactions</TabsTrigger>
+            <TabsTrigger value="transactions">Ledger</TabsTrigger>
           </TabsList>
 
           <TabsContent value="bank-statements" className="flex-1 flex flex-col">

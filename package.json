@@ -1,0 +1,26 @@
+{
+  "name": "silent-spirit",
+  "version": "1.0.0",
+  "description": "A fullstack application for connecting to eBay API with OAuth authentication, user management, and comprehensive logging.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/filippmiller/ebay-connector-app.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/filippmiller/ebay-connector-app/issues"
+  },
+  "homepage": "https://github.com/filippmiller/ebay-connector-app#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.57.0"
+  }
+}

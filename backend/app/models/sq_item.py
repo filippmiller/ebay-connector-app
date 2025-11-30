@@ -15,12 +15,12 @@ class SqItemBase(BaseModel):
     ``tbl_parts_detail`` fields, but most callers need only the core subset.
     """
 
-    sku: Optional[str] = None
+    sku: Optional[str | int | Decimal] = None
     sku2: Optional[str] = None
     model_id: Optional[int] = None
     model: Optional[str] = None
     part: Optional[str] = None
-    category: Optional[str] = None
+    category: Optional[str | int | Decimal] = None
     description: Optional[str] = None
 
     price: Optional[Decimal] = None
@@ -28,7 +28,7 @@ class SqItemBase(BaseModel):
     brutto: Optional[Decimal] = None
 
     shipping_type: Optional[str] = None
-    shipping_group: Optional[str] = None
+    shipping_group: Optional[str | int] = None
 
     condition_id: Optional[int] = None
     condition_description: Optional[str] = None
@@ -90,7 +90,7 @@ class SqItemBase(BaseModel):
     listing_duration_in_days: Optional[int] = None
     use_standard_template_for_external_category_flag: Optional[bool] = None
     use_ebay_motors_site_flag: Optional[bool] = None
-    site_id: Optional[str] = None
+    site_id: Optional[str | int | Decimal] = None
     one_time_auction: Optional[bool] = None
 
     warehouse_id: Optional[int] = None
@@ -125,16 +125,16 @@ class SqItemListItem(BaseModel):
     """Reduced view used by the grid (``sq_catalog`` DataGridPage)."""
 
     id: int
-    sku: Optional[str] = None
+    sku: Optional[str | int | Decimal] = None
     model: Optional[str] = None
-    category: Optional[str] = None
+    category: Optional[str | int | Decimal] = None
     condition_id: Optional[int] = None
     part_number: Optional[str] = None
     price: Optional[Decimal] = None
     title: Optional[str] = None
     brand: Optional[str] = None
     alert_flag: Optional[bool] = None
-    shipping_group: Optional[str] = None
+    shipping_group: Optional[str | int] = None
     pic_url1: Optional[str] = None
     record_created: Optional[datetime] = None
     record_updated: Optional[datetime] = None
@@ -185,7 +185,7 @@ class SqItemRead(SqItemBase):
     basic_package_id: Optional[int] = None
 
     record_status_flag: Optional[bool] = None
-    checked_status: Optional[str] = None
+    checked_status: Optional[str | bool] = None
     checked: Optional[bool] = None
     checked_by: Optional[str] = None
     one_time_auction: Optional[bool] = None
@@ -211,7 +211,7 @@ class SqItemRead(SqItemBase):
     clone_sku_updated_by: Optional[str] = None
     use_standard_template_for_external_category_flag: Optional[bool] = None
     use_ebay_motors_site_flag: Optional[bool] = None
-    site_id: Optional[str] = None
+    site_id: Optional[str | int | Decimal] = None
 
     class Config:
         from_attributes = True

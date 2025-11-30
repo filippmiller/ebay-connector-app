@@ -22,12 +22,186 @@ from app.models_sqlalchemy.models import (
     AccountingTransaction as AccountingTxn,
     SqItem,
     TblPartsInventory,
+    EbaySnipe,
 )
 from app.services.auth import get_current_user
 from app.models.user import User as UserModel
 from app.routers.grid_layouts import _allowed_columns_for_grid
 
 router = APIRouter(prefix="/api/grids", tags=["grids_data"])
+
+
+@router.get("/cases/detail")
+async def get_case_detail(
+    kind: str = Query(..., description="Entity kind: inquiry | postorder_case | payment_dispute"),
+    external_id: str = Query(..., alias="id", description="External id: inquiryId / caseId / disputeId"),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Return a single unified case/dispute/inquiry row plus messages and events.
+
+    This endpoint reuses the unified Cases grid projection so that the
+    "entity" payload matches a row from the /api/grids/cases grid. It then
+    augments it with related ebay_messages and ebay_events rows.
+    """
+    db_sqla = next(get_db_sqla())
+    try:
+        # 1) Fetch unified entity row via the same projection as the Cases grid.
+        from app.models_sqlalchemy.models import Message as EbayMessage, EbayEvent
+
+        selected_cols = _allowed_columns_for_grid("cases")
+        data = _get_cases_data(
+            db_sqla,
+            current_user,
+            selected_cols,
+            limit=1,
+            offset=0,
+            sort_column=None,
+            sort_dir="desc",
+            state=None,
+            buyer=None,
+            from_date=None,
+            to_date=None,
+            kind_filter=kind,
+            external_id_filter=external_id,
+        )
+        rows = data.get("rows") or []
+        if not rows:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case/inquiry/dispute not found")
+
+        entity = rows[0]
+
+        # 2) Load related messages from ebay_messages.
+        messages: List[Dict[str, Any]] = []
+        try:
+            from datetime import datetime as dt_type
+            from decimal import Decimal
+
+            q = db_sqla.query(EbayMessage).filter(EbayMessage.user_id == current_user.id)
+
+            if kind == "inquiry":
+                q = q.filter(
+                    or_(
+                        EbayMessage.inquiry_id == external_id,
+                        EbayMessage.order_id == entity.get("order_id"),
+                    )
+                )
+            elif kind == "postorder_case":
+                q = q.filter(
+                    or_(
+                        EbayMessage.case_id == external_id,
+                        EbayMessage.order_id == entity.get("order_id"),
+                    )
+                )
+            elif kind == "payment_dispute":
+                q = q.filter(
+                    or_(
+                        EbayMessage.payment_dispute_id == external_id,
+                        EbayMessage.order_id == entity.get("order_id"),
+                    )
+                )
+
+            q = q.order_by(EbayMessage.message_date.desc())
+            rows_msg: List[EbayMessage] = q.limit(500).all()
+
+            def _ser_msg(m: EbayMessage) -> Dict[str, Any]:
+                out: Dict[str, Any] = {}
+                for attr in [
+                    "id",
+                    "message_id",
+                    "thread_id",
+                    "sender_username",
+                    "recipient_username",
+                    "subject",
+                    "body",
+                    "message_type",
+                    "direction",
+                    "is_read",
+                    "is_flagged",
+                    "is_archived",
+                    "order_id",
+                    "listing_id",
+                    "case_id",
+                    "inquiry_id",
+                    "return_id",
+                    "payment_dispute_id",
+                    "transaction_id",
+                    "message_topic",
+                    "case_event_type",
+                    "preview_text",
+                ]:
+                    val = getattr(m, attr, None)
+                    if isinstance(val, dt_type):
+                        out[attr] = val.isoformat()
+                    elif isinstance(val, Decimal):
+                        out[attr] = float(val)
+                    else:
+                        out[attr] = val
+                out["message_date"] = m.message_date.isoformat() if m.message_date else None
+                out["message_at"] = m.message_at.isoformat() if getattr(m, "message_at", None) else None
+                out["has_attachments"] = bool(getattr(m, "has_attachments", False))
+                out["attachments_meta"] = getattr(m, "attachments_meta", None)
+                return out
+
+            messages = [_ser_msg(m) for m in rows_msg]
+        except Exception:
+            messages = []
+
+        # 3) Load related events from ebay_events.
+        events: List[Dict[str, Any]] = []
+        try:
+            from datetime import datetime as dt_type
+
+            entity_type = None
+            if kind == "inquiry":
+                entity_type = "INQUIRY"
+            elif kind == "postorder_case":
+                entity_type = "CASE"
+            elif kind == "payment_dispute":
+                entity_type = "DISPUTE"
+
+            ev_q = db_sqla.query(EbayEvent)
+            if entity_type:
+                ev_q = ev_q.filter(EbayEvent.entity_type == entity_type)
+            ev_q = ev_q.filter(EbayEvent.entity_id == external_id)
+
+            account_key = entity.get("ebay_user_id") or entity.get("ebay_account_id")
+            if account_key:
+                ev_q = ev_q.filter(EbayEvent.ebay_account == account_key)
+
+            ev_q = ev_q.order_by(EbayEvent.event_time.asc().nulls_last(), EbayEvent.created_at.asc())
+            rows_ev: List[EbayEvent] = ev_q.limit(500).all()
+
+            for ev in rows_ev:
+                item: Dict[str, Any] = {
+                    "id": ev.id,
+                    "source": ev.source,
+                    "channel": ev.channel,
+                    "topic": ev.topic,
+                    "entity_type": ev.entity_type,
+                    "entity_id": ev.entity_id,
+                    "ebay_account": ev.ebay_account,
+                }
+                for fn in ["event_time", "publish_time", "created_at", "processed_at"]:
+                    dtv = getattr(ev, fn, None)
+                    if isinstance(dtv, dt_type):
+                        item[fn] = dtv.isoformat()
+                    else:
+                        item[fn] = None
+                item["status"] = ev.status
+                item["error"] = ev.error
+                item["headers"] = ev.headers
+                item["payload"] = ev.payload
+                events.append(item)
+        except Exception:
+            events = []
+
+        return {
+            "entity": entity,
+            "messages": messages,
+            "events": events,
+        }
+    finally:
+        db_sqla.close()
 
 
 @router.get("/buying/rows")
@@ -76,16 +250,19 @@ async def get_grid_data(
     sort_by: Optional[str] = Query(None),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
     columns: Optional[str] = Query(None, description="Comma-separated list of columns to include"),
-    # Offers-specific filters (mirroring /offers)
+    # Offers-specific filters (mirroring /offers) and reused for sniper status filter
     state: Optional[str] = Query(None),
     direction: Optional[str] = Query(None),
     buyer: Optional[str] = Query(None),
     item_id: Optional[str] = Query(None),
     sku: Optional[str] = Query(None),
+    ebay_account_id: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
     # Finances-specific filters
     transaction_type: Optional[str] = Query(None),
+    # Finances fees-specific filters
+    fee_type: Optional[str] = Query(None),
     # Messages-specific filters (mirroring /messages)
     folder: Optional[str] = Query(None),
     unread_only: bool = False,
@@ -94,6 +271,11 @@ async def get_grid_data(
     storage_id: Optional[str] = Query(None, alias="storageID"),
     # Inventory-specific filters
     ebay_status: Optional[str] = Query(None),
+    # SKU Catalog specific filters
+    model: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    part_number: Optional[str] = Query(None),
+    title: Optional[str] = Query(None),
     search: Optional[str] = None,
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -113,12 +295,16 @@ async def get_grid_data(
     else:
         requested_cols = allowed_cols
 
-    # Determine sort column
+    # Determine default sort column for each grid. We prefer stable identifiers
+    # or creation timestamps so that with sort_dir="desc" newest records appear
+    # first. When users pick an explicit sort_by, that takes precedence.
     default_sort_col = None
     if grid_key == "orders":
+        # Order line items: newest orders first.
         default_sort_col = "created_at"
     elif grid_key == "transactions":
-        default_sort_col = "transaction_date"
+        # Legacy ebay_transactions: fall back to created_at when present.
+        default_sort_col = "created_at" if "created_at" in allowed_cols else "transaction_date"
     elif grid_key == "messages":
         default_sort_col = "message_date"
     elif grid_key == "offers":
@@ -131,6 +317,15 @@ async def get_grid_data(
         # Default to the numeric ID column so newest rows (highest IDs)
         # appear first when sort_dir is "desc".
         default_sort_col = "ID"
+    elif grid_key == "buying":
+        # Buying grid (purchases): newest purchases first.
+        # _get_buying_data will map this to EbayBuyer.record_created_at when needed.
+        default_sort_col = "record_created_at" if "record_created_at" in allowed_cols else None
+    elif grid_key in {"sku_catalog", "active_inventory", "accounting_bank_statements", "accounting_cash_expenses", "accounting_transactions", "ledger_transactions"}:
+        # These all have a real numeric/id or primary timestamp column named "id"
+        # (or similar) in their ColumnMeta; prefer that when available.
+        if "id" in allowed_cols:
+            default_sort_col = "id"
 
     sort_column = sort_by if sort_by in allowed_cols else default_sort_col
 
@@ -208,6 +403,23 @@ async def get_grid_data(
             )
         finally:
             db_sqla.close()
+    elif grid_key == "sniper_snipes":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_sniper_snipes_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                status_filter=state,
+                ebay_account_id=ebay_account_id,
+                search=search,
+            )
+        finally:
+            db_sqla.close()
     elif grid_key == "cases":
         # Cases & disputes live in the Postgres-backed ebay_cases / ebay_disputes
         # tables, so we must use the SQLAlchemy session from app.models_sqlalchemy.
@@ -261,6 +473,8 @@ async def get_grid_data(
                 sort_dir,
                 from_date=from_date,
                 to_date=to_date,
+                fee_type=fee_type,
+                search=search,
             )
         finally:
             db_sqla.close()
@@ -292,6 +506,11 @@ async def get_grid_data(
                 sort_column,
                 sort_dir,
                 search=search,
+                sku=sku,
+                model=model,
+                category=category,
+                part_number=part_number,
+                title=title,
             )
         finally:
             db_sqla.close()
@@ -326,6 +545,27 @@ async def get_grid_data(
         finally:
             db_sqla.close()
     elif grid_key == "accounting_transactions":
+        db_sqla = next(get_db_sqla())
+        try:
+            return _get_accounting_transactions_grid_data(
+                db_sqla,
+                current_user,
+                requested_cols,
+                limit,
+                offset,
+                sort_column,
+                sort_dir,
+                date_from=from_date,
+                date_to=to_date,
+                source_type=source_type,
+                storage_id=storage_id,
+            )
+        finally:
+            db_sqla.close()
+    elif grid_key == "ledger_transactions":
+        # Ledger grid is a thin wrapper over accounting_transactions, but wired
+        # as a separate grid_key so that it can evolve independently in the UI
+        # (columns, layout, etc.).
         db_sqla = next(get_db_sqla())
         try:
             return _get_accounting_transactions_grid_data(
@@ -533,6 +773,11 @@ def _get_sku_catalog_data(
     sort_column: Optional[str],
     sort_dir: str,
     search: Optional[str] = None,
+    sku: Optional[str] = None,
+    model: Optional[str] = None,
+    category: Optional[str] = None,
+    part_number: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> Dict[str, Any]:
     """SKU catalog grid backed by the SQ catalog table (sq_items).
 
@@ -545,19 +790,27 @@ def _get_sku_catalog_data(
 
     query = db.query(SqItem)
 
-    if search:
-        like = f"%{search}%"
+
+    if sku:
+        query = query.filter(SqItem.sku.ilike(f"%{sku}%"))
+    if model:
+        # В SKU_catalog нет текстовой колонки "Model", только numeric Model_ID.
+        # Для фильтрации по модели используем эвристику: ищем подстроку в Title /
+        # Description / Part, где обычно фигурирует модель ноутбука.
+        like = f"%{model}%"
         query = query.filter(
             or_(
-                SqItem.sku.ilike(like),
                 SqItem.title.ilike(like),
                 SqItem.description.ilike(like),
-                SqItem.part_number.ilike(like),
-                SqItem.mpn.ilike(like),
-                SqItem.upc.ilike(like),
                 SqItem.part.ilike(like),
             )
         )
+    if category:
+        query = query.filter(SqItem.category.ilike(f"%{category}%"))
+    if part_number:
+        query = query.filter(SqItem.part_number.ilike(f"%{part_number}%"))
+    if title:
+        query = query.filter(SqItem.title.ilike(f"%{title}%"))
 
     total = query.count()
 
@@ -566,7 +819,9 @@ def _get_sku_catalog_data(
         "id": SqItem.id,
         "sku_code": SqItem.sku,
         "sku": SqItem.sku,
-        "model": SqItem.model,
+        # "model" текстовой колонки нет; оставляем ключ для совместимости,
+        # но сортировать будем по numeric Model_ID либо по ID.
+        "model": SqItem.model_id,
         "category": SqItem.category,
         "price": SqItem.price,
         "record_created": SqItem.record_created,
@@ -574,9 +829,10 @@ def _get_sku_catalog_data(
         "rec_created": SqItem.record_created,
         "rec_updated": SqItem.record_updated,
     }
-    sort_attr = allowed_sort_cols.get(sort_column or "rec_updated")
+    # По умолчанию сортируем по ID (новые записи сверху при sort_dir="desc").
+    sort_attr = allowed_sort_cols.get(sort_column or "id")
     if sort_attr is None:
-        sort_attr = SqItem.record_updated
+        sort_attr = SqItem.id
     if sort_dir == "desc":
         query = query.order_by(desc(sort_attr))
     else:
@@ -693,6 +949,7 @@ def _get_inventory_data(
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
+    from sqlalchemy.sql import text as sa_text
     from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText
 
     table = TblPartsInventory.__table__
@@ -783,6 +1040,24 @@ def _get_inventory_data(
 
     rows_db = query.offset(offset).limit(limit).all()
 
+    # Optional mapping of StatusSKU numeric codes to human-readable names from
+    # tbl_parts_inventorystatus. If the lookup table is missing in this
+    # environment, we silently fall back to showing the raw numeric code.
+    status_label_by_id: Dict[int, str] = {}
+    try:
+        status_sql = sa_text(
+            'SELECT "InventoryStatus_ID" AS id, "InventoryStatus_Name" AS name '
+            'FROM "tbl_parts_inventorystatus"'
+        )
+        result = db.execute(status_sql)
+        for row in result:
+            try:
+                status_label_by_id[int(row.id)] = str(row.name)
+            except Exception:
+                continue
+    except Exception:
+        status_label_by_id = {}
+
     def _serialize(row_) -> Dict[str, Any]:
         mapping = getattr(row_, "_mapping", row_)
         row: Dict[str, Any] = {}
@@ -793,6 +1068,17 @@ def _get_inventory_data(
                 if value is None:
                     # Column not in mapping - skip it
                     continue
+                # Special case: map StatusSKU numeric ID to friendly name when available.
+                if col == "StatusSKU" and status_label_by_id:
+                    try:
+                        key = int(value)
+                        label = status_label_by_id.get(key)
+                        if label is not None:
+                            row[col] = label
+                            continue
+                    except Exception:
+                        # Fall through to generic serialization on failure.
+                        pass
                 if isinstance(value, dt_type):
                     row[col] = value.isoformat()
                 elif isinstance(value, Decimal):
@@ -807,6 +1093,91 @@ def _get_inventory_data(
         return row
 
     rows = [_serialize(item) for item in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_sniper_snipes_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    status_filter: Optional[str],
+    ebay_account_id: Optional[str],
+    search: Optional[str],
+) -> Dict[str, Any]:
+    """Sniper grid backed by ebay_snipes.
+
+    This powers the SNIPER tab and is deliberately simple: one row per snipe
+    scoped to the current user, with optional filters on status, account and a
+    lightweight search over item_id/title.
+    """
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    query = db.query(EbaySnipe).filter(EbaySnipe.user_id == current_user.id)
+
+    if status_filter:
+        # Accept either a single status or a comma-separated list.
+        raw = [s.strip() for s in status_filter.split(",") if s.strip()]
+        if raw:
+            query = query.filter(EbaySnipe.status.in_(raw))
+
+    if ebay_account_id:
+        query = query.filter(EbaySnipe.ebay_account_id == ebay_account_id)
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(EbaySnipe.item_id.ilike(like), EbaySnipe.title.ilike(like))
+        )
+
+    total = query.count()
+
+    # Allow sorting on a safe subset of real columns, default to created_at.
+    allowed_sort_cols = {
+        "created_at": EbaySnipe.created_at,
+        "end_time": EbaySnipe.end_time,
+        "fire_at": EbaySnipe.fire_at,
+        "status": EbaySnipe.status,
+        "max_bid_amount": EbaySnipe.max_bid_amount,
+    }
+    sort_attr = allowed_sort_cols.get(sort_column or "created_at")
+    if sort_dir == "desc":
+        query = query.order_by(desc(sort_attr))
+    else:
+        query = query.order_by(asc(sort_attr))
+
+    rows_db: List[EbaySnipe] = query.offset(offset).limit(limit).all()
+
+    def _serialize(snipe: EbaySnipe) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            try:
+                value = getattr(snipe, col, None)
+                if value is None:
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                # Skip unexpected/legacy columns without failing the entire grid.
+                continue
+        return row
+
+    rows = [_serialize(s) for s in rows_db]
 
     return {
         "rows": rows,
@@ -1079,6 +1450,8 @@ def _get_cases_data(
     buyer: Optional[str],
     from_date: Optional[str],
     to_date: Optional[str],
+    kind_filter: Optional[str] = None,
+    external_id_filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Unified Cases & Disputes grid backed by ebay_disputes + ebay_cases.
 
@@ -1102,9 +1475,39 @@ def _get_cases_data(
             d.respond_by_date AS respond_by_date,
             d.dispute_data    AS raw_payload,
             d.ebay_account_id AS ebay_account_id,
-            d.ebay_user_id    AS ebay_user_id
+            d.ebay_user_id    AS ebay_user_id,
+            NULL::text        AS buyer_username,
+            NULL::numeric     AS amount_value,
+            NULL::text        AS amount_currency,
+            NULL::timestamptz AS creation_date_api,
+            NULL::timestamptz AS last_modified_date_api,
+            NULL::text        AS case_status_enum,
+            NULL::text        AS item_id,
+            NULL::text        AS transaction_id
         FROM ebay_disputes d
         WHERE d.user_id = :user_id
+        UNION ALL
+        SELECT
+            'inquiry'         AS kind,
+            i.inquiry_id      AS external_id,
+            i.order_id        AS order_id,
+            i.issue_type      AS reason,
+            i.status          AS status,
+            i.opened_at::text AS open_date,
+            i.last_update_at::text AS respond_by_date,
+            i.raw_json        AS raw_payload,
+            i.ebay_account_id AS ebay_account_id,
+            i.ebay_user_id    AS ebay_user_id,
+            i.buyer_username  AS buyer_username,
+            i.claim_amount_value    AS amount_value,
+            i.claim_amount_currency AS amount_currency,
+            NULL::timestamptz AS creation_date_api,
+            NULL::timestamptz AS last_modified_date_api,
+            NULL::text        AS case_status_enum,
+            i.item_id         AS item_id,
+            i.transaction_id  AS transaction_id
+        FROM ebay_inquiries i
+        WHERE i.user_id = :user_id
         UNION ALL
         SELECT
             'postorder_case'  AS kind,
@@ -1112,11 +1515,19 @@ def _get_cases_data(
             c.order_id        AS order_id,
             c.case_type       AS reason,
             c.case_status     AS status,
-            c.open_date       AS open_date,
-            c.close_date      AS respond_by_date,
+            COALESCE(c.creation_date_api::text, c.open_date)  AS open_date,
+            COALESCE(c.respond_by::text, c.close_date)        AS respond_by_date,
             c.case_data       AS raw_payload,
             c.ebay_account_id AS ebay_account_id,
-            c.ebay_user_id    AS ebay_user_id
+            c.ebay_user_id    AS ebay_user_id,
+            c.buyer_username  AS buyer_username,
+            c.claim_amount_value    AS amount_value,
+            c.claim_amount_currency AS amount_currency,
+            c.creation_date_api     AS creation_date_api,
+            c.last_modified_date_api AS last_modified_date_api,
+            c.case_status_enum      AS case_status_enum,
+            c.item_id          AS item_id,
+            c.transaction_id   AS transaction_id
         FROM ebay_cases c
         WHERE c.user_id = :user_id
         """
@@ -1138,47 +1549,59 @@ def _get_cases_data(
     for row in result:
         issue = _issue_type(row.reason)
 
+        # Prefer normalized columns from ebay_cases for Post-Order cases, but
+        # fall back to parsing raw_payload for legacy rows or disputes where
+        # those fields are not available.
+        buyer_username = getattr(row, "buyer_username", None)
+        amount = getattr(row, "amount_value", None)
+        currency = getattr(row, "amount_currency", None)
+        creation_date_api = getattr(row, "creation_date_api", None)
+        last_modified_date_api = getattr(row, "last_modified_date_api", None)
+        case_status_enum = getattr(row, "case_status_enum", None)
+        item_id = getattr(row, "item_id", None)
+        transaction_id = getattr(row, "transaction_id", None)
+
         raw_payload = row.raw_payload
-        try:
-            payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload or {}
-        except Exception:
-            payload = {}
+        payload: Dict[str, Any] = {}
+        if buyer_username is None or amount is None or currency is None:
+            try:
+                payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload or {}
+            except Exception:
+                payload = {}
 
-        # Some legacy rows may store a primitive JSON value (e.g. a string) in
-        # the JSONB column. In that case json.loads(raw_payload) returns a
-        # plain str instead of a dict, and downstream .get calls would fail
-        # with AttributeError. Normalize to a dict so grid rendering is
-        # resilient to those rows.
-        if not isinstance(payload, dict):
-            payload = {}
+            # Some legacy rows may store a primitive JSON value (e.g. a string)
+            # in the JSONB column. Normalize to a dict so grid rendering is
+            # resilient to those rows.
+            if not isinstance(payload, dict):
+                payload = {}
 
-        # Buyer username – tolerate various shapes for the "buyer" field.
-        buyer_field = payload.get("buyer") if isinstance(payload, dict) else None
-        if isinstance(buyer_field, dict):
-            buyer_obj = buyer_field
-        else:
-            buyer_obj = {}
+        if buyer_username is None and isinstance(payload, dict):
+            # Buyer username – tolerate various shapes for the "buyer" field.
+            buyer_field = payload.get("buyer")
+            if isinstance(buyer_field, dict):
+                buyer_obj = buyer_field
+            else:
+                buyer_obj = {}
 
-        buyer_username = (
-            payload.get("buyerUsername")
-            or buyer_obj.get("username")
-            or buyer_obj.get("userId")
-        )
+            buyer_username = (
+                payload.get("buyerUsername")
+                or buyer_obj.get("username")
+                or buyer_obj.get("userId")
+            )
 
-        amount = None
-        currency = None
-        try:
-            mt_list = payload.get("monetaryTransactions") if isinstance(payload, dict) else None
-            if isinstance(mt_list, list) and mt_list:
-                first_txn = mt_list[0] or {}
-                if isinstance(first_txn, dict):
-                    total_price = first_txn.get("totalPrice") or {}
-                    if isinstance(total_price, dict):
-                        amount = total_price.get("value")
-                        currency = total_price.get("currency")
-        except Exception:
-            # If the payload shape is unexpected, just leave amount/currency as None.
-            pass
+        if amount is None and isinstance(payload, dict):
+            try:
+                mt_list = payload.get("monetaryTransactions")
+                if isinstance(mt_list, list) and mt_list:
+                    first_txn = mt_list[0] or {}
+                    if isinstance(first_txn, dict):
+                        total_price = first_txn.get("totalPrice") or {}
+                        if isinstance(total_price, dict):
+                            amount = total_price.get("value")
+                            currency = total_price.get("currency") or currency
+            except Exception:
+                # If the payload shape is unexpected, just leave amount/currency as None.
+                pass
 
         if amount is None and isinstance(payload, dict):
             claim = payload.get("claimAmount") or payload.get("disputeAmount") or {}
@@ -1202,6 +1625,8 @@ def _get_cases_data(
 
         open_date = _normalize_dt(row.open_date)
         respond_by_date = _normalize_dt(row.respond_by_date)
+        creation_date_api_str = _normalize_dt(creation_date_api)
+        last_modified_date_api_str = _normalize_dt(last_modified_date_api)
 
         rows_all.append(
             {
@@ -1216,12 +1641,25 @@ def _get_cases_data(
                 "currency": currency,
                 "open_date": open_date,
                 "respond_by_date": respond_by_date,
+                # Also expose normalized fields for API consumers that need
+                # richer joins (messages, finances, etc.).
                 "ebay_account_id": row.ebay_account_id,
                 "ebay_user_id": row.ebay_user_id,
+                "item_id": item_id,
+                "transaction_id": transaction_id,
+                "case_status_enum": case_status_enum,
+                "creation_date_api": creation_date_api_str,
+                "last_modified_date_api": last_modified_date_api_str,
             }
         )
 
     # Simple filters
+    if kind_filter:
+        rows_all = [r for r in rows_all if (r.get("kind") or "") == kind_filter]
+
+    if external_id_filter:
+        rows_all = [r for r in rows_all if (r.get("external_id") or "") == external_id_filter]
+
     if state:
         rows_all = [r for r in rows_all if (r.get("status") or "").lower() == state.lower()]
     if buyer:
@@ -1481,6 +1919,8 @@ def _get_finances_fees_data(
     sort_dir: str,
     from_date: Optional[str],
     to_date: Optional[str],
+    fee_type: Optional[str] = None,
+    search: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Finances fees grid backed by ebay_finances_fees.
 
@@ -1500,6 +1940,16 @@ def _get_finances_fees_data(
     if to_date:
         where_clauses.append("f.created_at <= :to_date")
         params["to_date"] = to_date
+
+    if fee_type:
+        where_clauses.append("f.fee_type ILIKE :fee_type")
+        params["fee_type"] = f"%{fee_type}%"
+
+    if search:
+        # Lightweight global search across fee_type and transaction_id so the generic grid search
+        # box can locate rows by human-readable type or id.
+        where_clauses.append("(f.fee_type ILIKE :search OR f.transaction_id ILIKE :search)")
+        params["search"] = f"%{search}%"
 
     where_sql = " AND ".join(where_clauses)
 
@@ -1625,7 +2075,15 @@ def _get_accounting_transactions_grid_data(
     def _serialize(txn: AccountingTxn) -> Dict[str, Any]:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            value = getattr(txn, col, None)
+            if col == "signed_amount":
+                # Synthetic signed amount: positive for direction="in",
+                # negative for direction="out". This powers Ledger coloring
+                # without changing the underlying schema.
+                base = txn.amount or Decimal("0")
+                sign = 1 if txn.direction == "in" else -1
+                value = base * sign
+            else:
+                value = getattr(txn, col, None)
             if isinstance(value, dt_type):
                 row[col] = value.isoformat()
             elif isinstance(value, Decimal):

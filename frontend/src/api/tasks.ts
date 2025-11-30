@@ -10,6 +10,8 @@ export interface TaskListItem {
   due_at?: string | null;
   snooze_until?: string | null;
   is_popup: boolean;
+  is_archived: boolean;
+  is_important: boolean;
   creator_id: string;
   creator_username?: string | null;
   assignee_id?: string | null;
@@ -106,6 +108,7 @@ export interface GetTasksOptions {
   search?: string;
   page?: number;
   pageSize?: number;
+  archived?: boolean;
 }
 
 export const getTasks = async (options: GetTasksOptions = {}): Promise<TaskListResponse> => {
@@ -116,12 +119,14 @@ export const getTasks = async (options: GetTasksOptions = {}): Promise<TaskListR
     search,
     page = 1,
     pageSize = 50,
+    archived = false,
   } = options;
 
   const params = new URLSearchParams({
     role,
     page: String(page),
     page_size: String(pageSize),
+    archived: archived ? 'true' : 'false',
   });
 
   if (type) {
@@ -175,6 +180,25 @@ export const snoozeTask = async (
 ): Promise<TaskDetail> => {
   const resp = await apiClient.post(`/api/tasks/${taskId}/snooze`, payload);
   return resp.data as TaskDetail;
+};
+
+export const archiveTask = async (taskId: string): Promise<TaskDetail> => {
+  const resp = await apiClient.post(`/api/tasks/${taskId}/archive`, {});
+  return resp.data as TaskDetail;
+};
+
+export const unarchiveTask = async (taskId: string): Promise<TaskDetail> => {
+  const resp = await apiClient.post(`/api/tasks/${taskId}/unarchive`, {});
+  return resp.data as TaskDetail;
+};
+
+export const setTaskImportant = async (taskId: string, isImportant: boolean): Promise<TaskDetail> => {
+  const resp = await apiClient.post(`/api/tasks/${taskId}/important`, { is_important: isImportant });
+  return resp.data as TaskDetail;
+};
+
+export const deleteTask = async (taskId: string): Promise<void> => {
+  await apiClient.delete(`/api/tasks/${taskId}`);
 };
 
 export const getUnreadTaskNotifications = async (

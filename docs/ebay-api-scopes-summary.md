@@ -833,3 +833,22 @@ This is the thin wrapper used by both the Connection page and the Debugger to in
   - `MY_SCOPES` in `EbayDebugger` defines a front-end “whitelisted” scope set used for reconnect flows.
   - The Debugger unions required template scopes (`REQUIRED_SCOPES_BY_TEMPLATE`) with `MY_SCOPES` and calls `/ebay/auth/start` with that union, ensuring reconnects do not narrow the token.
   - Admin endpoints expose account vs catalog scopes (`/api/admin/ebay/accounts/scopes`) and token info/logs for deeper audits.
+
+---
+
+## 8. 2025-11-26 update – Sniper / Buy APIs
+
+- We introduced a dedicated migration `ensure_buy_offer_auction_scope_20251126` that guarantees the presence of
+  `https://api.ebay.com/oauth/api_scope/buy.offer.auction` in `ebay_scope_definitions` with `grant_type = 'user'` and
+  `is_active = true`.
+- As a result, **all new user tokens** obtained via `/ebay/auth/start` now include **both** of the core Buy scopes needed
+  for the Sniper module:
+  - `https://api.ebay.com/oauth/api_scope` (base browse scope; required for Identity/Browse).
+  - `https://api.ebay.com/oauth/api_scope/buy.offer.auction` (required for Buy Offer bidding APIs).
+- The Sniper module uses these scopes as follows:
+  - Browse `GET /buy/browse/v1/item/get_item_by_legacy_id` uses the **latest account-level user token** from
+    `ebay_tokens` to resolve auction metadata and the REST `itemId`.
+  - Buy Offer `POST /buy/offer/v1_beta/bidding/{item_id}/place_proxy_bid` and
+    `GET /buy/offer/v1_beta/bidding/{item_id}` use the same account token and rely on `buy.offer.auction`.
+- No special frontend handling is required: the existing `/ebay/scopes` catalog and `availableScopes` mechanism already
+  picks up the new Buy scope once migrations have been applied and accounts are re-authorized.

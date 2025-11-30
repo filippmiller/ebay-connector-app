@@ -13,6 +13,7 @@ from app.models.ebay_account import (
 )
 from app.services.ebay_account_service import ebay_account_service
 from app.utils.logger import logger
+from app.services.ebay_token_refresh_service import refresh_access_token_for_account
 
 router = APIRouter(prefix="/ebay-accounts", tags=["eBay Accounts"])
 
@@ -181,17 +182,16 @@ async def force_refresh_token(
         if not token or not token.refresh_token:
             raise HTTPException(status_code=400, detail="No refresh token available")
         
-        from app.services.ebay import ebay_service
-        
-        new_token_data = await ebay_service.refresh_access_token(token.refresh_token)
-        
-        ebay_account_service.save_tokens(
+        result = await refresh_access_token_for_account(
             db,
-            account_id,
-            new_token_data["access_token"],
-            new_token_data.get("refresh_token", token.refresh_token),
-            new_token_data["expires_in"]
+            account,
+            triggered_by="manual",
+            persist=True,
+            capture_http=False,
         )
+        if not result.get("success"):
+            msg = result.get("error_message") or result.get("error") or "Failed to refresh token"
+            raise HTTPException(status_code=500, detail=msg)
         
         logger.info(f"Force refreshed token for account {account_id}")
         return {"status": "success", "message": "Token refreshed successfully"}

@@ -221,6 +221,8 @@ class SQLiteDatabase:
             username=row['username'],
             hashed_password=row['hashed_password'],
             role=UserRole(row['role']),
+            is_active=True,
+            must_change_password=False,
             created_at=datetime.fromisoformat(row['created_at']),
             ebay_connected=bool(row['ebay_connected']),
             ebay_access_token=row['ebay_access_token'],

@@ -39,10 +39,15 @@ def compute_sync_window(
 ) -> Tuple[datetime, datetime]:
     """Compute an incremental sync window for a worker based on its cursor.
 
-    - If cursor_value exists and parses, start from (cursor - overlap).
-    - If cursor_value is missing or invalid, use an initial backfill window
-      of ``initial_backfill_days`` ending at ``now``.
+    Current policy (for all eBay workers):
+    - If ``cursor_value`` exists and parses, start from (cursor - overlap).
+    - If ``cursor_value`` is missing or invalid, treat the cursor as ``now``
+      and start from (now - overlap).
     - Returns (window_from, window_to) as timezone-aware datetimes.
+
+    ``initial_backfill_days`` is kept for future experimentation but is not
+    used by the current eBay workers, which all rely on an overlap-only
+    incremental model.
     """
 
     if now is None:
@@ -58,10 +63,15 @@ def compute_sync_window(
                 cursor_raw = cursor_raw.replace("Z", "+00:00")
             cursor_dt = datetime.fromisoformat(cursor_raw)
         except Exception:
-            cursor_dt = now - timedelta(days=initial_backfill_days)
-        window_from = cursor_dt - timedelta(minutes=overlap_minutes)
+            # Invalid cursor – fall back to treating it as "now" and only look
+            # back by the configured overlap.
+            cursor_dt = now
     else:
-        window_from = now - timedelta(days=initial_backfill_days)
+        # No cursor yet – behave as if the last successful run ended "now" and
+        # re-check only the overlap window.
+        cursor_dt = now
+
+    window_from = cursor_dt - timedelta(minutes=overlap_minutes)
 
     return window_from, window_to
 
@@ -74,7 +84,8 @@ def get_or_create_global_config(db: Session) -> EbayWorkerGlobalConfig:
         id=str(uuid4()),
         workers_enabled=True,
         defaults_json={
-            "overlap_minutes": 60,
+            # Global default: 30-minute overlap and 90-day initial backfill.
+            "overlap_minutes": 30,
             "initial_backfill_days": 90,
         },
     )

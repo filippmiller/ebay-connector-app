@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Plus, Search, LayoutList, LayoutPanelLeft, Check, Clock, X, Play } from 'lucide-react';
+import { Plus, Search, LayoutList, LayoutPanelLeft, Check, Clock, X, Play, Flag, Archive, Trash2 } from 'lucide-react';
 
 import FixedHeader from '@/components/FixedHeader';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,10 @@ import {
   changeTaskStatus,
   addTaskComment,
   snoozeTask,
+  archiveTask,
+  unarchiveTask,
+  setTaskImportant,
+  deleteTask,
 } from '@/api/tasks';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -63,6 +67,7 @@ const TasksPage: React.FC = () => {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('assigned_to_me');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
@@ -104,6 +109,7 @@ const TasksPage: React.FC = () => {
         search: searchQuery || undefined,
         page,
         pageSize,
+        archived: showArchived,
       });
       setTasks(resp.items || []);
       setTotal(resp.total || 0);
@@ -116,7 +122,7 @@ const TasksPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [typeFilter, roleFilter, statusFilter, searchQuery, page, pageSize]);
+  }, [typeFilter, roleFilter, statusFilter, searchQuery, page, pageSize, showArchived]);
 
   const loadTaskDetail = useCallback(async (taskId: string) => {
     setDetailLoading(true);
@@ -233,6 +239,51 @@ const TasksPage: React.FC = () => {
     return <Badge className={color}>{priority}</Badge>;
   };
 
+  const handleArchiveToggle = async (task: TaskListItem | TaskDetail) => {
+    try {
+      if (task.is_archived) {
+        await unarchiveTask(task.id);
+      } else {
+        await archiveTask(task.id);
+      }
+      await loadTasks();
+      if (selectedTask && selectedTask.id === task.id) {
+        const updated = await getTask(task.id).catch(() => null);
+        if (updated) setSelectedTask(updated);
+      }
+    } catch (e) {
+      console.error('Failed to toggle archive', e);
+    }
+  };
+
+  const handleImportantToggle = async (task: TaskListItem | TaskDetail) => {
+    try {
+      const updated = await setTaskImportant(task.id, !task.is_important);
+      await loadTasks();
+      if (selectedTask && selectedTask.id === task.id) {
+        setSelectedTask(updated);
+      }
+    } catch (e) {
+      console.error('Failed to toggle important', e);
+    }
+  };
+
+  const handleDelete = async (task: TaskListItem | TaskDetail) => {
+    if (task.is_important) return;
+    const confirmed = window.confirm('Delete this task permanently? This cannot be undone.');
+    if (!confirmed) return;
+    try {
+      await deleteTask(task.id);
+      await loadTasks();
+      if (selectedTask && selectedTask.id === task.id) {
+        setSelectedTask(null);
+      }
+    } catch (e: any) {
+      console.error('Failed to delete task', e);
+      alert(e?.response?.data?.detail || 'Failed to delete task');
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-white">
       <FixedHeader />
@@ -321,6 +372,30 @@ const TasksPage: React.FC = () => {
               </select>
             </div>
 
+            <div className="flex items-center gap-1 text-xs">
+              <span className="font-semibold text-gray-600 mr-1">View:</span>
+              <Button
+                size="sm"
+                variant={!showArchived ? 'default' : 'outline'}
+                onClick={() => {
+                  setShowArchived(false);
+                  setPage(1);
+                }}
+              >
+                Active
+              </Button>
+              <Button
+                size="sm"
+                variant={showArchived ? 'default' : 'outline'}
+                onClick={() => {
+                  setShowArchived(true);
+                  setPage(1);
+                }}
+              >
+                Archive
+              </Button>
+            </div>
+
             <div className="flex-1 min-w-[180px] relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
               <Input
@@ -371,12 +446,13 @@ const TasksPage: React.FC = () => {
                       <th className="px-3 py-2 text-left">Priority</th>
                       <th className="px-3 py-2 text-left">Due</th>
                       <th className="px-3 py-2 text-left">Created</th>
+                      <th className="px-3 py-2 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {tasks.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-3 py-4 text-center text-xs text-gray-500">
+                        <td colSpan={9} className="px-3 py-4 text-center text-xs text-gray-500">
                           No tasks found.
                         </td>
                       </tr>
@@ -391,7 +467,10 @@ const TasksPage: React.FC = () => {
                             {t.type === 'task' ? 'Task' : 'Reminder'}
                           </td>
                           <td className="px-3 py-2 align-top max-w-xs">
-                            <div className="font-semibold text-gray-800 truncate">{t.title}</div>
+                            <div className="flex items-center gap-1">
+                              {t.is_important && <Flag className="h-3 w-3 text-red-500 flex-shrink-0" />}
+                              <div className="font-semibold text-gray-800 truncate">{t.title}</div>
+                            </div>
                             {t.description && (
                               <div className="text-[11px] text-gray-500 truncate">{t.description}</div>
                             )}
@@ -409,6 +488,43 @@ const TasksPage: React.FC = () => {
                           </td>
                           <td className="px-3 py-2 align-top text-[11px] text-gray-500">
                             {new Date(t.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-3 py-2 align-top text-[11px] text-gray-600">
+                            <div className="flex flex-wrap gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleArchiveToggle(t);
+                                }}
+                              >
+                                <Archive className="h-3 w-3 mr-1" />
+                                {t.is_archived ? 'Unarchive' : 'Archive'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant={t.is_important ? 'default' : 'outline'}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleImportantToggle(t);
+                                }}
+                              >
+                                <Flag className="h-3 w-3 mr-1" />
+                                {t.is_important ? 'Important' : 'Mark important'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={t.is_important}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDelete(t);
+                                }}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" /> Delete
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -512,6 +628,11 @@ const TasksPage: React.FC = () => {
                           {selectedTask.type === 'task' ? 'TASK' : 'REMINDER'}
                         </Badge>
                         <div className="flex items-center gap-1">
+                          {selectedTask.is_important && (
+                            <span className="inline-flex items-center text-[10px] text-red-600 mr-1">
+                              <Flag className="h-3 w-3 mr-0.5" /> Important
+                            </span>
+                          )}
                           {renderStatusBadge(selectedTask)}
                           {renderPriorityBadge(selectedTask)}
                         </div>
@@ -616,6 +737,30 @@ const TasksPage: React.FC = () => {
                           )}
                         </>
                       )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handleArchiveToggle(selectedTask)}
+                      >
+                        <Archive className="h-3 w-3 mr-1" />
+                        {selectedTask.is_archived ? 'Unarchive' : 'Archive'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={selectedTask.is_important ? 'default' : 'outline'}
+                        onClick={() => void handleImportantToggle(selectedTask)}
+                      >
+                        <Flag className="h-3 w-3 mr-1" />
+                        {selectedTask.is_important ? 'Important' : 'Mark important'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={selectedTask.is_important}
+                        onClick={() => void handleDelete(selectedTask)}
+                      >
+                        <Trash2 className="h-3 w-3 mr-1" /> Delete
+                      </Button>
                     </div>
 
                     {/* Comments / activity */}

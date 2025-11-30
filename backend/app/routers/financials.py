@@ -124,40 +124,76 @@ async def get_financials_summary(
     db: Session = Depends(get_db)
 ):
     """Get financial summary (KPIs)"""
-    from ..models_sqlalchemy.models import Transaction
-    
-    txn_query = db.query(Transaction).filter(Transaction.user_id == current_user.id)
-    fee_query = db.query(Fee).filter(Fee.user_id == current_user.id)
-    payout_query = db.query(Payout).filter(Payout.user_id == current_user.id)
-    
+    from sqlalchemy import text
+
+    # Build dynamic WHERE clause joined to ebay_accounts for org-level scoping
+    where_clauses_txn = ["a.org_id = :user_id"]
+    where_clauses_fee = ["a.org_id = :user_id"]
+    params = {"user_id": current_user.id}
+
     if from_date:
-        try:
-            from_dt = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
-            txn_query = txn_query.filter(Transaction.sale_date >= from_dt)
-            fee_query = fee_query.filter(Fee.assessed_at >= from_dt)
-            payout_query = payout_query.filter(Payout.payout_date >= from_dt)
-        except:
-            pass
-    
+        where_clauses_txn.append("t.booking_date >= :from_date")
+        where_clauses_fee.append("f.created_at >= :from_date")
+        params["from_date"] = from_date
+
     if to_date:
-        try:
-            to_dt = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
-            txn_query = txn_query.filter(Transaction.sale_date <= to_dt)
-            fee_query = fee_query.filter(Fee.assessed_at <= to_dt)
-            payout_query = payout_query.filter(Payout.payout_date <= to_dt)
-        except:
-            pass
-    
-    gross_sales = txn_query.with_entities(func.sum(Transaction.sale_value)).scalar() or 0
-    total_fees = fee_query.with_entities(func.sum(Fee.amount)).scalar() or 0
-    payouts_total = payout_query.with_entities(func.sum(Payout.total_amount)).scalar() or 0
-    
+        where_clauses_txn.append("t.booking_date <= :to_date")
+        where_clauses_fee.append("f.created_at <= :to_date")
+        params["to_date"] = to_date
+
+    where_txn = " AND ".join(where_clauses_txn)
+    where_fee = " AND ".join(where_clauses_fee)
+
+    # 1. Gross Sales: Sum of positive SALE transactions
+    sql_sales = text(f"""
+        SELECT COALESCE(SUM(t.transaction_amount_value), 0)
+        FROM ebay_finances_transactions t
+        JOIN ebay_accounts a ON a.id = t.ebay_account_id
+        WHERE {where_txn} AND t.transaction_type = 'SALE' AND t.transaction_amount_value > 0
+    """)
+    gross_sales = db.execute(sql_sales, params).scalar() or 0.0
+
+    # 2. Refunds: Sum of REFUND transactions (usually negative)
+    sql_refunds = text(f"""
+        SELECT COALESCE(SUM(t.transaction_amount_value), 0)
+        FROM ebay_finances_transactions t
+        JOIN ebay_accounts a ON a.id = t.ebay_account_id
+        WHERE {where_txn} AND t.transaction_type = 'REFUND'
+    """)
+    refunds = db.execute(sql_refunds, params).scalar() or 0.0
+
+    # 3. Payouts: Sum of PAYOUT transactions (usually negative, representing money out to bank)
+    # We take the absolute value for display if desired, or just sum them.
+    # Usually payouts are negative in the ledger (money leaving eBay).
+    # The UI expects a positive number for "Payouts total".
+    sql_payouts = text(f"""
+        SELECT COALESCE(SUM(t.transaction_amount_value), 0)
+        FROM ebay_finances_transactions t
+        JOIN ebay_accounts a ON a.id = t.ebay_account_id
+        WHERE {where_txn} AND t.transaction_type = 'PAYOUT'
+    """)
+    payouts_raw = db.execute(sql_payouts, params).scalar() or 0.0
+    payouts_total = abs(float(payouts_raw))
+
+    # 4. Total Fees
+    sql_fees = text(f"""
+        SELECT COALESCE(SUM(f.amount_value), 0)
+        FROM ebay_finances_fees f
+        JOIN ebay_accounts a ON a.id = f.ebay_account_id
+        WHERE {where_fee}
+    """)
+    total_fees = db.execute(sql_fees, params).scalar() or 0.0
+
+    # Net Calculation: Gross Sales + Refunds (negative) - Total Fees
+    # Note: This is a simplified view.
+    net = float(gross_sales) + float(refunds) - float(total_fees)
+
     return {
         "gross_sales": float(gross_sales),
         "total_fees": float(total_fees),
-        "net": float(gross_sales - total_fees),
-        "payouts_total": float(payouts_total),
-        "refunds": 0,
+        "net": net,
+        "payouts_total": payouts_total,
+        "refunds": float(refunds),
     }
 
 
