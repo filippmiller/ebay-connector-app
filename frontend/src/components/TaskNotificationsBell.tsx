@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, Check, Clock, MessageCircle, Play, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { formatTimeLocal } from '@/lib/dateUtils';
 import {
   TaskNotificationItem,
   getUnreadTaskNotifications,
@@ -232,7 +233,7 @@ export const TaskNotificationsBell: React.FC = () => {
               Tasks & Reminders
             </span>
             {lastSince && (
-              <span className="text-[10px] text-gray-400">Updated {new Date(lastSince).toLocaleTimeString()}</span>
+            <span className="text-[10px] text-gray-400">Updated {formatTimeLocal(lastSince)}</span>
             )}
           </div>
 
@@ -269,7 +270,7 @@ export const TaskNotificationsBell: React.FC = () => {
                       </div>
                     </div>
                     <span className="text-[10px] text-gray-400 whitespace-nowrap">
-                      {new Date(n.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                      {formatTimeLocal(n.created_at)}
                     </span>
                   </div>
                   <div className="flex items-center justify-end gap-1 mt-1">

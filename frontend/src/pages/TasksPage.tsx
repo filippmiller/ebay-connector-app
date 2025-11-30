@@ -6,6 +6,7 @@ import FixedHeader from '@/components/FixedHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { formatDateTimeLocal, formatDateLocal } from '@/lib/dateUtils';
 import {
   TaskDetail,
   TaskListItem,
@@ -484,10 +485,10 @@ const TasksPage: React.FC = () => {
                           <td className="px-3 py-2 align-top">{renderStatusBadge(t)}</td>
                           <td className="px-3 py-2 align-top">{renderPriorityBadge(t)}</td>
                           <td className="px-3 py-2 align-top text-[11px] text-gray-600">
-                            {t.due_at ? new Date(t.due_at).toLocaleString() : '-'}
+                            {t.due_at ? formatDateTimeLocal(t.due_at) : '-'}
                           </td>
                           <td className="px-3 py-2 align-top text-[11px] text-gray-500">
-                            {new Date(t.created_at).toLocaleDateString()}
+                            {formatDateLocal(t.created_at)}
                           </td>
                           <td className="px-3 py-2 align-top text-[11px] text-gray-600">
                             <div className="flex flex-wrap gap-1">
@@ -563,7 +564,7 @@ const TasksPage: React.FC = () => {
                             {t.due_at && (
                               <div className="text-[10px] text-gray-500 flex items-center gap-1">
                                 <Clock className="h-3 w-3" />
-                                {new Date(t.due_at).toLocaleDateString()}
+                                {formatDateLocal(t.due_at)}
                               </div>
                             )}
                           </div>

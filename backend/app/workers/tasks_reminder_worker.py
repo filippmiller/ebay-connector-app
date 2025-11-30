@@ -55,11 +55,12 @@ async def process_due_reminders_once() -> Dict[str, Any]:
             task.status = "fired"
             task.snooze_until = None
 
+            human_ts = now.strftime("%Y-%m-%d %H:%M UTC")
             fired_comment = TaskComment(
                 id=str(uuid.uuid4()),
                 task_id=task.id,
                 author_id=None,
-                body=f"Reminder fired at {now.isoformat()}",
+                body=f"Reminder fired at {human_ts}",
                 kind="system",
             )
             db.add(fired_comment)

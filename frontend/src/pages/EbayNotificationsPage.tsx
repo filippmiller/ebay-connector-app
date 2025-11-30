@@ -10,14 +10,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ebayApi, type AdminEbayEvent, type AdminEbayEventDetail, type NotificationsStatus, type NotificationAccountInfo, type TestNotificationResponse } from '../api/ebay';
 import { useAuth } from '@/auth/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeLocal, formatTimeLocal } from '@/lib/dateUtils';
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '';
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
+  return formatDateTimeLocal(value);
 }
 
 export default function EbayNotificationsPage() {
@@ -927,13 +924,8 @@ export default function EbayNotificationsPage() {
                     <div className="text-gray-500">No events yet.</div>
                   ) : (
                     recentEvents.map((ev) => {
-                      const t = formatDate(ev.event_time || ev.created_at);
-                      const time = t ? new Date(ev.event_time || ev.created_at || '').toLocaleTimeString('en-US', {
-                        hour12: false,
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      }) : '';
+                      const ts = ev.event_time || ev.created_at;
+                      const time = ts ? formatTimeLocal(ts) : '';
                       const hasError = ev.status === 'FAILED' || ev.signature_valid === false;
                       const isOk = !hasError && (ev.status === 'RECEIVED' || ev.status === 'PROCESSED');
                       const dotClass = hasError
