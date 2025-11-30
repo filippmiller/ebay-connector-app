@@ -22,6 +22,7 @@ from ..services.ebay_connect_logger import ebay_connect_logger
 from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
 from ..config import settings
 from app.services.ebay_token_refresh_service import refresh_access_token_for_account
+from app.workers.ebay_workers_loop import run_ebay_workers_once
 
 FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
 
@@ -322,7 +323,13 @@ async def get_token_refresh_worker_status(
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ):
-    """Return heartbeat/status information for the token refresh worker."""
+    """Return heartbeat/status information for the token refresh worker.
+
+    NOTE: This endpoint is kept for backwards compatibility with existing
+    frontend code. New clients should prefer
+    ``/api/admin/ebay/workers/loop-status``, which aggregates both the token
+    refresh and eBay workers loops.
+    """
 
     # BackgroundWorker is global, not per-org, but we still require admin auth.
     worker: Optional[BackgroundWorker] = (
@@ -368,6 +375,118 @@ async def get_token_refresh_worker_status(
         "runs_error_in_row": worker.runs_error_in_row,
         "next_run_estimated_at": next_run_estimated_at,
     }
+
+
+@router.post("/ebay/workers/run-once")
+async def run_ebay_workers_once_admin(
+    current_user: User = Depends(admin_required),
+):
+    """Trigger a single eBay workers cycle for all active accounts.
+
+    This does **not** start the long-running loop; it just runs one
+    on-demand iteration. The background loop will continue to run on its own
+    schedule when enabled in the main API process.
+    """
+    try:
+        # Fire-and-forget: let the background task run independently so the
+        # admin call returns immediately.
+        import asyncio
+
+        asyncio.create_task(run_ebay_workers_once())
+        return {"status": "started"}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Failed to trigger on-demand eBay workers cycle: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="run_once_failed")
+
+
+@router.get("/ebay/workers/loop-status")
+async def get_ebay_workers_loop_status(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Return aggregated heartbeat for eBay data workers loop and token refresh loop.
+
+    This is the primary endpoint the Admin Workers UI should use to display
+    whether the long-running loops are healthy or stale.
+    """
+
+    loops: list[dict[str, Any]] = []
+
+    now = datetime.now(timezone.utc)
+
+    def _build_loop_payload(worker_name: str, loop_name: str, default_interval: int) -> dict[str, Any]:
+        worker: Optional[BackgroundWorker] = (
+            db.query(BackgroundWorker)
+            .filter(BackgroundWorker.worker_name == worker_name)
+            .one_or_none()
+        )
+        if worker is None:
+            interval = default_interval
+            last_started = None
+            last_finished = None
+            last_status = None
+            last_error = None
+        else:
+            interval = worker.interval_seconds or default_interval
+            last_started = worker.last_started_at
+            last_finished = worker.last_finished_at
+            last_status = worker.last_status
+            last_error = worker.last_error_message
+
+        # Consider a loop "stale" when we have never seen a finished run or the
+        # time since the last finished run exceeds 3x the configured interval.
+        stale = True
+        last_finished_iso: Optional[str] = None
+        last_started_iso: Optional[str] = None
+        last_success_at_iso: Optional[str] = None
+
+        if last_started is not None:
+            try:
+                last_started_iso = last_started.astimezone(timezone.utc).isoformat()
+            except Exception:  # pragma: no cover - defensive
+                last_started_iso = last_started.isoformat()
+
+        if last_finished is not None:
+            try:
+                last_finished_utc = last_finished.astimezone(timezone.utc)
+                last_finished_iso = last_finished_utc.isoformat()
+            except Exception:  # pragma: no cover - defensive
+                last_finished_utc = last_finished
+                last_finished_iso = last_finished.isoformat()
+
+            # If the last status was "ok", treat that finished_at as the last
+            # success timestamp.
+            if (last_status or "").lower() == "ok":
+                last_success_at_iso = last_finished_utc.isoformat()
+
+            try:
+                if interval and (now - last_finished_utc).total_seconds() <= 3 * interval:
+                    stale = False
+            except Exception:  # pragma: no cover - defensive
+                stale = True
+
+        return {
+            "loop_name": loop_name,
+            "worker_name": worker_name,
+            "interval_seconds": interval,
+            "last_started_at": last_started_iso,
+            "last_finished_at": last_finished_iso,
+            "last_success_at": last_success_at_iso,
+            "last_status": last_status,
+            "last_error_message": last_error,
+            "stale": stale,
+            # For now the authoritative host is the main API process. If we
+            # later move loops to dedicated services, this field can be
+            # derived from environment.
+            "source": "main_api",
+        }
+
+    # eBay data workers loop (every 5 minutes)
+    loops.append(_build_loop_payload("ebay_workers_loop", "ebay_workers", 300))
+    # Token refresh loop (every 10 minutes)
+    loops.append(_build_loop_payload("token_refresh_worker", "token_refresh", 600))
+
+    return {"loops": loops}
 
 
 @router.get("/ebay/tokens/refresh/log")

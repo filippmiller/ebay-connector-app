@@ -204,6 +204,23 @@ export interface EbayTokenRefreshDebugResponse {
   } | null;
 }
 
+export interface WorkersLoopStatusItem {
+  loop_name: string;
+  worker_name: string;
+  interval_seconds: number;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_success_at: string | null;
+  last_status: string | null;
+  last_error_message: string | null;
+  stale: boolean;
+  source: string | null;
+}
+
+export interface WorkersLoopStatusResponse {
+  loops: WorkersLoopStatusItem[];
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -402,6 +419,11 @@ export const ebayApi = {
       '/api/admin/ebay/token/refresh-debug',
       { ebay_account_id: accountId },
     );
+    return response.data;
+  },
+
+  async getWorkersLoopStatus(): Promise<WorkersLoopStatusResponse> {
+    const response = await apiClient.get<WorkersLoopStatusResponse>('/api/admin/ebay/workers/loop-status');
     return response.data;
   },
 

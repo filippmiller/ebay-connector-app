@@ -9,6 +9,7 @@ import {
   TokenRefreshWorkerStatus,
   EbayTokenRefreshLogResponse,
   EbayTokenRefreshDebugResponse,
+  WorkersLoopStatusItem,
 } from "../api/ebay";
 import { EbayWorkersPanel } from "../components/workers/EbayWorkersPanel";
 import { formatDateTimeLocal, formatRelativeTime } from "../lib/dateUtils";
@@ -35,6 +36,9 @@ const AdminWorkersPage: React.FC = () => {
   const [tokenStatusError, setTokenStatusError] = useState<string | null>(null);
   const [tokenStatusLoading, setTokenStatusLoading] = useState(false);
   const [workerStatus, setWorkerStatus] = useState<TokenRefreshWorkerStatus | null>(null);
+  const [loopStatus, setLoopStatus] = useState<WorkersLoopStatusItem[] | null>(null);
+  const [loopStatusError, setLoopStatusError] = useState<string | null>(null);
+  const [loopStatusLoading, setLoopStatusLoading] = useState(false);
 
   // Per-account refresh log modal state
   const [logModalOpen, setLogModalOpen] = useState(false);
@@ -72,6 +76,20 @@ const AdminWorkersPage: React.FC = () => {
     }
   };
 
+  const loadWorkersLoopStatus = async () => {
+    try {
+      setLoopStatusLoading(true);
+      setLoopStatusError(null);
+      const resp = await ebayApi.getWorkersLoopStatus();
+      setLoopStatus(resp.loops || []);
+    } catch (e: any) {
+      console.error("Failed to load workers loop status", e);
+      setLoopStatusError(e?.response?.data?.detail || e.message || "Failed to load workers loop status");
+    } finally {
+      setLoopStatusLoading(false);
+    }
+  };
+
   useEffect(() => {
     const loadAccountsAndTokens = async () => {
       try {
@@ -89,7 +107,7 @@ const AdminWorkersPage: React.FC = () => {
         setAccountsLoading(false);
       }
 
-      await loadTokenStatusAndWorker();
+      await Promise.all([loadTokenStatusAndWorker(), loadWorkersLoopStatus()]);
     };
 
     void loadAccountsAndTokens();
@@ -204,9 +222,94 @@ const AdminWorkersPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-2 items-stretch">
-              {/* Compact account selection */}
-              <Card className="flex-1 min-w-[220px] p-0">
+          <div className="flex flex-col lg:flex-row gap-2 items-stretch">
+            {/* Workers loop + token-refresh heartbeat */}
+            <Card className="flex-1 min-w-[260px] p-0">
+              <CardHeader className="py-1 px-3 pb-0">
+                <CardTitle className="text-[12px] font-semibold">Background loops</CardTitle>
+              </CardHeader>
+              <CardContent className="py-1 px-3 space-y-1">
+                {loopStatusLoading && (
+                  <div className="text-[11px] text-gray-600">Checking loop status...</div>
+                )}
+                {loopStatusError && (
+                  <div className="text-[11px] text-red-600">{loopStatusError}</div>
+                )}
+                {!loopStatusLoading && !loopStatusError && loopStatus && (
+                  <>
+                    {loopStatus.map((loop) => {
+                      const isOk = loop.last_status === 'ok' && !loop.stale && !loop.last_error_message;
+                      const isError = !!loop.last_error_message || (loop.last_status && loop.last_status !== 'ok');
+                      const colorClass = isOk
+                        ? 'bg-green-100 text-green-800 border-green-200'
+                        : loop.stale
+                          ? 'bg-yellow-100 text-yellow-800 border-yellow-200'
+                          : isError
+                            ? 'bg-red-100 text-red-800 border-red-200'
+                            : 'bg-gray-100 text-gray-700 border-gray-200';
+                      const label = loop.loop_name === 'ebay_workers'
+                        ? 'eBay workers loop'
+                        : loop.loop_name === 'token_refresh'
+                          ? 'Token refresh loop'
+                          : loop.loop_name;
+                      const lastFinished = loop.last_finished_at;
+                      const rel = lastFinished ? formatRelativeTime(lastFinished) : null;
+                      return (
+                        <div
+                          key={loop.loop_name}
+                          className={`flex items-center justify-between text-[11px] border rounded px-2 py-1 ${colorClass}`}
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-semibold">{label}</span>
+                            <span className="text-[10px] text-gray-700">
+                              Interval: {loop.interval_seconds ? `${Math.round(loop.interval_seconds / 60)} min` : 'n/a'}
+                            </span>
+                            <span className="text-[10px] text-gray-700">
+                              Last run:{' '}
+                              {lastFinished ? formatDateTimeLocal(lastFinished) : 'never'}
+                              {rel && (
+                                <span className="ml-1 text-gray-500">({rel})</span>
+                              )}
+                            </span>
+                            {loop.last_error_message && (
+                              <span className="text-[10px] text-red-700 truncate max-w-xs">
+                                Error: {loop.last_error_message}
+                              </span>
+                            )}
+                          </div>
+                          <div className="ml-2 flex flex-col items-end gap-1">
+                            <span className="text-[10px] uppercase tracking-wide">
+                              {loop.stale ? 'STALE' : isOk ? 'OK' : isError ? 'ERROR' : (loop.last_status || 'UNKNOWN')}
+                            </span>
+                            {loop.loop_name === 'ebay_workers' && (
+                              <button
+                                type="button"
+                                className="px-2 py-0.5 border rounded text-[10px] bg-white hover:bg-gray-50"
+                                onClick={async () => {
+                                  try {
+                                    await ebayApi
+                                      .runEbayWorkersOnce?.();
+                                  } catch (e) {
+                                    console.error('Failed to trigger workers run-once', e);
+                                  } finally {
+                                    void loadWorkersLoopStatus();
+                                  }
+                                }}
+                              >
+                                Run one cycle
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Compact account selection */}
+            <Card className="flex-1 min-w-[220px] p-0">
                 <CardHeader className="py-1 px-3 pb-0">
                   <CardTitle className="text-[12px] font-semibold">Account selection</CardTitle>
                 </CardHeader>
