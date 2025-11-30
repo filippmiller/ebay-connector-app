@@ -13,6 +13,7 @@ from ..models.user import User
 from ..utils.logger import logger
 from ..services.ebay import ebay_service
 from ..services.ebay_connect_logger import ebay_connect_logger
+from ..services.ebay_token_refresh_service import build_sanitized_refresh_preview_for_account
 from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
 from ..config import settings
 
@@ -474,6 +475,29 @@ async def refresh_ebay_access_token(
         "access_expires_at": access_expires_at.isoformat() if access_expires_at else None,
         "access_ttl_sec": ttl_sec,
     }
+
+
+@router.get("/ebay/token/refresh-preview/{ebay_account_id}")
+async def get_ebay_token_refresh_preview(
+    ebay_account_id: str,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin-only, sanitized debug information about the token refresh request.
+
+    Never returns full tokens or Authorization headers. This uses the same
+    decrypted refresh_token and HTTP shape that the background worker uses
+    when calling eBay to refresh access tokens.
+    """
+    account = db.query(EbayAccount).filter(
+        EbayAccount.id == ebay_account_id,
+        EbayAccount.org_id == current_user.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    preview = build_sanitized_refresh_preview_for_account(db, ebay_account_id)
+    return preview
 
 
 @router.get("/ebay-events")

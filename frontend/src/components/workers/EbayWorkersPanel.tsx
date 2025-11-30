@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import api from "../../lib/apiClient";
 import { SyncTerminal } from "../SyncTerminal";
+import { ebayApi, TokenRefreshPreviewResponse } from "../../api/ebay";
 
 interface WorkerConfigItem {
   api_family: string;
@@ -73,6 +74,9 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
   const [runningApiFamily, setRunningApiFamily] = useState<string | null>(null);
   const [recentRuns, setRecentRuns] = useState<any[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | "latest" | null>("latest");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewData, setPreviewData] = useState<TokenRefreshPreviewResponse | null>(null);
 
   const deriveSyncRunId = (run: { id: string; api_family: string } | null | undefined): string | null => {
     if (!run || !run.id || !run.api_family) return null;
@@ -321,6 +325,38 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     }
   };
 
+  const openPreview = async () => {
+    if (!accountId) return;
+    setPreviewLoading(true);
+    setPreviewData(null);
+    setPreviewOpen(true);
+    try {
+      const data = await ebayApi.getTokenRefreshPreview(accountId);
+      setPreviewData(data);
+    } catch (e: any) {
+      console.error("Failed to load token refresh preview", e);
+      setPreviewData({
+        error: "load_failed",
+        message: e?.response?.data?.detail || e.message || "Failed to load preview",
+        method: "",
+        url: "",
+        headers: {},
+        body_form: {
+          grant_type: "refresh_token",
+          refresh_token: {
+            prefix: null,
+            suffix: null,
+            length: 0,
+            starts_with_v: false,
+            contains_enc_prefix: false,
+          },
+        },
+      } as any);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   if (!accountId) {
     return <div className="mt-4 text-gray-500">Select an eBay account to see workers.</div>;
   }
@@ -347,14 +383,22 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                 <div className="text-xs text-gray-500">eBay user id: {ebayUserId}</div>
               )}
             </div>
-            <button
-              onClick={toggleGlobal}
-              className={`px-4 py-2 font-semibold rounded shadow text-white ${
-                config.workers_enabled ? "bg-red-600" : "bg-green-600"
-              }`}
-            >
-              {config.workers_enabled ? "BIG RED BUTTON: TURN OFF ALL JOBS" : "Enable all workers"}
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={openPreview}
+                className="px-3 py-2 text-xs font-semibold rounded border bg-white text-gray-700"
+              >
+                Inspect token format
+              </button>
+              <button
+                onClick={toggleGlobal}
+                className={`px-4 py-2 font-semibold rounded shadow text-white ${
+                  config.workers_enabled ? "bg-red-600" : "bg-green-600"
+                }`}
+              >
+                {config.workers_enabled ? "BIG RED BUTTON: TURN OFF ALL JOBS" : "Enable all workers"}
+              </button>
+            </div>
           </div>
 
           <table className="min-w-full text-sm border mt-4">
@@ -628,6 +672,54 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
               <pre className="text-xs bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap">
                 {JSON.stringify(detailsData, null, 2)}
               </pre>
+            )}
+          </div>
+        </div>
+      )}
+
+      {previewOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg max-w-lg w-full max-h-[80vh] overflow-auto p-4 text-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold">Token refresh request preview</div>
+              <button
+                onClick={() => setPreviewOpen(false)}
+                className="text-xs text-gray-600"
+              >
+                Close
+              </button>
+            </div>
+            {previewLoading && <div>Loading preview...</div>}
+            {!previewLoading && previewData && (
+              <div className="space-y-2">
+                {previewData.error && (
+                  <div className="text-xs text-red-600">
+                    {previewData.message || previewData.error}
+                  </div>
+                )}
+                {previewData.account && (
+                  <div className="text-xs text-gray-700">
+                    Account: {previewData.account.house_name || previewData.account.username || previewData.account.id}
+                  </div>
+                )}
+                <div>
+                  <div><span className="font-semibold">Method:</span> {previewData.method}</div>
+                  <div className="break-all"><span className="font-semibold">URL:</span> {previewData.url}</div>
+                  <div><span className="font-semibold">grant_type:</span> {previewData.body_form?.grant_type}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-xs mb-1">Headers (sanitized)</div>
+                  <pre className="text-[11px] bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify(previewData.headers || {}, null, 2)}
+                  </pre>
+                </div>
+                <div>
+                  <div className="font-semibold text-xs mb-1">refresh_token (masked)</div>
+                  <pre className="text-[11px] bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify(previewData.body_form?.refresh_token || {}, null, 2)}
+                  </pre>
+                </div>
+              </div>
             )}
           </div>
         </div>

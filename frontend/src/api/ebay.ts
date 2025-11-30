@@ -127,6 +127,30 @@ export interface TestNotificationResponse {
   tokenType?: 'application' | 'user' | null;
 }
 
+export interface TokenRefreshPreviewResponse {
+  method: string;
+  url: string;
+  headers: Record<string, any>;
+  body_form: {
+    grant_type: string;
+    refresh_token: {
+      prefix: string | null;
+      suffix: string | null;
+      length: number;
+      starts_with_v: boolean;
+      contains_enc_prefix: boolean;
+    };
+  };
+  account?: {
+    id: string;
+    house_name?: string | null;
+    username?: string | null;
+    ebay_user_id?: string | null;
+  };
+  error?: string;
+  message?: string;
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -293,6 +317,19 @@ export const ebayApi = {
   },
 
   async testNotificationTopic(topicId: string): Promise<TestNotificationResponse> {
+      const response = await apiClient.post<TestNotificationResponse>(
+        '/api/admin/notifications/test-topic',
+        { topicId },
+      );
+      return response.data;
+  },
+
+  async getTokenRefreshPreview(ebayAccountId: string): Promise<TokenRefreshPreviewResponse> {
+    const response = await apiClient.get<TokenRefreshPreviewResponse>(
+      `/api/admin/ebay/token/refresh-preview/${encodeURIComponent(ebayAccountId)}`,
+    );
+    return response.data;
+  },
     const response = await apiClient.post<TestNotificationResponse>(
       '/api/admin/notifications/test-topic',
       { topicId },
