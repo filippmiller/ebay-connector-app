@@ -160,6 +160,10 @@ async def refresh_access_token_for_account(
     # - capture_http=False -> use refresh_access_token (returns EbayTokenResponse)
     # - capture_http=True  -> use debug_refresh_access_token_http (returns
     #                        raw HTTP request/response details only)
+    
+    debug_payload: Optional[Dict[str, Any]] = None
+    token_data: Dict[str, Any] = {}
+
     try:
         if capture_http:
             debug_payload = await ebay_service.debug_refresh_access_token_http(
@@ -202,49 +206,72 @@ async def refresh_access_token_for_account(
                 token_data = json.loads(body_text) if body_text else {}
             except Exception:
                 token_data = {}
+        
+        else:
+            # Standard worker flow
+            # Raises HTTPException on failure
+            token_resp = await ebay_service.refresh_access_token(
+                plain_refresh_token,
+                environment=env,
+                user_id=getattr(account, "org_id", None),
+                source=triggered_by,
+            )
+            # Convert Pydantic model to dict
+            if hasattr(token_resp, "dict"):
+                 token_data = token_resp.dict()
+            elif hasattr(token_resp, "model_dump"):
+                 token_data = token_resp.model_dump()
+            else:
+                 token_data = token_resp.__dict__
 
-            access_token = token_data.get("access_token")
-            expires_in = token_data.get("expires_in")
-            new_refresh_token = token_data.get("refresh_token")
-            refresh_token_expires_in = token_data.get("refresh_token_expires_in")
+        # Common extraction and validation
+        access_token = token_data.get("access_token")
+        expires_in = token_data.get("expires_in")
+        new_refresh_token = token_data.get("refresh_token")
+        refresh_token_expires_in = token_data.get("refresh_token_expires_in")
 
-            if not access_token or not isinstance(expires_in, (int, float)):
-                msg = "Token refresh debug succeeded but response is missing access_token/expires_in"
-                logger.error(
-                    "Account %s (%s): %s. Raw body length=%s",
-                    account.id,
-                    account.house_name,
-                    msg,
-                    len(body_text),
-                )
-                refresh_log.success = False
-                refresh_log.error_code = "invalid_response"
-                refresh_log.error_message = msg[:2000]
-                refresh_log.finished_at = datetime.now(timezone.utc)
-                token.refresh_error = msg
-                db.commit()
-                return {
-                    "success": False,
-                    "error": "invalid_response",
-                    "error_message": msg,
-                    "http": debug_payload,
-                }
+        if not access_token or not isinstance(expires_in, (int, float)):
+            msg = "Token refresh succeeded but response is missing access_token/expires_in"
+            logger.error(
+                "Account %s (%s): %s",
+                account.id,
+                account.house_name,
+                msg,
+            )
+            refresh_log.success = False
+            refresh_log.error_code = "invalid_response"
+            refresh_log.error_message = msg[:2000]
+            refresh_log.finished_at = datetime.now(timezone.utc)
+            token.refresh_error = msg
+            db.commit()
+            return {
+                "success": False,
+                "error": "invalid_response",
+                "error_message": msg,
+                "http": debug_payload,
+            }
 
-            # Persist tokens if requested.
-            token = ebay_account_service.get_token(db, account.id) or token
+        # Persist tokens if requested.
+        if persist:
+             # Use the service to update/save tokens properly
+             token = ebay_account_service.save_tokens(
+                db,
+                str(account.id),
+                access_token,
+                new_refresh_token, # Might be None if not rotated
+                int(expires_in),
+                refresh_token_expires_in=int(refresh_token_expires_in) if refresh_token_expires_in else None,
+             )
 
         finished = datetime.now(timezone.utc)
         refresh_log.success = True
         refresh_log.finished_at = finished
-        try:
-            if getattr(token, "expires_at", None) is not None:
-                refresh_log.new_expires_at = token.expires_at
-            else:
-                refresh_log.new_expires_at = finished + timedelta(
-                    seconds=int(getattr(new_token_data, "expires_in", 0) or 0),
-                )
-        except Exception:  # pragma: no cover - defensive
-            refresh_log.new_expires_at = None
+        
+        # Calculate new expiry for log
+        if getattr(token, "expires_at", None) is not None:
+            refresh_log.new_expires_at = token.expires_at
+        else:
+            refresh_log.new_expires_at = finished + timedelta(seconds=int(expires_in))
 
         token.refresh_error = None
         db.commit()
@@ -259,7 +286,7 @@ async def refresh_access_token_for_account(
             "success": True,
             "error": None,
             "error_message": None,
-            "http": None,
+            "http": debug_payload,
         }
 
     except HTTPException as exc:
