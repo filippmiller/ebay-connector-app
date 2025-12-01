@@ -4906,7 +4906,22 @@ class EbayService:
                         exc,
                         exc_info=True,
                     )
+                    event_logger.log_warning(
+                        f"Upsert error for return_id={return_id!r}: {exc}",
+                    )
                     ok = False
+
+                if not ok:
+                    # Either upsert_return() returned False (e.g. missing returnId
+                    # or DB-level error) or we hit an exception above. Emit a
+                    # structured warning into the worker log so the UI clearly
+                    # shows which payloads were skipped while the underlying
+                    # reason remains in the backend logs.
+                    event_logger.log_warning(
+                        f"Skipped storing Post-Order return (upsert_return returned False) "
+                        f"for return_id={return_id!r}. See backend logs for "
+                        f"'Return data missing returnId' or 'Error upserting return'.",
+                    )
 
                 if ok:
                     stored += 1

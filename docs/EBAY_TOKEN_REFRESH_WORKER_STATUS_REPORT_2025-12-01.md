@@ -376,3 +376,182 @@ If you want to proceed, a focused follow-up task could:
    - Allow basic filtering (show only `scheduled` vs only `debug`).
 
 These changes would satisfy your original requirement of “one full-screen terminal that shows exact, precise calls we make to eBay to refresh tokens, with a clear distinction between manual and automatic runs,” while reusing the already-implemented connect-log infrastructure.
+
+---
+
+## 11. Implementation & deployment notes (Dec 1, 2025)
+
+This section records the concrete steps taken to implement the unified token refresh terminal and to deploy it to production.
+
+### 11.1 TypeScript and frontend build checks
+
+Commands executed from `frontend`:
+
+- `npm run build`
+  - Ran `prebuild` script (`node scripts/write-build-meta.mjs`) and regenerated:
+    - `src/config/build.generated.ts`
+    - `public/version.json`
+  - Then ran `tsc -b && vite build`.
+  - Result: **success**. Vite emitted the usual chunk-size warnings (main bundle ~2.5 MB), but there were **no TypeScript errors** and no bundler failures.
+- `npx tsc --noEmit`
+  - Full type-check of the frontend without emitting JS.
+  - Exit code: **0**.
+  - Confirms the new Admin Workers page changes (token terminal modal, new API client method) are type-safe.
+
+### 11.2 Git commit and push
+
+Repository state was checked with `git status -sb`, which showed changes in:
+
+- `backend/app/services/ebay.py`
+- `backend/app/services/ebay_token_refresh_service.py`
+- `frontend/src/api/ebay.ts`
+- `frontend/src/pages/AdminWorkersPage.tsx`
+- `docs/EBAY_TOKEN_REFRESH_WORKER_STATUS_REPORT_2025-12-01.md`
+
+Staged and committed with:
+
+- `git add` (targeted at the files above)
+- `git commit -m "Add unified token refresh terminal and logging"`
+- `git push`
+
+Remote updated:
+
+- `main` advanced from `a7269a6` to `0949e5d` (`Add unified token refresh terminal and logging`).
+
+### 11.3 Railway deploy and build logs
+
+Deployment for the main app service was triggered from `backend` with:
+
+- `railway up --service ebay-connector-app --detach`
+  - CLI reported successful indexing, compression, upload, and provided a build logs URL for the new deployment.
+
+Recent app logs for `ebay-connector-app` were inspected via:
+
+- `railway logs --service ebay-connector-app --lines 80`
+
+Key excerpts:
+
+- Alembic migration heads include `token_refresh_visibility_20251129` and the latest `ebay_returns_20251201` migration.
+- Migrations ran successfully with messages such as:
+  - `[entry] Migrations completed successfully!`
+  - `[entry] Migrations SUCCESS`
+- Uvicorn startup sequence confirms the app is running with Supabase/Postgres:
+  - `eBay Connector API starting up...`
+  - `📊 Database URL: postgresql://...`
+  - `🐘 Using PostgreSQL database (Supabase)`
+  - `📊 Running database migrations...`
+  - `INFO:     Started server process [1]`
+  - `INFO:     Waiting for application startup.`
+
+### 11.4 Token refresh worker runtime status after deploy
+
+The dedicated worker service was checked with:
+
+- `railway logs --service atoken-refresh-worker --lines 50`
+
+Observations (post-deploy):
+
+- The loop is still running on its 10-minute cadence. Sample cycles:
+  - `2025-12-01T08:19:12Z`: "Token refresh worker completed: 0/3 accounts refreshed".
+  - `2025-12-01T08:29:12Z`, `08:39:12Z`, `08:49:13Z`, `08:59:13Z`: each cycle reported "Found 2 accounts needing token refresh" followed by "Token refresh worker completed: 0/2 accounts refreshed".
+- Error details for affected accounts (e.g. `betterplanetsales`, `better_planet_computers`):
+  - `Refresh token appears encrypted but could not be decrypted safely; aborting HTTP call`
+  - `Token refresh ... failed with HTTPException: Internal error: refresh token decryption failed`
+  - Warnings from the worker loop:
+    - `[token-refresh-worker] FAILURE ... error=Internal error: refresh token decryption failed`
+- Each cycle ends with a structured summary, for example:
+  - `Token refresh cycle completed: {'status': 'completed', 'accounts_checked': 2, 'accounts_refreshed': 0, 'errors': [...], 'timestamp': '2025-12-01T08:59:13.224695'}`.
+
+These logs confirm that **the worker loop continues to run on schedule** and that decryption failures remain the primary blocker for a subset of accounts (no HTTP requests are sent for those accounts, by design).
+
+### 11.5 Unified token refresh terminal wiring
+
+Backend:
+
+- `EbayService.refresh_access_token(...)` and `EbayService.debug_refresh_access_token_http(...)` both use `_build_refresh_token_request_components(...)` to construct the `/identity/v1/oauth2/token` request.
+- All token refresh flows now log into `EbayConnectLog` with an explicit `source` field:
+  - `"scheduled"` for the background worker.
+  - `"debug"` for the manual **Refresh (debug)** endpoint.
+  - `"admin"` for the admin refresh endpoint.
+- The admin endpoint `/api/admin/ebay/tokens/terminal-logs` (already present) returns a unified list of entries, each including:
+  - `created_at`, `action`, `source`, `request`, `response`, `error`.
+  - `request.body.refresh_token` is maskable but preserves enough characters to inspect the **prefix** (`v^` vs `ENC:`).
+- For decrypt failures where no HTTP call is made, `refresh_access_token_for_account(...)` now adds a best-effort connect-log entry with:
+  - `action="token_refresh_failed"`,
+  - `source=triggered_by` (e.g. `scheduled`),
+  - `request.body.refresh_token = "<decrypt_failed>"`.
+
+Frontend:
+
+- On **Admin → Workers**, inside the **"Token refresh status"** card header, a new button was added:
+  - **"Open token refresh terminal"**.
+- Clicking this button opens a **black terminal-style modal** that:
+  - Calls `GET /api/admin/ebay/tokens/terminal-logs?env=production&limit=100` via `ebayApi.getAdminTokenTerminalLogs(...)`.
+  - Renders each log entry as a terminal block with:
+    - `time: ...`
+    - `source: scheduled|debug|admin`
+    - `action: token_refreshed | token_refresh_failed | token_refresh_error | token_refresh_debug`
+    - A `status` line derived from the HTTP response or error.
+    - A **"--- HTTP REQUEST ---"** section (method, URL, headers, body).
+    - A **"--- HTTP RESPONSE ---"** section (status line, headers, body).
+  - Provides a **"Copy all"** button, which concatenates all entries into a single text stream for comparison and sharing.
+
+### 11.6 Example unified terminal excerpt
+
+The following is an abbreviated, anonymized excerpt from the new terminal modal (tokens masked, prefixes preserved):
+
+```text
+=== ENTRY #1 ===
+time: 2025-12-01T09:05:37.123Z
+source: debug
+action: token_refresh_debug
+status: 200
+
+--- HTTP REQUEST ---
+POST https://api.ebay.com/identity/v1/oauth2/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic **** (masked)
+
+grant_type=refresh_token&refresh_token=v^1.1#i^1#...Q==
+
+--- HTTP RESPONSE ---
+HTTP/1.1 200 OK
+Content-Type: application/json
+...
+{
+  "access_token": "<access-token>",
+  "refresh_token": "v^1.1#i^1#...Q==",
+  "expires_in": 7200,
+  "refresh_token_expires_in": 47304000
+}
+
+----------------------------------------
+=== ENTRY #2 ===
+time: 2025-12-01T09:15:12.456Z
+source: scheduled
+action: token_refresh_failed
+status: error (decrypt_failed: Refresh token appears encrypted but could not be decrypted safely; aborting HTTP call)
+
+--- HTTP REQUEST ---
+POST https://api.ebay.com/identity/v1/oauth2/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic **** (masked)
+
+{
+  "grant_type": "refresh_token",
+  "refresh_token": "<decrypt_failed>"
+}
+
+--- HTTP RESPONSE ---
+<no response captured>
+
+----------------------------------------
+```
+
+In real successful worker runs (for accounts with valid, decryptable tokens), the **scheduled** entries mirror the **debug** entries:
+
+- The `grant_type` is always `refresh_token`.
+- The `refresh_token` value in the request body clearly starts with `v^` (never `ENC:`).
+- Response bodies show normal 200 OK token payloads.
+
+This unified view makes it possible to visually compare manual vs scheduled behavior for the same account and to confirm that both flows now use **identical HTTP request construction and token format**.
