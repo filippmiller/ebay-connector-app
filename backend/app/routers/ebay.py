@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
+from sqlalchemy.orm import Session
+
 from app.models.ebay import EbayAuthRequest, EbayAuthCallback, EbayConnectionStatus
 from app.services.auth import get_current_active_user, get_user_from_header_or_query
 from app.services.ebay import ebay_service
 from app.services.ebay_connect_logger import ebay_connect_logger
 from app.models.user import User
 from app.utils.logger import logger, ebay_logger
+from app.models_sqlalchemy import get_db
 
 router = APIRouter(prefix="/ebay", tags=["ebay"])
 
