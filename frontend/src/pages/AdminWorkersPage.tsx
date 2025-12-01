@@ -350,8 +350,19 @@ const AdminWorkersPage: React.FC = () => {
               </Card>
               {/* Compact token refresh worker summary (4,5) */}
               <Card className="flex-1 min-w-[220px] p-0">
-                <CardHeader className="py-1 px-3 pb-0">
+                <CardHeader className="py-1 px-3 pb-0 flex items-center justify-between">
                   <CardTitle className="text-[12px] font-semibold">Token refresh status</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-[11px] text-blue-700 hover:underline"
+                      onClick={openHttpLogsModal}
+                    >
+                      View token HTTP logs (JSON)
+                    </button>
+                    {/* The full terminal for token refresh lives in the Workers panel; this button just
+                        opens the same JSON logs for quick access from the header. */}
+                  </div>
                 </CardHeader>
                 <CardContent className="py-1 px-3">
                   {workerStatus ? (
