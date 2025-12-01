@@ -150,7 +150,13 @@ const AdminWorkersPage: React.FC = () => {
       setTerminalLoading(true);
       setTerminalError(null);
       const resp = await ebayApi.getAdminTokenTerminalLogs('production', 100);
-      setTerminalEntries(resp.entries || []);
+      const entries = Array.isArray(resp.entries) ? [...resp.entries] : [];
+      entries.sort((a: any, b: any) => {
+        const ad = a?.created_at ? Date.parse(a.created_at) : 0;
+        const bd = b?.created_at ? Date.parse(b.created_at) : 0;
+        return bd - ad; // newest first
+      });
+      setTerminalEntries(entries);
     } catch (e: any) {
       console.error('Failed to load token terminal logs', e);
       setTerminalError(
