@@ -58,6 +58,12 @@ const AdminWorkersPage: React.FC = () => {
   const [httpLogsError, setHttpLogsError] = useState<string | null>(null);
   const [httpLogs, setHttpLogs] = useState<any[]>([]);
 
+  // Unified token refresh terminal (scheduled + debug) backed by /api/admin/ebay/tokens/terminal-logs
+  const [terminalModalOpen, setTerminalModalOpen] = useState(false);
+  const [terminalLoading, setTerminalLoading] = useState(false);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [terminalEntries, setTerminalEntries] = useState<any[]>([]);
+
   const loadTokenStatusAndWorker = async () => {
     try {
       setTokenStatusLoading(true);
@@ -135,6 +141,23 @@ const AdminWorkersPage: React.FC = () => {
       setHttpLogsError(e?.response?.data?.detail || e.message || "Failed to load token HTTP logs");
     } finally {
       setHttpLogsLoading(false);
+    }
+  };
+
+  const openTokenTerminalModal = async () => {
+    try {
+      setTerminalModalOpen(true);
+      setTerminalLoading(true);
+      setTerminalError(null);
+      const resp = await ebayApi.getAdminTokenTerminalLogs('production', 100);
+      setTerminalEntries(resp.entries || []);
+    } catch (e: any) {
+      console.error('Failed to load token terminal logs', e);
+      setTerminalError(
+        e?.response?.data?.detail || e.message || 'Failed to load token terminal logs',
+      );
+    } finally {
+      setTerminalLoading(false);
     }
   };
 
@@ -360,8 +383,13 @@ const AdminWorkersPage: React.FC = () => {
                     >
                       View token HTTP logs (JSON)
                     </button>
-                    {/* The full terminal for token refresh lives in the Workers panel; this button just
-                        opens the same JSON logs for quick access from the header. */}
+                    <button
+                      type="button"
+                      className="text-[11px] text-blue-700 hover:underline"
+                      onClick={openTokenTerminalModal}
+                    >
+                      Open token refresh terminal
+                    </button>
                   </div>
                 </CardHeader>
                 <CardContent className="py-1 px-3">
@@ -759,23 +787,210 @@ const AdminWorkersPage: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          <div>
-                            <div className="font-semibold text-[11px] mb-0.5">Request</div>
-                            <pre className="bg-white border rounded px-2 py-1 text-[10px] overflow-auto max-h-48">
-                              {JSON.stringify(log.request, null, 2)}
-                            </pre>
-                          </div>
-                          <div>
-                            <div className="font-semibold text-[11px] mb-0.5">Response</div>
-                            <pre className="bg-white border rounded px-2 py-1 text-[10px] overflow-auto max-h-48">
-                              {JSON.stringify(log.response, null, 2)}
-                            </pre>
-                          </div>
-                        </div>
+                        <pre className="text-[11px] bg-white p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                          {JSON.stringify(log.request, null, 2)}
+                        </pre>
+                        {log.response && (
+                          <pre className="mt-1 text-[11px] bg-white p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                            {JSON.stringify(log.response, null, 2)}
+                          </pre>
+                        )}
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {terminalModalOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+              <div className="bg-gray-900 rounded shadow-lg max-w-5xl w-[95vw] max-h-[90vh] overflow-auto p-4 text-xs text-green-100 font-mono">
+                <div className="flex items-center justify-between mb-2 text-gray-200">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-sm">Token refresh terminal (worker + debug)</span>
+                    <span className="text-[11px] text-gray-400">
+                      Shows recent token refresh HTTP calls from both the scheduled worker (source="scheduled")
+                      and manual debug runs (source="debug").
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs text-gray-300 hover:text-white"
+                    onClick={() => {
+                      setTerminalModalOpen(false);
+                      setTerminalEntries([]);
+                      setTerminalError(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+                {terminalLoading && (
+                  <div className="text-[11px] text-gray-300">Loading token refresh terminal logs...</div>
+                )}
+                {terminalError && (
+                  <div className="text-[11px] text-red-400 mb-2">{terminalError}</div>
+                )}
+                {!terminalLoading && !terminalError && terminalEntries.length === 0 && (
+                  <div className="text-[11px] text-gray-300">No token refresh terminal logs found.</div>
+                )}
+                {!terminalLoading && terminalEntries.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      className="mb-2 px-2 py-0.5 border rounded text-[11px] bg-gray-800 hover:bg-gray-700 text-gray-100"
+                      onClick={() => {
+                        const text = terminalEntries
+                          .map((entry: any, idx: number) => {
+                            const lines: string[] = [];
+                            lines.push(`=== ENTRY #${idx + 1} ===`);
+                            lines.push(`time: ${entry.created_at || 'n/a'}`);
+                            lines.push(`source: ${entry.source || 'unknown'}`);
+                            lines.push(`action: ${entry.action || 'n/a'}`);
+                            if (entry.response && typeof entry.response.status === 'number') {
+                              lines.push(`status: ${entry.response.status}`);
+                            } else if (entry.response && typeof entry.response.status_code === 'number') {
+                              lines.push(`status: ${entry.response.status_code}`);
+                            } else if (entry.error) {
+                              lines.push(`status: error (${String(entry.error).slice(0, 80)})`);
+                            }
+                            lines.push('');
+                            lines.push('--- HTTP REQUEST ---');
+                            const req = entry.request || {};
+                            if (req.method || req.url || req.headers || req.body) {
+                              lines.push(`${req.method || 'POST'} ${req.url || ''}`.trim());
+                              if (req.headers) {
+                                Object.entries(req.headers).forEach(([k, v]) => {
+                                  lines.push(`${k}: ${String(v)}`);
+                                });
+                              }
+                              lines.push('');
+                              if (req.body != null) {
+                                if (typeof req.body === 'string') {
+                                  lines.push(req.body);
+                                } else {
+                                  try {
+                                    lines.push(JSON.stringify(req.body, null, 2));
+                                  } catch {
+                                    lines.push(String(req.body));
+                                  }
+                                }
+                              }
+                            } else {
+                              lines.push('<no request captured>');
+                            }
+                            lines.push('');
+                            lines.push('--- HTTP RESPONSE ---');
+                            const res = entry.response;
+                            if (res) {
+                              const status = (res.status_code ?? res.status ?? '?') as any;
+                              const reason = (res.reason || '') as any;
+                              lines.push(`HTTP/1.1 ${status}${reason ? ` ${reason}` : ''}`);
+                              if (res.headers) {
+                                Object.entries(res.headers).forEach(([k, v]) => {
+                                  lines.push(`${k}: ${String(v)}`);
+                                });
+                              }
+                              lines.push('');
+                              if (res.body != null) {
+                                if (typeof res.body === 'string') {
+                                  lines.push(res.body);
+                                } else {
+                                  try {
+                                    lines.push(JSON.stringify(res.body, null, 2));
+                                  } catch {
+                                    lines.push(String(res.body));
+                                  }
+                                }
+                              }
+                            } else {
+                              lines.push('<no response captured>');
+                            }
+                            lines.push('');
+                            return lines.join('\n');
+                          })
+                          .join('\n----------------------------------------\n');
+                        if (navigator?.clipboard?.writeText) {
+                          void navigator.clipboard.writeText(text);
+                        }
+                      }}
+                    >
+                      Copy all
+                    </button>
+                    <pre className="bg-black text-green-100 font-mono text-[11px] p-3 rounded h-[60vh] overflow-auto whitespace-pre-wrap">
+                      {terminalEntries
+                        .map((entry: any, idx: number) => {
+                          const lines: string[] = [];
+                          lines.push(`=== ENTRY #${idx + 1} ===`);
+                          lines.push(`time: ${entry.created_at || 'n/a'}`);
+                          lines.push(`source: ${entry.source || 'unknown'}`);
+                          lines.push(`action: ${entry.action || 'n/a'}`);
+                          if (entry.response && typeof entry.response.status === 'number') {
+                            lines.push(`status: ${entry.response.status}`);
+                          } else if (entry.response && typeof entry.response.status_code === 'number') {
+                            lines.push(`status: ${entry.response.status_code}`);
+                          } else if (entry.error) {
+                            lines.push(`status: error (${String(entry.error).slice(0, 80)})`);
+                          }
+                          lines.push('');
+                          lines.push('--- HTTP REQUEST ---');
+                          const req = entry.request || {};
+                          if (req.method || req.url || req.headers || req.body) {
+                            lines.push(`${req.method || 'POST'} ${req.url || ''}`.trim());
+                            if (req.headers) {
+                              Object.entries(req.headers).forEach(([k, v]) => {
+                                lines.push(`${k}: ${String(v)}`);
+                              });
+                            }
+                            lines.push('');
+                            if (req.body != null) {
+                              if (typeof req.body === 'string') {
+                                lines.push(req.body);
+                              } else {
+                                try {
+                                  lines.push(JSON.stringify(req.body, null, 2));
+                                } catch {
+                                  lines.push(String(req.body));
+                                }
+                              }
+                            }
+                          } else {
+                            lines.push('<no request captured>');
+                          }
+                          lines.push('');
+                          lines.push('--- HTTP RESPONSE ---');
+                          const res = entry.response;
+                          if (res) {
+                            const status = (res.status_code ?? res.status ?? '?') as any;
+                            const reason = (res.reason || '') as any;
+                            lines.push(`HTTP/1.1 ${status}${reason ? ` ${reason}` : ''}`);
+                            if (res.headers) {
+                              Object.entries(res.headers).forEach(([k, v]) => {
+                                lines.push(`${k}: ${String(v)}`);
+                              });
+                            }
+                            lines.push('');
+                            if (res.body != null) {
+                              if (typeof res.body === 'string') {
+                                lines.push(res.body);
+                              } else {
+                                try {
+                                  lines.push(JSON.stringify(res.body, null, 2));
+                                } catch {
+                                  lines.push(String(res.body));
+                                }
+                              }
+                            }
+                          } else {
+                            lines.push('<no response captured>');
+                          }
+                          lines.push('');
+                          return lines.join('\n');
+                        })
+                        .join('\n----------------------------------------\n')}
+                    </pre>
+                  </>
                 )}
               </div>
             </div>

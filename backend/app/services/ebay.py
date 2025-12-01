@@ -2658,6 +2658,291 @@ class EbayService:
                 detail=message,
             )
 
+    async def fetch_postorder_returns(
+        self,
+        access_token: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch return requests from the Post-Order Returns API.
+
+        This wraps ``GET /post-order/v2/return/search`` as documented in the
+        eBay Post-Order API. We surface detailed errors (status, body,
+        correlation id) so worker UIs can show real failure causes.
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        # See "Search Returns" docs: GET https://api.ebay.com/post-order/v2/return/search
+        api_url = f"{settings.ebay_api_base_url}/post-order/v2/return/search"
+        timeout_seconds = 30.0
+
+        headers = {
+            # Post-Order API expects OAuth user tokens in the IAF scheme.
+            # Docs: all Post-Order calls use standard OAuth tokens via the
+            # Authorization header. Historically these are sent as
+            # "Authorization: IAF <user_access_token>".
+            "Authorization": f"IAF {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        }
+
+        params = filter_params or {}
+
+        ebay_logger.log_ebay_event(
+            "fetch_postorder_returns_request",
+            f"Fetching Post-Order returns from eBay ({settings.EBAY_ENVIRONMENT})",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "method": "GET",
+                "params": params,
+            },
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.get(api_url, headers=headers, params=params)
+
+            if response.status_code != 200:
+                correlation_id = (
+                    response.headers.get("X-EBAY-CORRELATION-ID")
+                    or response.headers.get("x-ebay-correlation-id")
+                )
+                try:
+                    error_body: Any = response.json()
+                except Exception:
+                    error_body = response.text
+
+                body_snippet = (
+                    str(error_body)[:2000]
+                    if not isinstance(error_body, (dict, list))
+                    else error_body
+                )
+
+                message = (
+                    f"EBAY Post-Order error {response.status_code} on GET "
+                    f"/post-order/v2/return/search; "
+                    f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
+                )
+
+                ebay_logger.log_ebay_event(
+                    "fetch_postorder_returns_failed",
+                    "Failed to fetch Post-Order returns from eBay",
+                    response_data={
+                        "status_code": response.status_code,
+                        "correlation_id": correlation_id,
+                        "headers": dict(response.headers),
+                        "body": body_snippet,
+                    },
+                    status="error",
+                    error=message,
+                )
+                logger.error(message)
+                raise HTTPException(status_code=response.status_code, detail=message)
+
+            returns_data = response.json()
+
+            total = returns_data.get("total")
+            items = (
+                returns_data.get("members")
+                or returns_data.get("returns")
+                or returns_data.get("returnSummaries")
+                or []
+            )
+
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_returns_success",
+                "Successfully fetched Post-Order returns",
+                response_data={
+                    "total_returns": total if total is not None else len(items),
+                },
+                status="success",
+            )
+            logger.info("Successfully fetched Post-Order returns from eBay")
+            return returns_data
+
+        except httpx.TimeoutException as e:
+            message = (
+                f"Timeout calling EBAY Post-Order GET /post-order/v2/return/search "
+                f"after {timeout_seconds}s: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_returns_timeout",
+                "Timeout during Post-Order returns fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=message,
+            )
+        except httpx.RequestError as e:
+            message = (
+                "Network error calling EBAY Post-Order GET "
+                "/post-order/v2/return/search: "
+                f"{str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_returns_error",
+                "HTTP request error during Post-Order returns fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
+            )
+
+    async def fetch_postorder_return_detail(
+        self,
+        access_token: str,
+        return_id: str,
+        fieldgroups: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fetch a single Post-Order return request by id.
+
+        This wraps ``GET /post-order/v2/return/{returnId}`` so workers can store
+        the full detailed payload (including refund breakdown, shipment info,
+        and history) in ``ebay_returns.raw_json``.
+        """
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+        if not return_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="return_id is required",
+            )
+
+        # See "Get Return" docs: GET https://api.ebay.com/post-order/v2/return/{returnId}
+        api_url = f"{settings.ebay_api_base_url}/post-order/v2/return/{return_id}"
+        timeout_seconds = 30.0
+
+        headers = {
+            "Authorization": f"IAF {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        }
+
+        params: Dict[str, Any] = {}
+        if fieldgroups:
+            params["fieldgroups"] = fieldgroups
+
+        ebay_logger.log_ebay_event(
+            "fetch_postorder_return_detail_request",
+            "Fetching Post-Order return detail from eBay",
+            request_data={
+                "environment": settings.EBAY_ENVIRONMENT,
+                "api_url": api_url,
+                "method": "GET",
+                "return_id": return_id,
+                "params": params,
+            },
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.get(api_url, headers=headers, params=params)
+
+            if response.status_code != 200:
+                correlation_id = (
+                    response.headers.get("X-EBAY-CORRELATION-ID")
+                    or response.headers.get("x-ebay-correlation-id")
+                )
+                try:
+                    error_body: Any = response.json()
+                except Exception:
+                    error_body = response.text
+
+                body_snippet = (
+                    str(error_body)[:2000]
+                    if not isinstance(error_body, (dict, list))
+                    else error_body
+                )
+
+                message = (
+                    f"EBAY Post-Order error {response.status_code} on GET "
+                    f"/post-order/v2/return/{return_id}; "
+                    f"correlation-id={correlation_id or 'unknown'}; body={body_snippet}"
+                )
+
+                ebay_logger.log_ebay_event(
+                    "fetch_postorder_return_detail_failed",
+                    "Failed to fetch Post-Order return detail from eBay",
+                    response_data={
+                        "status_code": response.status_code,
+                        "correlation_id": correlation_id,
+                        "headers": dict(response.headers),
+                        "body": body_snippet,
+                    },
+                    status="error",
+                    error=message,
+                )
+                logger.error(message)
+                raise HTTPException(status_code=response.status_code, detail=message)
+
+            data: Any
+            try:
+                data = response.json() or {}
+            except Exception:
+                data = {}
+
+            if not isinstance(data, dict):
+                data = {"raw": data}
+
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_return_detail_success",
+                "Successfully fetched Post-Order return detail",
+                response_data={
+                    "return_id": return_id,
+                },
+                status="success",
+            )
+            logger.info("Successfully fetched Post-Order return detail from eBay")
+            return data
+
+        except httpx.TimeoutException as e:
+            message = (
+                f"Timeout calling EBAY Post-Order GET /post-order/v2/return/{return_id} "
+                f"after {timeout_seconds}s: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_return_detail_timeout",
+                "Timeout during Post-Order return detail fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=message,
+            )
+        except httpx.RequestError as e:
+            message = (
+                "Network error calling EBAY Post-Order GET "
+                f"/post-order/v2/return/{return_id}: {str(e)}"
+            )
+            ebay_logger.log_ebay_event(
+                "fetch_postorder_return_detail_error",
+                "HTTP request error during Post-Order return detail fetch",
+                status="error",
+                error=message,
+            )
+            logger.error(message)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
+            )
+
     async def fetch_inventory_items(self, access_token: str, limit: int = 200, offset: int = 0) -> Dict[str, Any]:
         """
         Fetch inventory items from eBay Inventory API

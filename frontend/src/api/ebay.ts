@@ -452,6 +452,19 @@ export const ebayApi = {
     return response.data;
   },
 
+  async getAdminTokenTerminalLogs(
+    env: string,
+    limit: number = 50,
+  ): Promise<{ entries: any[] }> {
+    const params = new URLSearchParams();
+    params.set('env', env);
+    params.set('limit', String(limit));
+    const response = await apiClient.get<{ entries: any[] }>(
+      `/api/admin/ebay/tokens/terminal-logs?${params.toString()}`,
+    );
+    return response.data;
+  },
+
   async getEbayTokenStatus(): Promise<EbayTokenStatusResponse> {
     const response = await apiClient.get<EbayTokenStatusResponse>('/api/admin/ebay/tokens/status');
     return response.data;

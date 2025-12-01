@@ -337,6 +337,39 @@ async def refresh_access_token_for_account(
                 token.refresh_error = msg
         db.commit()
 
+        # Best-effort connect-log entry so the unified token terminal can show
+        # decrypt_failed cases even when no outbound HTTP call was made.
+        try:  # pragma: no cover - diagnostics only
+            from app.services.ebay_connect_logger import ebay_connect_logger
+
+            env = settings.EBAY_ENVIRONMENT or "sandbox"
+            ebay_connect_logger.log_event(
+                user_id=getattr(account, "org_id", None),
+                environment=env,
+                action="token_refresh_failed",
+                request={
+                    "method": "POST",
+                    "url": ebay_service.token_url,
+                    "headers": {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Authorization": "Basic **** (masked)",
+                    },
+                    "body": {
+                        "grant_type": "refresh_token",
+                        # We deliberately do not attempt to include the broken
+                        # refresh token here; the important part for the UI is
+                        # that this entry is clearly marked as decrypt_failed.
+                        "refresh_token": "<decrypt_failed>",
+                    },
+                },
+                response=None,
+                error=msg[:2000],
+                source=triggered_by,
+            )
+        except Exception:
+            # Logging must never break the refresh flow.
+            pass
+
         return {
             "success": False,
             "error": code,
