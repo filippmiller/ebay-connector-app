@@ -4851,7 +4851,7 @@ class EbayService:
             await asyncio.sleep(0.2)
 
             stored = 0
-            for r in returns:
+            for summary in returns:
                 if is_cancelled(event_logger.run_id):
                     logger.info(
                         f"Returns sync cancelled for run_id {event_logger.run_id} (during storage)",
@@ -4874,29 +4874,42 @@ class EbayService:
                         "run_id": event_logger.run_id,
                     }
 
-                return_id = r.get("returnId") or r.get("return_id")
-                detail_payload: Dict[str, Any] = r
+                # Each element from the search response is treated as the
+                # high-level summary. We resolve the return id from it and then
+                # attempt to fetch the full detail payload to build a merged
+                # {"summary": ..., "detail": ...} object for normalized
+                # storage in ebay_returns.
+                return_id = summary.get("returnId") or summary.get("return_id")
+                detail: Dict[str, Any] = {}
                 if return_id:
                     try:
-                        detail_payload = await self.fetch_postorder_return_detail(access_token, return_id)
+                        detail = await self.fetch_postorder_return_detail(access_token, return_id)
                         api_calls += 1
                     except HTTPException as http_exc:  # pragma: no cover - defensive
                         try:
-                            detail = http_exc.detail  # type: ignore[assignment]
+                            detail_msg = http_exc.detail  # type: ignore[assignment]
                         except Exception:
-                            detail = str(http_exc)
+                            detail_msg = str(http_exc)
                         event_logger.log_warning(
-                            f"Failed to fetch return detail for {return_id}: {detail}",
+                            f"Failed to fetch return detail for {return_id}: {detail_msg}",
                         )
+                        # Fall back to storing summary-only data.
+                        detail = {}
                     except Exception as exc:  # pragma: no cover - defensive
                         event_logger.log_warning(
                             f"Unexpected error fetching return detail for {return_id}: {exc}",
                         )
+                        detail = {}
+
+                merged_payload: Dict[str, Any] = {
+                    "summary": summary,
+                    "detail": detail,
+                }
 
                 try:
                     ok = ebay_db.upsert_return(  # type: ignore[attr-defined]
                         user_id,
-                        detail_payload,
+                        merged_payload,
                         ebay_account_id=ebay_account_id,
                         ebay_user_id=ebay_user_id,
                         return_id=return_id,

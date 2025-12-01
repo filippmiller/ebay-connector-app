@@ -862,9 +862,22 @@ class PostgresEbayDatabase:
     ) -> bool:
         """Insert or update a Post-Order return in ebay_returns.
 
-        Mirrors the style of upsert_inquiry / upsert_case, normalizing key
-        identifiers, usernames, monetary amounts and timestamps while keeping
-        the full raw payload for auditing.
+        There are two supported payload shapes:
+
+        1. A *merged* dict with top-level keys ``summary`` and ``detail`` as
+           produced by the Post-Order search + detail API calls.
+        2. A flat dict resembling the raw detail response (backwards
+           compatibility / defensive path).
+
+        For the merged shape, we apply the explicit mapping rules described in
+        EBAY_RETURNS_MAPPING_2025-12-01, including:
+
+        * Identifiers: return_id, order_id, item_id, transaction_id.
+        * Actors: buyer_username, seller_username, ebay_user_id.
+        * Return state/type and reason.
+        * Timestamps: creation_date, last_modified_date, closed_date.
+        * Money: sellerTotalRefund → total_amount_value/currency with fallbacks.
+        * Raw payload: compact JSON of the full merged summary+detail object.
 
         ``return_id`` is accepted explicitly so that callers (e.g. workers using
         /post-order/v2/return/search) can pass the ID obtained from the search
@@ -873,15 +886,31 @@ class PostgresEbayDatabase:
         session = self._get_session()
 
         try:
-            # Prefer explicit return_id from the worker/search response; fall
-            # back to any id fields present on the detail payload. This makes
-            # the upsert robust against minor schema differences where the
-            # detail JSON does not repeat the id at the top level.
-            effective_return_id = (
-                return_id
-                or return_data.get("returnId")
-                or return_data.get("return_id")
-            )
+            now = datetime.utcnow()
+
+            # Detect the merged Post-Order payload shape {"summary": {...}, "detail": {...}}.
+            summary = None
+            detail = None
+            if isinstance(return_data.get("summary"), dict) and isinstance(return_data.get("detail"), dict):
+                summary = return_data.get("summary") or {}
+                detail = return_data.get("detail") or {}
+
+            # Prefer explicit return_id from the worker/search response; for the
+            # merged payload we resolve it from summary.returnId; otherwise fall
+            # back to any id fields present on the flattened payload.
+            if summary is not None:
+                effective_return_id = (
+                    return_id
+                    or summary.get("returnId")
+                    or summary.get("return_id")
+                )
+            else:
+                effective_return_id = (
+                    return_id
+                    or return_data.get("returnId")
+                    or return_data.get("return_id")
+                )
+
             if not effective_return_id:
                 logger.error(
                     "Return data missing returnId (no explicit return_id passed and "
@@ -891,62 +920,193 @@ class PostgresEbayDatabase:
 
             return_id = str(effective_return_id)
 
-            now = datetime.utcnow()
+            # --- Mapping for merged summary+detail payload (preferred path) ---
+            if summary is not None:
+                # Identifiers & actors
+                order_id = summary.get("orderId") or summary.get("order_id")
 
-            order_id = return_data.get("orderId") or return_data.get("order_id")
-            item_id = return_data.get("itemId") or return_data.get("item_id")
-            if item_id is not None:
-                item_id = str(item_id)
+                # Item / transaction: prefer summary.creationInfo.item.*, fallback to detail.itemDetail.*
+                item_id = (
+                    self._safe_get(summary, "creationInfo", "item", "itemId")
+                    or self._safe_get(summary, "creationInfo", "item", "item_id")
+                    or self._safe_get(detail, "itemDetail", "itemId")
+                    or self._safe_get(detail, "itemDetail", "item_id")
+                )
+                if item_id is not None:
+                    item_id = str(item_id)
 
-            transaction_id = return_data.get("transactionId") or return_data.get("transaction_id")
-            if transaction_id is not None:
-                transaction_id = str(transaction_id)
+                transaction_id = (
+                    self._safe_get(summary, "creationInfo", "item", "transactionId")
+                    or self._safe_get(summary, "creationInfo", "item", "transaction_id")
+                    or self._safe_get(detail, "itemDetail", "transactionId")
+                    or self._safe_get(detail, "itemDetail", "transaction_id")
+                )
+                if transaction_id is not None:
+                    transaction_id = str(transaction_id)
 
-            return_state = return_data.get("state") or return_data.get("returnState") or return_data.get("return_state")
-            return_type = return_data.get("type") or return_data.get("returnType") or return_data.get("return_type")
-            reason = return_data.get("reason") or return_data.get("reasonCode") or return_data.get("reason_code")
+                buyer_username = (
+                    summary.get("buyerLoginName")
+                    or detail.get("buyerLoginName")
+                    or summary.get("buyer_username")
+                    or detail.get("buyer_username")
+                )
+                seller_username = (
+                    summary.get("sellerLoginName")
+                    or detail.get("sellerLoginName")
+                    or summary.get("seller_username")
+                    or detail.get("seller_username")
+                )
 
-            buyer_username = (
-                self._safe_get(return_data, "buyer", "username")
-                or return_data.get("buyerUsername")
-                or return_data.get("buyer_username")
-            )
-            seller_username = (
-                self._safe_get(return_data, "seller", "username")
-                or return_data.get("sellerUsername")
-                or return_data.get("seller_username")
-            )
+                # ebay_user_id is the seller login (e.g. "mil_243"); fall back to
+                # the worker-provided ebay_user_id if payload is missing it.
+                effective_ebay_user_id = seller_username or ebay_user_id
 
-            amount_obj = (
-                self._safe_get(return_data, "totalAmount")
-                or self._safe_get(return_data, "refundAmount")
-                or return_data.get("totalAmount")
-                or return_data.get("refundAmount")
-            )
-            if isinstance(amount_obj, dict):
-                total_amount_value, total_amount_currency = self._parse_money(amount_obj)
+                # Return type & state
+                return_type = (
+                    summary.get("currentType")
+                    or self._safe_get(summary, "creationInfo", "type")
+                    or summary.get("returnType")
+                )
+                return_state = summary.get("state") or summary.get("returnState")
+
+                # Reason string: "{reasonType}:{reason}" | "reasonType" | "reason" | None
+                reason_type = self._safe_get(summary, "creationInfo", "reasonType")
+                reason_code = self._safe_get(summary, "creationInfo", "reason")
+                reason: Optional[str]
+                if reason_type and reason_code:
+                    reason = f"{reason_type}:{reason_code}"
+                elif reason_type:
+                    reason = str(reason_type)
+                elif reason_code:
+                    reason = str(reason_code)
+                else:
+                    reason = None
+
+                # Money: sellerTotalRefund → buyerTotalRefund → detail.refundInfo...
+                amount_obj = (
+                    self._safe_get(summary, "sellerTotalRefund", "estimatedRefundAmount")
+                    or self._safe_get(summary, "buyerTotalRefund", "estimatedRefundAmount")
+                    or self._safe_get(
+                        detail,
+                        "refundInfo",
+                        "estimatedRefundDetail",
+                        "itemizedRefundDetails",
+                        0,
+                        "estimatedAmount",
+                    )
+                )
+                if isinstance(amount_obj, dict):
+                    total_amount_value, total_amount_currency = self._parse_money(amount_obj)
+                else:
+                    total_amount_value, total_amount_currency = (None, None)
+
+                # Dates
+                creation_raw = self._safe_get(
+                    summary,
+                    "creationInfo",
+                    "creationDate",
+                    "value",
+                )
+
+                # last_modified_date ≈ MAX(responseHistory[*].creationDate.value)
+                history = detail.get("responseHistory") or []
+                history_datetimes: List[datetime] = []
+                for entry in history:
+                    raw = self._safe_get(entry, "creationDate", "value") or entry.get("creationDate")
+                    if isinstance(raw, str):
+                        dt = self._parse_datetime(raw)
+                        if dt is not None:
+                            history_datetimes.append(dt)
+
+                creation_date = self._parse_datetime(creation_raw) if isinstance(creation_raw, str) else None
+                if history_datetimes:
+                    last_modified_date = max(history_datetimes)
+                else:
+                    last_modified_date = creation_date
+
+                # closed_date: use any explicit close timestamp on detail if present.
+                closed_raw = (
+                    self._safe_get(detail, "closeDate", "value")
+                    or detail.get("closeDate")
+                    or self._safe_get(detail, "closeInfo", "closeDate", "value")
+                    or self._safe_get(detail, "closeInfo", "closeDate")
+                )
+                closed_date = self._parse_datetime(closed_raw) if isinstance(closed_raw, str) else None
+
+                # Raw payload: full merged summary+detail as compact JSON.
+                raw_json = json.dumps(return_data, separators=(",", ":"))
+
+            # --- Fallback for legacy / flat payloads (defensive path) ---
             else:
-                total_amount_value, total_amount_currency = (None, None)
+                order_id = return_data.get("orderId") or return_data.get("order_id")
+                item_id = return_data.get("itemId") or return_data.get("item_id")
+                if item_id is not None:
+                    item_id = str(item_id)
 
-            creation_raw = (
-                self._safe_get(return_data, "creationDate", "value")
-                or return_data.get("creationDate")
-                or return_data.get("creation_date")
-            )
-            last_modified_raw = (
-                self._safe_get(return_data, "lastModifiedDate", "value")
-                or return_data.get("lastModifiedDate")
-                or return_data.get("last_modified_date")
-            )
-            closed_raw = (
-                self._safe_get(return_data, "closedDate", "value")
-                or return_data.get("closedDate")
-                or return_data.get("closed_date")
-            )
+                transaction_id = return_data.get("transactionId") or return_data.get("transaction_id")
+                if transaction_id is not None:
+                    transaction_id = str(transaction_id)
 
-            creation_date = self._parse_datetime(creation_raw if isinstance(creation_raw, str) else None)
-            last_modified_date = self._parse_datetime(last_modified_raw if isinstance(last_modified_raw, str) else None)
-            closed_date = self._parse_datetime(closed_raw if isinstance(closed_raw, str) else None)
+                return_state = (
+                    return_data.get("state")
+                    or return_data.get("returnState")
+                    or return_data.get("return_state")
+                )
+                return_type = (
+                    return_data.get("type")
+                    or return_data.get("returnType")
+                    or return_data.get("return_type")
+                )
+                reason = (
+                    return_data.get("reason")
+                    or return_data.get("reasonCode")
+                    or return_data.get("reason_code")
+                )
+
+                buyer_username = (
+                    self._safe_get(return_data, "buyer", "username")
+                    or return_data.get("buyerUsername")
+                    or return_data.get("buyer_username")
+                )
+                seller_username = (
+                    self._safe_get(return_data, "seller", "username")
+                    or return_data.get("sellerUsername")
+                    or return_data.get("seller_username")
+                )
+                effective_ebay_user_id = seller_username or ebay_user_id
+
+                amount_obj = (
+                    self._safe_get(return_data, "totalAmount")
+                    or self._safe_get(return_data, "refundAmount")
+                    or return_data.get("totalAmount")
+                    or return_data.get("refundAmount")
+                )
+                if isinstance(amount_obj, dict):
+                    total_amount_value, total_amount_currency = self._parse_money(amount_obj)
+                else:
+                    total_amount_value, total_amount_currency = (None, None)
+
+                creation_raw = (
+                    self._safe_get(return_data, "creationDate", "value")
+                    or return_data.get("creationDate")
+                    or return_data.get("creation_date")
+                )
+                last_modified_raw = (
+                    self._safe_get(return_data, "lastModifiedDate", "value")
+                    or return_data.get("lastModifiedDate")
+                    or return_data.get("last_modified_date")
+                )
+                closed_raw = (
+                    self._safe_get(return_data, "closedDate", "value")
+                    or return_data.get("closedDate")
+                    or return_data.get("closed_date")
+                )
+
+                creation_date = self._parse_datetime(creation_raw if isinstance(creation_raw, str) else None)
+                last_modified_date = self._parse_datetime(last_modified_raw if isinstance(last_modified_raw, str) else None)
+                closed_date = self._parse_datetime(closed_raw if isinstance(closed_raw, str) else None)
+
+                raw_json = json.dumps(return_data, separators=(",", ":"))
 
             from sqlalchemy import text as text_query
 
@@ -995,7 +1155,7 @@ class PostgresEbayDatabase:
                     "return_id": return_id,
                     "user_id": user_id,
                     "ebay_account_id": ebay_account_id,
-                    "ebay_user_id": ebay_user_id,
+                    "ebay_user_id": effective_ebay_user_id,
                     "order_id": order_id,
                     "item_id": item_id,
                     "transaction_id": transaction_id,
@@ -1009,7 +1169,7 @@ class PostgresEbayDatabase:
                     "creation_date": creation_date,
                     "last_modified_date": last_modified_date,
                     "closed_date": closed_date,
-                    "raw_json": json.dumps(return_data),
+                    "raw_json": raw_json,
                     "created_at": now,
                     "updated_at": now,
                 },
