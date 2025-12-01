@@ -184,6 +184,21 @@ async def refresh_access_token_for_account(
                     msg,
                 )
 
+                # Log debug failure to terminal
+                try:
+                    from app.services.ebay_connect_logger import ebay_connect_logger
+                    ebay_connect_logger.log_event(
+                        user_id=getattr(account, "org_id", None),
+                        environment=env,
+                        action="token_refresh_debug",
+                        request=debug_payload.get("request"),
+                        response=debug_payload.get("response"),
+                        error=msg,
+                        source=triggered_by,
+                    )
+                except Exception:
+                    pass
+
                 refresh_log.success = False
                 refresh_log.error_code = error or "debug_error"
                 refresh_log.error_message = msg[:2000]
@@ -281,6 +296,21 @@ async def refresh_access_token_for_account(
             account.id,
             account.house_name,
         )
+
+        # Log debug success to terminal
+        if capture_http and debug_payload:
+            try:
+                from app.services.ebay_connect_logger import ebay_connect_logger
+                ebay_connect_logger.log_event(
+                    user_id=getattr(account, "org_id", None),
+                    environment=env,
+                    action="token_refresh_debug",
+                    request=debug_payload.get("request"),
+                    response=debug_payload.get("response"),
+                    source=triggered_by,
+                )
+            except Exception:
+                pass
 
         return {
             "success": True,
