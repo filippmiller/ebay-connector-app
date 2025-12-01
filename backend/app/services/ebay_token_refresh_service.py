@@ -36,6 +36,42 @@ from app.utils.logger import logger
 from dataclasses import dataclass
 
 
+
+def _get_plain_refresh_token(token: EbayToken) -> str:
+    """
+    Canonical helper to retrieve the decrypted refresh token from an EbayToken object.
+
+    This handles cases where the ORM property might return the raw encrypted value
+    (e.g. if decryption fails or environment is flaky) by explicitly attempting
+    decryption on the raw column if needed.
+    """
+    from app.utils import crypto
+
+    # 1. Try the property first (standard path)
+    # If decryption works, this returns "v^..."
+    # If decryption fails (in crypto.decrypt), this returns "ENC:v1:..."
+    val = token.refresh_token
+
+    if val and isinstance(val, str) and not val.startswith("ENC:"):
+        return val
+
+    # 2. If we got an encrypted value (or None), try to access the raw column explicitly
+    # and decrypt it. This is a fallback/retry.
+    raw = token._refresh_token
+    if not raw:
+        return ""
+
+    # Attempt explicit decryption
+    decrypted = crypto.decrypt(raw)
+
+    # 3. Final check
+    if decrypted and isinstance(decrypted, str) and not decrypted.startswith("ENC:"):
+        return decrypted
+
+    # If it's still encrypted, it means we really can't decrypt it (wrong key?)
+    return decrypted or ""
+
+
 async def refresh_access_token_for_account(
     db: Session,
     account: EbayAccount,
@@ -91,8 +127,15 @@ async def refresh_access_token_for_account(
     db.add(refresh_log)
     db.flush()
 
-    if not token or not token.refresh_token:
-        msg = "No refresh token available"
+    # ------------------------------------------------------------------
+    # 2. Decrypt/Validate Token
+    # ------------------------------------------------------------------
+    # Use our canonical helper to ensure we have a plain token (v^...)
+    # before calling the service.
+    plain_refresh_token = _get_plain_refresh_token(token) if token else ""
+
+    if not plain_refresh_token:
+        msg = "No refresh token available (or decryption failed)"
         logger.warning("Account %s (%s) has no refresh token", account.id, account.house_name)
 
         refresh_log.success = False
@@ -120,7 +163,7 @@ async def refresh_access_token_for_account(
     try:
         if capture_http:
             debug_payload = await ebay_service.debug_refresh_access_token_http(
-                token.refresh_token,
+                plain_refresh_token,
                 environment=env,
             )
 
@@ -188,94 +231,6 @@ async def refresh_access_token_for_account(
                 }
 
             # Persist tokens if requested.
-            if persist:
-                ebay_account_service.save_tokens(
-                    db,
-                    account.id,
-                    access_token=access_token,
-                    refresh_token=new_refresh_token or token.refresh_token,
-                    expires_in=int(expires_in),
-                    refresh_token_expires_in=int(refresh_token_expires_in)
-                    if isinstance(refresh_token_expires_in, (int, float))
-                    else None,
-                )
-                # Reload token so we can capture the updated expires_at.
-                token = ebay_account_service.get_token(db, account.id) or token
-
-            # Best-effort connect log entry so Token HTTP / terminal views can see this debug run.
-            try:  # pragma: no cover - diagnostics only
-                from app.services.ebay_connect_logger import ebay_connect_logger
-
-                ebay_connect_logger.log_event(
-                    user_id=getattr(account, "org_id", None),
-                    environment=env,
-                    action="token_refresh_debug",
-                    request=debug_payload.get("request"),
-                    response=debug_payload.get("response"),
-                    error=None,
-                    source=triggered_by,
-                )
-            except Exception:
-                # Do not fail the refresh flow if debug logging fails.
-                pass
-
-            finished = datetime.now(timezone.utc)
-            refresh_log.success = True
-            refresh_log.finished_at = finished
-            try:
-                if getattr(token, "expires_at", None) is not None:
-                    refresh_log.new_expires_at = token.expires_at
-                else:
-                    refresh_log.new_expires_at = finished + timedelta(
-                        seconds=int(expires_in),
-                    )
-            except Exception:  # pragma: no cover - defensive
-                refresh_log.new_expires_at = None
-
-            # Any previous error is now cleared on success.
-            token.refresh_error = None
-            db.commit()
-
-            logger.info(
-                "Successfully refreshed token for account %s (%s) via debug flow",
-                account.id,
-                account.house_name,
-            )
-
-            return {
-                "success": True,
-                "error": None,
-                "error_message": None,
-                "http": debug_payload,
-            }
-
-        # === capture_http=False: normal worker/admin flow ===
-        new_token_data = await ebay_service.refresh_access_token(
-            token.refresh_token,
-            user_id=getattr(account, "org_id", None),
-            environment=env,
-            source=triggered_by,
-        )
-
-        # Persist new tokens if requested.
-        if persist:
-            ebay_account_service.save_tokens(
-                db,
-                account.id,
-                access_token=new_token_data.access_token,
-                refresh_token=(
-                    getattr(new_token_data, "refresh_token", None)
-                    or token.refresh_token
-                ),
-                expires_in=int(getattr(new_token_data, "expires_in", 0) or 0),
-                refresh_token_expires_in=int(
-                    getattr(new_token_data, "refresh_token_expires_in", 0) or 0,
-                )
-                if getattr(new_token_data, "refresh_token_expires_in", None)
-                is not None
-                else None,
-            )
-            # Reload token so we can capture updated expires_at.
             token = ebay_account_service.get_token(db, account.id) or token
 
         finished = datetime.now(timezone.utc)
