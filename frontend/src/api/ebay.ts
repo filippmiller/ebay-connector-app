@@ -271,6 +271,22 @@ export interface EbayReturnsResponse {
   offset: number;
 }
 
+export interface EbayReturnMessage {
+  kind?: string | null;
+  author?: string | null;
+  activity?: string | null;
+  from_state?: string | null;
+  to_state?: string | null;
+  text: string;
+  created_at?: string | null;
+}
+
+export interface EbayReturnDetailResponse {
+  row: EbayReturnRow;
+  messages: EbayReturnMessage[];
+  raw: any;
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -531,6 +547,16 @@ export const ebayApi = {
     if (typeof params.offset === 'number') searchParams.set('offset', String(params.offset));
     const response = await apiClient.get<EbayReturnsResponse>(
       `/ebay/returns?${searchParams.toString()}`,
+    );
+    return response.data;
+  },
+
+  async getReturnDetail(params: { accountId: string; returnId: string }): Promise<EbayReturnDetailResponse> {
+    const searchParams = new URLSearchParams();
+    searchParams.set('account_id', params.accountId);
+    searchParams.set('return_id', params.returnId);
+    const response = await apiClient.get<EbayReturnDetailResponse>(
+      `/ebay/returns/detail?${searchParams.toString()}`,
     );
     return response.data;
   },

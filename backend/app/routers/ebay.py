@@ -986,6 +986,126 @@ async def get_returns(
     }
 
 
+@router.get("/returns/detail")
+async def get_return_detail(
+    account_id: str = Query(..., description="eBay account id"),
+    return_id: str = Query(..., description="Post-Order return id"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return a single ebay_returns row plus decoded raw payload and messages.
+
+    This powers the Returns detail modal. Messages are derived from the
+    Post-Order payload:
+
+    * Initial buyer comment – ``summary.creationInfo.comments.content``.
+    * History notes – ``detail.responseHistory[*].notes`` with author/activity.
+    """
+    from app.models_sqlalchemy.models import EbayAccount, EbayReturn
+    import json
+    from datetime import datetime as dt_type
+
+    account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
+    if not account or account.org_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    row: EbayReturn | None = (
+        db.query(EbayReturn)
+        .filter(EbayReturn.ebay_account_id == account_id, EbayReturn.return_id == return_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Return not found")
+
+    # Decode raw_json best-effort.
+    raw: Dict[str, Any]
+    try:
+        raw = json.loads(row.raw_json or "{}")
+        if not isinstance(raw, dict):
+            raw = {"raw": raw}
+    except Exception:
+        raw = {}
+
+    summary = raw.get("summary") or {}
+    detail = raw.get("detail") or {}
+
+    messages: List[Dict[str, Any]] = []
+
+    # 1) Initial buyer comment from creationInfo.comments.content
+    try:
+        comments = (
+            summary.get("creationInfo")
+            or {}
+        ).get("comments") or {}
+        comment_text = comments.get("content")
+        creation_info = summary.get("creationInfo") or {}
+        creation_dt = creation_info.get("creationDate") or {}
+        creation_val = creation_dt.get("value") if isinstance(creation_dt, dict) else creation_dt
+        if comment_text:
+            messages.append(
+                {
+                    "kind": "initial_comment",
+                    "author": "BUYER",
+                    "activity": "BUYER_CREATE_RETURN",
+                    "text": comment_text,
+                    "created_at": creation_val,
+                }
+            )
+    except Exception:
+        # Best-effort – ignore extraction failures.
+        pass
+
+    # 2) responseHistory[*].notes
+    try:
+        history = detail.get("responseHistory") or []
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            text = entry.get("notes") or ""
+            if not text:
+                continue
+            c_raw = entry.get("creationDate") or {}
+            c_val = c_raw.get("value") if isinstance(c_raw, dict) else c_raw
+            messages.append(
+                {
+                    "kind": "history",
+                    "author": entry.get("author"),
+                    "activity": entry.get("activity"),
+                    "from_state": entry.get("fromState"),
+                    "to_state": entry.get("toState"),
+                    "text": text,
+                    "created_at": c_val,
+                }
+            )
+    except Exception:
+        pass
+
+    row_payload = {
+        "return_id": row.return_id,
+        "account_id": row.ebay_account_id,
+        "ebay_user_id": row.ebay_user_id,
+        "order_id": row.order_id,
+        "item_id": row.item_id,
+        "transaction_id": row.transaction_id,
+        "return_state": row.return_state,
+        "return_type": row.return_type,
+        "reason": row.reason,
+        "buyer_username": row.buyer_username,
+        "seller_username": row.seller_username,
+        "total_amount_value": float(row.total_amount_value) if row.total_amount_value is not None else None,
+        "total_amount_currency": row.total_amount_currency,
+        "creation_date": row.creation_date.isoformat() if isinstance(row.creation_date, dt_type) else (row.creation_date.isoformat() if row.creation_date else None),
+        "last_modified_date": row.last_modified_date.isoformat() if isinstance(row.last_modified_date, dt_type) else (row.last_modified_date.isoformat() if row.last_modified_date else None),
+        "closed_date": row.closed_date.isoformat() if isinstance(row.closed_date, dt_type) else (row.closed_date.isoformat() if row.closed_date else None),
+    }
+
+    return {
+        "row": row_payload,
+        "messages": messages,
+        "raw": raw,
+    }
+
+
 @router.get("/disputes")
 async def get_disputes(
     limit: int = Query(100, description="Number of disputes to return"),
