@@ -14,6 +14,24 @@ from app.services.ebay_connect_logger import ebay_connect_logger
 from app.utils.logger import logger, ebay_logger
 from app.utils import crypto
 
+
+def _mask_prefix(value: Optional[str], length: int = 12) -> str:
+    """Return a short, non-sensitive preview of a token for logs.
+
+    We only log the first ``length`` characters and never the full value.
+    """
+    if not value:
+        return "<none>"
+    return value[:length] + ("…" if len(value) > length else "")
+
+
+def _looks_like_ebay_refresh_token(token: Optional[str]) -> bool:
+    """Heuristic check that a token looks like an eBay refresh token.
+
+    All tokens we receive from eBay today start with ``"v^"``.
+    """
+    return isinstance(token, str) and token.startswith("v^")
+
 ORDERS_PAGE_LIMIT = 200          # Fulfillment API max
 TRANSACTIONS_PAGE_LIMIT = 200    # Finances API max
 DISPUTES_PAGE_LIMIT = 100        # Fulfillment API max
@@ -852,18 +870,22 @@ class EbayService:
         refresh_token: str,
         *,
         environment: Optional[str] = None,
+        caller: Optional[str] = None,
     ) -> tuple[str, Dict[str, str], Dict[str, str], Dict[str, Any]]:
         """Build common headers/body/payload for the refresh_token grant.
 
-        This helper is used both by the background worker and the admin debug
-        endpoint so that they generate *identical* HTTP requests to eBay's
-        /identity/v1/oauth2/token endpoint.
+        All refresh flows (worker, admin refresh, debug) must go through this
+        helper so we can guarantee that:
+        - encrypted blobs (``ENC:v1:…``) are decrypted exactly once;
+        - no ``ENC:`` value is ever sent to eBay;
+        - the final token looks like a real eBay refresh token (starts with
+          ``"v^"``);
+        - failures surface as a deterministic ``decrypt_failed`` error.
 
-        The returned ``request_payload`` is used **only** for admin-only
-        diagnostics (connect logs + Workers UI). Per request from the
-        maintainer, it now contains the **exact** headers and body that are
-        sent to eBay, including the unmasked refresh token. Do not expose
-        these logs outside the trusted admin context.
+        The returned ``request_payload`` is used only for admin-only
+        diagnostics (connect logs + Workers UI). It contains the exact headers
+        and body that are sent to eBay and must not be exposed outside trusted
+        admin contexts.
         """
         if not settings.ebay_client_id or not settings.ebay_cert_id:
             ebay_logger.log_ebay_event(
@@ -874,32 +896,75 @@ class EbayService:
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="eBay credentials not configured",
+                detail={
+                    "code": "config_error",
+                    "message": "eBay credentials not configured",
+                },
             )
 
+        caller_label = caller or "unknown"
+
         # ------------------------------------------------------------------
-        # Ensure we never send an encrypted blob (ENC:v1:...) to eBay.
-        #
-        # Callers *should* pass the plain eBay refresh token obtained from the
-        # ORM property (EbayToken.refresh_token), which already performs
-        # decryption. However, for extra safety we defensively handle cases
-        # where an encrypted value accidentally reaches this layer.
+        # Normalize and, if necessary, decrypt an ENC:v1: blob.
         # ------------------------------------------------------------------
-        original_token = refresh_token
-        if isinstance(refresh_token, str) and refresh_token.startswith("ENC:v1:"):
-            decrypted = crypto.decrypt(refresh_token)
-            if not isinstance(decrypted, str) or decrypted.startswith("ENC:v1:"):
-                logger.error(
-                    "Refresh token appears encrypted but could not be decrypted safely; aborting HTTP call",
-                )
+        raw_token = refresh_token or ""
+        decrypted_token = raw_token
+
+        if isinstance(raw_token, str) and raw_token.startswith("ENC:v1:"):
+            try:
+                decrypted = crypto.decrypt(raw_token)
+            except Exception as exc:  # pragma: no cover - defensive
+                msg = f"Failed to decrypt refresh token for caller={caller_label}: {exc}"
+                logger.error(msg)
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Internal error: refresh token decryption failed",
+                    detail={"code": "decrypt_failed", "message": msg},
                 )
-            logger.warning(
-                "Received encrypted refresh token at HTTP layer; decrypting before calling eBay",
+            decrypted_token = decrypted
+
+        # Final safety checks: non-empty, no ENC prefix, and looks like eBay token.
+        if not isinstance(decrypted_token, str) or not decrypted_token:
+            msg = f"Missing or empty refresh token for caller={caller_label}"
+            logger.error(msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"code": "decrypt_failed", "message": msg},
             )
-            refresh_token = decrypted
+
+        if decrypted_token.startswith("ENC:v1:"):
+            msg = (
+                "Refresh token still encrypted after decrypt attempt; "
+                f"caller={caller_label}. Account requires reconnect."
+            )
+            logger.error(msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"code": "decrypt_failed", "message": msg},
+            )
+
+        if not _looks_like_ebay_refresh_token(decrypted_token):
+            msg = (
+                "Refresh token does not look like an eBay token "
+                f"(prefix={_mask_prefix(decrypted_token)}) for caller={caller_label}. "
+                "Account requires reconnect."
+            )
+            logger.error(msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"code": "decrypt_failed", "message": msg},
+            )
+
+        final_token = decrypted_token
+
+        # Log a short diagnostic so we can prove worker vs debug use the same
+        # value without leaking secrets.
+        logger.info(
+            "token_refresh_path caller=%s input_prefix=%s decrypted_prefix=%s final_prefix=%s",
+            caller_label,
+            _mask_prefix(raw_token),
+            _mask_prefix(decrypted_token),
+            _mask_prefix(final_token),
+        )
 
         target_env = environment or settings.EBAY_ENVIRONMENT or "sandbox"
 
@@ -913,12 +978,9 @@ class EbayService:
 
         data = {
             "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
+            "refresh_token": final_token,
         }
 
-        # Admin diagnostics want a 1:1 view of what we actually send to eBay.
-        # ``request_payload`` therefore mirrors ``headers`` and ``data``
-        # exactly, with **no masking**.
         request_payload = {
             "method": "POST",
             "url": self.token_url,
@@ -945,6 +1007,7 @@ class EbayService:
         target_env, headers, data, request_payload = self._build_refresh_token_request_components(
             refresh_token,
             environment=environment,
+            caller=source or "worker_or_admin",
         )
 
         ebay_logger.log_ebay_event(
@@ -1081,6 +1144,7 @@ class EbayService:
         target_env, headers, data, _ = self._build_refresh_token_request_components(
             refresh_token,
             environment=environment,
+            caller="debug",
         )
 
         # Urlencode the body for human-friendly display.

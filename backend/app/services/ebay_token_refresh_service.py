@@ -308,8 +308,16 @@ async def refresh_access_token_for_account(
         }
 
     except HTTPException as exc:
-        # HTTPException from EbayService (non-200 or network error).
-        msg = str(exc.detail) if isinstance(exc.detail, str) else str(exc.detail)
+        # HTTPException from EbayService (non-200, network error, or decrypt_failed).
+        detail = exc.detail
+        if isinstance(detail, dict):
+            code = detail.get("code") or str(exc.status_code)
+            message = detail.get("message") or str(detail)
+        else:
+            code = str(exc.status_code)
+            message = str(detail)
+
+        msg = message
         logger.error(
             "Token refresh for account %s (%s) failed with HTTPException: %s",
             account.id,
@@ -318,16 +326,20 @@ async def refresh_access_token_for_account(
         )
 
         refresh_log.success = False
-        refresh_log.error_code = str(exc.status_code)
+        refresh_log.error_code = code
         refresh_log.error_message = msg[:2000]
         refresh_log.finished_at = datetime.now(timezone.utc)
         if token is not None:
-            token.refresh_error = msg
+            # Mark decrypt failures explicitly so the UI can show "needs reconnect".
+            if code == "decrypt_failed":
+                token.refresh_error = f"decrypt_failed: {msg}"
+            else:
+                token.refresh_error = msg
         db.commit()
 
         return {
             "success": False,
-            "error": str(exc.status_code),
+            "error": code,
             "error_message": msg,
             "http": None,
         }
