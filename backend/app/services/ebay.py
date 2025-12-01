@@ -4899,6 +4899,7 @@ class EbayService:
                         detail_payload,
                         ebay_account_id=ebay_account_id,
                         ebay_user_id=ebay_user_id,
+                        return_id=return_id,
                     )
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.warning(

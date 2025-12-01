@@ -857,20 +857,39 @@ class PostgresEbayDatabase:
         return_data: Dict[str, Any],
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
+        *,
+        return_id: Optional[str] = None,
     ) -> bool:
         """Insert or update a Post-Order return in ebay_returns.
 
         Mirrors the style of upsert_inquiry / upsert_case, normalizing key
         identifiers, usernames, monetary amounts and timestamps while keeping
         the full raw payload for auditing.
+
+        ``return_id`` is accepted explicitly so that callers (e.g. workers using
+        /post-order/v2/return/search) can pass the ID obtained from the search
+        response even if the detailed payload omits or nests the id field.
         """
         session = self._get_session()
 
         try:
-            return_id = return_data.get("returnId") or return_data.get("return_id")
-            if not return_id:
-                logger.error("Return data missing returnId")
+            # Prefer explicit return_id from the worker/search response; fall
+            # back to any id fields present on the detail payload. This makes
+            # the upsert robust against minor schema differences where the
+            # detail JSON does not repeat the id at the top level.
+            effective_return_id = (
+                return_id
+                or return_data.get("returnId")
+                or return_data.get("return_id")
+            )
+            if not effective_return_id:
+                logger.error(
+                    "Return data missing returnId (no explicit return_id passed and "
+                    "no returnId/return_id key in payload)",
+                )
                 return False
+
+            return_id = str(effective_return_id)
 
             now = datetime.utcnow()
 
