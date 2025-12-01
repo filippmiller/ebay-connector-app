@@ -198,7 +198,94 @@ export default function ReturnsPage() {
                         Visible columns
                       </span>
                       <button
-                    {filteredRows.length === 0 && !loading && !error && (
+                        type="button"
+                        className="text-[11px] text-blue-600 hover:underline"
+                        onClick={() =>
+                          setVisibleColumns((prev) =>
+                            prev.length === ALL_COLUMNS.length
+                              ? ([] as ColumnKey[])
+                              : (ALL_COLUMNS.map((c) => c.key) as ColumnKey[])
+                          )
+                        }
+                      >
+                        {visibleColumns.length === ALL_COLUMNS.length ? 'Hide all' : 'Show all'}
+                      </button>
+                    </div>
+                    <div className="px-3 py-2 space-y-1">
+                      {ALL_COLUMNS.map((col) => (
+                        <label key={col.key} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={isColVisible(col.key)}
+                            onChange={() => toggleColumn(col.key)}
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Status */}
+          {error && (
+            <div className="text-sm text-red-600 border border-red-200 bg-red-50 px-3 py-2 rounded">
+              {error}
+            </div>
+          )}
+          {loading && !error && (
+            <div className="text-sm text-gray-600">Loading returns…</div>
+          )}
+
+          {/* Data table */}
+          <div className="flex-1 overflow-auto border rounded-lg bg-white">
+            <table className="min-w-full text-xs text-left">
+              <thead className="bg-gray-100 border-b">
+                <tr>
+                  {isColVisible('return_id') && (
+                    <th className="px-2 py-1 font-semibold">Return ID</th>
+                  )}
+                  {isColVisible('order_id') && (
+                    <th className="px-2 py-1 font-semibold">Order ID</th>
+                  )}
+                  {isColVisible('item_id') && (
+                    <th className="px-2 py-1 font-semibold">Item ID</th>
+                  )}
+                  {isColVisible('transaction_id') && (
+                    <th className="px-2 py-1 font-semibold">Transaction ID</th>
+                  )}
+                  {isColVisible('return_state') && (
+                    <th className="px-2 py-1 font-semibold">State</th>
+                  )}
+                  {isColVisible('return_type') && (
+                    <th className="px-2 py-1 font-semibold">Type</th>
+                  )}
+                  {isColVisible('buyer_username') && (
+                    <th className="px-2 py-1 font-semibold">Buyer</th>
+                  )}
+                  {isColVisible('seller_username') && (
+                    <th className="px-2 py-1 font-semibold">Seller</th>
+                  )}
+                  {isColVisible('amount') && (
+                    <th className="px-2 py-1 font-semibold">Amount</th>
+                  )}
+                  {isColVisible('creation_date') && (
+                    <th className="px-2 py-1 font-semibold">Created</th>
+                  )}
+                  {isColVisible('last_modified_date') && (
+                    <th className="px-2 py-1 font-semibold">Last modified</th>
+                  )}
+                  {isColVisible('closed_date') && (
+                    <th className="px-2 py-1 font-semibold">Closed</th>
+                  )}
+                  <th className="px-2 py-1 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.length === 0 && !loading && !error && (
                   <tr>
                     <td colSpan={13} className="px-3 py-6 text-center text-gray-500 text-sm">
                       No returns found for this account.
