@@ -663,6 +663,59 @@ async def get_ebay_token_logs(
     return {"logs": filtered}
 
 
+@router.get("/ebay/tokens/terminal-logs")
+async def get_ebay_token_terminal_logs(
+    env: str = Query(..., description="production only"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(admin_required),
+):
+    """Return detailed token-refresh HTTP logs for the Workers terminal view.
+
+    This endpoint is admin-only and masks refresh_token values in the response
+    body so they are safe to display in the UI while still being precise.
+    """
+    if env != "production":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="env_not_supported")
+
+    logs = ebay_connect_logger.get_logs(current_user.id, env, limit)
+
+    def _mask_refresh_token(value: str) -> str:
+        if not isinstance(value, str):
+            return value
+        if len(value) <= 15:
+            return value
+        return f"{value[:10]}...{value[-5:]}"
+
+    def _mask_request(req: dict | None) -> dict | None:
+        if not isinstance(req, dict):
+            return req
+        body = req.get("body") or req.get("data")
+        if isinstance(body, dict) and "refresh_token" in body:
+            body = {**body, "refresh_token": _mask_refresh_token(body.get("refresh_token"))}
+        return {**req, "body": body}
+
+    entries: list[dict] = []
+    for entry in logs:
+        action = entry.get("action")
+        if action not in {"token_refreshed", "token_refresh_failed", "token_refresh_debug"}:
+            continue
+        masked_req = _mask_request(entry.get("request"))
+        entries.append(
+            {
+                "id": entry.get("id"),
+                "created_at": entry.get("created_at"),
+                "environment": entry.get("environment"),
+                "action": action,
+                "source": entry.get("source"),
+                "request": masked_req,
+                "response": entry.get("response"),
+                "error": entry.get("error"),
+            }
+        )
+
+    return {"entries": entries}
+
+
 @router.post("/ebay/tokens/logs/blocked-scope")
 async def log_blocked_scope(
     env: str = Query(..., description="production only"),

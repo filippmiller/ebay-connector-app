@@ -202,6 +202,23 @@ async def refresh_access_token_for_account(
                 # Reload token so we can capture the updated expires_at.
                 token = ebay_account_service.get_token(db, account.id) or token
 
+            # Best-effort connect log entry so Token HTTP / terminal views can see this debug run.
+            try:  # pragma: no cover - diagnostics only
+                from app.services.ebay_connect_logger import ebay_connect_logger
+
+                ebay_connect_logger.log_event(
+                    user_id=getattr(account, "org_id", None),
+                    environment=env,
+                    action="token_refresh_debug",
+                    request=debug_payload.get("request"),
+                    response=debug_payload.get("response"),
+                    error=None,
+                    source=triggered_by,
+                )
+            except Exception:
+                # Do not fail the refresh flow if debug logging fails.
+                pass
+
             finished = datetime.now(timezone.utc)
             refresh_log.success = True
             refresh_log.finished_at = finished
@@ -237,6 +254,7 @@ async def refresh_access_token_for_account(
             token.refresh_token,
             user_id=getattr(account, "org_id", None),
             environment=env,
+            source=triggered_by,
         )
 
         # Persist new tokens if requested.

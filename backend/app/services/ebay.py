@@ -934,6 +934,7 @@ class EbayService:
         *,
         user_id: Optional[str] = None,
         environment: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> EbayTokenResponse:
         """Refresh an access token using a long-lived refresh token.
 
@@ -997,6 +998,7 @@ class EbayService:
                                 else str(response_body)[:5000],
                             },
                             error=str(error_detail)[:2000],
+                            source=source,
                         )
 
                     raise HTTPException(
@@ -1029,6 +1031,7 @@ class EbayService:
                             # Store full parsed JSON body; may include tokens
                             "body": token_data,
                         },
+                        source=source,
                     )
 
                 logger.info("Successfully refreshed eBay access token")
@@ -1053,6 +1056,7 @@ class EbayService:
                     request=request_payload,
                     response=None,
                     error=error_msg,
+                    source=source,
                 )
 
             logger.error(error_msg)
