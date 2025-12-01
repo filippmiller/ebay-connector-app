@@ -117,6 +117,9 @@ def decrypt(value: Optional[str]) -> Optional[str]:
         aesgcm = AESGCM(key)
         pt_bytes = aesgcm.decrypt(nonce, ct, associated_data=None)
         return pt_bytes.decode("utf-8")
-    except Exception:
-        # Never raise on decrypt; just return the original string.
+    except Exception as e:
+        # Log the error for diagnostics, but return original value to be safe/compatible
+        # with legacy plain-text data.
+        from app.utils.logger import logger
+        logger.error(f"Crypto decryption failed: {type(e).__name__}: {e}")
         return value
