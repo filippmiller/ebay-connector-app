@@ -142,6 +142,7 @@ class PostgresDatabase:
         request: Optional[Dict[str, Any]] = None,
         response: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> None:
         db: Session = next(get_db())
         try:
@@ -150,6 +151,7 @@ class PostgresDatabase:
                 user_id=user_id,
                 environment=environment or 'sandbox',
                 action=action,
+                source=source,
                 request_method=(request or {}).get('method'),
                 request_url=(request or {}).get('url'),
                 request_headers=(request or {}).get('headers'),
@@ -194,6 +196,7 @@ class PostgresDatabase:
                     "user_id": log.user_id,
                     "environment": log.environment,
                     "action": log.action,
+                    "source": getattr(log, "source", None),
                     "request": {
                         "method": log.request_method,
                         "url": log.request_url,

@@ -1084,6 +1084,8 @@ class EbayConnectLog(Base):
     user_id = Column(String(36), ForeignKey('users.id'), nullable=True, index=True)
     environment = Column(String(20), nullable=False, default="sandbox", index=True)
     action = Column(String(50), nullable=False, index=True)
+    # Optional label for the logical source of the call, e.g. "debug", "scheduled", "admin".
+    source = Column(String(32), nullable=True, index=True)
 
     request_method = Column(String(10), nullable=True)
     request_url = Column(Text, nullable=True)
@@ -1103,6 +1105,7 @@ class EbayConnectLog(Base):
         Index('idx_ebay_connect_logs_user_env', 'user_id', 'environment'),
         Index('idx_ebay_connect_logs_action', 'action'),
         Index('idx_ebay_connect_logs_created', 'created_at'),
+        Index('idx_ebay_connect_logs_source', 'source'),
     )
 
 
