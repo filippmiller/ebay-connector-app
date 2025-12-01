@@ -10,6 +10,7 @@ from app.services.ebay_connect_logger import ebay_connect_logger
 from app.models.user import User
 from app.utils.logger import logger, ebay_logger
 from app.models_sqlalchemy import get_db
+from app.services.ebay_account_service import ebay_account_service
 
 router = APIRouter(prefix="/ebay", tags=["ebay"])
 
