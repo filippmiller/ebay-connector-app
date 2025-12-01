@@ -246,7 +246,6 @@ export interface WorkersLoopStatusResponse {
 }
 
 export interface EbayReturnRow {
-  id: number;
   return_id: string;
   account_id: string | null;
   ebay_user_id: string | null;

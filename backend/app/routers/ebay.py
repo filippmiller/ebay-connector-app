@@ -959,7 +959,6 @@ async def get_returns(
     for r in rows:
         items.append(
             {
-                "id": r.id,
                 "return_id": r.return_id,
                 "account_id": r.ebay_account_id,
                 "ebay_user_id": r.ebay_user_id,

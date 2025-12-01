@@ -133,7 +133,7 @@ export default function ReturnsPage() {
                   </tr>
                 )}
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-b last:border-b-0 hover:bg-gray-50">
+                  <tr key={r.return_id} className="border-b last:border-b-0 hover:bg-gray-50">
                     <td className="px-2 py-1 font-mono text-[11px]">{r.return_id}</td>
                     <td className="px-2 py-1 text-[11px]">{r.order_id ?? '—'}</td>
                     <td className="px-2 py-1 text-[11px]">{r.item_id ?? '—'}</td>

@@ -962,12 +962,11 @@ class EbayReturn(Base):
 
     __tablename__ = "ebay_returns"
 
-    # Composite PK (return_id, user_id) is enforced at the DB level; here we
-    # expose a surrogate integer id for ORM convenience when needed.
-    id = Column(Integer, primary_key=True, autoincrement=True)
-
-    return_id = Column(String(100), nullable=False, index=True)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    # В реальной схеме первичный ключ составной: (return_id, user_id).
+    # Модель должна точно соответствовать БД, поэтому не вводим
+    # искусственный "id" и отмечаем оба поля как primary_key.
+    return_id = Column(String(100), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id"), primary_key=True)
 
     ebay_account_id = Column(String(36), ForeignKey("ebay_accounts.id"), nullable=True, index=True)
     ebay_user_id = Column(String(64), nullable=True, index=True)
