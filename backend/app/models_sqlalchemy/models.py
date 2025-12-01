@@ -952,6 +952,57 @@ class Return(Base):
     )
 
 
+class EbayReturn(Base):
+    """Post-Order returns table (ebay_returns).
+
+    This table stores normalized Post-Order return records per user/account,
+    mirroring the Postgres schema created by the Alembic migration
+    `ebay_returns_20251201`.
+    """
+
+    __tablename__ = "ebay_returns"
+
+    # Composite PK (return_id, user_id) is enforced at the DB level; here we
+    # expose a surrogate integer id for ORM convenience when needed.
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    return_id = Column(String(100), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+
+    ebay_account_id = Column(String(36), ForeignKey("ebay_accounts.id"), nullable=True, index=True)
+    ebay_user_id = Column(String(64), nullable=True, index=True)
+
+    order_id = Column(String(100), nullable=True, index=True)
+    item_id = Column(String(100), nullable=True)
+    transaction_id = Column(String(100), nullable=True)
+
+    return_state = Column(String(50), nullable=True, index=True)
+    return_type = Column(String(50), nullable=True)
+    reason = Column(Text, nullable=True)
+
+    buyer_username = Column(Text, nullable=True)
+    seller_username = Column(Text, nullable=True)
+
+    total_amount_value = Column(Numeric(12, 2), nullable=True)
+    total_amount_currency = Column(String(10), nullable=True)
+
+    creation_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_modified_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    closed_date = Column(DateTime(timezone=True), nullable=True)
+
+    raw_json = Column(Text, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # Composite natural key used for upserts and deduplication.
+        Index("idx_ebay_returns_account_return", "ebay_account_id", "return_id", unique=True),
+        Index("idx_ebay_returns_state_last_modified", "ebay_account_id", "return_state", "last_modified_date"),
+        Index("idx_ebay_returns_creation_date", "ebay_account_id", "creation_date"),
+    )
+
+
 class SyncLog(Base):
     __tablename__ = "sync_logs"
     

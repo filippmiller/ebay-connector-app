@@ -4447,6 +4447,221 @@ class EbayService:
         finally:
             event_logger.close()
 
+    async def sync_postorder_returns(
+        self,
+        user_id: str,
+        access_token: str,
+        run_id: Optional[str] = None,
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Sync Post-Order returns into ebay_returns.
+
+        The Post-Order Returns search endpoint has limited date filtering
+        capabilities, so we currently treat the worker window as diagnostic
+        metadata while relying on upserts + overlap for safety, mirroring the
+        strategy used for inquiries and cases.
+        """
+        from app.services.ebay_database import ebay_db
+        from app.services.sync_event_logger import SyncEventLogger, is_cancelled
+        import time
+
+        event_logger = SyncEventLogger(user_id, "returns", run_id=run_id)
+        job_id = ebay_db.create_sync_job(user_id, "returns")
+        start_time = time.time()
+
+        try:
+            total_fetched = 0
+            total_stored = 0
+            api_calls = 0
+
+            event_logger.log_start(
+                f"Starting Post-Order returns sync from eBay ({settings.EBAY_ENVIRONMENT})",
+            )
+            if window_from or window_to:
+                event_logger.log_info(
+                    f"Worker window from={window_from!r} to={window_to!r} (diagnostic only)",
+                )
+
+            logger.info(f"Starting Post-Order returns sync for user {user_id}")
+
+            await asyncio.sleep(0.3)
+
+            if is_cancelled(event_logger.run_id):
+                logger.info(
+                    f"Returns sync cancelled for run_id {event_logger.run_id} (before API request)",
+                )
+                event_logger.log_warning("Sync operation cancelled by user")
+                duration_ms = int((time.time() - start_time) * 1000)
+                event_logger.log_done(
+                    "Returns sync cancelled: 0 fetched, 0 stored",
+                    0,
+                    0,
+                    duration_ms,
+                )
+                ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                return {
+                    "status": "cancelled",
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "api_calls": 0,
+                    "job_id": job_id,
+                    "run_id": event_logger.run_id,
+                }
+
+            # Initial search call; for now we do not project the window onto
+            # query params until Post-Order filtering is validated in prod.
+            event_logger.log_info("→ Requesting: GET /post-order/v2/return/search")
+            request_start = time.time()
+            try:
+                search_response = await self.fetch_postorder_returns(access_token)
+                api_calls += 1
+            except Exception:
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        f"Returns sync cancelled for run_id {event_logger.run_id} (after API error)",
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        "Returns sync cancelled: 0 fetched, 0 stored",
+                        0,
+                        0,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", 0, 0)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": 0,
+                        "total_stored": 0,
+                        "api_calls": api_calls,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+                raise
+
+            request_duration = int((time.time() - request_start) * 1000)
+
+            returns = (
+                search_response.get("members")
+                or search_response.get("returns")
+                or search_response.get("returnSummaries")
+                or []
+            )
+            total_fetched = len(returns)
+
+            event_logger.log_http_request(
+                "GET",
+                "/post-order/v2/return/search",
+                200,
+                request_duration,
+                total_fetched,
+            )
+            event_logger.log_info(
+                f"← Response: 200 OK ({request_duration}ms) - Received {total_fetched} returns",
+            )
+
+            await asyncio.sleep(0.2)
+
+            stored = 0
+            for r in returns:
+                if is_cancelled(event_logger.run_id):
+                    logger.info(
+                        f"Returns sync cancelled for run_id {event_logger.run_id} (during storage)",
+                    )
+                    event_logger.log_warning("Sync operation cancelled by user")
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    event_logger.log_done(
+                        f"Returns sync cancelled: {total_fetched} fetched, {stored} stored",
+                        total_fetched,
+                        stored,
+                        duration_ms,
+                    )
+                    ebay_db.update_sync_job(job_id, "cancelled", total_fetched, stored)
+                    return {
+                        "status": "cancelled",
+                        "total_fetched": total_fetched,
+                        "total_stored": stored,
+                        "api_calls": api_calls,
+                        "job_id": job_id,
+                        "run_id": event_logger.run_id,
+                    }
+
+                return_id = r.get("returnId") or r.get("return_id")
+                detail_payload: Dict[str, Any] = r
+                if return_id:
+                    try:
+                        detail_payload = await self.fetch_postorder_return_detail(access_token, return_id)
+                        api_calls += 1
+                    except HTTPException as http_exc:  # pragma: no cover - defensive
+                        try:
+                            detail = http_exc.detail  # type: ignore[assignment]
+                        except Exception:
+                            detail = str(http_exc)
+                        event_logger.log_warning(
+                            f"Failed to fetch return detail for {return_id}: {detail}",
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        event_logger.log_warning(
+                            f"Unexpected error fetching return detail for {return_id}: {exc}",
+                        )
+
+                try:
+                    ok = ebay_db.upsert_return(  # type: ignore[attr-defined]
+                        user_id,
+                        detail_payload,
+                        ebay_account_id=ebay_account_id,
+                        ebay_user_id=ebay_user_id,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Returns sync: failed to upsert return payload: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    ok = False
+
+                if ok:
+                    stored += 1
+
+            total_stored = stored
+            duration_ms = int((time.time() - start_time) * 1000)
+            ebay_db.update_sync_job(job_id, "completed", total_fetched, total_stored)
+
+            event_logger.log_done(
+                f"Returns sync completed: {total_fetched} fetched, {total_stored} stored in {duration_ms}ms (api_calls={api_calls})",
+                total_fetched,
+                total_stored,
+                duration_ms,
+            )
+
+            logger.info(
+                "Returns sync completed: fetched=%s, stored=%s, api_calls=%s",
+                total_fetched,
+                total_stored,
+                api_calls,
+            )
+
+            return {
+                "status": "completed",
+                "total_fetched": total_fetched,
+                "total_stored": total_stored,
+                "api_calls": api_calls,
+                "job_id": job_id,
+                "run_id": event_logger.run_id,
+            }
+
+        except Exception as exc:
+            error_msg = str(exc)
+            event_logger.log_error(f"Returns sync failed: {error_msg}", exc)
+            logger.error(f"Returns sync failed: {error_msg}")
+            ebay_db.update_sync_job(job_id, "failed", error_message=error_msg)
+            raise
+        finally:
+            event_logger.close()
+
     async def sync_all_offers(
         self,
         user_id: str,

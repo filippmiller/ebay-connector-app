@@ -125,7 +125,7 @@ async def get_worker_config(
     states_by_api: Dict[str, EbaySyncState] = {s.api_family: s for s in existing_states}
 
     # Ensure we have at least Orders / Transactions / Offers / Messages /
-    # Active Inventory / Cases / Inquiries / Finances / Buyer workers
+    # Active Inventory / Cases / Inquiries / Finances / Buyer / Returns workers
     # configured so they always appear in the Workers control UI for this
     # account.
     ensured_families = [
@@ -138,6 +138,7 @@ async def get_worker_config(
         "inquiries",
         "finances",
         "buyer",
+        "returns",
     ]
     ebay_user_id = account.ebay_user_id or "unknown"
     for api_family in ensured_families:
@@ -167,6 +168,7 @@ async def get_worker_config(
         "inquiries": "(inquiry_id, user_id)",
         "cases": "(case_id, user_id)",
         "disputes": "(dispute_id, user_id)",
+        "returns": "(ebay_account_id, return_id)",
     }
 
     items: List[WorkerConfigItem] = []
@@ -270,7 +272,7 @@ async def run_worker_once(
     if not are_workers_globally_enabled(db):
         return {"status": "skipped", "reason": "workers_disabled"}
 
-    if api not in {"orders", "transactions", "offers", "messages", "active_inventory", "cases", "inquiries", "finances", "buyer"}:
+    if api not in {"orders", "transactions", "offers", "messages", "active_inventory", "cases", "inquiries", "finances", "buyer", "returns"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
 
     account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
@@ -307,6 +309,10 @@ async def run_worker_once(
         elif api == "buyer":
             run_id = await run_purchases_worker_for_account(account_id)
             api_family = "buyer"
+        elif api == "returns":
+            from app.services.ebay_workers.returns_worker import run_returns_worker_for_account
+            run_id = await run_returns_worker_for_account(account_id)
+            api_family = "returns"
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")
     except HTTPException:
@@ -362,6 +368,7 @@ async def run_all_workers_once(
         "inquiries",
         "finances",
         "buyer",
+        "returns",
     ]
 
     ebay_user_id = account.ebay_user_id or "unknown"
@@ -446,6 +453,9 @@ async def run_all_workers_once(
                 run_id = await run_finances_worker_for_account(account_id)
             elif api_family == "buyer":
                 run_id = await run_purchases_worker_for_account(account_id)
+            elif api_family == "returns":
+                from app.services.ebay_workers.returns_worker import run_returns_worker_for_account
+                run_id = await run_returns_worker_for_account(account_id)
             else:
                 run_id = None
         except Exception as exc:  # noqa: BLE001
@@ -570,6 +580,7 @@ async def get_worker_schedule(
         "inquiries",
         "finances",
         "buyer",
+        "returns",
     ]
     ebay_user_id = account.ebay_user_id or "unknown"
 
@@ -601,6 +612,7 @@ async def get_worker_schedule(
         "offers": 30,
         # Messages worker also uses a 30-minute overlap between runs.
         "messages": 30,
+        "returns": 30,
     }
     backfill_by_api: Dict[str, int] = {
         "orders": 90,
@@ -610,6 +622,7 @@ async def get_worker_schedule(
         "inquiries": 90,
         "offers": 90,
         "messages": 90,
+        "returns": 90,
     }
 
     interval_minutes = 5

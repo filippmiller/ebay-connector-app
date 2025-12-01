@@ -898,6 +898,91 @@ async def _run_disputes_sync(user_id: str, access_token: str, ebay_environment: 
         settings.EBAY_ENVIRONMENT = original_env
 
 
+@router.get("/returns")
+async def get_returns(
+    account_id: str = Query(..., description="eBay account id"),
+    state: Optional[str] = Query(None, description="Filter by return_state"),
+    date_from: Optional[str] = Query(None, description="Filter by creation_date from (ISO8601)"),
+    date_to: Optional[str] = Query(None, description="Filter by creation_date to (ISO8601)"),
+    limit: int = Query(100, ge=1, le=500, description="Number of returns to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return normalized Post-Order returns for a specific eBay account.
+
+    This is a thin read-only API over the `ebay_returns` table populated by the
+    Returns worker. It supports basic filtering by state and creation date
+    range, and returns a stable subset of columns suitable for grid views.
+    """
+    from app.models_sqlalchemy.models import EbayAccount, EbayReturn
+
+    account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
+    if not account or account.org_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    query = db.query(EbayReturn).filter(EbayReturn.ebay_account_id == account_id)
+
+    if state:
+        query = query.filter(EbayReturn.return_state == state)
+
+    if date_from:
+        try:
+            from dateutil import parser as _parser  # type: ignore[import]
+            dt_from = _parser.isoparse(date_from)
+            query = query.filter(EbayReturn.creation_date >= dt_from)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_from format")
+
+    if date_to:
+        try:
+            from dateutil import parser as _parser  # type: ignore[import]
+            dt_to = _parser.isoparse(date_to)
+            query = query.filter(EbayReturn.creation_date <= dt_to)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_to format")
+
+    total = query.count()
+
+    rows = (
+        query.order_by(EbayReturn.creation_date.desc().nullslast())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "id": r.id,
+                "return_id": r.return_id,
+                "account_id": r.ebay_account_id,
+                "ebay_user_id": r.ebay_user_id,
+                "order_id": r.order_id,
+                "item_id": r.item_id,
+                "transaction_id": r.transaction_id,
+                "return_state": r.return_state,
+                "return_type": r.return_type,
+                "reason": r.reason,
+                "buyer_username": r.buyer_username,
+                "seller_username": r.seller_username,
+                "total_amount_value": float(r.total_amount_value) if r.total_amount_value is not None else None,
+                "total_amount_currency": r.total_amount_currency,
+                "creation_date": r.creation_date.isoformat() if r.creation_date else None,
+                "last_modified_date": r.last_modified_date.isoformat() if r.last_modified_date else None,
+                "closed_date": r.closed_date.isoformat() if r.closed_date else None,
+            }
+        )
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @router.get("/disputes")
 async def get_disputes(
     limit: int = Query(100, description="Number of disputes to return"),

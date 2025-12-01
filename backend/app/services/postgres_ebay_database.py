@@ -851,6 +851,161 @@ class PostgresEbayDatabase:
         finally:
             session.close()
 
+    def upsert_return(
+        self,
+        user_id: str,
+        return_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a Post-Order return in ebay_returns.
+
+        Mirrors the style of upsert_inquiry / upsert_case, normalizing key
+        identifiers, usernames, monetary amounts and timestamps while keeping
+        the full raw payload for auditing.
+        """
+        session = self._get_session()
+
+        try:
+            return_id = return_data.get("returnId") or return_data.get("return_id")
+            if not return_id:
+                logger.error("Return data missing returnId")
+                return False
+
+            now = datetime.utcnow()
+
+            order_id = return_data.get("orderId") or return_data.get("order_id")
+            item_id = return_data.get("itemId") or return_data.get("item_id")
+            if item_id is not None:
+                item_id = str(item_id)
+
+            transaction_id = return_data.get("transactionId") or return_data.get("transaction_id")
+            if transaction_id is not None:
+                transaction_id = str(transaction_id)
+
+            return_state = return_data.get("state") or return_data.get("returnState") or return_data.get("return_state")
+            return_type = return_data.get("type") or return_data.get("returnType") or return_data.get("return_type")
+            reason = return_data.get("reason") or return_data.get("reasonCode") or return_data.get("reason_code")
+
+            buyer_username = (
+                self._safe_get(return_data, "buyer", "username")
+                or return_data.get("buyerUsername")
+                or return_data.get("buyer_username")
+            )
+            seller_username = (
+                self._safe_get(return_data, "seller", "username")
+                or return_data.get("sellerUsername")
+                or return_data.get("seller_username")
+            )
+
+            amount_obj = (
+                self._safe_get(return_data, "totalAmount")
+                or self._safe_get(return_data, "refundAmount")
+                or return_data.get("totalAmount")
+                or return_data.get("refundAmount")
+            )
+            if isinstance(amount_obj, dict):
+                total_amount_value, total_amount_currency = self._parse_money(amount_obj)
+            else:
+                total_amount_value, total_amount_currency = (None, None)
+
+            creation_raw = (
+                self._safe_get(return_data, "creationDate", "value")
+                or return_data.get("creationDate")
+                or return_data.get("creation_date")
+            )
+            last_modified_raw = (
+                self._safe_get(return_data, "lastModifiedDate", "value")
+                or return_data.get("lastModifiedDate")
+                or return_data.get("last_modified_date")
+            )
+            closed_raw = (
+                self._safe_get(return_data, "closedDate", "value")
+                or return_data.get("closedDate")
+                or return_data.get("closed_date")
+            )
+
+            creation_date = self._parse_datetime(creation_raw if isinstance(creation_raw, str) else None)
+            last_modified_date = self._parse_datetime(last_modified_raw if isinstance(last_modified_raw, str) else None)
+            closed_date = self._parse_datetime(closed_raw if isinstance(closed_raw, str) else None)
+
+            from sqlalchemy import text as text_query
+
+            query = text_query(
+                """
+                INSERT INTO ebay_returns
+                (return_id, user_id, ebay_account_id, ebay_user_id,
+                 order_id, item_id, transaction_id,
+                 return_state, return_type, reason,
+                 buyer_username, seller_username,
+                 total_amount_value, total_amount_currency,
+                 creation_date, last_modified_date, closed_date,
+                 raw_json, created_at, updated_at)
+                VALUES (:return_id, :user_id, :ebay_account_id, :ebay_user_id,
+                        :order_id, :item_id, :transaction_id,
+                        :return_state, :return_type, :reason,
+                        :buyer_username, :seller_username,
+                        :total_amount_value, :total_amount_currency,
+                        :creation_date, :last_modified_date, :closed_date,
+                        :raw_json, :created_at, :updated_at)
+                ON CONFLICT (return_id, user_id)
+                DO UPDATE SET
+                    ebay_account_id = EXCLUDED.ebay_account_id,
+                    ebay_user_id = EXCLUDED.ebay_user_id,
+                    order_id = EXCLUDED.order_id,
+                    item_id = EXCLUDED.item_id,
+                    transaction_id = EXCLUDED.transaction_id,
+                    return_state = EXCLUDED.return_state,
+                    return_type = EXCLUDED.return_type,
+                    reason = EXCLUDED.reason,
+                    buyer_username = EXCLUDED.buyer_username,
+                    seller_username = EXCLUDED.seller_username,
+                    total_amount_value = EXCLUDED.total_amount_value,
+                    total_amount_currency = EXCLUDED.total_amount_currency,
+                    creation_date = EXCLUDED.creation_date,
+                    last_modified_date = EXCLUDED.last_modified_date,
+                    closed_date = EXCLUDED.closed_date,
+                    raw_json = EXCLUDED.raw_json,
+                    updated_at = EXCLUDED.updated_at
+                """
+            )
+
+            session.execute(
+                query,
+                {
+                    "return_id": return_id,
+                    "user_id": user_id,
+                    "ebay_account_id": ebay_account_id,
+                    "ebay_user_id": ebay_user_id,
+                    "order_id": order_id,
+                    "item_id": item_id,
+                    "transaction_id": transaction_id,
+                    "return_state": return_state,
+                    "return_type": return_type,
+                    "reason": reason,
+                    "buyer_username": buyer_username,
+                    "seller_username": seller_username,
+                    "total_amount_value": total_amount_value,
+                    "total_amount_currency": total_amount_currency,
+                    "creation_date": creation_date,
+                    "last_modified_date": last_modified_date,
+                    "closed_date": closed_date,
+                    "raw_json": json.dumps(return_data),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+            session.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error upserting return: {str(e)}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
     def upsert_case(
         self,
         user_id: str,

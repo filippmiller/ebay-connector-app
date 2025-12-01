@@ -16,3 +16,4 @@ Railway cron or Cloudflare Workers.
 
 from .scheduler import run_cycle_for_all_accounts, run_cycle_for_account
 from .orders_worker import run_orders_worker_for_account
+from .returns_worker import run_returns_worker_for_account

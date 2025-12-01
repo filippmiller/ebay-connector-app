@@ -245,6 +245,33 @@ export interface WorkersLoopStatusResponse {
   loops: WorkersLoopStatusItem[];
 }
 
+export interface EbayReturnRow {
+  id: number;
+  return_id: string;
+  account_id: string | null;
+  ebay_user_id: string | null;
+  order_id: string | null;
+  item_id: string | null;
+  transaction_id: string | null;
+  return_state: string | null;
+  return_type: string | null;
+  reason: string | null;
+  buyer_username: string | null;
+  seller_username: string | null;
+  total_amount_value: number | null;
+  total_amount_currency: string | null;
+  creation_date: string | null;
+  last_modified_date: string | null;
+  closed_date: string | null;
+}
+
+export interface EbayReturnsResponse {
+  items: EbayReturnRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export const ebayApi = {
   async startAuth(
     redirectUri: string,
@@ -471,6 +498,27 @@ export const ebayApi = {
     params.set('limit', String(limit));
     const response = await apiClient.get<{ logs: EbayConnectLog[] }>(
       `/api/admin/ebay/tokens/logs?${params.toString()}`,
+    );
+    return response.data;
+  },
+
+  async getReturns(params: {
+    accountId: string;
+    state?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<EbayReturnsResponse> {
+    const searchParams = new URLSearchParams();
+    searchParams.set('account_id', params.accountId);
+    if (params.state) searchParams.set('state', params.state);
+    if (params.dateFrom) searchParams.set('date_from', params.dateFrom);
+    if (params.dateTo) searchParams.set('date_to', params.dateTo);
+    if (typeof params.limit === 'number') searchParams.set('limit', String(params.limit));
+    if (typeof params.offset === 'number') searchParams.set('offset', String(params.offset));
+    const response = await apiClient.get<EbayReturnsResponse>(
+      `/ebay/returns?${searchParams.toString()}`,
     );
     return response.data;
   },
