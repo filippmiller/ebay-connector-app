@@ -94,8 +94,11 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
             initial_backfill_days=initial_backfill_days,
         )
 
-        from_iso = window_from.replace(microsecond=0).isoformat() + "Z"
-        to_iso = window_to.replace(microsecond=0).isoformat() + "Z"
+        # Format timestamps as proper UTC ISO8601 strings ending with "Z".
+        # We intentionally avoid producing values like "+00:00Z" which break
+        # downstream parsing in EbayService.sync_all_transactions.
+        from_iso = window_from.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        to_iso = window_to.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
         log_start(
             db,

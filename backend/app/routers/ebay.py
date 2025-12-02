@@ -731,15 +731,15 @@ async def sync_all_orders(
         "status": "started",
         "message": f"Orders sync started in background ({env})"
     }
-
-
-async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
+ 
+ 
+ async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
     """Background task to run orders sync with error handling"""
     from app.config import settings
-    
+ 
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
-    
+ 
     try:
         # Pass run_id to sync_all_orders so it uses the same run_id for events
         await ebay_service.sync_all_orders(user_id, access_token, run_id=run_id)
@@ -747,9 +747,9 @@ async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: st
         logger.error(f"Background orders sync failed for run_id {run_id}: {str(e)}")
     finally:
         settings.EBAY_ENVIRONMENT = original_env
-
-
-@router.get("/orders")
+ 
+ 
+ @router.get("/orders")
 async def get_orders(
     limit: int = Query(100, description="Number of orders to return"),
     offset: int = Query(0, description="Offset for pagination"),
@@ -829,17 +829,87 @@ async def sync_all_transactions(
 
 
 async def _run_transactions_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
+    """Background task to run transactions sync using the same cursor logic as workers.
+ 
+    This endpoint now:
+    - Locates the primary active eBay account for the org (most recently connected).
+    - Uses EbaySyncState + compute_sync_window to derive a [cursor-30m, now] window.
+    - Calls EbayService.sync_all_transactions with that window.
+    - Advances the cursor on success, or records last_error on failure.
+    """
     from app.config import settings
-    
+    from app.models_sqlalchemy import get_db
+    from app.services.ebay_workers.state import (
+        get_or_create_sync_state,
+        compute_sync_window,
+        mark_sync_run_result,
+    )
+    from app.services.ebay_workers.transactions_worker import (
+        OVERLAP_MINUTES_DEFAULT,
+        INITIAL_BACKFILL_DAYS_DEFAULT,
+    )
+ 
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
-    
+ 
+    db_session = next(get_db())
     try:
-        # Pass run_id to sync_all_transactions so it uses the same run_id for events
-        await ebay_service.sync_all_transactions(user_id, access_token, run_id=run_id)
-    except Exception as e:
-        logger.error(f"Background transactions sync failed for run_id {run_id}: {str(e)}")
+        # Pick the most recently connected active eBay account for this org.
+        accounts = ebay_account_service.get_accounts_by_org(db_session, org_id=user_id, active_only=True)
+        if not accounts:
+            logger.warning(
+                "Transactions sync: no active eBay accounts found for org_id=%s; skipping manual sync",
+                user_id,
+            )
+            return
+ 
+        account = accounts[0]
+        ebay_account_id = account.id
+        ebay_user_id = account.ebay_user_id or "unknown"
+ 
+        # Ensure we have a sync state row and compute the incremental window
+        state = get_or_create_sync_state(
+            db_session,
+            ebay_account_id=ebay_account_id,
+            ebay_user_id=ebay_user_id,
+            api_family="transactions",
+        )
+ 
+        window_from, window_to = compute_sync_window(
+            state,
+            overlap_minutes=OVERLAP_MINUTES_DEFAULT,
+            initial_backfill_days=INITIAL_BACKFILL_DAYS_DEFAULT,
+        )
+ 
+        from_iso = window_from.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        to_iso = window_to.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+ 
+        try:
+            # Pass run_id so SyncEventLogger in sync_all_transactions uses the
+            # same stream the UI is already listening to.
+            await ebay_service.sync_all_transactions(
+                user_id,
+                access_token,
+                run_id=run_id,
+                ebay_account_id=ebay_account_id,
+                ebay_user_id=ebay_user_id,
+                window_from=from_iso,
+                window_to=to_iso,
+            )
+            # On success, advance cursor to window_to
+            mark_sync_run_result(db_session, state, cursor_value=to_iso, error=None)
+        except Exception as e:
+            # Record the error on the sync state but keep the previous cursor.
+            mark_sync_run_result(db_session, state, cursor_value=None, error=str(e))
+            logger.error(
+                "Background transactions sync failed for run_id %s, account_id=%s: %s",
+                run_id,
+                ebay_account_id,
+                str(e),
+            )
+        
     finally:
+        db_session.close()
         settings.EBAY_ENVIRONMENT = original_env
 
 
