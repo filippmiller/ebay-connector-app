@@ -331,7 +331,17 @@ async def run_worker_once(
         active = get_active_run(db, ebay_account_id=account_id, api_family=api_family)
         if active:
             return {"status": "skipped", "reason": "already_running", "run_id": active.id}
-        return {"status": "skipped", "reason": "not_started"}
+        # If there is no active run and the worker did not start, surface a
+        # structured error so the UI can show a clear message instead of
+        # silently doing nothing.
+        return {
+            "status": "error",
+            "api_family": api_family,
+            "error_message": (
+                "Worker did not start (reason=not_started). "
+                "Check that the worker is enabled, the account is active, and a valid eBay token exists."
+            ),
+        }
 
     return {"status": "started", "run_id": run_id, "api_family": api_family}
 
