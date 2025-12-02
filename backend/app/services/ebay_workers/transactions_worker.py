@@ -6,7 +6,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models_sqlalchemy.models import EbayAccount, EbayToken
+from app.models_sqlalchemy.models import EbayAccount, EbayToken, User
 from app.models_sqlalchemy import SessionLocal
 from app.services.ebay_account_service import ebay_account_service
 from app.services.ebay import EbayService
@@ -119,6 +119,11 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
         try:
             # sync_all_transactions expects the org/user id and an access token.
             user_id = account.org_id
+            
+            # Fetch user to get environment
+            user = db.query(User).filter(User.id == user_id).first()
+            environment = user.ebay_environment if user else "sandbox"
+
             result = await ebay_service.sync_all_transactions(
                 user_id=user_id,
                 access_token=token.access_token,
@@ -127,6 +132,7 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
                 ebay_user_id=ebay_user_id,
                 window_from=from_iso,
                 window_to=to_iso,
+                environment=environment,
             )
 
             total_fetched = int(result.get("total_fetched", 0))

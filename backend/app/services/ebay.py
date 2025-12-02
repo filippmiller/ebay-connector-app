@@ -1625,7 +1625,7 @@ class EbayService:
             logger.error(f"Error getting user identity: {str(e)}", exc_info=True)
             return {"username": None, "userId": None, "error": str(e)}
 
-    async def fetch_transactions(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def fetch_transactions(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None, environment: Optional[str] = None) -> Dict[str, Any]:
         """
         Fetch transaction records from eBay Finances API
         By default, fetches transactions from the last 90 days
@@ -1638,8 +1638,15 @@ class EbayService:
                 detail="eBay access token required"
             )
         
+        # Determine environment and base URL
+        target_env = environment or settings.EBAY_ENVIRONMENT
+        if target_env == "sandbox":
+            base_url = "https://apiz.sandbox.ebay.com"
+        else:
+            base_url = "https://apiz.ebay.com"
+
         # Finances API lives on apiz.ebay.com / apiz.sandbox.ebay.com, not api.ebay.com
-        api_url = f"{settings.ebay_finances_base_url}/sell/finances/v1/transaction"
+        api_url = f"{base_url}/sell/finances/v1/transaction"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -3370,6 +3377,7 @@ class EbayService:
         ebay_user_id: Optional[str] = None,
         window_from: Optional[str] = None,
         window_to: Optional[str] = None,
+        environment: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Synchronize transactions from eBay to database with pagination (limit=200).
@@ -3539,7 +3547,7 @@ class EbayService:
 
                 request_start = time.time()
                 try:
-                    transactions_response = await self.fetch_transactions(access_token, filter_params)
+                    transactions_response = await self.fetch_transactions(access_token, filter_params, environment=environment)
                 except Exception as e:
                     # Check for cancellation after error
                     if is_cancelled(event_logger.run_id):
@@ -3738,6 +3746,7 @@ class EbayService:
         ebay_user_id: Optional[str] = None,
         window_from: Optional[str] = None,
         window_to: Optional[str] = None,
+        environment: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Synchronize Finances transactions into Postgres tables.
 
@@ -3913,7 +3922,7 @@ class EbayService:
                 request_start = time.time()
                 try:
                     transactions_response = await self.fetch_transactions(
-                        access_token, filter_params
+                        access_token, filter_params, environment=environment
                     )
                 except Exception as e:
                     # Check for cancellation after error
