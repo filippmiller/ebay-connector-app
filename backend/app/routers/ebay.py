@@ -733,23 +733,23 @@ async def sync_all_orders(
     }
  
  
- async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
-    """Background task to run orders sync with error handling"""
+async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str) -> None:
+    """Background task to run orders sync with error handling."""
     from app.config import settings
- 
+
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
- 
+
     try:
         # Pass run_id to sync_all_orders so it uses the same run_id for events
         await ebay_service.sync_all_orders(user_id, access_token, run_id=run_id)
-    except Exception as e:
-        logger.error(f"Background orders sync failed for run_id {run_id}: {str(e)}")
+    except Exception as e:  # noqa: BLE001
+        logger.error("Background orders sync failed for run_id %s: %s", run_id, str(e))
     finally:
         settings.EBAY_ENVIRONMENT = original_env
- 
- 
- @router.get("/orders")
+
+
+@router.get("/orders")
 async def get_orders(
     limit: int = Query(100, description="Number of orders to return"),
     offset: int = Query(0, description="Offset for pagination"),
