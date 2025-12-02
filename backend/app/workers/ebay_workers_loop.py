@@ -120,5 +120,49 @@ async def run_ebay_workers_loop(interval_seconds: int = 300) -> None:
             pass
 
 
+async def run_ebay_workers_proxy_loop(interval_seconds: int = 300) -> None:
+    """Run the eBay workers loop in Proxy Mode.
+    
+    Delegates execution to the Web App via internal API.
+    This is used when running as a standalone service to avoid environment/decryption issues.
+    """
+    import httpx
+    import os
+    
+    logger.info("eBay workers loop started (API Proxy Mode)")
+    
+    web_app_url = os.getenv("WEB_APP_URL", "").rstrip("/")
+    internal_api_key = os.getenv("INTERNAL_API_KEY", "")
+    
+    if not web_app_url:
+        logger.error("Proxy mode requires WEB_APP_URL")
+        return
+    if not internal_api_key:
+        logger.error("Proxy mode requires INTERNAL_API_KEY")
+        return
+
+    while True:
+        try:
+            endpoint = f"{web_app_url}/api/admin/internal/run-ebay-workers"
+            logger.info(f"Triggering worker cycle via {endpoint}...")
+            
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(
+                    endpoint,
+                    json={"internal_api_key": internal_api_key},
+                )
+                if resp.status_code == 200:
+                    logger.info("Proxy trigger sent successfully")
+                else:
+                    logger.error(f"Proxy trigger failed: HTTP {resp.status_code} {resp.text}")
+                    
+        except Exception as e:
+            logger.error(f"Proxy trigger failed: {e}")
+        
+        await asyncio.sleep(interval_seconds)
+
+
 if __name__ == "__main__":
-    asyncio.run(run_ebay_workers_loop())
+    # When run as a script, default to Proxy Mode to ensure we use the Web App's
+    # environment and keys for decryption.
+    asyncio.run(run_ebay_workers_proxy_loop())

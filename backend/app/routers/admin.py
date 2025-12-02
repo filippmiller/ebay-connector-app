@@ -87,6 +87,37 @@ async def internal_refresh_tokens(
         )
 
 
+@router.post("/internal/run-ebay-workers")
+async def internal_run_ebay_workers(
+    payload: InternalTokenRefreshRequest,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint for the worker to trigger the main eBay workers loop.
+    
+    This allows the worker service to act as a proxy, ensuring all API calls
+    originate from the Web App environment (correct keys/decryption).
+    """
+    expected_key = os.getenv("INTERNAL_API_KEY", "")
+    if not expected_key or payload.internal_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_internal_api_key"
+        )
+    
+    from app.services.ebay_workers import run_cycle_for_all_accounts
+    
+    try:
+        logger.info("Internal trigger: Running cycle for all accounts...")
+        await run_cycle_for_all_accounts()
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Internal workers run failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"run_failed: {str(e)}"
+        )
+
+
 @router.get("/notifications/status")
 async def get_notifications_status(
     current_user: User = Depends(admin_required),
