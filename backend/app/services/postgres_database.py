@@ -1,3 +1,4 @@
+from sqlalchemy import or_
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
@@ -178,7 +179,9 @@ class PostgresDatabase:
     ) -> List[Dict[str, Any]]:
         db: Session = next(get_db())
         try:
-            query = db.query(EbayConnectLog).filter(EbayConnectLog.user_id == user_id)
+            query = db.query(EbayConnectLog).filter(
+                or_(EbayConnectLog.user_id == user_id, EbayConnectLog.user_id.is_(None))
+            )
             if environment:
                 query = query.filter(EbayConnectLog.environment == environment)
 
