@@ -137,7 +137,7 @@ async def refresh_access_token_for_account(
     if not plain_refresh_token:
         msg = "No refresh token available (or decryption failed)"
         logger.warning("Account %s (%s) has no refresh token", account.id, account.house_name)
-
+        # ... (rest of existing error handling) ...
         refresh_log.success = False
         refresh_log.error_code = "NO_REFRESH_TOKEN"
         refresh_log.error_message = msg
@@ -150,6 +150,35 @@ async def refresh_access_token_for_account(
         return {
             "success": False,
             "error": "no_refresh_token",
+            "error_message": msg,
+            "http": None,
+        }
+
+    # FAIL FAST: If the token is still encrypted, it means crypto.decrypt failed.
+    # This usually happens if the Worker has a different JWT_SECRET than the Web App.
+    if plain_refresh_token.startswith("ENC:"):
+        msg = (
+            "Token decryption failed (returned ENC value). "
+            "Check that the Worker Service has the same JWT_SECRET/SECRET_KEY as the Web App."
+        )
+        logger.error(
+            "Account %s (%s): %s",
+            account.id,
+            account.house_name,
+            msg,
+        )
+        refresh_log.success = False
+        refresh_log.error_code = "decrypt_failed"
+        refresh_log.error_message = msg
+        refresh_log.finished_at = datetime.now(timezone.utc)
+
+        if token is not None:
+            token.refresh_error = msg
+        
+        db.commit()
+        return {
+            "success": False,
+            "error": "decrypt_failed",
             "error_message": msg,
             "http": None,
         }

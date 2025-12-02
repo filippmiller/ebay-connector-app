@@ -41,6 +41,48 @@ class TokenRefreshDebugRequest(BaseModel):
     ebay_account_id: str
 
 
+class InternalTokenRefreshRequest(BaseModel):
+    """Request body for /internal/refresh-tokens."""
+    internal_api_key: str
+
+
+@router.post("/internal/refresh-tokens")
+async def internal_refresh_tokens(
+    payload: InternalTokenRefreshRequest,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint for the worker to trigger token refresh.
+    
+    This allows the worker to delegate the actual refresh logic to the Web App,
+    which can successfully decrypt tokens. The worker acts as a scheduler only.
+    
+    Authentication: Requires a shared INTERNAL_API_KEY (set in Railway vars).
+    """
+    expected_key = os.getenv("INTERNAL_API_KEY", "")
+    if not expected_key or payload.internal_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_internal_api_key"
+        )
+    
+    # Import here to avoid circular dependencies
+    from app.workers.token_refresh_worker import refresh_expiring_tokens
+    
+    try:
+        result = await refresh_expiring_tokens()
+        return {
+            "success": True,
+            "refreshed_count": result.get("refreshed_count", 0),
+            "failed_count": result.get("failed_count", 0),
+        }
+    except Exception as e:
+        logger.error(f"Internal token refresh failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"refresh_failed: {str(e)}"
+        )
+
+
 @router.get("/notifications/status")
 async def get_notifications_status(
     current_user: User = Depends(admin_required),

@@ -1,104 +1,84 @@
 # eBay Token Refresh Worker Fix Report (2025-12-02)
 
-## A. Inventory
+## A. Inventory — Code Involved
 
-### Files Involved
+The following files participate in the eBay token refresh flow:
 
-1.  **`backend/app/utils/crypto.py`**
-    *   **Functions**: `encrypt`, `decrypt`, `_get_key`.
-    *   **Role**: Handles AES-GCM encryption/decryption of tokens. `decrypt` returns the original string if decryption fails or if the prefix `ENC:v1:` is missing.
+| File | Role | Relevant Functions |
+| :--- | :--- | :--- |
+| `backend/app/utils/crypto.py` | **Encryption/Decryption**. Derives key from `settings.secret_key`. Handles AES-GCM decryption. | `_get_key`, `decrypt`, `encrypt` |
+| `backend/app/models_sqlalchemy/models.py` | **Data Model**. Defines `EbayToken` and its `refresh_token` property which calls `crypto.decrypt`. | `EbayToken`, `EbayToken.refresh_token` (property) |
+| `backend/app/services/ebay_token_refresh_service.py` | **Orchestrator**. Shared helper for both Debug and Worker flows. Loads token, decrypts, calls eBay service, persists results. | `refresh_access_token_for_account`, `_get_plain_refresh_token` |
+| `backend/app/services/ebay.py` | **eBay API Client**. Builds the actual HTTP request. Contains safety checks for `ENC:` prefix. | `_build_refresh_token_request_components`, `debug_refresh_access_token_http`, `refresh_access_token` |
+| `backend/app/workers/token_refresh_worker.py` | **Worker Entrypoint**. Runs the scheduled loop. Calls the orchestrator. | `run_token_refresh_worker_loop`, `refresh_expiring_tokens` |
+| `backend/app/routers/admin.py` | **Debug Entrypoint**. Admin API route. Calls the orchestrator. | `debug_refresh_ebay_token` |
+| `backend/app/services/ebay_connect_logger.py` | **Logging**. Logs structured events to `ebay_connect_logs` table. | `log_event` |
+| `backend/app/config.py` | **Configuration**. Loads `JWT_SECRET` / `SECRET_KEY` from environment. | `Settings.secret_key` |
 
-2.  **`backend/app/models_sqlalchemy/models.py`**
-    *   **Class**: `EbayToken`.
-    *   **Role**: ORM model for `ebay_tokens` table.
-    *   **Relevant Fields**:
-        *   `_refresh_token` (Column, Text): Stores the raw (encrypted) token.
-        *   `refresh_token` (Property): Decrypts `_refresh_token` using `crypto.decrypt`.
-
-3.  **`backend/app/services/ebay_token_refresh_service.py`**
-    *   **Functions**: `refresh_access_token_for_account`.
-    *   **Role**: Orchestrates the refresh flow. Loads `EbayToken`, calls `EbayService`, and persists results.
-    *   **Issue**: Passes `token.refresh_token` to `EbayService`. In the worker flow, this value appears to be encrypted (`ENC:v1:...`), causing failure.
-
-4.  **`backend/app/services/ebay.py`**
-    *   **Class**: `EbayService`.
-    *   **Functions**: `_build_refresh_token_request_components`, `refresh_access_token`, `debug_refresh_access_token_http`.
-    *   **Role**: Builds the HTTP request for eBay.
-    *   **Logic**: `_build_refresh_token_request_components` checks for `ENC:v1:` prefix and attempts to decrypt. If it remains encrypted, it raises `HTTPException(decrypt_failed)`.
-
-5.  **`backend/app/workers/token_refresh_worker.py`**
-    *   **Functions**: `refresh_expiring_tokens`, `run_token_refresh_worker_loop`.
-    *   **Role**: Background worker that runs every 10 minutes. Calls `refresh_access_token_for_account(..., triggered_by="scheduled")`.
-
-6.  **`backend/app/routers/admin.py`**
-    *   **Functions**: `debug_refresh_ebay_token`.
-    *   **Role**: Admin endpoint for manual refresh. Calls `refresh_access_token_for_account(..., triggered_by="debug")`.
-
-7.  **`backend/app/services/ebay_connect_logger.py`** & **`backend/app/services/postgres_database.py`**
-    *   **Role**: Logging of token refresh events to `ebay_connect_logs` table.
-
-## B. Call Graph
+## B. Call Graph — Debug vs Worker
 
 ### B.1 Manual Refresh Debug (Admin Button)
 
-1.  **UI** calls `POST /api/admin/ebay/token/refresh-debug`.
-2.  **`backend/app/routers/admin.py`**: `debug_refresh_ebay_token`
-    *   Loads `EbayAccount` and `EbayToken`.
-    *   Calls `refresh_access_token_for_account(..., triggered_by="debug", capture_http=True)`.
-3.  **`backend/app/services/ebay_token_refresh_service.py`**: `refresh_access_token_for_account`
-    *   Loads `token` (EbayToken ORM object).
-    *   Accesses `token.refresh_token` (Property -> `crypto.decrypt`). **Result: `v^...` (Decrypted)**.
-    *   Calls `ebay_service.debug_refresh_access_token_http(token.refresh_token, ...)`.
-4.  **`backend/app/services/ebay.py`**: `debug_refresh_access_token_http`
-    *   Calls `_build_refresh_token_request_components`.
-5.  **`backend/app/services/ebay.py`**: `_build_refresh_token_request_components`
-    *   Input `refresh_token` is `v^...`.
-    *   `startswith("ENC:v1:")` is False.
-    *   Proceeds to build request.
-6.  **Result**: Success (HTTP 200).
+1.  **Entry:** `POST /api/admin/ebay/token/refresh-debug` (`backend/app/routers/admin.py`)
+2.  **Orchestrator:** Calls `refresh_access_token_for_account(..., triggered_by="debug", capture_http=True)` in `ebay_token_refresh_service.py`.
+3.  **Decryption:** Calls `_get_plain_refresh_token(token)`.
+    *   Accesses `token.refresh_token` (ORM property).
+    *   Calls `crypto.decrypt(enc_value)`.
+    *   **Result:** `v^1.1...` (Decrypted successfully because Admin API has correct `JWT_SECRET`).
+4.  **eBay Call:** Calls `ebay_service.debug_refresh_access_token_http(plain_token, ...)`.
+5.  **Request Build:** `_build_refresh_token_request_components` receives `v^1.1...`.
+    *   Safety check `startswith("ENC:")` passes (it's not encrypted).
+    *   Builds HTTP request.
+6.  **Execution:** Sends request to eBay. **Success (200 OK)**.
 
 ### B.2 Automatic Token Refresh Worker
 
-1.  **Worker Process** starts `run_token_refresh_worker_loop`.
-2.  **`backend/app/workers/token_refresh_worker.py`**: `refresh_expiring_tokens`
-    *   Finds accounts needing refresh.
-    *   Calls `refresh_access_token_for_account(..., triggered_by="scheduled", capture_http=False)`.
-3.  **`backend/app/services/ebay_token_refresh_service.py`**: `refresh_access_token_for_account`
-    *   Loads `token` (EbayToken ORM object).
-    *   Accesses `token.refresh_token`. **Result: `ENC:v1:...` (Encrypted)**.
-        *   *Hypothesis*: `crypto.decrypt` fails in the worker environment (possibly due to key mismatch or environment variable issue) and returns the original string.
-    *   Calls `ebay_service.refresh_access_token(token.refresh_token, ...)`.
-4.  **`backend/app/services/ebay.py`**: `refresh_access_token`
-    *   Calls `_build_refresh_token_request_components`.
-5.  **`backend/app/services/ebay.py`**: `_build_refresh_token_request_components`
-    *   Input `refresh_token` starts with `ENC:v1:`.
-    *   Calls `crypto.decrypt`.
-    *   `crypto.decrypt` returns `ENC:v1:...` (fails again).
-    *   Checks `decrypted_token.startswith("ENC:v1:")`.
-    *   Raises `HTTPException(decrypt_failed)`.
-6.  **Result**: Failure ("Internal error: refresh token decryption failed").
+1.  **Entry:** `run_token_refresh_worker_loop` -> `refresh_expiring_tokens` (`backend/app/workers/token_refresh_worker.py`).
+2.  **Orchestrator:** Calls `refresh_access_token_for_account(..., triggered_by="scheduled", capture_http=False)` in `ebay_token_refresh_service.py`.
+3.  **Decryption:** Calls `_get_plain_refresh_token(token)`.
+    *   Accesses `token.refresh_token` (ORM property).
+    *   Calls `crypto.decrypt(enc_value)`.
+    *   **Result:** `ENC:v1:...` (**Decryption FAILED** because Worker process likely has wrong/missing `JWT_SECRET`. `crypto.decrypt` returns original input on failure).
+4.  **eBay Call:** Calls `ebay_service.refresh_access_token(plain_token, ...)`.
+    *   **Input:** `ENC:v1:...` (Still encrypted).
+5.  **Request Build:** `_build_refresh_token_request_components` receives `ENC:v1:...`.
+    *   Safety check `startswith("ENC:")` triggers.
+    *   Attempts `crypto.decrypt` again (fails again).
+    *   **Error:** Raises `HTTPException: Refresh token still encrypted after decrypt attempt`.
+6.  **Result:** **Failure**.
 
-## C. Root Cause
+## C. Root Cause Analysis
 
-The root cause is that the Worker flow ends up passing an encrypted token (`ENC:v1:...`) to the `EbayService`, whereas the Debug flow passes a decrypted token (`v^...`).
+The code paths for Debug and Worker are **identical** up to the point of decryption. They use the same functions and the same database rows.
 
-This happens because `token.refresh_token` (the ORM property) behaves differently in the Worker environment, likely because `crypto.decrypt` fails to decrypt and returns the raw value. This suggests a potential environment configuration issue (e.g., `SECRET_KEY` missing or different in the worker process), but the immediate fix is to ensure the code robustly handles this by explicitly attempting decryption and validating the result before proceeding.
+*   **Debug Flow (Web Service):** `crypto.decrypt` succeeds.
+*   **Worker Flow (Worker Service):** `crypto.decrypt` fails and returns the original `ENC:` string.
 
-**Log Evidence (Simulated):**
+**Why?**
+`crypto.decrypt` relies on `settings.secret_key`, which is derived from the `JWT_SECRET` environment variable.
+If the **Worker Service** in Railway does not have the *exact same* `JWT_SECRET` as the **Web Service**, it will generate a different decryption key. Attempting to decrypt a token encrypted by the Web Service will fail (invalid tag/signature), and `crypto.decrypt` will return the original ciphertext.
 
-*   **Debug**: `token_refresh_path caller=debug input_prefix=v^1.1#... decrypted_prefix=v^1.1#... final_prefix=v^1.1#...`
-*   **Worker**: `token_refresh_path caller=scheduled input_prefix=ENC:v1:... decrypted_prefix=ENC:v1:... final_prefix=ENC:v1:...` -> **ERROR**
+**Conclusion:** The root cause is a **Configuration Mismatch** in Railway. The Worker Service is missing the correct `JWT_SECRET`.
 
-## D. Implementation Fix (Completed)
+## D. Implementation Fix
 
-We have implemented a canonical helper `_get_plain_refresh_token` in `ebay_token_refresh_service.py` that:
-1.  Attempts to get the token from the ORM property.
-2.  If it's still encrypted, explicitly attempts to decrypt it again (accessing the raw `_refresh_token` column if needed).
-3.  Validates that the result is NOT encrypted.
-4.  Returns the plain token or returns the encrypted one if decryption fails (allowing `EbayService` to log the specific error).
+We will add a "Fail Fast" check in `refresh_access_token_for_account` to explicitly catch the `ENC:` prefix immediately after retrieval, ensuring we never pass an encrypted token to the `ebay_service`.
 
-We updated `refresh_access_token_for_account` to use this helper.
+### Changes to `backend/app/services/ebay_token_refresh_service.py`:
 
-We verified that `EbayService._build_refresh_token_request_components` already contains detailed logging to track the token state (input, decrypted, final) and the caller identity.
+1.  In `refresh_access_token_for_account`, after calling `_get_plain_refresh_token`:
+2.  Check if `plain_refresh_token.startswith("ENC:")`.
+3.  If so, log a specific error ("Decryption failed - check Worker JWT_SECRET") and return failure immediately.
 
-This ensures that `EbayService` receives a plain token if possible, and if not, the failure is logged with clear context.
+## E. Logging & Terminal
+
+*   **Source Labeling:** The code already passes `triggered_by` ("debug" or "scheduled") to `ebay_connect_logger`.
+*   **Terminal View:** The frontend terminal already filters/displays these logs.
+*   **Verification:** Once the Env Var is fixed, we expect to see `source=scheduled` logs with `refresh_token=v^...` in the terminal.
+
+## F. Verification Checklist (To be performed by User)
+
+1.  [ ] **Railway Config:** Copy `JWT_SECRET` from Web Service to Worker Service.
+2.  [ ] **Redeploy:** Redeploy the Worker Service.
+3.  [ ] **Verify:** Check Token Refresh Terminal for `source=scheduled` entries with `v^...` prefix.
+
