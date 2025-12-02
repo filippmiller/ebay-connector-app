@@ -28,12 +28,189 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models_sqlalchemy.models import EbayAccount, EbayToken
-from app.models_sqlalchemy.ebay_workers import EbayTokenRefreshLog
+from app.models_sqlalchemy.ebay_workers import EbayTokenRefreshLog, BackgroundWorker
 from app.services.ebay_account_service import ebay_account_service
 from app.services.ebay import ebay_service
 from app.utils.logger import logger
 
 from dataclasses import dataclass
+
+
+
+def _get_or_create_worker_row(db: Session, worker_name: str, interval: int) -> BackgroundWorker:
+    """Fetch or create the BackgroundWorker row for this worker."""
+    worker: Optional[BackgroundWorker] = (
+        db.query(BackgroundWorker)
+        .filter(BackgroundWorker.worker_name == worker_name)
+        .one_or_none()
+    )
+    if worker is None:
+        worker = BackgroundWorker(
+            id=str(uuid.uuid4()),
+            worker_name=worker_name,
+            interval_seconds=interval,
+        )
+        db.add(worker)
+        db.commit()
+        db.refresh(worker)
+    return worker
+
+
+async def run_token_refresh_job(
+    db: Session,
+    force_all: bool = False,
+    capture_http: bool = False,
+    triggered_by: str = "scheduled",
+) -> Dict[str, Any]:
+    """
+    Core logic for the token refresh worker.
+    
+    Args:
+        db: Database session
+        force_all: If True, refresh ALL active accounts regardless of expiry.
+        capture_http: If True, log detailed HTTP request/response to terminal.
+        triggered_by: Label for the source of the trigger (e.g. "scheduled", "manual_loop").
+    """
+    WORKER_NAME = "token_refresh_worker"
+    WORKER_INTERVAL_SECONDS = 600
+
+    logger.info(f"Starting token refresh job (force_all={force_all}, capture_http={capture_http})...")
+
+    worker_status = "error"
+    worker_error_message: Optional[str] = None
+
+    # Best-effort heartbeat
+    try:
+        worker_row = _get_or_create_worker_row(db, WORKER_NAME, WORKER_INTERVAL_SECONDS)
+    except Exception as hb_exc:
+        logger.error("Failed to load/create BackgroundWorker row: %s", hb_exc)
+        worker_row = None
+
+    try:
+        now_utc = datetime.now(timezone.utc)
+        if worker_row is not None:
+            worker_row.last_started_at = now_utc
+            worker_row.last_status = "running"
+            worker_row.last_error_message = None
+            db.commit()
+
+        if force_all:
+            # Fetch ALL active accounts
+            accounts = db.query(EbayAccount).filter(EbayAccount.is_active == True).all()
+        else:
+            # Fetch only expiring accounts
+            accounts = ebay_account_service.get_accounts_needing_refresh(
+                db,
+                threshold_minutes=15,
+                max_age_minutes=60,
+            )
+
+        if not accounts:
+            logger.info("No accounts need token refresh")
+            worker_status = "ok"
+            return {
+                "status": "completed",
+                "accounts_checked": 0,
+                "accounts_refreshed": 0,
+                "errors": [],
+            }
+
+        logger.info(f"Found {len(accounts)} accounts to process")
+
+        refreshed_count = 0
+        errors = []
+
+        for account in accounts:
+            try:
+                logger.info(
+                    "[token-refresh-job] Refreshing token for account %s (%s)",
+                    account.id,
+                    account.house_name,
+                )
+
+                result = await refresh_access_token_for_account(
+                    db,
+                    account,
+                    triggered_by=triggered_by,
+                    persist=True,
+                    capture_http=capture_http,
+                )
+
+                success = bool(result.get("success"))
+                error_msg = result.get("error_message") or result.get("error") or "unknown_error"
+
+                if success:
+                    refreshed_count += 1
+                    logger.info(
+                        "[token-refresh-job] SUCCESS account=%s house=%s",
+                        account.id,
+                        account.house_name,
+                    )
+                else:
+                    logger.warning(
+                        "[token-refresh-job] FAILURE account=%s house=%s error=%s",
+                        account.id,
+                        account.house_name,
+                        error_msg,
+                    )
+                    errors.append({
+                        "account_id": account.id,
+                        "house_name": account.house_name,
+                        "error": error_msg,
+                    })
+
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(
+                    "[token-refresh-job] Exception refreshing token for account %s: %s",
+                    account.id,
+                    error_msg,
+                )
+                errors.append({
+                    "account_id": account.id,
+                    "house_name": account.house_name,
+                    "error": error_msg,
+                })
+
+        logger.info(
+            "Token refresh job completed: %s/%s accounts refreshed",
+            refreshed_count,
+            len(accounts),
+        )
+        worker_status = "ok"
+
+        return {
+            "status": "completed",
+            "accounts_checked": len(accounts),
+            "accounts_refreshed": refreshed_count,
+            "errors": errors,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+    except Exception as e:
+        worker_error_message = str(e)
+        logger.error("Token refresh job failed: %s", worker_error_message)
+        return {
+            "status": "error",
+            "error": worker_error_message,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    finally:
+        try:
+            if worker_row is not None:
+                finished = datetime.now(timezone.utc)
+                worker_row.last_finished_at = finished
+                worker_row.last_status = worker_status
+                if worker_status == "ok":
+                    worker_row.runs_ok_in_row = (worker_row.runs_ok_in_row or 0) + 1
+                    worker_row.runs_error_in_row = 0
+                else:
+                    worker_row.runs_error_in_row = (worker_row.runs_error_in_row or 0) + 1
+                    if worker_error_message:
+                        worker_row.last_error_message = worker_error_message[:2000]
+                db.commit()
+        except Exception as hb_exc:
+            logger.error("Failed to update background worker heartbeat: %s", hb_exc)
 
 
 

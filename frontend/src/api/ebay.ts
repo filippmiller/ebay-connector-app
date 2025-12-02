@@ -142,10 +142,10 @@ export interface TokenRefreshPreviewResponse {
     };
   };
   account?: {
-      id: string;
-      house_name?: string | null;
-      username?: string | null;
-      ebay_user_id?: string | null;
+    id: string;
+    house_name?: string | null;
+    username?: string | null;
+    ebay_user_id?: string | null;
   };
   error?: string;
   message?: string;
@@ -294,7 +294,7 @@ export const ebayApi = {
     scopes?: string[],
     houseName?: string,
   ): Promise<{ authorization_url: string; state: string }> {
-    const params = new URLSearchParams({ 
+    const params = new URLSearchParams({
       redirect_uri: redirectUri,
       environment: environment,
     });
@@ -307,7 +307,7 @@ export const ebayApi = {
   },
 
   async handleCallback(code: string, redirectUri: string, environment: string = 'sandbox', state?: string): Promise<{ message: string; expires_in: number }> {
-    const params = new URLSearchParams({ 
+    const params = new URLSearchParams({
       redirect_uri: redirectUri,
       environment: environment
     });
@@ -516,6 +516,13 @@ export const ebayApi = {
   async runEbayWorkersOnce(): Promise<{ status: string }> {
     const response = await apiClient.post<{ status: string }>(
       '/api/admin/ebay/workers/run-once',
+    );
+    return response.data;
+  },
+
+  async runTokenRefreshWorkerOnce(): Promise<{ status: string; count: number; results: any[] }> {
+    const response = await apiClient.post<{ status: string; count: number; results: any[] }>(
+      '/api/admin/ebay/workers/token-refresh/run-once',
     );
     return response.data;
   },

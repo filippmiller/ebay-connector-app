@@ -19,7 +19,7 @@ from ..models.user import User
 from ..utils.logger import logger
 from ..services.ebay import ebay_service
 from ..services.ebay_connect_logger import ebay_connect_logger
-from ..services.ebay_token_refresh_service import build_sanitized_refresh_preview_for_account
+from ..services.ebay_token_refresh_service import build_sanitized_refresh_preview_for_account, run_token_refresh_job
 from ..services.ebay_notification_topics import SUPPORTED_TOPICS, PRIMARY_WEBHOOK_TOPIC_ID
 from ..config import settings
 from app.services.ebay_token_refresh_service import refresh_access_token_for_account
@@ -65,15 +65,19 @@ async def internal_refresh_tokens(
             detail="invalid_internal_api_key"
         )
     
-    # Import here to avoid circular dependencies
-    from app.workers.token_refresh_worker import refresh_expiring_tokens
-    
     try:
-        result = await refresh_expiring_tokens()
+        # Use the shared service logic.
+        # capture_http=True ensures logs appear in the terminal.
+        result = await run_token_refresh_job(
+            db,
+            force_all=False,
+            capture_http=True,
+            triggered_by="scheduled_proxy"
+        )
         return {
             "success": True,
-            "refreshed_count": result.get("refreshed_count", 0),
-            "failed_count": result.get("failed_count", 0),
+            "refreshed_count": result.get("accounts_refreshed", 0),
+            "failed_count": len(result.get("errors", [])),
         }
     except Exception as e:
         logger.error(f"Internal token refresh failed: {e}", exc_info=True)
@@ -1077,6 +1081,33 @@ async def refresh_ebay_access_token(
         "access_expires_at": access_expires_at.isoformat() if access_expires_at else None,
         "access_ttl_sec": ttl_sec,
     }
+
+
+@router.post("/ebay/workers/token-refresh/run-once")
+async def run_token_refresh_worker_once(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Trigger a manual token refresh cycle for ALL active accounts.
+
+    This forces a refresh attempt for every active account, regardless of
+    expiry time, and logs full debug info to the terminal.
+    """
+    try:
+        # Force refresh of ALL accounts.
+        result = await run_token_refresh_job(
+            db,
+            force_all=True,
+            capture_http=True,
+            triggered_by="manual_loop"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Manual token refresh failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"run_once_failed: {str(e)}"
+        )
 
 
 @router.get("/ebay/token/refresh-preview/{ebay_account_id}")
