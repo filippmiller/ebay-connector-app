@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.models_sqlalchemy.ebay_workers import EbayWorkerRun
+from app.models_sqlalchemy.ebay_workers import EbayWorkerRun, EbaySyncState
 from app.utils.logger import logger
 
 
@@ -54,8 +54,22 @@ def start_run(
 ) -> Optional[EbayWorkerRun]:
     """Start a new worker run if there is no fresh active run.
 
+    Uses row-level locking on EbaySyncState to prevent race conditions.
     Returns the new run, or None if a fresh run is already in progress.
     """
+    
+    # Acquire lock on the state row to serialize access to this worker's run state.
+    # This prevents two concurrent workers (e.g. web app vs worker service) from
+    # both seeing "no active run" and starting one.
+    _ = (
+        db.query(EbaySyncState)
+        .filter(
+            EbaySyncState.ebay_account_id == ebay_account_id,
+            EbaySyncState.api_family == api_family,
+        )
+        .with_for_update()
+        .first()
+    )
 
     active = get_active_run(db, ebay_account_id=ebay_account_id, api_family=api_family)
     if active:

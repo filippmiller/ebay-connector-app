@@ -32,6 +32,7 @@ from app.models_sqlalchemy.ebay_workers import EbayTokenRefreshLog, BackgroundWo
 from app.services.ebay_account_service import ebay_account_service
 from app.services.ebay import ebay_service
 from app.utils.logger import logger
+from app.services.ebay_connect_logger import ebay_connect_logger
 
 from dataclasses import dataclass
 
@@ -107,6 +108,20 @@ async def run_token_refresh_job(
 
         if not accounts:
             logger.info("No accounts need token refresh")
+            
+            # Log heartbeat so the UI terminal shows the worker is alive
+            try:
+                ebay_connect_logger.log_event(
+                    user_id=None,  # System event
+                    environment=settings.EBAY_ENVIRONMENT or "sandbox",
+                    action="worker_heartbeat",
+                    request=None,
+                    response={"message": "Worker alive, no tokens need refresh"},
+                    source=triggered_by,
+                )
+            except Exception as e:
+                logger.error(f"Failed to log worker heartbeat: {e}")
+
             worker_status = "ok"
             return {
                 "status": "completed",

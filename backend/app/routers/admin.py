@@ -774,7 +774,7 @@ async def get_ebay_token_terminal_logs(
     entries: list[dict] = []
     for entry in logs:
         action = entry.get("action")
-        if action not in {"token_refreshed", "token_refresh_failed", "token_refresh_debug"}:
+        if action not in {"token_refreshed", "token_refresh_failed", "token_refresh_debug", "worker_heartbeat"}:
             continue
         masked_req = _mask_request(entry.get("request"))
         entries.append(

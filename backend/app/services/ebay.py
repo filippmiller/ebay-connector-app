@@ -5975,56 +5975,42 @@ class EbayService:
                         if not item_id and not sku:
                             continue
 
-                        existing = (
-                            db_session.query(ActiveInventory)
-                            .filter(
-                                ActiveInventory.ebay_account_id == ebay_account_id,
-                                ActiveInventory.sku == sku,
-                                ActiveInventory.item_id == item_id,
-                            )
-                            .one_or_none()
+                        # Atomic upsert using PostgreSQL ON CONFLICT to prevent race conditions
+                        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                        stmt = pg_insert(ActiveInventory).values(
+                            ebay_account_id=ebay_account_id,
+                            ebay_user_id=ebay_user_id,
+                            sku=sku,
+                            item_id=item_id,
+                            title=title,
+                            quantity_available=quantity_available,
+                            price=price_val,
+                            currency=currency,
+                            listing_status=listing_status,
+                            condition_id=condition_id,
+                            condition_text=condition_text,
+                            raw_payload=raw_payload,
+                            last_seen_at=now_utc,
                         )
-
-                        raw_payload = {
-                            "ItemID": item_id,
-                            "SKU": sku,
-                            "Title": title,
-                            "Quantity": quantity_total,
-                            "QuantitySold": quantity_sold,
-                            "ListingStatus": listing_status,
-                            "ConditionID": condition_id,
-                            "ConditionDisplayName": condition_text,
-                        }
-
-                        if existing:
-                            existing.ebay_user_id = ebay_user_id
-                            existing.title = title
-                            existing.quantity_available = quantity_available
-                            existing.price = price_val
-                            existing.currency = currency
-                            existing.listing_status = listing_status
-                            existing.condition_id = condition_id
-                            existing.condition_text = condition_text
-                            existing.raw_payload = raw_payload
-                            existing.last_seen_at = now_utc
-                        else:
-                            obj = ActiveInventory(
-                                ebay_account_id=ebay_account_id,
-                                ebay_user_id=ebay_user_id,
-                                sku=sku,
-                                item_id=item_id,
-                                title=title,
-                                quantity_available=quantity_available,
-                                price=price_val,
-                                currency=currency,
-                                listing_status=listing_status,
-                                condition_id=condition_id,
-                                condition_text=condition_text,
-                                raw_payload=raw_payload,
-                                last_seen_at=now_utc,
-                            )
-                            db_session.add(obj)
-                            total_stored += 1
+                        
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=['ebay_account_id', 'sku', 'item_id'],
+                            set_={
+                                'ebay_user_id': stmt.excluded.ebay_user_id,
+                                'title': stmt.excluded.title,
+                                'quantity_available': stmt.excluded.quantity_available,
+                                'price': stmt.excluded.price,
+                                'currency': stmt.excluded.currency,
+                                'listing_status': stmt.excluded.listing_status,
+                                'condition_id': stmt.excluded.condition_id,
+                                'condition_text': stmt.excluded.condition_text,
+                                'raw_payload': stmt.excluded.raw_payload,
+                                'last_seen_at': stmt.excluded.last_seen_at,
+                            }
+                        )
+                        db_session.execute(stmt)
+                        total_stored += 1
 
                     db_session.commit()
 

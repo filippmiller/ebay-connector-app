@@ -45,9 +45,8 @@ def compute_sync_window(
       and start from (now - overlap).
     - Returns (window_from, window_to) as timezone-aware datetimes.
 
-    ``initial_backfill_days`` is kept for future experimentation but is not
-    used by the current eBay workers, which all rely on an overlap-only
-    incremental model.
+    ``initial_backfill_days`` is used when no cursor exists (first run) to
+    import historical data.
     """
 
     if now is None:
@@ -67,9 +66,9 @@ def compute_sync_window(
             # back by the configured overlap.
             cursor_dt = now
     else:
-        # No cursor yet – behave as if the last successful run ended "now" and
-        # re-check only the overlap window.
-        cursor_dt = now
+        # No cursor yet – this is the first run.
+        # Start from (now - backfill_days) to import historical data.
+        cursor_dt = now - timedelta(days=initial_backfill_days)
 
     window_from = cursor_dt - timedelta(minutes=overlap_minutes)
 
