@@ -125,85 +125,90 @@ async def update_category(
     }
 
 
+# --- Bank Rules ---
+
+
+@router.get("/rules")
+async def list_rules(
+    is_active: Optional[bool] = Query(None),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    query = db.query(AccountingBankRule)
+    if is_active is not None:
+        query = query.filter(AccountingBankRule.is_active == is_active)
+    
+    # Order by priority (asc) then id
+    rows = query.order_by(AccountingBankRule.priority.asc(), AccountingBankRule.id.asc()).all()
+    return [
+        {
+            "id": r.id,
+            "pattern_type": r.pattern_type,
+            "pattern_value": r.pattern_value,
+            "expense_category_id": r.expense_category_id,
+            "priority": r.priority,
+            "is_active": r.is_active,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/rules", status_code=status.HTTP_201_CREATED)
+async def create_rule(
+    pattern_type: str,
+    pattern_value: str,
+    expense_category_id: int,
+    priority: int = 10,
+    is_active: bool = True,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    rule = AccountingBankRule(
+        pattern_type=pattern_type,
+        pattern_value=pattern_value,
+        expense_category_id=expense_category_id,
+        priority=priority,
+        is_active=is_active,
+        created_by_user_id=current_user.id,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return {
+        "id": rule.id,
+        "pattern_type": rule.pattern_type,
+        "pattern_value": rule.pattern_value,
+        "expense_category_id": rule.expense_category_id,
+        "priority": rule.priority,
+        "is_active": rule.is_active,
+    }
+
+
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_rule(
+    rule_id: int,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    rule = db.query(AccountingBankRule).get(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    db.delete(rule)
+    db.commit()
+    return None
+
+
+
 # --- Bank statements upload & rows ---
 
 
-def _normalize_header(name: str) -> str:
-    """Normalize CSV/XLSX header names to improve auto-mapping.
+import hashlib
+from app.services.accounting_parsers.csv_parser import parse_csv_bytes
+from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
+from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes
+from app.services.accounting_rules_engine import apply_rules_to_bank_rows
 
-    This makes the CSV/XLSX parser a bit more tolerant to different export
-    formats (Google Sheets, various banks, etc.).
-    """
-
-    return " ".join(name.strip().split()).lower()
-
-
-def _iter_dict_rows_from_csv(text: str) -> Iterable[Dict[str, Any]]:
-    reader = csv.DictReader(io.StringIO(text))
-    for raw in reader:
-        # Normalize keys to a stable form while keeping the original variants
-        normalized: Dict[str, Any] = {}
-        for k, v in raw.items():
-            key_norm = _normalize_header(k) if isinstance(k, str) else k
-            normalized[key_norm] = v.strip() if isinstance(v, str) else v
-        yield normalized
-
-
-def _parse_csv_rows(file_bytes: bytes) -> List[Dict[str, Any]]:
-    text = file_bytes.decode("utf-8", errors="ignore")
-    rows: List[Dict[str, Any]] = []
-    for idx, raw in enumerate(_iter_dict_rows_from_csv(text), start=1):
-        rows.append({"__index__": idx, **raw})
-    return rows
-
-
-def _parse_xlsx_rows(file_bytes: bytes) -> List[Dict[str, Any]]:
-    """Best-effort XLSX parser used for bank/ledger imports.
-
-    We avoid overfitting to a single template and instead:
-    - read the first sheet,
-    - treat the first non-empty row as headers,
-    - normalize header names similarly to CSV,
-    - return a list of row dicts.
-    """
-
-    try:
-        from openpyxl import load_workbook  # type: ignore
-    except Exception as exc:  # pragma: no cover - import error is surfaced at runtime
-        raise RuntimeError(
-            "XLSX support requires the 'openpyxl' dependency; "
-            "please ensure it is installed in the backend environment."
-        ) from exc
-
-    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-    ws = wb.active
-
-    rows: List[Dict[str, Any]] = []
-    header_row: List[str] = []
-
-    for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        vals = [cell for cell in row]
-        # Skip completely empty rows at the top
-        if not any(vals) and not header_row:
-            continue
-        if not header_row:
-            header_row = [str(v) if v is not None else "" for v in vals]
-            continue
-
-        normalized: Dict[str, Any] = {}
-        for col_idx, raw_val in enumerate(vals):
-            if col_idx >= len(header_row):
-                continue
-            key = header_row[col_idx]
-            if not isinstance(key, str) or not key.strip():
-                continue
-            key_norm = _normalize_header(key)
-            normalized[key_norm] = raw_val
-
-        if normalized:
-            rows.append({"__index__": len(rows) + 1, **normalized})
-
-    return rows
 
 
 @router.post("/bank-statements", status_code=status.HTTP_201_CREATED)
@@ -217,6 +222,23 @@ async def upload_bank_statement(
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ):
+    # 1. Read file and compute hash
+    file_bytes = await file.read()
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    # 2. Check for duplicate statement
+    existing_stmt = (
+        db.query(AccountingBankStatement)
+        .filter(AccountingBankStatement.file_hash == file_hash)
+        .first()
+    )
+    if existing_stmt:
+        # If already uploaded, just return the existing one
+        # We could also check if it was parsed successfully and retry if not,
+        # but for now let's assume "uploaded" means we have it.
+        return {"id": existing_stmt.id, "status": existing_stmt.status, "message": "Statement already uploaded"}
+
+    # 3. Create new statement record
     stmt = AccountingBankStatement(
         bank_name=bank_name,
         account_last4=account_last4,
@@ -224,6 +246,7 @@ async def upload_bank_statement(
         statement_period_start=statement_period_start,
         statement_period_end=statement_period_end,
         status="uploaded",
+        file_hash=file_hash,
         created_by_user_id=current_user.id,
         updated_by_user_id=current_user.id,
     )
@@ -231,7 +254,6 @@ async def upload_bank_statement(
     db.flush()
 
     storage_path = f"accounting/bank_statements/{stmt.id}/{file.filename}"
-    file_bytes = await file.read()
     # NOTE: actual writing to storage/bucket is environment-specific and reused from existing infra (to be wired separately)
 
     stmt_file = AccountingBankStatementFile(
@@ -248,20 +270,78 @@ async def upload_bank_statement(
     is_xlsx_like = ext.endswith(".xlsx") or ext.endswith(".xls")
     is_pdf_like = ext.endswith(".pdf") or "pdf" in content_type
 
+    new_rows = []
+
     if is_pdf_like:
-        # Explicitly mark PDF statements as not yet supported for parsing so the
-        # UI can distinguish them from generic "uploaded" files. Real parsing
-        # will be implemented in a future iteration using
-        # app.services.accounting_parsers.pdf_parser.
-        logger.warning(
-            "Bank statement %s uploaded as PDF; parsing is not implemented yet, "
-            "use CSV/XLSX export for now",
-            stmt.id,
-        )
-        stmt.status = "error_pdf_not_supported"
+        try:
+            parsed = await parse_pdf_bytes(file_bytes)
+            
+            # Helper to generate row dedupe key (reused)
+            def _make_row_dedupe_key(row_data: Dict[str, Any], stmt_id: int) -> str:
+                raw_str = f"{stmt_id}|{row_data.get('__index__')}|{row_data.get('date')}|{row_data.get('amount')}|{row_data.get('description')}"
+                return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
+
+            for row in parsed:
+                amount_raw = row.get("amount")
+                try:
+                    amount_val = Decimal(str(amount_raw)) if amount_raw not in (None, "") else Decimal("0")
+                except Exception:
+                    amount_val = Decimal("0")
+
+                bal_raw = row.get("balance")
+                try:
+                    bal_val = Decimal(str(bal_raw)) if bal_raw not in (None, "") else None
+                except Exception:
+                    bal_val = None
+
+                op_date_raw = row.get("date")
+                op_date: Optional[date] = None
+                if op_date_raw:
+                    try:
+                        op_date = date.fromisoformat(str(op_date_raw))
+                    except Exception:
+                        op_date = None
+
+                description_raw = row.get("description") or ""
+
+                dedupe_key = _make_row_dedupe_key(row, stmt.id)
+
+                db_row = AccountingBankRow(
+                    bank_statement_id=stmt.id,
+                    row_index=row.get("__index__"),
+                    operation_date=op_date,
+                    description_raw=description_raw,
+                    amount=amount_val,
+                    balance_after=bal_val,
+                    currency=row.get("currency") or currency,
+                    parsed_status="auto_parsed",
+                    match_status="unmatched",
+                    dedupe_key=dedupe_key,
+                    created_by_user_id=current_user.id,
+                    updated_by_user_id=current_user.id,
+                )
+                db.add(db_row)
+                new_rows.append(db_row)
+
+            stmt.status = "parsed"
+        except Exception as e:
+            logger.warning(f"Failed to parse PDF bank statement: {e}")
+            stmt.status = "error_parsing_failed"
+
     elif is_csv_like or is_xlsx_like:
         try:
-            parsed = _parse_xlsx_rows(file_bytes) if is_xlsx_like else _parse_csv_rows(file_bytes)
+            parsed = parse_xlsx_bytes(file_bytes) if is_xlsx_like else parse_csv_bytes(file_bytes)
+            
+            # Helper to generate row dedupe key
+            def _make_row_dedupe_key(row_data: Dict[str, Any], stmt_id: int) -> str:
+                # Combine statement ID with row content to ensure uniqueness within the system
+                # but allow same transaction in different statements (if desired, or globally unique?)
+                # Requirement says: "At bank row level (idempotent re-upload of the same file)."
+                # Since we already dedupe the file by hash, this is a secondary check.
+                # Let's use a content hash.
+                raw_str = f"{stmt_id}|{row_data.get('__index__')}|{row_data.get('date')}|{row_data.get('amount')}|{row_data.get('description')}"
+                return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
+
             for row in parsed:
                 # The header normalizer stores keys in lower-case form, so we
                 # first try those and then fall back to a few common variants
@@ -315,6 +395,8 @@ async def upload_bank_statement(
                     or ""
                 )
 
+                dedupe_key = _make_row_dedupe_key(row, stmt.id)
+
                 db_row = AccountingBankRow(
                     bank_statement_id=stmt.id,
                     row_index=row.get("__index__"),
@@ -325,10 +407,12 @@ async def upload_bank_statement(
                     currency=row.get("currency") or row.get("Currency") or currency,
                     parsed_status="auto_parsed",
                     match_status="unmatched",
+                    dedupe_key=dedupe_key,
                     created_by_user_id=current_user.id,
                     updated_by_user_id=current_user.id,
                 )
                 db.add(db_row)
+                new_rows.append(db_row)
 
             stmt.status = "parsed"
         except Exception as e:
@@ -337,6 +421,10 @@ async def upload_bank_statement(
     else:
         # PDF and other formats: only store file, no parsing yet
         stmt.status = "uploaded"
+
+    # Apply auto-categorization rules
+    if new_rows:
+        apply_rules_to_bank_rows(db, new_rows)
 
     db.commit()
     db.refresh(stmt)
@@ -637,6 +725,7 @@ async def commit_bank_rows(
             direction=direction,
             source_type="bank_statement",
             source_id=r.id,
+            bank_row_id=r.id,
             account_name=account_name_val,
             account_id=None,
             counterparty=None,

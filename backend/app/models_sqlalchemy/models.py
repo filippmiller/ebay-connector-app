@@ -1864,10 +1864,15 @@ class AccountingBankStatement(Base):
     total_debit = Column(Numeric(14, 2), nullable=True)
     total_credit = Column(Numeric(14, 2), nullable=True)
     status = Column(Text, nullable=False, default="uploaded")
+    file_hash = Column(Text, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+
+    __table_args__ = (
+        Index('idx_accounting_bank_statement_file_hash', 'file_hash'),
+    )
 
 
 class AccountingBankStatementFile(Base):
@@ -1896,11 +1901,16 @@ class AccountingBankRow(Base):
     currency = Column(Text, nullable=True)
     parsed_status = Column(Text, nullable=False, default="auto_parsed")
     match_status = Column(Text, nullable=False, default="unmatched")
+    dedupe_key = Column(Text, nullable=True, index=True)
     expense_category_id = Column(BigInteger, ForeignKey('accounting_expense_category.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+
+    __table_args__ = (
+        Index('idx_accounting_bank_row_dedupe_key', 'dedupe_key'),
+    )
 
 
 class AccountingCashExpense(Base):
@@ -1931,6 +1941,7 @@ class AccountingTransaction(Base):
     direction = Column(Text, nullable=False)  # 'in' or 'out'
     source_type = Column(Text, nullable=False, index=True)
     source_id = Column(BigInteger, nullable=False)
+    bank_row_id = Column(BigInteger, ForeignKey('accounting_bank_row.id'), nullable=True, unique=True)
     account_name = Column(Text, nullable=True)
     account_id = Column(Text, nullable=True)
     counterparty = Column(Text, nullable=True)
@@ -1958,6 +1969,25 @@ class AccountingTransactionLog(Base):
     field_name = Column(Text, nullable=False)
     old_value = Column(Text, nullable=True)
     new_value = Column(Text, nullable=True)
+
+
+class AccountingBankRule(Base):
+    __tablename__ = "accounting_bank_rule"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    pattern_type = Column(Text, nullable=False)  # 'contains', 'regex', 'counterparty', 'llm_label'
+    pattern_value = Column(Text, nullable=False)
+    expense_category_id = Column(BigInteger, ForeignKey('accounting_expense_category.id'), nullable=False)
+    priority = Column(Integer, nullable=False, default=10)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index('idx_accounting_bank_rule_active_priority', 'is_active', 'priority'),
+    )
 
 
 class PayoutItem(Base):

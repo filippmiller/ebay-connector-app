@@ -17,6 +17,15 @@ interface AccountingCategory {
   name: string;
 }
 
+interface AccountingRule {
+  id: number;
+  pattern_type: string;
+  pattern_value: string;
+  expense_category_id: number;
+  priority: number;
+  is_active: boolean;
+}
+
 function BankStatementsList() {
   const navigate = useNavigate();
   const [bankName, setBankName] = useState('');
@@ -708,6 +717,170 @@ function TransactionsTab() {
   );
 }
 
+function RulesTab() {
+  const [rules, setRules] = useState<AccountingRule[]>([]);
+  const [categories, setCategories] = useState<AccountingCategory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // New rule form
+  const [patternType, setPatternType] = useState('contains');
+  const [patternValue, setPatternValue] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [priority, setPriority] = useState('10');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [rulesResp, catsResp] = await Promise.all([
+          api.get('/api/accounting/rules', { params: { is_active: true } }),
+          api.get('/api/accounting/categories', { params: { is_active: true } }),
+        ]);
+        setRules(rulesResp.data || []);
+        setCategories(catsResp.data || []);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
+  }, [refreshKey]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!patternValue || !categoryId) return;
+    setSubmitting(true);
+    try {
+      await api.post('/api/accounting/rules', {
+        pattern_type: patternType,
+        pattern_value: patternValue,
+        expense_category_id: Number(categoryId),
+        priority: Number(priority),
+        is_active: true,
+      });
+      setRefreshKey((v) => v + 1);
+      setPatternValue('');
+      setCategoryId('');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this rule?')) return;
+    await api.delete(`/api/accounting/rules/${id}`);
+    setRefreshKey((v) => v + 1);
+  };
+
+  return (
+    <div className="flex-1 flex flex-col gap-4">
+      <Card className="p-4">
+        <h2 className="text-lg font-semibold mb-2">New Auto-Categorization Rule</h2>
+        <form className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end" onSubmit={handleCreate}>
+          <div>
+            <Label className="block text-xs mb-1">Pattern Type</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={patternType}
+              onChange={(e) => setPatternType(e.target.value)}
+            >
+              <option value="contains">Contains text</option>
+              <option value="regex">Regex</option>
+              <option value="counterparty">Counterparty</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <Label className="block text-xs mb-1">Pattern Value</Label>
+            <Input
+              value={patternValue}
+              onChange={(e) => setPatternValue(e.target.value)}
+              placeholder="e.g. 'UBER' or 'AMZN MKTPLACE'"
+              required
+            />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Category</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              required
+            >
+              <option value="">Select category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Priority (lower=first)</Label>
+            <Input
+              type="number"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              required
+            />
+          </div>
+          <div className="md:col-span-5 flex justify-end mt-2">
+            <Button type="submit" disabled={submitting || !patternValue || !categoryId}>
+              {submitting ? 'Creating...' : 'Create Rule'}
+            </Button>
+          </div>
+        </form>
+      </Card>
+
+      <div className="flex-1 min-h-0 overflow-auto border rounded bg-white">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-3 py-2 text-left">Priority</th>
+              <th className="px-3 py-2 text-left">Type</th>
+              <th className="px-3 py-2 text-left">Pattern</th>
+              <th className="px-3 py-2 text-left">Category</th>
+              <th className="px-3 py-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rules.map((r) => {
+              const cat = categories.find((c) => c.id === r.expense_category_id);
+              return (
+                <tr key={r.id} className="border-t hover:bg-gray-50">
+                  <td className="px-3 py-2">{r.priority}</td>
+                  <td className="px-3 py-2">{r.pattern_type}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{r.pattern_value}</td>
+                  <td className="px-3 py-2">
+                    {cat ? `${cat.code} — ${cat.name}` : r.expense_category_id}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600 hover:text-red-800"
+                      onClick={() => handleDelete(r.id)}
+                    >
+                      Delete
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!loading && rules.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-3 py-4 text-center text-gray-500">
+                  No rules defined.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function AccountingPage() {
   const { user } = useAuth();
   const location = useLocation();
@@ -733,12 +906,15 @@ export default function AccountingPage() {
   const activeTab = currentPath.startsWith('/cash')
     ? 'cash'
     : currentPath.startsWith('/transactions')
-    ? 'transactions'
-    : 'bank-statements';
+      ? 'transactions'
+      : currentPath.startsWith('/rules')
+        ? 'rules'
+        : 'bank-statements';
 
   const handleTabChange = (val: string) => {
     if (val === 'cash') navigate('/accounting/cash');
     else if (val === 'transactions') navigate('/accounting/transactions');
+    else if (val === 'rules') navigate('/accounting/rules');
     else navigate('/accounting/bank-statements');
   };
 
@@ -757,6 +933,7 @@ export default function AccountingPage() {
             <TabsTrigger value="bank-statements">Statements</TabsTrigger>
             <TabsTrigger value="cash">Cash Expenses</TabsTrigger>
             <TabsTrigger value="transactions">Ledger</TabsTrigger>
+            <TabsTrigger value="rules">Rules</TabsTrigger>
           </TabsList>
 
           <TabsContent value="bank-statements" className="flex-1 flex flex-col">
@@ -778,6 +955,13 @@ export default function AccountingPage() {
             <Routes>
               <Route path="transactions" element={<TransactionsTab />} />
               <Route path="*" element={<Navigate to="transactions" replace />} />
+            </Routes>
+          </TabsContent>
+
+          <TabsContent value="rules" className="flex-1 flex flex-col">
+            <Routes>
+              <Route path="rules" element={<RulesTab />} />
+              <Route path="*" element={<Navigate to="rules" replace />} />
             </Routes>
           </TabsContent>
         </Tabs>

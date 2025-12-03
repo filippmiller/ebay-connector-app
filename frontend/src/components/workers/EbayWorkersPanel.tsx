@@ -573,23 +573,75 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${w.enabled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"
-                        }`}
-                    >
-                      {w.enabled ? "Enabled" : "Disabled"}
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      {/* Traffic Light Indicator */}
+                      <div
+                        className={`w-3 h-3 rounded-full shadow-sm ${!w.enabled
+                            ? "bg-gray-400"
+                            : w.last_run_status === "running"
+                              ? "bg-yellow-400 animate-pulse"
+                              : w.last_run_status === "error"
+                                ? "bg-red-500"
+                                : "bg-green-500"
+                          }`}
+                        title={
+                          !w.enabled
+                            ? "Worker Disabled"
+                            : w.last_run_status === "running"
+                              ? "Running..."
+                              : w.last_run_status === "error"
+                                ? "Last Run Failed"
+                                : "Healthy"
+                        }
+                      />
+                      <span
+                        className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${w.enabled ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-600"
+                          }`}
+                      >
+                        {w.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </div>
                     {w.last_error && (
-                      <div className="text-xs text-red-600 mt-1 max-w-xs truncate">
-                        Last error: {w.last_error}
+                      <div className="text-xs text-red-600 mt-1 max-w-xs truncate" title={w.last_error}>
+                        Error: {w.last_error}
                       </div>
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    <div>
-                      <div>Started: {w.last_run_started_at ? formatDateTimeLocal(w.last_run_started_at) : "–"}</div>
-                      <div>Finished: {w.last_run_finished_at ? formatDateTimeLocal(w.last_run_finished_at) : "–"}</div>
-                      <div>Status: {w.last_run_status || "–"}</div>
+                    <div className="text-xs space-y-0.5">
+                      <div>
+                        <span className="text-gray-500">Started:</span>{" "}
+                        {w.last_run_started_at ? formatDateTimeLocal(w.last_run_started_at) : "–"}
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Finished:</span>{" "}
+                        {w.last_run_finished_at ? formatDateTimeLocal(w.last_run_finished_at) : "–"}
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <span className="text-gray-500">Status:</span>
+                        <span
+                          className={`font-medium ${w.last_run_status === "error"
+                              ? "text-red-600"
+                              : w.last_run_status === "running"
+                                ? "text-yellow-600"
+                                : "text-gray-900"
+                            }`}
+                        >
+                          {w.last_run_status || "–"}
+                        </span>
+                      </div>
+                      {/* Detailed Run Stats */}
+                      {w.last_run_summary && (
+                        <div className="mt-1 pt-1 border-t border-gray-100 text-gray-600">
+                          <span title="Records fetched from API">
+                            ⬇ {w.last_run_summary.total_fetched ?? 0}
+                          </span>
+                          <span className="mx-1 text-gray-300">|</span>
+                          <span title="Records stored to DB">
+                            💾 {w.last_run_summary.total_stored ?? 0}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-2">
