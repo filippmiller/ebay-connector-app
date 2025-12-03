@@ -487,6 +487,90 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                         </div>
                       </div>
                     )}
+                    {w.api_family === 'messages' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Messages – Trading API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GetMyMessages</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_messages</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Syncs member-to-member messages.
+                        </div>
+                      </div>
+                    )}
+                    {w.api_family === 'active_inventory' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Active Inventory – Trading API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GetMyeBaySelling</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_active_inventory</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Snapshot of currently active listings.
+                        </div>
+                      </div>
+                    )}
+                    {w.api_family === 'cases' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Post-Order Cases – Post-Order API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GET /post-order/v2/casemanagement/case</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_cases</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Syncs INR and SNAD cases.
+                        </div>
+                      </div>
+                    )}
+                    {w.api_family === 'inquiries' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Post-Order Inquiries – Post-Order API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GET /post-order/v2/inquiry</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_inquiries</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Syncs buyer inquiries (pre-case disputes).
+                        </div>
+                      </div>
+                    )}
+                    {w.api_family === 'finances' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Finances – Finances API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GET /sell/finances/v1/transaction</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_finances_transactions</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Dedicated finances sync for fees and transactions.
+                        </div>
+                      </div>
+                    )}
+                    {w.api_family === 'buyer' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Purchases – Trading API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GetMyeBayBuying</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_buyer</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Syncs items purchased by this account.
+                        </div>
+                      </div>
+                    )}
+                    {w.api_family === 'returns' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Post-Order Returns – Post-Order API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GET /post-order/v2/return</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_returns</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Syncs return requests.
+                        </div>
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <span
