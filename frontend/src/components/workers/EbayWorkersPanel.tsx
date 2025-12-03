@@ -577,12 +577,12 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                       {/* Traffic Light Indicator */}
                       <div
                         className={`w-3 h-3 rounded-full shadow-sm ${!w.enabled
-                            ? "bg-gray-400"
-                            : w.last_run_status === "running"
-                              ? "bg-yellow-400 animate-pulse"
-                              : w.last_run_status === "error"
-                                ? "bg-red-500"
-                                : "bg-green-500"
+                          ? "bg-gray-400"
+                          : w.last_run_status === "running"
+                            ? "bg-yellow-400 animate-pulse"
+                            : w.last_run_status === "error"
+                              ? "bg-red-500"
+                              : "bg-green-500"
                           }`}
                         title={
                           !w.enabled
@@ -621,10 +621,10 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                         <span className="text-gray-500">Status:</span>
                         <span
                           className={`font-medium ${w.last_run_status === "error"
-                              ? "text-red-600"
-                              : w.last_run_status === "running"
-                                ? "text-yellow-600"
-                                : "text-gray-900"
+                            ? "text-red-600"
+                            : w.last_run_status === "running"
+                              ? "text-yellow-600"
+                              : "text-gray-900"
                             }`}
                         >
                           {w.last_run_status || "–"}
@@ -632,14 +632,29 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                       </div>
                       {/* Detailed Run Stats */}
                       {w.last_run_summary && (
-                        <div className="mt-1 pt-1 border-t border-gray-100 text-gray-600">
-                          <span title="Records fetched from API">
-                            ⬇ {w.last_run_summary.total_fetched ?? 0}
-                          </span>
-                          <span className="mx-1 text-gray-300">|</span>
-                          <span title="Records stored to DB">
-                            💾 {w.last_run_summary.total_stored ?? 0}
-                          </span>
+                        <div className="mt-1 pt-1 border-t border-gray-100 text-gray-600 text-[11px]">
+                          <div className="flex items-center space-x-2">
+                            <span title="Records fetched from API">
+                              ⬇ {w.last_run_summary.total_fetched ?? 0}
+                            </span>
+                            <span className="text-gray-300">|</span>
+                            <span title="Records stored to DB">
+                              💾 {w.last_run_summary.total_stored ?? 0}
+                            </span>
+                            {w.last_run_summary.duration_ms !== undefined && (
+                              <>
+                                <span className="text-gray-300">|</span>
+                                <span title="Duration">
+                                  ⏱ {(w.last_run_summary.duration_ms / 1000).toFixed(1)}s
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {w.last_run_summary.window_from && w.last_run_summary.window_to && (
+                            <div className="mt-0.5 text-gray-400" title="Sync Window">
+                              📅 {formatDateTimeLocal(w.last_run_summary.window_from).split(',')[1]} - {formatDateTimeLocal(w.last_run_summary.window_to).split(',')[1]}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
