@@ -67,6 +67,10 @@ def create_worker_run_notification(
         # Without an owning org/user there is nobody to notify.
         return
 
+    from app.services.ebay_workers.state import are_worker_notifications_enabled
+    if not are_worker_notifications_enabled(db):
+        return
+
     try:
         total_fetched = _safe_int((summary or {}).get("total_fetched"))
         total_stored = _safe_int((summary or {}).get("total_stored"))

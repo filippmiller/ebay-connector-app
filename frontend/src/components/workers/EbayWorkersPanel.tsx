@@ -19,6 +19,7 @@ interface WorkerConfigItem {
 
 interface WorkerConfigResponse {
   workers_enabled: boolean;
+  worker_notifications_enabled?: boolean;
   account: {
     id: string;
     ebay_user_id?: string;
@@ -190,6 +191,24 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     }
   };
 
+  const toggleNotifications = async () => {
+    if (!config) return;
+    // Default to true if undefined, so we toggle to false
+    const current = config.worker_notifications_enabled !== false;
+    try {
+      const resp = await api.post(
+        `/ebay/workers/global-notifications-toggle`,
+        { worker_notifications_enabled: !current },
+      );
+      setConfig((prev) =>
+        prev ? { ...prev, worker_notifications_enabled: resp.data.worker_notifications_enabled } : prev
+      );
+    } catch (e: any) {
+      console.error("Failed to toggle notifications", e);
+      setError(e?.response?.data?.detail || e.message || "Failed to toggle notifications");
+    }
+  };
+
   const toggleWorker = async (apiFamily: string, enabled: boolean) => {
     try {
       await api.post(
@@ -202,11 +221,11 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
       setConfig((prev) =>
         prev
           ? {
-              ...prev,
-              workers: prev.workers.map((w) =>
-                w.api_family === apiFamily ? { ...w, enabled } : w
-              ),
-            }
+            ...prev,
+            workers: prev.workers.map((w) =>
+              w.api_family === apiFamily ? { ...w, enabled } : w
+            ),
+          }
           : prev
       );
     } catch (e: any) {
@@ -296,7 +315,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
     setDetailsData(null);
     setDetailsLoading(true);
     try {
-      const runsResp = await api.get<{ runs: any[]}>(
+      const runsResp = await api.get<{ runs: any[] }>(
         `/ebay/workers/runs`,
         {
           params: { account_id: accountId, api: apiFamily, limit: 1 },
@@ -386,6 +405,16 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
             </div>
             <div className="flex items-center space-x-2">
               <button
+                onClick={toggleNotifications}
+                className={`px-3 py-2 text-xs font-semibold rounded border ${config.worker_notifications_enabled !== false
+                    ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                    : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                  }`}
+                title="Toggle system notifications for worker runs"
+              >
+                {config.worker_notifications_enabled !== false ? "🔔 System Notifications: ON" : "🔕 System Notifications: OFF"}
+              </button>
+              <button
                 onClick={openPreview}
                 className="px-3 py-2 text-xs font-semibold rounded border bg-white text-gray-700"
               >
@@ -393,9 +422,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
               </button>
               <button
                 onClick={toggleGlobal}
-                className={`px-4 py-2 font-semibold rounded shadow text-white ${
-                  config.workers_enabled ? "bg-red-600" : "bg-green-600"
-                }`}
+                className={`px-4 py-2 font-semibold rounded shadow text-white ${config.workers_enabled ? "bg-red-600" : "bg-green-600"
+                  }`}
               >
                 {config.workers_enabled ? "BIG RED BUTTON: TURN OFF ALL JOBS" : "Enable all workers"}
               </button>
@@ -450,9 +478,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                   </td>
                   <td className="px-3 py-2">
                     <span
-                      className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${
-                        w.enabled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"
-                      }`}
+                      className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${w.enabled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"
+                        }`}
                     >
                       {w.enabled ? "Enabled" : "Disabled"}
                     </span>
@@ -485,9 +512,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                     </button>
                     <button
                       onClick={() => triggerRun(w.api_family)}
-                      className={`px-2 py-1 border rounded text-xs text-white ${
-                        runningApiFamily === w.api_family ? "bg-blue-400" : "bg-blue-600"
-                      }`}
+                      className={`px-2 py-1 border rounded text-xs text-white ${runningApiFamily === w.api_family ? "bg-blue-400" : "bg-blue-600"
+                        }`}
                       disabled={runningApiFamily === w.api_family}
                     >
                       {runningApiFamily === w.api_family ? "Starting..." : "Run now"}
@@ -566,94 +592,94 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
 
       {/* Workers sync terminal occupying lower half of the tab */}
       <div className="mt-6">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-gray-700">
-              eBay workers terminal for this account – showing {activeApiFamily || "latest"} run
-            </div>
-            <div className="flex items-center space-x-2 text-xs text-gray-600">
-              <span>Select worker run:</span>
-              <select
-                className="border rounded px-1 py-0.5 text-xs"
-                value={selectedRunId || "latest"}
-                onChange={async (e) => {
-                  const val = e.target.value;
-                  if (val === "latest") {
-                    setSelectedRunId("latest");
-                    // Re-resolve latest run from recentRuns
-                    if (recentRuns.length > 0) {
-                      const latest = recentRuns[0];
-                      let syncRunId: string | null = deriveSyncRunId(latest);
-                      try {
-                        const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
-                        const summary = logsResp.data?.run?.summary as any;
-                        syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
-                      } catch (err) {
-                        console.error("Failed to load logs for latest worker run", err);
-                      }
-                      if (syncRunId) {
-                        setActiveSyncRunId(syncRunId);
-                        setActiveApiFamily(latest.api_family);
-                        setSelectedRunId(latest.id);
-                      }
-                    }
-                  } else {
-                    setSelectedRunId(val);
-                    // Try to find the run in the local recentRuns list so we can
-                    // derive a sync_run_id even if summary is still null.
-                    const run = recentRuns.find((r) => r.id === val);
-                    let syncRunId: string | null = deriveSyncRunId(run);
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm text-gray-700">
+            eBay workers terminal for this account – showing {activeApiFamily || "latest"} run
+          </div>
+          <div className="flex items-center space-x-2 text-xs text-gray-600">
+            <span>Select worker run:</span>
+            <select
+              className="border rounded px-1 py-0.5 text-xs"
+              value={selectedRunId || "latest"}
+              onChange={async (e) => {
+                const val = e.target.value;
+                if (val === "latest") {
+                  setSelectedRunId("latest");
+                  // Re-resolve latest run from recentRuns
+                  if (recentRuns.length > 0) {
+                    const latest = recentRuns[0];
+                    let syncRunId: string | null = deriveSyncRunId(latest);
                     try {
-                      const logsResp = await api.get(`/ebay/workers/logs/${val}`);
+                      const logsResp = await api.get(`/ebay/workers/logs/${latest.id}`);
                       const summary = logsResp.data?.run?.summary as any;
                       syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
-                      if (syncRunId) {
-                        setActiveSyncRunId(syncRunId);
-                        setActiveApiFamily(logsResp.data?.run?.api_family || null);
-                      }
                     } catch (err) {
-                      console.error("Failed to load logs for selected worker run", err);
+                      console.error("Failed to load logs for latest worker run", err);
+                    }
+                    if (syncRunId) {
+                      setActiveSyncRunId(syncRunId);
+                      setActiveApiFamily(latest.api_family);
+                      setSelectedRunId(latest.id);
                     }
                   }
-                }}
-              >
-                <option value="latest">Latest run (all APIs)</option>
-                {recentRuns.map((run) => {
-                  let label = `${run.api_family}`;
-                  if (run.started_at) {
-                    try {
-                      const d = new Date(run.started_at);
-                      const datePart = d.toISOString().slice(0, 10); // YYYY-MM-DD
-                      const timePart = d.toTimeString().slice(0, 8); // HH:MM:SS
-                      label += ` – ${datePart} ${timePart}`;
-                    } catch {
-                      label += ` – ${run.started_at}`;
+                } else {
+                  setSelectedRunId(val);
+                  // Try to find the run in the local recentRuns list so we can
+                  // derive a sync_run_id even if summary is still null.
+                  const run = recentRuns.find((r) => r.id === val);
+                  let syncRunId: string | null = deriveSyncRunId(run);
+                  try {
+                    const logsResp = await api.get(`/ebay/workers/logs/${val}`);
+                    const summary = logsResp.data?.run?.summary as any;
+                    syncRunId = summary?.sync_run_id || summary?.run_id || syncRunId;
+                    if (syncRunId) {
+                      setActiveSyncRunId(syncRunId);
+                      setActiveApiFamily(logsResp.data?.run?.api_family || null);
                     }
+                  } catch (err) {
+                    console.error("Failed to load logs for selected worker run", err);
                   }
-                  if (run.status) {
-                    label += ` – ${run.status}`;
+                }
+              }}
+            >
+              <option value="latest">Latest run (all APIs)</option>
+              {recentRuns.map((run) => {
+                let label = `${run.api_family}`;
+                if (run.started_at) {
+                  try {
+                    const d = new Date(run.started_at);
+                    const datePart = d.toISOString().slice(0, 10); // YYYY-MM-DD
+                    const timePart = d.toTimeString().slice(0, 8); // HH:MM:SS
+                    label += ` – ${datePart} ${timePart}`;
+                  } catch {
+                    label += ` – ${run.started_at}`;
                   }
-                  return (
-                    <option key={run.id} value={run.id}>
-                      {label}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+                }
+                if (run.status) {
+                  label += ` – ${run.status}`;
+                }
+                return (
+                  <option key={run.id} value={run.id}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
           </div>
-          {activeSyncRunId ? (
-            <SyncTerminal
-              runId={activeSyncRunId}
-              onComplete={() => {}}
-              onStop={() => {}}
-            />
-          ) : (
-            <div className="text-xs text-gray-500 border rounded p-2 bg-gray-50">
-              No worker run selected yet. Trigger a worker (e.g. "Run now" on Orders or Transactions)
-              or choose a run from the dropdown above to see detailed logs.
-            </div>
-          )}
         </div>
+        {activeSyncRunId ? (
+          <SyncTerminal
+            runId={activeSyncRunId}
+            onComplete={() => { }}
+            onStop={() => { }}
+          />
+        ) : (
+          <div className="text-xs text-gray-500 border rounded p-2 bg-gray-50">
+            No worker run selected yet. Trigger a worker (e.g. "Run now" on Orders or Transactions)
+            or choose a run from the dropdown above to see detailed logs.
+          </div>
+        )}
+      </div>
 
       {detailsRunId && detailsData && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">

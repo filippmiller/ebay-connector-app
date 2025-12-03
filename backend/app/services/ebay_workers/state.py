@@ -108,6 +108,26 @@ def set_workers_globally_enabled(db: Session, enabled: bool) -> EbayWorkerGlobal
     return cfg
 
 
+def are_worker_notifications_enabled(db: Session) -> bool:
+    """Check if worker completion notifications are globally enabled."""
+    cfg = get_or_create_global_config(db)
+    defaults = cfg.defaults_json or {}
+    # Default to True if not set, to preserve existing behaviour
+    return bool(defaults.get("worker_notifications_enabled", True))
+
+
+def set_worker_notifications_enabled(db: Session, enabled: bool) -> EbayWorkerGlobalConfig:
+    """Enable or disable worker completion notifications globally."""
+    cfg = get_or_create_global_config(db)
+    defaults = dict(cfg.defaults_json or {})
+    defaults["worker_notifications_enabled"] = enabled
+    cfg.defaults_json = defaults
+    cfg.updated_at = _now_utc()
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
 def get_or_create_sync_state(
     db: Session,
     *,

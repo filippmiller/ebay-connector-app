@@ -241,13 +241,24 @@ async def update_worker_config(
     return {"status": "ok"}
 
 
+class GlobalNotificationsToggleRequest(BaseModel):
+    worker_notifications_enabled: bool
+
+
 @router.get("/global-config")
 async def get_global_worker_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    from app.services.ebay_workers.state import are_worker_notifications_enabled
+    
     workers_enabled = are_workers_globally_enabled(db)
-    return {"workers_enabled": workers_enabled}
+    notifications_enabled = are_worker_notifications_enabled(db)
+    
+    return {
+        "workers_enabled": workers_enabled,
+        "worker_notifications_enabled": notifications_enabled,
+    }
 
 
 @router.post("/global-toggle")
@@ -259,6 +270,23 @@ async def toggle_global_workers(
     cfg = set_workers_globally_enabled(db, payload.workers_enabled)
     logger.info(f"Global workers_enabled set to {cfg.workers_enabled}")
     return {"workers_enabled": cfg.workers_enabled}
+
+
+@router.post("/global-notifications-toggle")
+async def toggle_global_notifications(
+    payload: GlobalNotificationsToggleRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.services.ebay_workers.state import set_worker_notifications_enabled
+    
+    cfg = set_worker_notifications_enabled(db, payload.worker_notifications_enabled)
+    # Re-read the value to be sure
+    defaults = cfg.defaults_json or {}
+    enabled = bool(defaults.get("worker_notifications_enabled", True))
+    
+    logger.info(f"Global worker_notifications_enabled set to {enabled}")
+    return {"worker_notifications_enabled": enabled}
 
 
 @router.post("/run")
