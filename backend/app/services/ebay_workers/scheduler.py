@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List
+import random
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,7 @@ API_FAMILIES = [
     # New Post-Order Returns worker
     "returns",
 ]
+
 def _get_db() -> Session:
     return SessionLocal()
 
@@ -50,8 +52,8 @@ def _get_db() -> Session:
 async def run_cycle_for_account(ebay_account_id: str) -> None:
     """Run one sync cycle for all enabled workers for a single account.
 
-    For now, only the Orders worker is wired. Additional API families can be
-    added to API_FAMILIES and handled here.
+    Runs workers in parallel using asyncio.gather to prevent one slow worker
+    from blocking others for the same account.
     """
 
     db = _get_db()
@@ -76,125 +78,56 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
                 api_family=api_family,
             )
 
-        # Orders worker
-        state_orders: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "orders",
-            )
-            .first()
-        )
-        if state_orders and state_orders.enabled:
-            await run_orders_worker_for_account(ebay_account_id)
+        # Collect all enabled worker tasks
+        tasks = []
 
-        # Transactions worker
-        state_tx: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "transactions",
+        # Helper to check state and add task
+        def _add_if_enabled(api_family: str, worker_func):
+            state: EbaySyncState | None = (
+                db.query(EbaySyncState)
+                .filter(
+                    EbaySyncState.ebay_account_id == ebay_account_id,
+                    EbaySyncState.api_family == api_family,
+                )
+                .first()
             )
-            .first()
-        )
-        if state_tx and state_tx.enabled:
-            await run_transactions_worker_for_account(ebay_account_id)
+            if state and state.enabled:
+                tasks.append(worker_func(ebay_account_id))
 
-        # Offers worker
-        state_offers: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "offers",
-            )
-            .first()
-        )
-        if state_offers and state_offers.enabled:
-            await run_offers_worker_for_account(ebay_account_id)
+        # 1. Orders
+        _add_if_enabled("orders", run_orders_worker_for_account)
+        
+        # 2. Transactions
+        _add_if_enabled("transactions", run_transactions_worker_for_account)
+        
+        # 3. Offers
+        _add_if_enabled("offers", run_offers_worker_for_account)
+        
+        # 4. Messages
+        _add_if_enabled("messages", run_messages_worker_for_account)
+        
+        # 5. Active Inventory
+        _add_if_enabled("active_inventory", run_active_inventory_worker_for_account)
+        
+        # 6. Buyer/Purchases
+        _add_if_enabled("buyer", run_purchases_worker_for_account)
+        
+        # 7. Cases
+        _add_if_enabled("cases", run_cases_worker_for_account)
+        
+        # 8. Inquiries
+        _add_if_enabled("inquiries", run_inquiries_worker_for_account)
+        
+        # 9. Finances
+        _add_if_enabled("finances", run_finances_worker_for_account)
+        
+        # 10. Returns
+        _add_if_enabled("returns", run_returns_worker_for_account)
 
-        # Messages worker
-        state_messages: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "messages",
-            )
-            .first()
-        )
-        if state_messages and state_messages.enabled:
-            await run_messages_worker_for_account(ebay_account_id)
-
-        # Active Inventory snapshot worker
-        state_active_inv: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "active_inventory",
-            )
-            .first()
-        )
-        if state_active_inv and state_active_inv.enabled:
-            await run_active_inventory_worker_for_account(ebay_account_id)
-
-        # Buyer/purchases worker
-        state_buyer: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "buyer",
-            )
-            .first()
-        )
-        if state_buyer and state_buyer.enabled:
-            await run_purchases_worker_for_account(ebay_account_id)
-
-        # Cases worker (Post-Order cases)
-        state_cases: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "cases",
-            )
-            .first()
-        )
-        if state_cases and state_cases.enabled:
-            await run_cases_worker_for_account(ebay_account_id)
-
-        # Inquiries worker (Post-Order inquiries)
-        state_inquiries: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "inquiries",
-            )
-            .first()
-        )
-        if state_inquiries and state_inquiries.enabled:
-            await run_inquiries_worker_for_account(ebay_account_id)
-
-        # Finances worker (Post-Order/Finances transactions)
-        state_finances: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "finances",
-            )
-            .first()
-        )
-        if state_finances and state_finances.enabled:
-            await run_finances_worker_for_account(ebay_account_id)
-
-        # Returns worker (Post-Order Returns API)
-        state_returns: EbaySyncState | None = (
-            db.query(EbaySyncState)
-            .filter(
-                EbaySyncState.ebay_account_id == ebay_account_id,
-                EbaySyncState.api_family == "returns",
-            )
-            .first()
-        )
-        if state_returns and state_returns.enabled:
-            await run_returns_worker_for_account(ebay_account_id)
+        if tasks:
+            import asyncio
+            # Run all enabled workers for this account in parallel
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     finally:
         db.close()
@@ -203,9 +136,10 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
 async def run_cycle_for_all_accounts() -> None:
     """Run one sync cycle for all *active* eBay accounts.
 
-    This is the core entry point used by the background scheduler loop. It is
-    safe to call from an external cron as well (e.g. Railway/Cloudflare).
+    Runs accounts in parallel with a concurrency limit to avoid overloading
+    the database or API rate limits.
     """
+    import asyncio
 
     db = _get_db()
     try:
@@ -213,8 +147,7 @@ async def run_cycle_for_all_accounts() -> None:
             logger.info("Global workers_enabled=false – skipping cycle for all accounts")
             return
 
-        # Fetch all active ebay accounts. Each account will have its own set of
-        # worker sync states (orders, transactions, offers, messages, etc.).
+        # Fetch all active ebay accounts.
         accounts: List[EbayAccount] = (
             db.query(EbayAccount)
             .filter(EbayAccount.is_active == True)  # noqa: E712
@@ -223,22 +156,44 @@ async def run_cycle_for_all_accounts() -> None:
         if not accounts:
             logger.info("No active eBay accounts found – skipping worker cycle")
             return
+        
+        # Shuffle accounts to ensure fairness over time
+        random.shuffle(accounts)
+
     finally:
         db.close()
 
-    for account in accounts:
-        try:
-            logger.info(
-                "Running worker cycle for account id=%s ebay_user_id=%s house_name=%s",
-                account.id,
-                getattr(account, "ebay_user_id", "unknown"),
-                getattr(account, "house_name", None),
-            )
-            await run_cycle_for_account(account.id)
-        except Exception as exc:
-            logger.error(
-                "Worker cycle failed for account id=%s: %s",
-                account.id,
-                exc,
-                exc_info=True,
-            )
+    # Concurrency limit for accounts (e.g. 5 accounts at once)
+    # Each account runs its own internal workers in parallel too.
+    MAX_CONCURRENT_ACCOUNTS = 5
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_ACCOUNTS)
+
+    async def _run_safe(account_id: str, user_id: str, house_name: str):
+        async with semaphore:
+            try:
+                logger.info(
+                    "Running worker cycle for account id=%s ebay_user_id=%s house_name=%s",
+                    account_id,
+                    user_id,
+                    house_name,
+                )
+                await run_cycle_for_account(account_id)
+            except Exception as exc:
+                logger.error(
+                    "Worker cycle failed for account id=%s: %s",
+                    account_id,
+                    exc,
+                    exc_info=True,
+                )
+
+    tasks = [
+        _run_safe(
+            acc.id,
+            getattr(acc, "ebay_user_id", "unknown"),
+            getattr(acc, "house_name", None)
+        )
+        for acc in accounts
+    ]
+
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)

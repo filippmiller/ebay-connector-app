@@ -117,6 +117,45 @@ async def internal_run_ebay_workers(
             detail=f"run_failed: {str(e)}"
         )
 
+class InternalSyncOffersRequest(BaseModel):
+    """Request body for /internal/sync-offers."""
+    internal_api_key: str
+    account_id: Optional[str] = None
+    limit_per_run: Optional[int] = 100
+
+
+@router.post("/internal/sync-offers")
+async def internal_sync_offers(
+    payload: InternalSyncOffersRequest,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint to trigger offers sync.
+    
+    Authentication: Requires a shared INTERNAL_API_KEY.
+    """
+    expected_key = os.getenv("INTERNAL_API_KEY", "")
+    if not expected_key or payload.internal_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_internal_api_key"
+        )
+    
+    from app.services.ebay_offers_service import ebay_offers_service
+    
+    query = db.query(EbayAccount).filter(EbayAccount.is_active == True)
+    if payload.account_id:
+        query = query.filter(EbayAccount.id == payload.account_id)
+    
+    accounts = query.all()
+    results = {}
+    
+    for account in accounts:
+        logger.info(f"Syncing offers for account {account.id} ({account.house_name})")
+        stats = await ebay_offers_service.sync_offers_for_account(db, account)
+        results[account.id] = stats
+        
+    return {"status": "ok", "results": results}
+
 
 @router.get("/notifications/status")
 async def get_notifications_status(

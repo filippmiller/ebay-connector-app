@@ -8,6 +8,7 @@ from app.db_models.fee import Fee
 from app.db_models.refund import Refund
 from app.db_models.sync_job import SyncJob
 from app.db_models.timesheet import Timesheet
+from app.db_models.inventory_offer import EbayInventoryOffer, EbayInventoryOfferEvent
 
 __all__ = [
     "User",
@@ -21,4 +22,6 @@ __all__ = [
     "Refund",
     "SyncJob",
     "Timesheet",
+    "EbayInventoryOffer",
+    "EbayInventoryOfferEvent",
 ]

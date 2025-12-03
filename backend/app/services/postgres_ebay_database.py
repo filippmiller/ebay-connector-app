@@ -1108,6 +1108,30 @@ class PostgresEbayDatabase:
 
                 raw_json = json.dumps(return_data, separators=(",", ":"))
 
+            # Log into unified ebay_events inbox (best-effort).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="post_order_api",
+                    topic="RETURN_UPDATED",
+                    entity_type="RETURN",
+                    entity_id=return_id,
+                    ebay_account=effective_ebay_user_id or ebay_account_id,
+                    event_time=creation_date, # Use creation date as event time for now, or last_modified if available
+                    publish_time=None,
+                    headers={
+                        "worker": "returns_worker",
+                        "api_family": "returns",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": effective_ebay_user_id,
+                    },
+                    payload=return_data,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for return %s", return_id, exc_info=True)
+
             from sqlalchemy import text as text_query
 
             query = text_query(
@@ -2126,6 +2150,30 @@ class PostgresEbayDatabase:
                     ebay_status = 'ACTIVE'
                 else:
                     ebay_status = 'ENDED'
+            
+            # Log into unified ebay_events inbox (best-effort).
+            try:
+                log_ebay_event(
+                    source="rest_poll",
+                    channel="inventory_api",
+                    topic="INVENTORY_ITEM_UPDATED",
+                    entity_type="INVENTORY_ITEM",
+                    entity_id=sku,
+                    ebay_account=ebay_user_id or ebay_account_id,
+                    event_time=now,
+                    publish_time=None,
+                    headers={
+                        "worker": "active_inventory_worker",
+                        "api_family": "inventory",
+                        "user_id": user_id,
+                        "ebay_account_id": ebay_account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
+                    payload=inventory_item_data,
+                    db=session,
+                )
+            except Exception:
+                logger.warning("Failed to log ebay_events row for inventory item %s", sku, exc_info=True)
             
             # Upsert using sku_code as unique key
             query = text("""

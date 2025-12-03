@@ -11,6 +11,7 @@ import { Loader2, Download, RefreshCw, X, Camera } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
 import { useEbayListingDebug } from '@/hooks/useEbayListingDebug';
+import { OfferHistoryTable } from '@/components/OfferHistoryTable';
 
 interface InventoryItem {
   id: number;
@@ -611,6 +612,10 @@ export default function InventoryPageV2() {
                   <p className="text-sm whitespace-pre-wrap">{detailItem.notes || '-'}</p>
                 </div>
               </div>
+
+              {detailItem.sku_code && (
+                <OfferHistoryTable sku={detailItem.sku_code} />
+              )}
             </div>
           )}
         </SheetContent>

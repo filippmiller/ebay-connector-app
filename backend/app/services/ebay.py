@@ -6820,7 +6820,59 @@ class EbayService:
                                 )
                                 .first()
                             )
+                            
+                            is_read = msg.get("read", False)
+                            is_flagged = msg.get("flagged", False)
+                            folder_id = msg.get("folderid")
+                            is_archived = folder_id == "2"
+
                             if existing:
+                                changed = False
+                                if existing.is_read != is_read:
+                                    existing.is_read = is_read
+                                    changed = True
+                                if existing.is_flagged != is_flagged:
+                                    existing.is_flagged = is_flagged
+                                    changed = True
+                                if existing.is_archived != is_archived:
+                                    existing.is_archived = is_archived
+                                    changed = True
+                                
+                                if not changed:
+                                    continue
+                                
+                                # If changed, we fall through to the logging and commit part.
+                                # But wait, the original code creates db_message below.
+                                # We need to restructure this loop slightly.
+                                # Let's just log and update here, then continue to next iteration to avoid re-creating db_message logic which is complex.
+                                
+                                try:
+                                    from app.services.ebay_event_inbox import log_ebay_event
+                                    log_ebay_event(
+                                        source="trading_poll",
+                                        channel="messages",
+                                        topic="MESSAGE_UPDATED",
+                                        entity_type="MESSAGE",
+                                        entity_id=message_id,
+                                        ebay_account=ebay_user_id or ebay_account_id,
+                                        event_time=datetime.utcnow(),
+                                        publish_time=None,
+                                        headers={
+                                            "worker": "messages_worker",
+                                            "api_family": "messages",
+                                            "user_id": user_id,
+                                            "ebay_account_id": ebay_account_id,
+                                            "ebay_user_id": ebay_user_id,
+                                        },
+                                        payload=msg,
+                                        db=db_session,
+                                    )
+                                except Exception:
+                                    logger.warning("Failed to log ebay_events row for message %s", message_id, exc_info=True)
+
+                                db_session.add(existing)
+                                db_session.commit()
+                                total_stored += 1
                                 continue
 
                             sender = msg.get("sender", "")
@@ -6946,6 +6998,31 @@ class EbayService:
                                 attachments_meta=attachments_meta,
                                 preview_text=preview_text,
                             )
+
+                            # Log event for new message
+                            try:
+                                from app.services.ebay_event_inbox import log_ebay_event
+                                log_ebay_event(
+                                    source="trading_poll",
+                                    channel="messages",
+                                    topic="MESSAGE_CREATED",
+                                    entity_type="MESSAGE",
+                                    entity_id=message_id,
+                                    ebay_account=ebay_user_id or ebay_account_id,
+                                    event_time=message_date,
+                                    publish_time=None,
+                                    headers={
+                                        "worker": "messages_worker",
+                                        "api_family": "messages",
+                                        "user_id": user_id,
+                                        "ebay_account_id": ebay_account_id,
+                                        "ebay_user_id": ebay_user_id,
+                                    },
+                                    payload=msg,
+                                    db=db_session,
+                                )
+                            except Exception:
+                                logger.warning("Failed to log ebay_events row for new message %s", message_id, exc_info=True)
 
                             try:
                                 db_session.add(db_message)

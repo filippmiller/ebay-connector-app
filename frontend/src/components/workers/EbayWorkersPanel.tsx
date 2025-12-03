@@ -407,8 +407,8 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
               <button
                 onClick={toggleNotifications}
                 className={`px-3 py-2 text-xs font-semibold rounded border ${config.worker_notifications_enabled !== false
-                    ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-                    : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                  ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                  : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
                   }`}
                 title="Toggle system notifications for worker runs"
               >
@@ -472,6 +472,18 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
                           Key columns: transaction_id, user_id, order_id, transaction_date, transaction_type,
                           transaction_status, amount, currency. All rows are tagged with ebay_account_id and ebay_user_id
                           (e.g. mil_243) for precise account-level tracking.
+                        </div>
+                      </div>
+                    )}
+                    {w.api_family === 'offers' && (
+                      <div className="mt-1 text-xs text-gray-600 max-w-xs">
+                        <div>Source: Inventory Offers – Inventory API</div>
+                        <div className="font-mono text-[11px] text-gray-500">GET /sell/inventory/v1/offer</div>
+                        <div className="mt-1">
+                          Destination: <span className="font-mono">ebay_inventory_offers</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Tracks price, quantity, and status changes over time.
                         </div>
                       </div>
                     )}

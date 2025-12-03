@@ -95,6 +95,13 @@ async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
             initial_backfill_days=initial_backfill_days,
         )
 
+        # Clamp the sync window to a maximum of 24 hours to prevent timeouts
+        # when backfilling large historical gaps (e.g. 90 days).
+        # This allows the worker to catch up incrementally over multiple runs.
+        MAX_WINDOW_HOURS = 24
+        if (window_to - window_from).total_seconds() > (MAX_WINDOW_HOURS * 3600):
+            window_to = window_from + timedelta(hours=MAX_WINDOW_HOURS)
+
         from_iso = window_from.replace(microsecond=0).isoformat() + "Z"
         to_iso = window_to.replace(microsecond=0).isoformat() + "Z"
 

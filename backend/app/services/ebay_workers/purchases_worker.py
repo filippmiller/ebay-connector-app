@@ -16,6 +16,7 @@ from .state import get_or_create_sync_state, mark_sync_run_result
 from .runs import start_run, complete_run, fail_run
 from .logger import log_start, log_page, log_done, log_error
 from .notifications import create_worker_run_notification
+from app.services.ebay_event_inbox import log_ebay_event
 
 
 PURCHASES_LIMIT = 500
@@ -229,6 +230,28 @@ async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str
                     )
                     db.add(obj)
                     stored += 1
+
+                # Log event
+                try:
+                    log_ebay_event(
+                        source="trading_poll",
+                        channel="buying_api",
+                        topic="PURCHASE_UPDATED" if existing else "PURCHASE_CREATED",
+                        entity_type="PURCHASE",
+                        entity_id=transaction_id or order_line_item_id or item_id,
+                        ebay_account=ebay_user_id,
+                        event_time=_now_utc(),
+                        payload=dto,
+                        db=db,
+                        headers={
+                            "worker": "purchases_worker",
+                            "api_family": "buyer",
+                            "user_id": user_id,
+                            "ebay_account_id": ebay_account_id,
+                        }
+                    )
+                except Exception:
+                    logger.warning("Failed to log event for purchase %s", transaction_id, exc_info=True)
 
             db.commit()
             total_stored = stored

@@ -94,6 +94,12 @@ async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[
             initial_backfill_days=initial_backfill_days,
         )
 
+        # Clamp the sync window to a maximum of 24 hours to prevent timeouts
+        # when backfilling large historical gaps (e.g. 90 days).
+        MAX_WINDOW_HOURS = 24
+        if (window_to - window_from).total_seconds() > (MAX_WINDOW_HOURS * 3600):
+            window_to = window_from + timedelta(hours=MAX_WINDOW_HOURS)
+
         # Format timestamps as proper UTC ISO8601 strings ending with "Z".
         # We intentionally avoid producing values like "+00:00Z" which break
         # downstream parsing in EbayService.sync_all_transactions.
