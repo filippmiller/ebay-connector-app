@@ -141,6 +141,9 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False, default=UserRole.user)
     # Soft-activation flag; inactive users cannot access the application.
     is_active = Column(Boolean, nullable=False, default=True)
+    
+    # Global toggle for worker completion notifications (persistent per user)
+    worker_notifications_enabled = Column(Boolean, nullable=False, default=True)
 
     # When True, the user is forced to pick a new password on next login.
     must_change_password = Column(Boolean, nullable=False, default=False)

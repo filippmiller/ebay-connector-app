@@ -28,6 +28,7 @@ class PostgresDatabase:
                 created_at=created_at,
                 updated_at=created_at,
                 ebay_connected=False,
+                worker_notifications_enabled=True,
                 ebay_environment='sandbox'
             )
             db.add(db_user)
@@ -122,6 +123,7 @@ class PostgresDatabase:
             hashed_password=db_user.hashed_password,
             role=UserRole(db_user.role.value if hasattr(db_user.role, 'value') else db_user.role),
             is_active=getattr(db_user, 'is_active', True),
+            worker_notifications_enabled=getattr(db_user, 'worker_notifications_enabled', True),
             must_change_password=getattr(db_user, 'must_change_password', False),
             created_at=db_user.created_at,
             ebay_connected=db_user.ebay_connected or False,

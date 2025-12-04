@@ -16,6 +16,7 @@ class User(BaseModel):
     hashed_password: str
     role: UserRole = UserRole.USER
     is_active: bool = True
+    worker_notifications_enabled: bool = True
     # When True, user must change password on next login.
     must_change_password: bool = False
     created_at: datetime

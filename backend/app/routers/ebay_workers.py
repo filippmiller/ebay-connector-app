@@ -54,6 +54,7 @@ class WorkerConfigItem(BaseModel):
 
 class WorkerConfigResponse(BaseModel):
     workers_enabled: bool
+    worker_notifications_enabled: bool
     account: Dict[str, Any]
     workers: List[WorkerConfigItem]
 
@@ -202,6 +203,7 @@ async def get_worker_config(
 
     return WorkerConfigResponse(
         workers_enabled=workers_enabled,
+        worker_notifications_enabled=current_user.worker_notifications_enabled,
         account={
             "id": account.id,
             "ebay_user_id": account.ebay_user_id,
@@ -253,7 +255,8 @@ async def get_global_worker_config(
     from app.services.ebay_workers.state import are_worker_notifications_enabled
     
     workers_enabled = are_workers_globally_enabled(db)
-    notifications_enabled = are_worker_notifications_enabled(db)
+    # Use the user-specific setting for notifications
+    notifications_enabled = current_user.worker_notifications_enabled
     
     return {
         "workers_enabled": workers_enabled,
@@ -278,15 +281,13 @@ async def toggle_global_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    from app.services.ebay_workers.state import set_worker_notifications_enabled
+    from app.services.database import db as db_service
     
-    cfg = set_worker_notifications_enabled(db, payload.worker_notifications_enabled)
-    # Re-read the value to be sure
-    defaults = cfg.defaults_json or {}
-    enabled = bool(defaults.get("worker_notifications_enabled", True))
+    # Update the user's preference
+    db_service.update_user(current_user.id, {"worker_notifications_enabled": payload.worker_notifications_enabled})
     
-    logger.info(f"Global worker_notifications_enabled set to {enabled}")
-    return {"worker_notifications_enabled": enabled}
+    logger.info(f"User {current_user.email} worker_notifications_enabled set to {payload.worker_notifications_enabled}")
+    return {"worker_notifications_enabled": payload.worker_notifications_enabled}
 
 
 @router.post("/run")
