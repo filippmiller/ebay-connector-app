@@ -2152,10 +2152,9 @@ files = [
 name = "numpy"
 version = "1.26.4"
 description = "Fundamental package for array computing in Python"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"cv\""
 files = [
     {file = "numpy-1.26.4-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:9ff0f4f29c51e2803569d7a51c2304de5554655a60c5d776e35b4a41413830d0"},
     {file = "numpy-1.26.4-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:2e4ee3380d6de9c9ec04745830fd9e2eccb3e6cf790d39d7b98ffd19b0dd754a"},
@@ -5614,9 +5613,9 @@ multidict = ">=4.0"
 propcache = ">=0.2.1"
 
 [extras]
-cv = ["easyocr", "numpy", "opencv-python", "ultralytics"]
+cv = ["easyocr", "opencv-python", "ultralytics"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "059568e437e997cc0eedab3d8e1f8a51e58881beee1ed82c95037823470ed239"
+content-hash = "d44bffdf638406aec5b599d4b989992ecfa9093bc24318acb37836c4f557eb5a"
