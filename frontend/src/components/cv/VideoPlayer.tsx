@@ -11,7 +11,6 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { 
   Play, 
-  Pause, 
   Square, 
   Maximize2, 
   Camera, 
@@ -53,7 +52,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [frameCount, setFrameCount] = useState(0);
   const [detections, setDetections] = useState(0);
   const [textRegions, setTextRegions] = useState(0);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [, setIsFullscreen] = useState(false);
   
   const fpsCounterRef = useRef({ frames: 0, lastTime: Date.now() });
 

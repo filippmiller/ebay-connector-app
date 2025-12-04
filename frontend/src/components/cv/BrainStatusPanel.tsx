@@ -7,7 +7,6 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
-import { Progress } from '../ui/progress';
 import {
   Brain,
   Eye,
@@ -15,8 +14,6 @@ import {
   Activity,
   Users,
   Zap,
-  Clock,
-  Database,
 } from 'lucide-react';
 import type { BrainStatus, SessionState } from '../../api/brain';
 

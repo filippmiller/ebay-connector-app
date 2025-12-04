@@ -4,7 +4,7 @@
  * Handles all API calls to the CV module endpoints
  */
 
-import { apiClient } from '../lib/apiClient';
+import apiClient from '../lib/apiClient';
 
 const API_BASE = '/cv';
 

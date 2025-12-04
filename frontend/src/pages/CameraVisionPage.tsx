@@ -44,10 +44,8 @@ import {
   Eye,
   FileText,
   Terminal,
-  Activity,
   Wifi,
   WifiOff,
-  Cog,
   Zap
 } from 'lucide-react';
 import { toast } from 'sonner';

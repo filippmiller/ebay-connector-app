@@ -34,10 +34,8 @@ import {
   Play,
   Square,
   Pause,
-  Settings,
   Activity,
   History,
-  Eye,
   Keyboard,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -260,7 +258,7 @@ export const VisionBrainPage: React.FC = () => {
     }
   }, [sessionState?.session_id]);
 
-  const isSessionActive = sessionState?.session_id && sessionState?.running;
+  const isSessionActive = !!(sessionState?.session_id && sessionState?.running);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950/20 to-slate-950">

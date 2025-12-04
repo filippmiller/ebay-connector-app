@@ -69,7 +69,7 @@ export const DebugConsole: React.FC<DebugConsoleProps> = ({
   const [filter, setFilter] = useState<string>('all');
   const [levelFilter, setLevelFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [autoScroll] = useState(true);
 
   const addLog = useCallback((entry: LogEntry) => {
     if (paused) return;
@@ -177,9 +177,8 @@ export const DebugConsole: React.FC<DebugConsoleProps> = ({
         hour12: false, 
         hour: '2-digit', 
         minute: '2-digit', 
-        second: '2-digit',
-        fractionalSecondDigits: 3
-      });
+        second: '2-digit'
+      }) + '.' + date.getMilliseconds().toString().padStart(3, '0');
     } catch {
       return timestamp;
     }

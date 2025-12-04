@@ -4,7 +4,7 @@
  * API client for the AI-powered vision brain system
  */
 
-import { apiClient } from '../lib/apiClient';
+import apiClient from '../lib/apiClient';
 
 const API_BASE = '/cv/brain';
 
