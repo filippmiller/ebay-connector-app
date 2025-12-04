@@ -26,16 +26,19 @@ beautifulsoup4 = "^4.12.3"
 cryptography = "^43.0.0"
 openpyxl = "^3.1.5"
 
-# Computer Vision Module Dependencies (optional)
+# Required for CV module (always installed)
+loguru = "^0.7.2"
+supabase = "^2.10.0"
+openai = "^1.0.0"
+
+# Computer Vision Module Dependencies (optional - heavy packages)
 opencv-python = {version = "^4.10.0", optional = true}
 ultralytics = {version = "^8.3.0", optional = true}
 easyocr = {version = "^1.7.2", optional = true}
-loguru = {version = "^0.7.2", optional = true}
-supabase = {version = "^2.10.0", optional = true}
 numpy = {version = "^1.26.0", optional = true}
 
 [tool.poetry.extras]
-cv = ["opencv-python", "ultralytics", "easyocr", "loguru", "supabase", "numpy"]
+cv = ["opencv-python", "ultralytics", "easyocr", "numpy"]
 
 [build-system]
 requires = ["poetry-core"]
