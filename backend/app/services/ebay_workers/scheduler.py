@@ -29,6 +29,8 @@ from .active_inventory_worker import run_active_inventory_worker_for_account
 from .returns_worker import run_returns_worker_for_account
 
 
+from app.services.ebay_token_refresh_service import run_token_refresh_job
+
 API_FAMILIES = [
     "orders",
     "transactions",
@@ -92,7 +94,10 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
                 .first()
             )
             if state and state.enabled:
+                logger.info(f"Scheduling {api_family} worker for account {ebay_account_id}")
                 tasks.append(worker_func(ebay_account_id))
+            else:
+                logger.info(f"Skipping {api_family} worker for account {ebay_account_id} (disabled)")
 
         # 1. Orders
         _add_if_enabled("orders", run_orders_worker_for_account)
@@ -143,6 +148,10 @@ async def run_cycle_for_all_accounts() -> None:
 
     db = _get_db()
     try:
+        # 1. Refresh tokens first to ensure workers don't fail with 401
+        logger.info("Running token refresh job before worker cycle...")
+        await run_token_refresh_job(db)
+
         if not are_workers_globally_enabled(db):
             logger.info("Global workers_enabled=false – skipping cycle for all accounts")
             return
