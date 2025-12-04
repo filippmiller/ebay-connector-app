@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 from app.services.ebay_workers import run_cycle_for_all_accounts
 from app.utils.logger import logger
+from app.utils.build_info import get_build_number
 from app.models_sqlalchemy import SessionLocal
 from app.models_sqlalchemy.ebay_workers import BackgroundWorker
 
@@ -152,7 +153,10 @@ async def run_ebay_workers_loop(interval_seconds: int = 300) -> None:
 
     Default interval is 300 seconds (5 minutes).
     """
-    logger.info("eBay workers loop started (interval=%s seconds)", interval_seconds)
+    build_number = get_build_number()
+    logger.info("=" * 60)
+    logger.info("eBay workers loop started (interval=%s seconds) BUILD=%s", interval_seconds, build_number)
+    logger.info("=" * 60)
 
     db = SessionLocal()
     worker_row = _get_or_create_worker_row(db)
@@ -320,10 +324,13 @@ async def run_transactions_worker_proxy_loop(interval_seconds: int = 300) -> Non
     This is a dedicated loop for running only the Transactions worker,
     useful for isolating transaction syncs from other workers.
     """
+    build_number = get_build_number()
+    logger.info("=" * 60)
     logger.info(
-        "[transactions_proxy_loop] Started (interval=%d seconds)",
-        interval_seconds
+        "[transactions_proxy_loop] Started (interval=%d seconds) BUILD=%s",
+        interval_seconds, build_number
     )
+    logger.info("=" * 60)
     
     while True:
         result = await run_transactions_worker_proxy_once()

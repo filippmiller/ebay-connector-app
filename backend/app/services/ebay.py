@@ -1570,11 +1570,14 @@ class EbayService:
         
         # CRITICAL: Validate token is NOT encrypted before making API call
         if access_token.startswith("ENC:"):
+            from app.utils.build_info import get_build_number
+            build_number = get_build_number()
             logger.error(
                 "[get_user_identity] ⚠️⚠️⚠️ CRITICAL: ENCRYPTED TOKEN RECEIVED! "
                 "user_id=%s user_email=%s token_prefix=%s... "
-                "This will cause 401 errors! Token must be decrypted before calling Identity API.",
+                "This will cause 401 errors! Token must be decrypted before calling Identity API. BUILD=%s",
                 user_id, user_email, access_token[:30] if access_token else "None",
+                build_number,
             )
             return {
                 "username": None,
@@ -1716,11 +1719,14 @@ class EbayService:
         token_hash = hashlib.sha256(access_token.encode()).hexdigest()[:16] if access_token else "none"
         
         # DIAGNOSTIC: Log token status
+        from app.utils.build_info import get_build_number
+        build_number = get_build_number()
         logger.info(
             "[fetch_transactions] Token validation: mode=%s correlation_id=%s account_id=%s "
-            "ebay_user_id=%s token_hash=%s token_prefix=%s... token_is_decrypted=YES",
+            "ebay_user_id=%s token_hash=%s token_prefix=%s... token_is_decrypted=YES BUILD=%s",
             mode or "unknown", correlation_id, account_id, ebay_user_id,
             token_hash, access_token[:15] if access_token else "None",
+            build_number,
         )
         
         headers = {

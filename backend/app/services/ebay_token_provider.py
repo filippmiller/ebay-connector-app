@@ -35,6 +35,7 @@ from app.config import settings
 from app.models_sqlalchemy.models import EbayAccount, EbayToken, User
 from app.services.ebay_account_service import ebay_account_service
 from app.utils.logger import logger
+from app.utils.build_info import get_build_number
 
 
 # How many minutes before expiry we should consider refreshing
@@ -268,12 +269,14 @@ async def get_valid_access_token(
     access_token_value = token.access_token
     
     # DIAGNOSTIC: Log what property returned
+    build_number = get_build_number()
     logger.info(
         "[token_provider] Token property returned: account_id=%s triggered_by=%s "
-        "token_prefix=%s... is_encrypted=%s",
+        "token_prefix=%s... is_encrypted=%s BUILD=%s",
         account_id, triggered_by,
         access_token_value[:20] if access_token_value else "None",
         "YES" if (access_token_value and access_token_value.startswith("ENC:")) else "NO",
+        build_number,
     )
     
     # If property returned encrypted value, try explicit decryption

@@ -161,6 +161,12 @@ app.include_router(cv_brain.router)
 
 @app.on_event("startup")
 async def startup_event():
+    # Log build number for deployment tracking
+    from app.utils.build_info import get_build_number
+    build_number = get_build_number()
+    logger.info("=" * 60)
+    logger.info(f"🚀 Application starting - BUILD_NUMBER: {build_number}")
+    logger.info("=" * 60)
     logger.info("eBay Connector API starting up...")
     
     from app.config import settings

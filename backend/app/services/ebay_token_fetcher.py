@@ -23,6 +23,7 @@ from app.models_sqlalchemy.models import EbayAccount, EbayToken
 from app.services.ebay_account_service import ebay_account_service
 from app.services.ebay_token_provider import get_valid_access_token
 from app.utils.logger import logger
+from app.utils.build_info import get_build_number
 
 
 def _compute_token_hash(token: str) -> str:
@@ -105,10 +106,11 @@ async def fetch_active_ebay_token(
     
     # Log successful token retrieval
     token_hash = _compute_token_hash(decrypted_token)
+    build_number = get_build_number()
     logger.info(
         "[fetch_active_ebay_token] ✅ Token retrieved successfully: account_id=%s "
         "token_hash=%s source=%s environment=%s triggered_by=%s api_family=%s "
-        "token_prefix=%s... token_is_decrypted=YES",
+        "token_prefix=%s... token_is_decrypted=YES BUILD=%s",
         ebay_account_id,
         token_hash,
         token_result.source,
@@ -116,6 +118,7 @@ async def fetch_active_ebay_token(
         triggered_by,
         api_family,
         decrypted_token[:15] if decrypted_token else "None",
+        build_number,
     )
     
     return decrypted_token
