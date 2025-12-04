@@ -64,14 +64,25 @@ async def run_returns_worker_for_account(
             )
             return None
 
-        token: Optional[EbayToken] = ebay_account_service.get_token(db, ebay_account_id)
-        if not token or not token.access_token:
-            logger.warning(f"Returns worker: no token for account {ebay_account_id}")
+        # CRITICAL: Use decrypted token from token_result, not token.access_token
+        # token.access_token may return ENC:v1:... if decryption fails
+        decrypted_access_token = token_result.access_token
+        if not decrypted_access_token:
+            logger.warning(f"Returns worker: no decrypted access token for account {ebay_account_id}")
+            return None
+        
+        # Validate token is decrypted
+        if decrypted_access_token.startswith("ENC:"):
+            logger.error(
+                f"[returns_worker] ⚠️ TOKEN STILL ENCRYPTED! account={ebay_account_id} "
+                f"token_hash={token_result.token_hash}. Check SECRET_KEY/JWT_SECRET in worker environment."
+            )
             return None
         
         logger.info(
             f"[returns_worker] Token retrieved: account={ebay_account_id} "
-            f"source={token_result.source} token_hash={token_result.token_hash} triggered_by={triggered_by}"
+            f"source={token_result.source} token_hash={token_result.token_hash} triggered_by={triggered_by} "
+            f"token_prefix={decrypted_access_token[:15]}..."
         )
 
         ebay_user_id = account.ebay_user_id or "unknown"
@@ -135,7 +146,7 @@ async def run_returns_worker_for_account(
 
             result = await ebay_service.sync_postorder_returns(
                 user_id=user_id,
-                access_token=token.access_token,
+                access_token=decrypted_access_token,  # Use decrypted token from token_result
                 run_id=sync_run_id,
                 ebay_account_id=ebay_account_id,
                 ebay_user_id=ebay_user_id,

@@ -34,6 +34,29 @@ class BaseWorker:
 
     def _now_utc(self) -> datetime:
         return datetime.now(timezone.utc)
+    
+    def _get_decrypted_token(self, token: EbayToken, account_id: str) -> Optional[str]:
+        """
+        Helper to safely get decrypted access token from EbayToken object.
+        
+        This ensures we never pass ENC:v1:... tokens to execute_sync().
+        Returns None if token is encrypted or missing.
+        """
+        access_token = token.access_token
+        if not access_token:
+            logger.error(f"[{self.api_family}_worker] No access token in token object for account {account_id}")
+            return None
+        
+        # CRITICAL: Token must NOT be encrypted
+        if access_token.startswith("ENC:"):
+            logger.error(
+                f"[{self.api_family}_worker] ⚠️ TOKEN STILL ENCRYPTED in execute_sync! "
+                f"account={account_id} token_prefix={access_token[:20]}. "
+                f"This should never happen - BaseWorker.run_for_account() should have fixed this."
+            )
+            return None
+        
+        return access_token
 
     async def execute_sync(
         self,
@@ -77,46 +100,28 @@ class BaseWorker:
                 logger.warning(f"{self.api_family} worker: account {ebay_account_id} not found or inactive")
                 return None
 
-            # Use the unified token provider instead of direct DB access
-            from app.services.ebay_token_provider import get_valid_access_token
+            # CRITICAL: Use the unified token fetcher - single source of truth
+            # This guarantees we always get a decrypted token (v^1.1#...), never ENC:v1:...
+            from app.services.ebay_token_fetcher import fetch_active_ebay_token
             
-            token_result = await get_valid_access_token(
+            decrypted_access_token = await fetch_active_ebay_token(
                 db,
                 ebay_account_id,
+                triggered_by=triggered_by,
                 api_family=self.api_family,
-                force_refresh=False,
-                validate_with_identity_api=False,
-                triggered_by=f"worker_{triggered_by}",
             )
             
-            if not token_result.success:
+            if not decrypted_access_token:
                 logger.warning(
-                    f"{self.api_family} worker: token retrieval failed for account {ebay_account_id}: "
-                    f"{token_result.error_code} - {token_result.error_message}"
+                    f"{self.api_family} worker: failed to fetch decrypted token for account {ebay_account_id}"
                 )
                 return None
             
             # Get the token object for backward compatibility with execute_sync signature
+            # But we'll override its _access_token to ensure token.access_token returns the decrypted value
             token: Optional[EbayToken] = ebay_account_service.get_token(db, ebay_account_id)
             if not token:
                 logger.warning(f"{self.api_family} worker: no token object for account {ebay_account_id}")
-                return None
-            
-            # CRITICAL FIX: Use the decrypted token from token_result, not token.access_token
-            # token.access_token property may return ENC:v1:... if decryption fails in worker environment
-            # token_result.access_token is guaranteed to be decrypted by get_valid_access_token()
-            decrypted_access_token = token_result.access_token
-            if not decrypted_access_token:
-                logger.warning(f"{self.api_family} worker: no decrypted access token for account {ebay_account_id}")
-                return None
-            
-            # Validate that token is actually decrypted (not ENC:...)
-            if decrypted_access_token.startswith("ENC:"):
-                logger.error(
-                    f"{self.api_family} worker: token still encrypted after get_valid_access_token()! "
-                    f"account={ebay_account_id} token_hash={token_result.token_hash}. "
-                    f"This indicates a decryption failure - check SECRET_KEY/JWT_SECRET in worker environment."
-                )
                 return None
             
             # CRITICAL: Override the token object's _access_token with the decrypted value
@@ -126,24 +131,26 @@ class BaseWorker:
             token._access_token = decrypted_access_token
             
             # Verify that token.access_token now returns the decrypted value
-            # (property will call crypto.decrypt, which returns non-ENC values as-is)
             verified_token = token.access_token
             if verified_token != decrypted_access_token:
-                logger.warning(
-                    f"[{self.api_family}_worker] Token property mismatch! "
+                logger.error(
+                    f"[{self.api_family}_worker] ⚠️ Token property mismatch after override! "
                     f"account={ebay_account_id} "
-                    f"token_result.access_token starts with: {decrypted_access_token[:10] if decrypted_access_token else 'None'}... "
-                    f"token.access_token starts with: {verified_token[:10] if verified_token else 'None'}..."
+                    f"decrypted_access_token starts with: {decrypted_access_token[:15] if decrypted_access_token else 'None'}... "
+                    f"token.access_token starts with: {verified_token[:15] if verified_token else 'None'}..."
                 )
+                # Force it again
+                token._access_token = decrypted_access_token
             
-            # Log token info for debugging (never log raw token)
-            logger.info(
-                f"[{self.api_family}_worker] Token retrieved: account={ebay_account_id} "
-                f"source={token_result.source} token_hash={token_result.token_hash} "
-                f"environment={token_result.environment} triggered_by={triggered_by} "
-                f"token_decrypted={'yes' if not decrypted_access_token.startswith('ENC:') else 'NO - STILL ENCRYPTED!'} "
-                f"token_prefix={decrypted_access_token[:10] if decrypted_access_token else 'None'}..."
-            )
+            # Final validation - token must NOT be encrypted
+            final_check = token.access_token
+            if final_check and final_check.startswith("ENC:"):
+                logger.error(
+                    f"[{self.api_family}_worker] ⚠️ TOKEN STILL ENCRYPTED AFTER ALL FIXES! "
+                    f"account={ebay_account_id} token_prefix={final_check[:20]}. "
+                    f"This should never happen - crypto.decrypt() may be broken."
+                )
+                return None
 
             ebay_user_id = account.ebay_user_id or "unknown"
 

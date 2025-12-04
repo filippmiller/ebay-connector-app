@@ -45,8 +45,18 @@ class PurchasesWorker(BaseWorker):
                 f"{window_from}..{window_to} (account={ebay_account_id})"
             )
 
+            # CRITICAL: Use helper to safely get decrypted token
+            access_token = self._get_decrypted_token(token, ebay_account_id)
+            if not access_token:
+                event_logger.log_error("Access token unavailable or encrypted")
+                return {
+                    "total_fetched": 0,
+                    "total_stored": 0,
+                    "error_message": "Access token unavailable or encrypted",
+                }
+
             purchases = await ebay_service.get_purchases(
-                access_token=token.access_token,
+                access_token=access_token,
                 since=window_from,
             )
 

@@ -249,8 +249,8 @@ async def get_valid_access_token(
             token = ebay_account_service.get_token(db, account_id)
             token_expires_at = _normalize_datetime(token.expires_at) if token else None
     
-    # 8. Final validation
-    if not token or not token.access_token:
+    # 8. Final validation and decryption
+    if not token:
         return EbayTokenResult(
             success=False,
             account_id=account_id,
@@ -260,10 +260,94 @@ async def get_valid_access_token(
             error_message="No access token available after refresh attempt",
         )
     
-    # 9. Optional Identity API validation
+    # CRITICAL: Get decrypted access token using the same pattern as _get_plain_refresh_token
+    # This ensures we always get a decrypted token, even if property returns ENC:...
+    from app.utils import crypto
+    
+    # Try property first (standard path)
+    access_token_value = token.access_token
+    
+    # If property returned encrypted value, try explicit decryption
+    if access_token_value and access_token_value.startswith("ENC:"):
+        logger.warning(
+            "[token_provider] Token property returned encrypted value, attempting explicit decryption: "
+            "account_id=%s triggered_by=%s",
+            account_id, triggered_by,
+        )
+        # Try to decrypt the raw column directly
+        raw_token = token._access_token
+        if raw_token:
+            decrypted_attempt = crypto.decrypt(raw_token)
+            if decrypted_attempt and not decrypted_attempt.startswith("ENC:"):
+                access_token_value = decrypted_attempt
+                logger.info(
+                    "[token_provider] Explicit decryption succeeded: account_id=%s triggered_by=%s",
+                    account_id, triggered_by,
+                )
+            else:
+                # Decryption failed - this is a critical error
+                logger.error(
+                    "[token_provider] ⚠️ TOKEN DECRYPTION FAILED! "
+                    "account_id=%s triggered_by=%s. "
+                    "Check that SECRET_KEY/JWT_SECRET is correct in worker environment.",
+                    account_id, triggered_by,
+                )
+                return EbayTokenResult(
+                    success=False,
+                    account_id=account_id,
+                    ebay_user_id=account.ebay_user_id,
+                    environment=environment,
+                    token_db_id=token.id,
+                    error_code="decryption_failed",
+                    error_message="Token decryption failed - check SECRET_KEY/JWT_SECRET configuration",
+                )
+        else:
+            # No raw token available
+            logger.error(
+                "[token_provider] No raw access token in DB: account_id=%s triggered_by=%s",
+                account_id, triggered_by,
+            )
+            return EbayTokenResult(
+                success=False,
+                account_id=account_id,
+                ebay_user_id=account.ebay_user_id,
+                environment=environment,
+                token_db_id=token.id,
+                error_code="no_raw_token",
+                error_message="No raw access token available in database",
+            )
+    
+    if not access_token_value:
+        return EbayTokenResult(
+            success=False,
+            account_id=account_id,
+            ebay_user_id=account.ebay_user_id,
+            environment=environment,
+            error_code="no_access_token",
+            error_message="No access token available after decryption",
+        )
+    
+    # Final validation - token must NOT be encrypted
+    if access_token_value.startswith("ENC:"):
+        logger.error(
+            "[token_provider] ⚠️ TOKEN STILL ENCRYPTED AFTER ALL ATTEMPTS! "
+            "account_id=%s triggered_by=%s. This should never happen.",
+            account_id, triggered_by,
+        )
+        return EbayTokenResult(
+            success=False,
+            account_id=account_id,
+            ebay_user_id=account.ebay_user_id,
+            environment=environment,
+            token_db_id=token.id,
+            error_code="token_still_encrypted",
+            error_message="Token is still encrypted after decryption attempts - check SECRET_KEY",
+        )
+    
+    # 9. Optional Identity API validation (only with decrypted token)
     if validate_with_identity_api:
         validation_result = await _validate_token_with_identity_api(
-            token.access_token, environment, account_id, triggered_by
+            access_token_value, environment, account_id, triggered_by
         )
         if not validation_result["valid"]:
             logger.warning(
@@ -276,25 +360,26 @@ async def get_valid_access_token(
                 ebay_user_id=account.ebay_user_id,
                 environment=environment,
                 token_db_id=token.id,
-                token_hash=_compute_token_hash(token.access_token),
+                token_hash=_compute_token_hash(access_token_value),
                 error_code="identity_validation_failed",
                 error_message=validation_result.get("error", "Identity API validation failed"),
             )
     
     # 10. Success!
-    token_hash = _compute_token_hash(token.access_token)
+    token_hash = _compute_token_hash(access_token_value)
     
     logger.info(
         "[token_provider] Token retrieved successfully: account_id=%s environment=%s source=%s "
-        "token_hash=%s expires_at=%s triggered_by=%s api_family=%s",
+        "token_hash=%s expires_at=%s triggered_by=%s api_family=%s token_prefix=%s...",
         account_id, environment, source, token_hash,
         token_expires_at.isoformat() if token_expires_at else None,
         triggered_by, api_family,
+        access_token_value[:15] if access_token_value else "None",
     )
     
     return EbayTokenResult(
         success=True,
-        access_token=token.access_token,
+        access_token=access_token_value,  # Use the guaranteed decrypted value
         environment=environment,
         expires_at=token_expires_at,
         scopes=None,  # Could be populated from EbayAuthorization if needed

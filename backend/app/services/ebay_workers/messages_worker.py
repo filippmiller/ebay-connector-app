@@ -31,9 +31,18 @@ class MessagesWorker(BaseWorker):
         ebay_service = EbayService()
         user_id = account.org_id
 
+        # CRITICAL: Use helper to safely get decrypted token
+        access_token = self._get_decrypted_token(token, account.id)
+        if not access_token:
+            return {
+                "total_fetched": 0,
+                "total_stored": 0,
+                "error_message": "Access token unavailable or encrypted",
+            }
+
         result = await ebay_service.sync_all_messages(
             user_id=user_id,
-            access_token=token.access_token,
+            access_token=access_token,
             run_id=sync_run_id,
             ebay_account_id=account.id,
             ebay_user_id=account.ebay_user_id,

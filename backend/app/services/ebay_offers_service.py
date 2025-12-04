@@ -108,12 +108,22 @@ class EbayOffersService:
             stats["errors"] += 1
             return stats
 
+        # CRITICAL: Validate token is decrypted (not ENC:v1:...)
+        access_token = token.access_token
+        if access_token.startswith("ENC:"):
+            logger.error(
+                f"[offers_service] ⚠️ TOKEN STILL ENCRYPTED! account={account.id} "
+                f"token_prefix={access_token[:20]}. Check SECRET_KEY/JWT_SECRET."
+            )
+            stats["errors"] += 1
+            return stats
+
         try:
             # Pagination loop
             offset = 0
             limit = 100
             while True:
-                response = await self.fetch_offers(token.access_token, limit=limit, offset=offset)
+                response = await self.fetch_offers(access_token, limit=limit, offset=offset)
                 offers = response.get("offers", [])
                 if not offers:
                     break
