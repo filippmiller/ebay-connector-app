@@ -16,3 +16,8 @@
 2025-11-11T15:11:35.3445523+03:00 - Updated ClearMind ESLint setup, installed flat-config deps, ran typecheck/lint/build
 2025-11-11T15:17:06.8570572+03:00 - Created branch fix/stabilize-20251111 for ESLint stabilization work
 2025-11-11T15:49:11.9965210+03:00 - Synced package.json and pnpm-lock.yaml for Railway install, rebuilt configs
+2025-12-04T12:00:00+03:00 - Created Vision Brain Layer: LLM Brain (OpenAI), Vision Brain Orchestrator, Operator Guidance Service, Brain Repository
+2025-12-04T12:00:00+03:00 - Created Supabase migration: 20251204_vision_brain_tables.sql (vision_sessions, vision_detections, vision_ocr_results, vision_brain_decisions, vision_operator_events)
+2025-12-04T12:00:00+03:00 - Created API endpoints: /cv/brain/* (REST + WebSocket)
+2025-12-04T12:00:00+03:00 - Created Frontend: BrainInstructionPanel, SessionTimeline, BrainStatusPanel, VisionBrainPage
+2025-12-04T12:00:00+03:00 - Created documentation: docs/vision_brain_layer-20251204.md

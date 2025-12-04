@@ -1,0 +1,38 @@
+# Computer Vision Module Requirements
+# Install with: pip install -r requirements-cv.txt
+
+# Core CV
+opencv-python>=4.10.0.84
+numpy>=1.26.0
+
+# Object Detection - YOLOv8
+ultralytics>=8.3.0
+
+# OCR Engines (choose one or more)
+easyocr>=1.7.2
+# paddlepaddle>=2.6.0  # For PaddleOCR
+# paddleocr>=2.7.0
+# pytesseract>=0.3.10  # Requires Tesseract installed on system
+
+# Structured Logging
+loguru>=0.7.2
+
+# Database
+supabase>=2.10.0
+
+# Async Support
+aiofiles>=24.1.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# WebSocket Support (already in FastAPI)
+# websockets>=12.0
+
+# Optional: GPU Support (uncomment for CUDA)
+# torch>=2.0.0
+# torchvision>=0.15.0
+
+# Optional: Alternative OCR
+# paddlepaddle-gpu>=2.6.0  # GPU version of PaddlePaddle
+

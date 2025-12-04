@@ -52,6 +52,8 @@ from app.routers import (
     ebay_browse,
     ebay_search_watches,
     inventory_offers,
+    cv_camera,
+    cv_brain,
 )
 from app.utils.logger import logger
 import os
@@ -154,6 +156,8 @@ app.include_router(ai_speech.router)
 app.include_router(ebay_browse.router)
 app.include_router(ebay_search_watches.router)
 app.include_router(inventory_offers.router)
+app.include_router(cv_camera.router)
+app.include_router(cv_brain.router)
 
 @app.on_event("startup")
 async def startup_event():

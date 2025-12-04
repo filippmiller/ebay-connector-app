@@ -49,6 +49,8 @@ import AdminAiCenterPage from './pages/AdminAiCenterPage';
 import AdminIntegrationsPage from './pages/AdminIntegrationsPage';
 import AdminAiEmailTrainingPage from './pages/AdminAiEmailTrainingPage';
 import AdminAiSettingsPage from './pages/AdminAiSettingsPage';
+import CameraVisionPage from './pages/CameraVisionPage';
+import VisionBrainPage from './pages/VisionBrainPage';
 import './App.css';
 import './App.css';
 
@@ -333,6 +335,22 @@ function App() {
             element={
               <ProtectedRoute>
                 <AccountingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/camera-vision"
+            element={
+              <ProtectedRoute>
+                <CameraVisionPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/vision-brain"
+            element={
+              <ProtectedRoute>
+                <VisionBrainPage />
               </ProtectedRoute>
             }
           />
