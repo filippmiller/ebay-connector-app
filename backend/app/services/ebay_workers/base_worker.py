@@ -152,6 +152,12 @@ class BaseWorker:
             # The property getter will return this value as-is since it doesn't start with ENC:
             token._access_token = decrypted_access_token
             
+            logger.info(
+                f"[{self.api_family}_worker] Token override: account_id={ebay_account_id} "
+                f"decrypted_token_prefix={decrypted_access_token[:20] if decrypted_access_token else 'None'}... "
+                f"BUILD={build_number}"
+            )
+            
             # Verify that token.access_token now returns the decrypted value
             verified_token = token.access_token
             if verified_token != decrypted_access_token:
@@ -159,7 +165,8 @@ class BaseWorker:
                     f"[{self.api_family}_worker] ⚠️ Token property mismatch after override! "
                     f"account={ebay_account_id} "
                     f"decrypted_access_token starts with: {decrypted_access_token[:15] if decrypted_access_token else 'None'}... "
-                    f"token.access_token starts with: {verified_token[:15] if verified_token else 'None'}..."
+                    f"token.access_token starts with: {verified_token[:15] if verified_token else 'None'}... "
+                    f"BUILD={build_number}"
                 )
                 # Force it again
                 token._access_token = decrypted_access_token
@@ -168,11 +175,17 @@ class BaseWorker:
             final_check = token.access_token
             if final_check and final_check.startswith("ENC:"):
                 logger.error(
-                    f"[{self.api_family}_worker] ⚠️ TOKEN STILL ENCRYPTED AFTER ALL FIXES! "
+                    f"[{self.api_family}_worker] ⚠️⚠️⚠️ TOKEN STILL ENCRYPTED AFTER ALL FIXES! "
                     f"account={ebay_account_id} token_prefix={final_check[:20]}. "
-                    f"This should never happen - crypto.decrypt() may be broken."
+                    f"This should never happen - crypto.decrypt() may be broken or SECRET_KEY mismatch. "
+                    f"BUILD={build_number}"
                 )
                 return None
+            
+            logger.info(
+                f"[{self.api_family}_worker] Token validation PASSED: account_id={ebay_account_id} "
+                f"token_prefix={final_check[:20] if final_check else 'None'}... BUILD={build_number}"
+            )
 
             ebay_user_id = account.ebay_user_id or "unknown"
 
