@@ -11,3 +11,5 @@ ALTER TABLE camera_logs ADD CONSTRAINT camera_logs_level_check
 -- Update any existing 'warn' entries to 'warning' (optional, for consistency)
 UPDATE camera_logs SET level = 'warning' WHERE level = 'warn';
 
+
+

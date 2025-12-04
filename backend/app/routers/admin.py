@@ -242,6 +242,86 @@ async def internal_run_ebay_workers(
             detail=f"run_failed: {str(e)}"
         )
 
+class InternalTransactionsRunOnceRequest(BaseModel):
+    """Request body for /internal/workers/transactions/run-once."""
+    internal_api_key: str
+    account_id: Optional[str] = None  # Optional: run for specific account only
+
+
+@router.post("/internal/workers/transactions/run-once")
+async def internal_transactions_run_once(
+    payload: InternalTransactionsRunOnceRequest,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint for the Railway worker to trigger Transactions sync.
+    
+    This is the SINGLE entry point for automatic Transactions worker runs.
+    It uses exactly the same code path as manual "Run Now" to ensure
+    consistent token handling and API calls.
+    
+    Authentication: Requires INTERNAL_API_KEY header/body.
+    
+    Request body:
+        - internal_api_key: Required for authentication
+        - account_id: Optional - if provided, runs for that account only;
+                      otherwise runs for ALL active accounts with transactions enabled
+    
+    Response:
+        - status: "ok", "skipped", "error"
+        - correlation_id: Unique ID for this run batch
+        - accounts_processed, accounts_succeeded, accounts_failed, accounts_skipped
+        - details: Per-account status information
+        - started_at, finished_at, duration_ms
+    """
+    expected_key = os.getenv("INTERNAL_API_KEY", "")
+    if not expected_key or payload.internal_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_internal_api_key"
+        )
+    
+    from app.services.ebay_workers.transactions_worker import (
+        run_transactions_sync_for_all_accounts,
+        run_transactions_worker_for_account,
+    )
+    
+    try:
+        if payload.account_id:
+            # Run for a specific account only
+            logger.info(
+                "[internal_transactions] Running for single account=%s",
+                payload.account_id
+            )
+            run_id = await run_transactions_worker_for_account(
+                payload.account_id,
+                triggered_by="internal_scheduler",
+            )
+            return {
+                "status": "ok" if run_id else "skipped",
+                "account_id": payload.account_id,
+                "run_id": run_id,
+                "reason": None if run_id else "already_running_or_disabled",
+            }
+        else:
+            # Run for ALL accounts
+            logger.info("[internal_transactions] Running for all accounts...")
+            result = await run_transactions_sync_for_all_accounts(
+                triggered_by="internal_scheduler"
+            )
+            return result
+            
+    except Exception as e:
+        logger.error(
+            "[internal_transactions] Error running transactions sync: %s",
+            str(e),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"transactions_sync_failed: {str(e)[:200]}"
+        )
+
+
 class InternalSyncOffersRequest(BaseModel):
     """Request body for /internal/sync-offers."""
     internal_api_key: str

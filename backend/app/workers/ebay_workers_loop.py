@@ -61,6 +61,11 @@ async def run_ebay_workers_once() -> None:
     
     Uses the same code path as the manual "Run Now" button to ensure
     consistent behavior.
+    
+    NOTE: When running as a separate Railway worker service, use
+    run_ebay_workers_proxy_loop() or run_transactions_worker_proxy_loop()
+    instead, which delegate to the Web App's internal endpoints to ensure
+    consistent token handling and avoid decryption issues.
     """
     from app.services.ebay_workers.orders_worker import run_orders_worker_for_account
     from app.services.ebay_workers.transactions_worker import run_transactions_worker_for_account
@@ -198,6 +203,70 @@ async def run_ebay_workers_loop(interval_seconds: int = 300) -> None:
             pass
 
 
+async def run_transactions_worker_proxy_once() -> dict:
+    """Run ONLY the Transactions worker via the internal API endpoint.
+    
+    This ensures transactions sync uses the exact same code path as manual "Run Now"
+    by delegating to the Web App's internal endpoint.
+    
+    Returns:
+        Dict with result from the internal API
+    """
+    import httpx
+    import os
+    
+    web_app_url = os.getenv("WEB_APP_URL", "").rstrip("/")
+    internal_api_key = os.getenv("INTERNAL_API_KEY", "")
+    
+    if not web_app_url:
+        error = "WEB_APP_URL not configured"
+        logger.error(f"[transactions_proxy] {error}")
+        return {"status": "error", "error": error}
+    
+    if not internal_api_key:
+        error = "INTERNAL_API_KEY not configured"
+        logger.error(f"[transactions_proxy] {error}")
+        return {"status": "error", "error": error}
+    
+    endpoint = f"{web_app_url}/api/admin/internal/workers/transactions/run-once"
+    
+    try:
+        logger.info(f"[transactions_proxy] Triggering transactions sync via {endpoint}...")
+        
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            resp = await client.post(
+                endpoint,
+                json={"internal_api_key": internal_api_key},
+            )
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                logger.info(
+                    "[transactions_proxy] SUCCESS: status=%s processed=%s succeeded=%s failed=%s",
+                    result.get("status"),
+                    result.get("accounts_processed", 0),
+                    result.get("accounts_succeeded", 0),
+                    result.get("accounts_failed", 0),
+                )
+                return result
+            else:
+                error_text = resp.text[:500]
+                logger.error(
+                    "[transactions_proxy] FAILED: HTTP %d - %s",
+                    resp.status_code, error_text,
+                )
+                return {
+                    "status": "error",
+                    "http_status": resp.status_code,
+                    "error": error_text,
+                }
+                
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"[transactions_proxy] Exception: {error_msg}", exc_info=True)
+        return {"status": "error", "error": error_msg}
+
+
 async def run_ebay_workers_proxy_loop(interval_seconds: int = 300) -> None:
     """Run the eBay workers loop in Proxy Mode.
     
@@ -230,7 +299,12 @@ async def run_ebay_workers_proxy_loop(interval_seconds: int = 300) -> None:
                     json={"internal_api_key": internal_api_key},
                 )
                 if resp.status_code == 200:
-                    logger.info("Proxy trigger sent successfully")
+                    result = resp.json()
+                    logger.info(
+                        "Proxy trigger completed: status=%s accounts=%s",
+                        result.get("status"),
+                        result.get("accounts_processed", 0),
+                    )
                 else:
                     logger.error(f"Proxy trigger failed: HTTP {resp.status_code} {resp.text}")
                     
@@ -240,7 +314,40 @@ async def run_ebay_workers_proxy_loop(interval_seconds: int = 300) -> None:
         await asyncio.sleep(interval_seconds)
 
 
+async def run_transactions_worker_proxy_loop(interval_seconds: int = 300) -> None:
+    """Run ONLY the Transactions worker in Proxy Mode on a schedule.
+    
+    This is a dedicated loop for running only the Transactions worker,
+    useful for isolating transaction syncs from other workers.
+    """
+    logger.info(
+        "[transactions_proxy_loop] Started (interval=%d seconds)",
+        interval_seconds
+    )
+    
+    while True:
+        result = await run_transactions_worker_proxy_once()
+        
+        if result.get("status") == "error":
+            logger.warning(
+                "[transactions_proxy_loop] Cycle had error: %s",
+                result.get("error", "unknown"),
+            )
+        
+        await asyncio.sleep(interval_seconds)
+
+
 if __name__ == "__main__":
-    # When run as a script, default to Proxy Mode to ensure we use the Web App's
-    # environment and keys for decryption.
-    asyncio.run(run_ebay_workers_proxy_loop())
+    import sys
+    
+    # When run as a script, support different modes via command line argument
+    mode = sys.argv[1] if len(sys.argv) > 1 else "all"
+    
+    if mode == "transactions":
+        # Run ONLY transactions worker via proxy
+        logger.info("Starting Transactions-only worker proxy loop...")
+        asyncio.run(run_transactions_worker_proxy_loop())
+    else:
+        # Run ALL workers via proxy (default behavior)
+        logger.info("Starting ALL workers proxy loop...")
+        asyncio.run(run_ebay_workers_proxy_loop())

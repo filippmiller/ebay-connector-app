@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import httpx
 import asyncio
 import json
@@ -1641,12 +1642,31 @@ class EbayService:
             logger.error(f"Error getting user identity: {str(e)}", exc_info=True)
             return {"username": None, "userId": None, "error": str(e)}
 
-    async def fetch_transactions(self, access_token: str, filter_params: Optional[Dict[str, Any]] = None, environment: Optional[str] = None) -> Dict[str, Any]:
+    async def fetch_transactions(
+        self, 
+        access_token: str, 
+        filter_params: Optional[Dict[str, Any]] = None, 
+        environment: Optional[str] = None,
+        *,
+        mode: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Fetch transaction records from eBay Finances API
         By default, fetches transactions from the last 90 days
         
         FIXED: Use RSQL filter format: filter=transactionDate:[...] (correct Finances API format)
+        
+        Args:
+            access_token: eBay OAuth access token
+            filter_params: Optional filter parameters for the API call
+            environment: Optional environment override (sandbox/production)
+            mode: Optional mode label ("manual", "automatic", "internal_scheduler")
+            correlation_id: Optional correlation ID for tracking this sync batch
+            account_id: Optional eBay account ID for logging
+            ebay_user_id: Optional eBay user ID for logging
         """
         if not access_token:
             raise HTTPException(
@@ -1664,10 +1684,20 @@ class EbayService:
         # Finances API lives on apiz.ebay.com / apiz.sandbox.ebay.com, not api.ebay.com
         api_url = f"{base_url}/sell/finances/v1/transaction"
         
+        # Redact token from headers for logging
+        token_hash = hashlib.sha256(access_token.encode()).hexdigest()[:16] if access_token else "none"
+        
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"  # Optional but recommended
+        }
+        
+        # Headers for logging (with token redacted)
+        headers_for_log = {
+            "Authorization": f"Bearer ***REDACTED*** (hash={token_hash})",
+            "Accept": headers["Accept"],
+            "X-EBAY-C-MARKETPLACE-ID": headers["X-EBAY-C-MARKETPLACE-ID"],
         }
         
         params = filter_params or {}
@@ -1685,11 +1715,25 @@ class EbayService:
             # params['transactionType'] = 'SALE'  # Uncomment if you want only sales
             pass
         
-        # Log with actual resolved environment (target_env), not the global setting
+        # Enhanced logging with mode, correlation_id, account info
+        log_context = {
+            "target_env": target_env,
+            "base_url": base_url,
+            "api_url": api_url,
+            "mode": mode or "unknown",
+            "correlation_id": correlation_id,
+            "account_id": account_id,
+            "ebay_user_id": ebay_user_id,
+            "token_hash": token_hash,
+        }
+        
         logger.info(
-            "[fetch_transactions] target_env=%s base_url=%s api_url=%s",
-            target_env, base_url, api_url,
+            "[fetch_transactions] mode=%s correlation_id=%s account_id=%s ebay_user_id=%s "
+            "target_env=%s base_url=%s api_url=%s token_hash=%s",
+            mode or "unknown", correlation_id, account_id, ebay_user_id,
+            target_env, base_url, api_url, token_hash,
         )
+        
         ebay_logger.log_ebay_event(
             "fetch_transactions_request",
             f"Fetching transactions from eBay ({target_env})",
@@ -1697,7 +1741,13 @@ class EbayService:
                 "environment": target_env,
                 "global_environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
-                "params": params
+                "method": "GET",
+                "headers": headers_for_log,
+                "params": params,
+                "mode": mode,
+                "correlation_id": correlation_id,
+                "account_id": account_id,
+                "ebay_user_id": ebay_user_id,
             }
         )
         
@@ -1713,7 +1763,23 @@ class EbayService:
                     ebay_logger.log_ebay_event(
                         "fetch_transactions_empty",
                         "No transactions found matching the criteria",
+                        request_data={
+                            "mode": mode,
+                            "correlation_id": correlation_id,
+                            "account_id": account_id,
+                            "ebay_user_id": ebay_user_id,
+                        },
+                        response_data={
+                            "status_code": 204,
+                            "mode": mode,
+                            "correlation_id": correlation_id,
+                            "account_id": account_id,
+                        },
                         status="success"
+                    )
+                    logger.info(
+                        "[fetch_transactions] Empty response (204) mode=%s correlation_id=%s account_id=%s",
+                        mode or "unknown", correlation_id, account_id,
                     )
                     return {"transactions": [], "total": 0}
                 
@@ -1722,38 +1788,67 @@ class EbayService:
                     try:
                         error_json = response.json()
                         error_detail = str(error_json)
-                        logger.error(f"Transactions API error {response.status_code}: {error_json}")
+                        logger.error(
+                            "[fetch_transactions] API error %d mode=%s correlation_id=%s account_id=%s: %s",
+                            response.status_code, mode or "unknown", correlation_id, account_id, error_json,
+                        )
                     except:
-                        logger.error(f"Transactions API error {response.status_code}: {error_detail}")
+                        logger.error(
+                            "[fetch_transactions] API error %d mode=%s correlation_id=%s account_id=%s: %s",
+                            response.status_code, mode or "unknown", correlation_id, account_id, error_detail[:200],
+                        )
                     
                     ebay_logger.log_ebay_event(
                         "fetch_transactions_failed",
                         f"Failed to fetch transactions: {response.status_code}",
+                        request_data={
+                            "mode": mode,
+                            "correlation_id": correlation_id,
+                            "account_id": account_id,
+                            "ebay_user_id": ebay_user_id,
+                        },
                         response_data={
                             "status_code": response.status_code,
-                            "error": error_detail,
-                            "headers": dict(response.headers)
+                            "error": error_detail[:500] if isinstance(error_detail, str) else str(error_detail),
+                            "headers": {k: v for k, v in dict(response.headers).items() if not k.lower().startswith('authorization')},
+                            "mode": mode,
+                            "correlation_id": correlation_id,
+                            "account_id": account_id,
                         },
                         status="error",
-                        error=error_detail
+                        error=error_detail[:500] if isinstance(error_detail, str) else str(error_detail)
                     )
                     raise HTTPException(
                         status_code=response.status_code,
-                        detail=f"Failed to fetch transactions (HTTP {response.status_code}): {error_detail}"
+                        detail=f"Failed to fetch transactions (HTTP {response.status_code}): {error_detail[:200]}"
                     )
                 
                 transactions_data = response.json()
+                total_transactions = transactions_data.get('total', 0)
                 
                 ebay_logger.log_ebay_event(
                     "fetch_transactions_success",
                     f"Successfully fetched transactions from eBay",
+                    request_data={
+                        "mode": mode,
+                        "correlation_id": correlation_id,
+                        "account_id": account_id,
+                        "ebay_user_id": ebay_user_id,
+                    },
                     response_data={
-                        "total_transactions": transactions_data.get('total', 0)
+                        "status_code": 200,
+                        "total_transactions": total_transactions,
+                        "mode": mode,
+                        "correlation_id": correlation_id,
+                        "account_id": account_id,
                     },
                     status="success"
                 )
                 
-                logger.info(f"Successfully fetched {transactions_data.get('total', 0)} transactions from eBay")
+                logger.info(
+                    "[fetch_transactions] Success: fetched=%d mode=%s correlation_id=%s account_id=%s",
+                    total_transactions, mode or "unknown", correlation_id, account_id,
+                )
                 
                 return transactions_data
                 
@@ -1762,10 +1857,24 @@ class EbayService:
             ebay_logger.log_ebay_event(
                 "fetch_transactions_error",
                 "HTTP request error during transactions fetch",
+                request_data={
+                    "mode": mode,
+                    "correlation_id": correlation_id,
+                    "account_id": account_id,
+                    "ebay_user_id": ebay_user_id,
+                },
+                response_data={
+                    "mode": mode,
+                    "correlation_id": correlation_id,
+                    "account_id": account_id,
+                },
                 status="error",
                 error=error_msg
             )
-            logger.error(error_msg)
+            logger.error(
+                "[fetch_transactions] Request error: %s mode=%s correlation_id=%s account_id=%s",
+                error_msg, mode or "unknown", correlation_id, account_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=error_msg
@@ -3400,6 +3509,9 @@ class EbayService:
         window_from: Optional[str] = None,
         window_to: Optional[str] = None,
         environment: Optional[str] = None,
+        *,
+        mode: Optional[str] = None,
+        correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Synchronize transactions from eBay to database with pagination (limit=200).
@@ -3416,6 +3528,9 @@ class EbayService:
             ebay_user_id: Optional eBay user id for tagging
             window_from: Optional ISO8601 datetime (UTC) for the start of the window
             window_to: Optional ISO8601 datetime (UTC) for the end of the window
+            environment: Optional environment override (sandbox/production)
+            mode: Optional mode label ("manual", "automatic", "internal_scheduler")
+            correlation_id: Optional correlation ID for tracking this sync batch
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
@@ -3570,7 +3685,15 @@ class EbayService:
 
                 request_start = time.time()
                 try:
-                    transactions_response = await self.fetch_transactions(access_token, filter_params, environment=environment)
+                    transactions_response = await self.fetch_transactions(
+                        access_token, 
+                        filter_params, 
+                        environment=environment,
+                        mode=mode,
+                        correlation_id=correlation_id,
+                        account_id=ebay_account_id,
+                        ebay_user_id=ebay_user_id,
+                    )
                 except Exception as e:
                     # Check for cancellation after error
                     if is_cancelled(event_logger.run_id):

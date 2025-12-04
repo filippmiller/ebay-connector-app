@@ -259,3 +259,5 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION cleanup_old_vision_data IS 'Delete old vision data older than specified days';
 
+
+
