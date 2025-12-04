@@ -116,6 +116,16 @@ export default function AdminPage() {
             <h2 className="text-lg font-semibold">Todo List</h2>
             <p className="text-sm text-gray-600 mt-1">View development progress</p>
           </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer border-2 border-purple-200 bg-purple-50" onClick={() => navigate('/admin/camera-vision')}>
+            <h2 className="text-lg font-semibold text-purple-700">📷 Camera Vision</h2>
+            <p className="text-sm text-gray-600 mt-1">DJI Osmo Pocket 3 + YOLO + OCR pipeline</p>
+          </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer border-2 border-cyan-200 bg-cyan-50" onClick={() => navigate('/admin/vision-brain')}>
+            <h2 className="text-lg font-semibold text-cyan-700">🧠 Vision Brain</h2>
+            <p className="text-sm text-gray-600 mt-1">AI-powered vision analysis with OpenAI</p>
+          </Card>
         </div>
       </div>
     </div>
