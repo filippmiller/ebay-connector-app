@@ -106,9 +106,9 @@ async def fetch_active_ebay_token(
     # Log successful token retrieval
     token_hash = _compute_token_hash(decrypted_token)
     logger.info(
-        "[fetch_active_ebay_token] Token retrieved successfully: account_id=%s "
+        "[fetch_active_ebay_token] ✅ Token retrieved successfully: account_id=%s "
         "token_hash=%s source=%s environment=%s triggered_by=%s api_family=%s "
-        "token_prefix=%s...",
+        "token_prefix=%s... token_is_decrypted=YES",
         ebay_account_id,
         token_hash,
         token_result.source,

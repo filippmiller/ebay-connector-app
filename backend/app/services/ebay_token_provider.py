@@ -267,12 +267,21 @@ async def get_valid_access_token(
     # Try property first (standard path)
     access_token_value = token.access_token
     
+    # DIAGNOSTIC: Log what property returned
+    logger.info(
+        "[token_provider] Token property returned: account_id=%s triggered_by=%s "
+        "token_prefix=%s... is_encrypted=%s",
+        account_id, triggered_by,
+        access_token_value[:20] if access_token_value else "None",
+        "YES" if (access_token_value and access_token_value.startswith("ENC:")) else "NO",
+    )
+    
     # If property returned encrypted value, try explicit decryption
     if access_token_value and access_token_value.startswith("ENC:"):
         logger.warning(
-            "[token_provider] Token property returned encrypted value, attempting explicit decryption: "
-            "account_id=%s triggered_by=%s",
-            account_id, triggered_by,
+            "[token_provider] ⚠️ Token property returned ENC:v1:... attempting explicit decryption: "
+            "account_id=%s triggered_by=%s token_prefix=%s...",
+            account_id, triggered_by, access_token_value[:20],
         )
         # Try to decrypt the raw column directly
         raw_token = token._access_token

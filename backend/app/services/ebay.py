@@ -1684,8 +1684,30 @@ class EbayService:
         # Finances API lives on apiz.ebay.com / apiz.sandbox.ebay.com, not api.ebay.com
         api_url = f"{base_url}/sell/finances/v1/transaction"
         
+        # CRITICAL: Validate token is NOT encrypted before making API call
+        if access_token.startswith("ENC:"):
+            logger.error(
+                "[fetch_transactions] ⚠️⚠️⚠️ CRITICAL: ENCRYPTED TOKEN RECEIVED! "
+                "mode=%s correlation_id=%s account_id=%s ebay_user_id=%s "
+                "token_prefix=%s... This will cause 401 errors!",
+                mode or "unknown", correlation_id, account_id, ebay_user_id,
+                access_token[:30] if access_token else "None",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Access token is encrypted (ENC:v1:...) - decryption failed. Check SECRET_KEY configuration."
+            )
+        
         # Redact token from headers for logging
         token_hash = hashlib.sha256(access_token.encode()).hexdigest()[:16] if access_token else "none"
+        
+        # DIAGNOSTIC: Log token status
+        logger.info(
+            "[fetch_transactions] Token validation: mode=%s correlation_id=%s account_id=%s "
+            "ebay_user_id=%s token_hash=%s token_prefix=%s... token_is_decrypted=YES",
+            mode or "unknown", correlation_id, account_id, ebay_user_id,
+            token_hash, access_token[:15] if access_token else "None",
+        )
         
         headers = {
             "Authorization": f"Bearer {access_token}",
