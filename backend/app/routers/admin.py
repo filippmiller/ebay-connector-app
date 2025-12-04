@@ -370,6 +370,105 @@ class InternalAccessTokenRequest(BaseModel):
     validate_with_identity_api: bool = False
 
 
+@router.post("/internal/test-fetch-token")
+async def internal_test_fetch_active_token(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """Test endpoint for fetch_active_ebay_token function.
+    
+    This endpoint allows testing the fetch_active_ebay_token function
+    to verify token decryption works correctly.
+    
+    Authentication: Requires INTERNAL_API_KEY.
+    
+    Request body:
+        {
+            "internal_api_key": "your-internal-api-key",
+            "ebay_account_id": "uuid-of-ebay-account",
+            "triggered_by": "test" (optional),
+            "api_family": "transactions" (optional)
+        }
+    
+    Returns:
+        {
+            "success": true/false,
+            "token_received": true/false,
+            "token_prefix": "v^1.1#..." or "ENC:v1:..." (first 20 chars),
+            "token_is_decrypted": true/false,
+            "token_hash": "hash...",
+            "error": "error message" (if failed)
+        }
+    """
+    expected_key = os.getenv("INTERNAL_API_KEY", "")
+    if not expected_key or payload.get("internal_api_key") != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing INTERNAL_API_KEY",
+        )
+    
+    ebay_account_id = payload.get("ebay_account_id")
+    if not ebay_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ebay_account_id is required",
+        )
+    
+    triggered_by = payload.get("triggered_by", "test")
+    api_family = payload.get("api_family", "test")
+    
+    try:
+        from app.services.ebay_token_fetcher import fetch_active_ebay_token
+        from app.utils.build_info import get_build_number
+        
+        build_number = get_build_number()
+        
+        token = await fetch_active_ebay_token(
+            db,
+            ebay_account_id,
+            triggered_by=triggered_by,
+            api_family=api_family,
+        )
+        
+        if not token:
+            return {
+                "success": False,
+                "token_received": False,
+                "token_prefix": None,
+                "token_is_decrypted": False,
+                "token_hash": None,
+                "error": "fetch_active_ebay_token returned None - check logs for details",
+                "build_number": build_number,
+            }
+        
+        token_is_decrypted = not token.startswith("ENC:")
+        token_hash = None
+        if token:
+            import hashlib
+            token_hash = hashlib.sha256(token.encode()).hexdigest()[:12]
+        
+        return {
+            "success": True,
+            "token_received": True,
+            "token_prefix": token[:20] + "..." if token else None,
+            "token_is_decrypted": token_is_decrypted,
+            "token_hash": token_hash,
+            "error": None,
+            "build_number": build_number,
+        }
+    except Exception as e:
+        logger.error(f"Error testing fetch_active_ebay_token: {e}", exc_info=True)
+        return {
+            "success": False,
+            "token_received": False,
+            "token_prefix": None,
+            "token_is_decrypted": False,
+            "token_hash": None,
+            "error": str(e),
+            "build_number": get_build_number(),
+        }
+
+
 @router.post("/internal/ebay/accounts/{account_id}/access-token")
 async def internal_get_ebay_access_token(
     account_id: str,
