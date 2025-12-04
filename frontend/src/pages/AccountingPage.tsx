@@ -50,7 +50,6 @@ function BankStatementsList() {
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const fileInputRef = useState<HTMLInputElement | null>(null);
 
   const extraParams = useMemo(() => {
     const params: Record<string, string> = {};
