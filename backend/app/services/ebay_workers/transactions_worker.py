@@ -57,11 +57,13 @@ class TransactionsWorker(BaseWorker):
 
         # Diagnostic logging
         if _DEBUG_TRANSACTIONS:
-            token_prefix = token.access_token[:20] if token.access_token else "<none>"
+            token_value = token.access_token
+            token_prefix = token_value[:20] if token_value else "<none>"
+            is_encrypted = token_value.startswith("ENC:") if token_value else False
             logger.info(
                 "[TRANSACTIONS_WORKER_DEBUG] account_id=%s ebay_user_id=%s user_id=%s "
                 "user.ebay_environment=%s resolved_environment=%s "
-                "settings.EBAY_ENVIRONMENT=%s token_prefix=%s... "
+                "settings.EBAY_ENVIRONMENT=%s token_prefix=%s... token_encrypted=%s "
                 "window_from=%s window_to=%s mode=%s correlation_id=%s",
                 account.id,
                 account.ebay_user_id,
@@ -70,11 +72,20 @@ class TransactionsWorker(BaseWorker):
                 environment,
                 settings.EBAY_ENVIRONMENT,
                 token_prefix,
+                is_encrypted,
                 window_from,
                 window_to,
                 mode,
                 correlation_id,
             )
+            
+            # CRITICAL: Warn if token is still encrypted at this point
+            if is_encrypted:
+                logger.error(
+                    "[TRANSACTIONS_WORKER_DEBUG] ⚠️ TOKEN STILL ENCRYPTED! "
+                    "account_id=%s token_prefix=%s... This will cause 401 errors!",
+                    account.id, token_prefix
+                )
 
         # Always log key environment info at INFO level for observability
         logger.info(

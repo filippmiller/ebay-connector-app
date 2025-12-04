@@ -98,15 +98,51 @@ class BaseWorker:
             
             # Get the token object for backward compatibility with execute_sync signature
             token: Optional[EbayToken] = ebay_account_service.get_token(db, ebay_account_id)
-            if not token or not token.access_token:
-                logger.warning(f"{self.api_family} worker: no token for account {ebay_account_id}")
+            if not token:
+                logger.warning(f"{self.api_family} worker: no token object for account {ebay_account_id}")
                 return None
+            
+            # CRITICAL FIX: Use the decrypted token from token_result, not token.access_token
+            # token.access_token property may return ENC:v1:... if decryption fails in worker environment
+            # token_result.access_token is guaranteed to be decrypted by get_valid_access_token()
+            decrypted_access_token = token_result.access_token
+            if not decrypted_access_token:
+                logger.warning(f"{self.api_family} worker: no decrypted access token for account {ebay_account_id}")
+                return None
+            
+            # Validate that token is actually decrypted (not ENC:...)
+            if decrypted_access_token.startswith("ENC:"):
+                logger.error(
+                    f"{self.api_family} worker: token still encrypted after get_valid_access_token()! "
+                    f"account={ebay_account_id} token_hash={token_result.token_hash}. "
+                    f"This indicates a decryption failure - check SECRET_KEY/JWT_SECRET in worker environment."
+                )
+                return None
+            
+            # CRITICAL: Override the token object's _access_token with the decrypted value
+            # This ensures that when execute_sync() accesses token.access_token, it gets the decrypted token
+            # We bypass the property setter and set the internal field directly
+            # The property getter will return this value as-is since it doesn't start with ENC:
+            token._access_token = decrypted_access_token
+            
+            # Verify that token.access_token now returns the decrypted value
+            # (property will call crypto.decrypt, which returns non-ENC values as-is)
+            verified_token = token.access_token
+            if verified_token != decrypted_access_token:
+                logger.warning(
+                    f"[{self.api_family}_worker] Token property mismatch! "
+                    f"account={ebay_account_id} "
+                    f"token_result.access_token starts with: {decrypted_access_token[:10] if decrypted_access_token else 'None'}... "
+                    f"token.access_token starts with: {verified_token[:10] if verified_token else 'None'}..."
+                )
             
             # Log token info for debugging (never log raw token)
             logger.info(
                 f"[{self.api_family}_worker] Token retrieved: account={ebay_account_id} "
                 f"source={token_result.source} token_hash={token_result.token_hash} "
-                f"environment={token_result.environment} triggered_by={triggered_by}"
+                f"environment={token_result.environment} triggered_by={triggered_by} "
+                f"token_decrypted={'yes' if not decrypted_access_token.startswith('ENC:') else 'NO - STILL ENCRYPTED!'} "
+                f"token_prefix={decrypted_access_token[:10] if decrypted_access_token else 'None'}..."
             )
 
             ebay_user_id = account.ebay_user_id or "unknown"
@@ -196,6 +232,9 @@ class BaseWorker:
             start_time = time.time()
 
             try:
+                # CRITICAL: At this point, token._access_token has been set to the decrypted value
+                # from token_result.access_token. The property token.access_token will now return
+                # the decrypted token (crypto.decrypt() returns values that don't start with ENC: as-is)
                 stats = await self.execute_sync(
                     db, account, token, run_id, sync_run_id, from_iso, to_iso
                 )
