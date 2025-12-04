@@ -6,7 +6,8 @@ camera settings, model paths, OCR settings, and Supabase configuration.
 """
 
 from pydantic_settings import BaseSettings
-from typing import Optional, List
+from pydantic import field_validator
+from typing import Optional, List, Union
 from enum import Enum
 
 
@@ -51,9 +52,17 @@ class CVSettings(BaseSettings):
     
     # OCR Settings
     ocr_engine: OCREngine = OCREngine.EASYOCR
-    ocr_languages: List[str] = ["en", "ru"]
+    ocr_languages: Union[List[str], str] = ["en", "ru"]
     ocr_confidence_threshold: float = 0.3
     ocr_gpu: bool = False
+    
+    @field_validator('ocr_languages', mode='before')
+    @classmethod
+    def parse_ocr_languages(cls, v):
+        """Parse comma-separated string to list"""
+        if isinstance(v, str):
+            return [lang.strip() for lang in v.split(',') if lang.strip()]
+        return v
     
     # Text Detection Settings
     text_detection_enabled: bool = True
