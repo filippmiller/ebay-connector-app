@@ -92,23 +92,45 @@ class BaseWorker:
         Returns:
             Run ID if started successfully, None if skipped
         """
+        from app.utils.build_info import get_build_number
+        build_number = get_build_number()
+        
+        logger.info(
+            f"[{self.api_family}_worker] run_for_account START: account_id={ebay_account_id} "
+            f"triggered_by={triggered_by} BUILD={build_number}"
+        )
+        
         self._triggered_by = triggered_by
         db: Session = SessionLocal()
         try:
             account: Optional[EbayAccount] = ebay_account_service.get_account(db, ebay_account_id)
             if not account or not account.is_active:
-                logger.warning(f"{self.api_family} worker: account {ebay_account_id} not found or inactive")
+                logger.warning(
+                    f"[{self.api_family}_worker] account {ebay_account_id} not found or inactive BUILD={build_number}"
+                )
                 return None
 
             # CRITICAL: Use the unified token fetcher - single source of truth
             # This guarantees we always get a decrypted token (v^1.1#...), never ENC:v1:...
             from app.services.ebay_token_fetcher import fetch_active_ebay_token
             
+            logger.info(
+                f"[{self.api_family}_worker] Calling fetch_active_ebay_token: account_id={ebay_account_id} "
+                f"triggered_by={triggered_by} BUILD={build_number}"
+            )
+            
             decrypted_access_token = await fetch_active_ebay_token(
                 db,
                 ebay_account_id,
                 triggered_by=triggered_by,
                 api_family=self.api_family,
+            )
+            
+            logger.info(
+                f"[{self.api_family}_worker] fetch_active_ebay_token returned: account_id={ebay_account_id} "
+                f"token_received={'YES' if decrypted_access_token else 'NO'} "
+                f"token_prefix={decrypted_access_token[:20] if decrypted_access_token else 'None'}... "
+                f"BUILD={build_number}"
             )
             
             if not decrypted_access_token:
