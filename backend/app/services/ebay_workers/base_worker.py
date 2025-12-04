@@ -139,6 +139,13 @@ class BaseWorker:
             from_iso = None
             to_iso = None
 
+            # DIAGNOSTIC: Log cursor value from state
+            logger.info(
+                f"[{self.api_family}_worker] DIAGNOSTIC state: account={ebay_account_id} "
+                f"cursor_value={state.cursor_value!r} triggered_by={triggered_by} "
+                f"overlap_minutes={self.overlap_minutes} initial_backfill_days={self.initial_backfill_days}"
+            )
+
             # If overlap_minutes is None, it means full sync (no window)
             if self.overlap_minutes is not None:
                 window_from, window_to = compute_sync_window(
@@ -147,13 +154,31 @@ class BaseWorker:
                     initial_backfill_days=self.initial_backfill_days,
                 )
 
+                # DIAGNOSTIC: Log window BEFORE cap
+                window_seconds = (window_to - window_from).total_seconds()
+                logger.info(
+                    f"[{self.api_family}_worker] DIAGNOSTIC window BEFORE cap: "
+                    f"from={window_from.isoformat()} to={window_to.isoformat()} "
+                    f"duration_seconds={window_seconds} triggered_by={triggered_by}"
+                )
+
                 MAX_WINDOW_HOURS = 24
                 if (window_to - window_from).total_seconds() > (MAX_WINDOW_HOURS * 3600):
+                    logger.info(
+                        f"[{self.api_family}_worker] DIAGNOSTIC applying 24h cap: "
+                        f"old_to={window_to.isoformat()} new_to={(window_from + timedelta(hours=MAX_WINDOW_HOURS)).isoformat()}"
+                    )
                     window_to = window_from + timedelta(hours=MAX_WINDOW_HOURS)
 
                 # Format timestamps as proper UTC ISO8601 strings ending with "Z".
                 from_iso = window_from.replace(microsecond=0).isoformat().replace("+00:00", "Z")
                 to_iso = window_to.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+                # DIAGNOSTIC: Log final window values
+                logger.info(
+                    f"[{self.api_family}_worker] DIAGNOSTIC window AFTER cap: "
+                    f"from_iso={from_iso} to_iso={to_iso} triggered_by={triggered_by}"
+                )
 
             log_start(
                 db,
