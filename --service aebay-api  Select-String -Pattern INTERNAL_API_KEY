@@ -1,0 +1,53 @@
+[33mcommit 5e52b743e3f6e4e851a572e30850f70144d820f3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: YOUR NAME <filippmiller@gmail.com>
+Date:   Fri Dec 5 00:48:01 2025 +0300
+
+    cursor: Add more diagnostic logging to BaseWorker token handling
+
+[1mdiff --git a/backend/app/services/ebay_workers/base_worker.py b/backend/app/services/ebay_workers/base_worker.py[m
+[1mindex 46cb03c..9f08b07 100644[m
+[1m--- a/backend/app/services/ebay_workers/base_worker.py[m
+[1m+++ b/backend/app/services/ebay_workers/base_worker.py[m
+[36m@@ -152,6 +152,12 @@[m [mclass BaseWorker:[m
+             # The property getter will return this value as-is since it doesn't start with ENC:[m
+             token._access_token = decrypted_access_token[m
+             [m
+[32m+[m[32m            logger.info([m
+[32m+[m[32m                f"[{self.api_family}_worker] Token override: account_id={ebay_account_id} "[m
+[32m+[m[32m                f"decrypted_token_prefix={decrypted_access_token[:20] if decrypted_access_token else 'None'}... "[m
+[32m+[m[32m                f"BUILD={build_number}"[m
+[32m+[m[32m            )[m
+[32m+[m[41m            [m
+             # Verify that token.access_token now returns the decrypted value[m
+             verified_token = token.access_token[m
+             if verified_token != decrypted_access_token:[m
+[36m@@ -159,7 +165,8 @@[m [mclass BaseWorker:[m
+                     f"[{self.api_family}_worker] ⚠️ Token property mismatch after override! "[m
+                     f"account={ebay_account_id} "[m
+                     f"decrypted_access_token starts with: {decrypted_access_token[:15] if decrypted_access_token else 'None'}... "[m
+[31m-                    f"token.access_token starts with: {verified_token[:15] if verified_token else 'None'}..."[m
+[32m+[m[32m                    f"token.access_token starts with: {verified_token[:15] if verified_token else 'None'}... "[m
+[32m+[m[32m                    f"BUILD={build_number}"[m
+                 )[m
+                 # Force it again[m
+                 token._access_token = decrypted_access_token[m
+[36m@@ -168,11 +175,17 @@[m [mclass BaseWorker:[m
+             final_check = token.access_token[m
+             if final_check and final_check.startswith("ENC:"):[m
+                 logger.error([m
+[31m-                    f"[{self.api_family}_worker] ⚠️ TOKEN STILL ENCRYPTED AFTER ALL FIXES! "[m
+[32m+[m[32m                    f"[{self.api_family}_worker] ⚠️⚠️⚠️ TOKEN STILL ENCRYPTED AFTER ALL FIXES! "[m
+                     f"account={ebay_account_id} token_prefix={final_check[:20]}. "[m
+[31m-                    f"This should never happen - crypto.decrypt() may be broken."[m
+[32m+[m[32m                    f"This should never happen - crypto.decrypt() may be broken or SECRET_KEY mismatch. "[m
+[32m+[m[32m                    f"BUILD={build_number}"[m
+                 )[m
+                 return None[m
+[32m+[m[41m            [m
+[32m+[m[32m            logger.info([m
+[32m+[m[32m                f"[{self.api_family}_worker] Token validation PASSED: account_id={ebay_account_id} "[m
+[32m+[m[32m                f"token_prefix={final_check[:20] if final_check else 'None'}... BUILD={build_number}"[m
+[32m+[m[32m            )[m
+ [m
+             ebay_user_id = account.ebay_user_id or "unknown"[m
+ [m
