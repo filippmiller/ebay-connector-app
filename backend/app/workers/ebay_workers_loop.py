@@ -57,11 +57,89 @@ def _get_or_create_worker_row(db: SessionLocal) -> BackgroundWorker | None:
 
 
 async def run_ebay_workers_once() -> None:
-    """Run one full workers cycle for all active accounts."""
+    """Run one full workers cycle for all active accounts.
+    
+    Uses the same code path as the manual "Run Now" button to ensure
+    consistent behavior.
+    """
+    from app.services.ebay_workers.orders_worker import run_orders_worker_for_account
+    from app.services.ebay_workers.transactions_worker import run_transactions_worker_for_account
+    from app.services.ebay_workers.offers_worker import run_offers_worker_for_account
+    from app.services.ebay_workers.messages_worker import run_messages_worker_for_account
+    from app.services.ebay_workers.active_inventory_worker import run_active_inventory_worker_for_account
+    from app.services.ebay_workers.cases_worker import run_cases_worker_for_account
+    from app.services.ebay_workers.finances_worker import run_finances_worker_for_account
+    from app.services.ebay_workers.purchases_worker import run_purchases_worker_for_account
+    from app.services.ebay_workers.inquiries_worker import run_inquiries_worker_for_account
+    from app.services.ebay_workers.returns_worker import run_returns_worker_for_account
+    from app.services.ebay_workers.state import are_workers_globally_enabled
+    from app.models_sqlalchemy.ebay_workers import EbaySyncState
+    from app.models_sqlalchemy.models import EbayAccount
+    from app.services.ebay_token_refresh_service import run_token_refresh_job
+    
+    db = SessionLocal()
     try:
-        await run_cycle_for_all_accounts()
+        logger.info("Running workers cycle (manual code path)...")
+        
+        # 1. Refresh tokens first
+        await run_token_refresh_job(db, triggered_by="loop_scheduler")
+        
+        # 2. Check if workers are globally enabled
+        if not are_workers_globally_enabled(db):
+            logger.info("Workers globally disabled - skipping cycle")
+            return
+        
+        # 3. Get all active accounts
+        accounts = db.query(EbayAccount).filter(EbayAccount.is_active == True).all()
+        if not accounts:
+            logger.info("No active accounts found - skipping cycle")
+            return
+        
+        logger.info(f"Running workers for {len(accounts)} accounts...")
+        
+        # 4. Run workers for each account using the SAME pattern as manual "Run Now"
+        for account in accounts:
+            account_id = account.id
+            
+            # Map of API families to worker functions
+            worker_map = {
+                "orders": run_orders_worker_for_account,
+                "transactions": run_transactions_worker_for_account,
+                "offers": run_offers_worker_for_account,
+                "messages": run_messages_worker_for_account,
+                "active_inventory": run_active_inventory_worker_for_account,
+                "buyer": run_purchases_worker_for_account,
+                "cases": run_cases_worker_for_account,
+                "inquiries": run_inquiries_worker_for_account,
+                "finances": run_finances_worker_for_account,
+                "returns": run_returns_worker_for_account,
+            }
+            
+            for api_family, worker_func in worker_map.items():
+                # Check if this worker is enabled for this account
+                state = db.query(EbaySyncState).filter(
+                    EbaySyncState.ebay_account_id == account_id,
+                    EbaySyncState.api_family == api_family,
+                ).first()
+                
+                if not state or not state.enabled:
+                    continue
+                
+                try:
+                    # Call worker with triggered_by="manual" to use the exact same code path
+                    # that works when users click "Run Now"
+                    run_id = await worker_func(account_id, triggered_by="manual")
+                    if run_id:
+                        logger.info(f"Worker {api_family} started for {account.house_name}: run_id={run_id}")
+                except Exception as e:
+                    logger.error(f"Worker {api_family} failed for account {account_id}: {e}", exc_info=True)
+        
+        logger.info("Workers cycle completed")
+        
     except Exception as exc:
         logger.error("eBay workers cycle failed: %s", exc, exc_info=True)
+    finally:
+        db.close()
 
 
 async def run_ebay_workers_loop(interval_seconds: int = 300) -> None:

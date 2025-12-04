@@ -141,8 +141,8 @@ async def internal_run_ebay_workers(
 ):
     """Internal endpoint for the worker to trigger the main eBay workers loop.
     
-    This allows the worker service to act as a proxy, ensuring all API calls
-    originate from the Web App environment (correct keys/decryption).
+    This uses the SAME code path as the manual "Run Now" button to ensure
+    consistent behavior between manual and automatic runs.
     """
     expected_key = os.getenv("INTERNAL_API_KEY", "")
     if not expected_key or payload.internal_api_key != expected_key:
@@ -151,12 +151,90 @@ async def internal_run_ebay_workers(
             detail="invalid_internal_api_key"
         )
     
-    from app.services.ebay_workers import run_cycle_for_all_accounts
+    # Import worker functions - same as manual "Run Now" endpoint
+    from app.services.ebay_workers.orders_worker import run_orders_worker_for_account
+    from app.services.ebay_workers.transactions_worker import run_transactions_worker_for_account
+    from app.services.ebay_workers.offers_worker import run_offers_worker_for_account
+    from app.services.ebay_workers.messages_worker import run_messages_worker_for_account
+    from app.services.ebay_workers.active_inventory_worker import run_active_inventory_worker_for_account
+    from app.services.ebay_workers.cases_worker import run_cases_worker_for_account
+    from app.services.ebay_workers.finances_worker import run_finances_worker_for_account
+    from app.services.ebay_workers.purchases_worker import run_purchases_worker_for_account
+    from app.services.ebay_workers.inquiries_worker import run_inquiries_worker_for_account
+    from app.services.ebay_workers.returns_worker import run_returns_worker_for_account
+    from app.services.ebay_workers.state import are_workers_globally_enabled, get_or_create_sync_state
+    from app.models_sqlalchemy.ebay_workers import EbaySyncState
+    from app.services.ebay_token_refresh_service import run_token_refresh_job
     
     try:
-        logger.info("Internal trigger: Running cycle for all accounts...")
-        await run_cycle_for_all_accounts()
-        return {"status": "ok"}
+        logger.info("Internal trigger: Running workers via manual code path...")
+        
+        # 1. Refresh tokens first (same as old scheduler)
+        await run_token_refresh_job(db, triggered_by="internal_scheduler")
+        
+        # 2. Check if workers are globally enabled
+        if not are_workers_globally_enabled(db):
+            logger.info("Workers globally disabled - skipping")
+            return {"status": "skipped", "reason": "workers_disabled"}
+        
+        # 3. Get all active accounts
+        accounts = db.query(EbayAccount).filter(EbayAccount.is_active == True).all()
+        if not accounts:
+            logger.info("No active accounts found")
+            return {"status": "ok", "accounts_processed": 0}
+        
+        results = []
+        
+        # 4. Run workers for each account using the SAME pattern as manual "Run Now"
+        for account in accounts:
+            account_id = account.id
+            account_results = {"account_id": account_id, "house_name": account.house_name, "workers": []}
+            
+            # Map of API families to worker functions
+            worker_map = {
+                "orders": run_orders_worker_for_account,
+                "transactions": run_transactions_worker_for_account,
+                "offers": run_offers_worker_for_account,
+                "messages": run_messages_worker_for_account,
+                "active_inventory": run_active_inventory_worker_for_account,
+                "buyer": run_purchases_worker_for_account,
+                "cases": run_cases_worker_for_account,
+                "inquiries": run_inquiries_worker_for_account,
+                "finances": run_finances_worker_for_account,
+                "returns": run_returns_worker_for_account,
+            }
+            
+            for api_family, worker_func in worker_map.items():
+                # Check if this worker is enabled for this account
+                state = db.query(EbaySyncState).filter(
+                    EbaySyncState.ebay_account_id == account_id,
+                    EbaySyncState.api_family == api_family,
+                ).first()
+                
+                if not state or not state.enabled:
+                    continue
+                
+                try:
+                    # Call worker with triggered_by="scheduler" - same as manual but marked as scheduler
+                    # Using "manual" here to match the exact code path that works
+                    run_id = await worker_func(account_id, triggered_by="manual")
+                    account_results["workers"].append({
+                        "api_family": api_family,
+                        "status": "started" if run_id else "skipped",
+                        "run_id": run_id,
+                    })
+                except Exception as e:
+                    logger.error(f"Worker {api_family} failed for account {account_id}: {e}")
+                    account_results["workers"].append({
+                        "api_family": api_family,
+                        "status": "error",
+                        "error": str(e)[:100],
+                    })
+            
+            results.append(account_results)
+        
+        return {"status": "ok", "accounts_processed": len(accounts), "results": results}
+        
     except Exception as e:
         logger.error(f"Internal workers run failed: {e}", exc_info=True)
         raise HTTPException(
