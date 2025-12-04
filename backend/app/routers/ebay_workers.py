@@ -310,37 +310,38 @@ async def run_worker_once(
 
     # Dispatch by API family with robust error handling so the client always
     # gets a structured response instead of a generic 5xx/502.
+    # All manual runs are marked as triggered_by="manual" for consistent logging.
     try:
         if api == "orders":
-            run_id = await run_orders_worker_for_account(account_id)
+            run_id = await run_orders_worker_for_account(account_id, triggered_by="manual")
             api_family = "orders"
         elif api == "transactions":
-            run_id = await run_transactions_worker_for_account(account_id)
+            run_id = await run_transactions_worker_for_account(account_id, triggered_by="manual")
             api_family = "transactions"
         elif api == "offers":
-            run_id = await run_offers_worker_for_account(account_id)
+            run_id = await run_offers_worker_for_account(account_id, triggered_by="manual")
             api_family = "offers"
         elif api == "messages":
-            run_id = await run_messages_worker_for_account(account_id)
+            run_id = await run_messages_worker_for_account(account_id, triggered_by="manual")
             api_family = "messages"
         elif api == "active_inventory":
-            run_id = await run_active_inventory_worker_for_account(account_id)
+            run_id = await run_active_inventory_worker_for_account(account_id, triggered_by="manual")
             api_family = "active_inventory"
         elif api == "cases":
-            run_id = await run_cases_worker_for_account(account_id)
+            run_id = await run_cases_worker_for_account(account_id, triggered_by="manual")
             api_family = "cases"
         elif api == "inquiries":
-            run_id = await run_inquiries_worker_for_account(account_id)
+            run_id = await run_inquiries_worker_for_account(account_id, triggered_by="manual")
             api_family = "inquiries"
         elif api == "finances":
-            run_id = await run_finances_worker_for_account(account_id)
+            run_id = await run_finances_worker_for_account(account_id, triggered_by="manual")
             api_family = "finances"
         elif api == "buyer":
-            run_id = await run_purchases_worker_for_account(account_id)
+            run_id = await run_purchases_worker_for_account(account_id, triggered_by="manual")
             api_family = "buyer"
         elif api == "returns":
             from app.services.ebay_workers.returns_worker import run_returns_worker_for_account
-            run_id = await run_returns_worker_for_account(account_id)
+            run_id = await run_returns_worker_for_account(account_id, triggered_by="manual")
             api_family = "returns"
         else:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported api_family")

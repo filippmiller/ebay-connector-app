@@ -43,7 +43,10 @@ class CasesWorker(BaseWorker):
         return result
 
 
-async def run_cases_worker_for_account(ebay_account_id: str) -> Optional[str]:
+async def run_cases_worker_for_account(
+    ebay_account_id: str,
+    triggered_by: str = "unknown",
+) -> Optional[str]:
     """Run Cases worker for a specific eBay account."""
     worker = CasesWorker()
-    return await worker.run_for_account(ebay_account_id)
+    return await worker.run_for_account(ebay_account_id, triggered_by=triggered_by)

@@ -47,7 +47,10 @@ class OrdersWorker(BaseWorker):
         return result
 
 
-async def run_orders_worker_for_account(ebay_account_id: str) -> Optional[str]:
+async def run_orders_worker_for_account(
+    ebay_account_id: str,
+    triggered_by: str = "unknown",
+) -> Optional[str]:
     """Run Orders sync worker for a specific eBay account."""
     worker = OrdersWorker()
-    return await worker.run_for_account(ebay_account_id)
+    return await worker.run_for_account(ebay_account_id, triggered_by=triggered_by)

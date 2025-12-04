@@ -98,7 +98,15 @@ class TransactionsWorker(BaseWorker):
         return result
 
 
-async def run_transactions_worker_for_account(ebay_account_id: str) -> Optional[str]:
-    """Run Transactions sync worker for a specific eBay account."""
+async def run_transactions_worker_for_account(
+    ebay_account_id: str,
+    triggered_by: str = "unknown",
+) -> Optional[str]:
+    """Run Transactions sync worker for a specific eBay account.
+    
+    Args:
+        ebay_account_id: UUID of the eBay account
+        triggered_by: How this run was triggered ("manual", "scheduler", or "unknown")
+    """
     worker = TransactionsWorker()
-    return await worker.run_for_account(ebay_account_id)
+    return await worker.run_for_account(ebay_account_id, triggered_by=triggered_by)

@@ -99,35 +99,38 @@ async def run_cycle_for_account(ebay_account_id: str) -> None:
             else:
                 logger.info(f"Skipping {api_family} worker for account {ebay_account_id} (disabled)")
 
+        # All workers are triggered by scheduler in this context
+        triggered_by = "scheduler"
+        
         # 1. Orders
-        _add_if_enabled("orders", run_orders_worker_for_account)
+        _add_if_enabled("orders", lambda aid: run_orders_worker_for_account(aid, triggered_by=triggered_by))
         
         # 2. Transactions
-        _add_if_enabled("transactions", run_transactions_worker_for_account)
+        _add_if_enabled("transactions", lambda aid: run_transactions_worker_for_account(aid, triggered_by=triggered_by))
         
         # 3. Offers
-        _add_if_enabled("offers", run_offers_worker_for_account)
+        _add_if_enabled("offers", lambda aid: run_offers_worker_for_account(aid, triggered_by=triggered_by))
         
         # 4. Messages
-        _add_if_enabled("messages", run_messages_worker_for_account)
+        _add_if_enabled("messages", lambda aid: run_messages_worker_for_account(aid, triggered_by=triggered_by))
         
         # 5. Active Inventory
-        _add_if_enabled("active_inventory", run_active_inventory_worker_for_account)
+        _add_if_enabled("active_inventory", lambda aid: run_active_inventory_worker_for_account(aid, triggered_by=triggered_by))
         
         # 6. Buyer/Purchases
-        _add_if_enabled("buyer", run_purchases_worker_for_account)
+        _add_if_enabled("buyer", lambda aid: run_purchases_worker_for_account(aid, triggered_by=triggered_by))
         
         # 7. Cases
-        _add_if_enabled("cases", run_cases_worker_for_account)
+        _add_if_enabled("cases", lambda aid: run_cases_worker_for_account(aid, triggered_by=triggered_by))
         
         # 8. Inquiries
-        _add_if_enabled("inquiries", run_inquiries_worker_for_account)
+        _add_if_enabled("inquiries", lambda aid: run_inquiries_worker_for_account(aid, triggered_by=triggered_by))
         
         # 9. Finances
-        _add_if_enabled("finances", run_finances_worker_for_account)
+        _add_if_enabled("finances", lambda aid: run_finances_worker_for_account(aid, triggered_by=triggered_by))
         
         # 10. Returns
-        _add_if_enabled("returns", run_returns_worker_for_account)
+        _add_if_enabled("returns", lambda aid: run_returns_worker_for_account(aid, triggered_by=triggered_by))
 
         if tasks:
             import asyncio

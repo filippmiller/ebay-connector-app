@@ -157,6 +157,96 @@ async def internal_sync_offers(
     return {"status": "ok", "results": results}
 
 
+class InternalAccessTokenRequest(BaseModel):
+    """Request body for /internal/ebay/accounts/{account_id}/access-token."""
+    internal_api_key: str
+    api_family: Optional[str] = None
+    force_refresh: bool = False
+    validate_with_identity_api: bool = False
+
+
+@router.post("/internal/ebay/accounts/{account_id}/access-token")
+async def internal_get_ebay_access_token(
+    account_id: str,
+    payload: InternalAccessTokenRequest,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint for workers to obtain a valid eBay access token.
+    
+    This is the single source of truth for all eBay workers (both manual "Run now"
+    and background scheduler) to get tokens. It uses the unified EbayTokenProvider
+    to ensure consistent token handling:
+    
+    1. Loads token from DB
+    2. Checks expiry (refreshes if near expiry or force_refresh=True)
+    3. Optionally validates via Identity API
+    4. Returns a ready-to-use access token
+    
+    Authentication: Requires INTERNAL_API_KEY.
+    
+    Request body:
+        - internal_api_key: Required for authentication
+        - api_family: Optional label for logging (e.g., "transactions", "orders")
+        - force_refresh: If True, refresh token even if not near expiry
+        - validate_with_identity_api: If True, validate token via eBay Identity API
+    
+    Response (success):
+        - success: true
+        - access_token: The valid access token (masked in logs, full in response)
+        - environment: "production" or "sandbox"
+        - expires_at: ISO timestamp when token expires
+        - source: "existing" or "refreshed"
+        - token_hash: SHA256 hash prefix for debugging
+        - account_id, ebay_user_id: Account identifiers
+    
+    Response (failure):
+        - success: false
+        - error_code: Short error code
+        - error_message: Human-readable error description
+    """
+    expected_key = os.getenv("INTERNAL_API_KEY", "")
+    if not expected_key or payload.internal_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_internal_api_key"
+        )
+    
+    from app.services.ebay_token_provider import get_valid_access_token
+    
+    result = await get_valid_access_token(
+        db,
+        account_id,
+        api_family=payload.api_family,
+        force_refresh=payload.force_refresh,
+        validate_with_identity_api=payload.validate_with_identity_api,
+        triggered_by="internal_api",
+    )
+    
+    if not result.success:
+        # Return 200 with structured error (not 4xx) so caller can handle gracefully
+        return {
+            "success": False,
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+            "account_id": result.account_id,
+            "ebay_user_id": result.ebay_user_id,
+            "environment": result.environment,
+        }
+    
+    return {
+        "success": True,
+        "access_token": result.access_token,
+        "environment": result.environment,
+        "expires_at": result.expires_at.isoformat() if result.expires_at else None,
+        "source": result.source,
+        "token_db_id": result.token_db_id,
+        "token_hash": result.token_hash,
+        "account_id": result.account_id,
+        "ebay_user_id": result.ebay_user_id,
+        "api_family": payload.api_family,
+    }
+
+
 @router.get("/notifications/status")
 async def get_notifications_status(
     current_user: User = Depends(admin_required),

@@ -24,3 +24,9 @@
 2025-12-04T14:42:00+03:00 - Bank Statement Upload Refactor: Enhanced PDF parser with metadata extraction (bank_name, account, period, currency via OpenAI)
 2025-12-04T14:42:00+03:00 - Backend: Made bank_name optional in /api/accounting/bank-statements, auto-extract from PDF
 2025-12-04T14:42:00+03:00 - Frontend: Simplified AccountingPage upload form - removed all manual fields, now just file picker + upload button with status feedback
+2025-12-04T18:30:00+03:00 - eBay Token Provider: Created unified EbayTokenProvider (backend/app/services/ebay_token_provider.py)
+2025-12-04T18:30:00+03:00 - eBay Token Provider: Added internal HTTP endpoint POST /api/admin/internal/ebay/accounts/{account_id}/access-token
+2025-12-04T18:30:00+03:00 - eBay Workers Refactor: Updated all 10 workers to use unified token provider with triggered_by parameter
+2025-12-04T18:30:00+03:00 - eBay Workers Refactor: Updated scheduler.py to pass triggered_by="scheduler" to all workers
+2025-12-04T18:30:00+03:00 - eBay Workers Refactor: Updated ebay_workers.py router to pass triggered_by="manual" for Run now
+2025-12-04T18:30:00+03:00 - Documentation: Created docs/worker-token-endpoint-20251204.md with full implementation details

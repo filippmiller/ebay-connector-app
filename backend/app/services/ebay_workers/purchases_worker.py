@@ -193,7 +193,10 @@ class PurchasesWorker(BaseWorker):
             event_logger.close()
 
 
-async def run_purchases_worker_for_account(ebay_account_id: str) -> Optional[str]:
+async def run_purchases_worker_for_account(
+    ebay_account_id: str,
+    triggered_by: str = "unknown",
+) -> Optional[str]:
     """Sync BUYING purchases for a single eBay account into ebay_buyer."""
     worker = PurchasesWorker()
-    return await worker.run_for_account(ebay_account_id)
+    return await worker.run_for_account(ebay_account_id, triggered_by=triggered_by)

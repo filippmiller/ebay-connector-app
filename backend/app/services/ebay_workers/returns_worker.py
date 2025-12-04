@@ -26,11 +26,18 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def run_returns_worker_for_account(ebay_account_id: str) -> Optional[str]:
+async def run_returns_worker_for_account(
+    ebay_account_id: str,
+    triggered_by: str = "unknown",
+) -> Optional[str]:
     """Run Post-Order Returns worker for a specific eBay account.
 
     This worker syncs Post-Order returns via
     ``EbayService.sync_postorder_returns`` into the ebay_returns table.
+    
+    Args:
+        ebay_account_id: UUID of the eBay account
+        triggered_by: How this run was triggered ("manual", "scheduler", or "unknown")
     """
 
     db: Session = SessionLocal()
@@ -40,10 +47,32 @@ async def run_returns_worker_for_account(ebay_account_id: str) -> Optional[str]:
             logger.warning(f"Returns worker: account {ebay_account_id} not found or inactive")
             return None
 
+        # Use the unified token provider
+        from app.services.ebay_token_provider import get_valid_access_token
+        
+        token_result = await get_valid_access_token(
+            db,
+            ebay_account_id,
+            api_family="returns",
+            triggered_by=f"worker_{triggered_by}",
+        )
+        
+        if not token_result.success:
+            logger.warning(
+                f"Returns worker: token retrieval failed for account {ebay_account_id}: "
+                f"{token_result.error_code} - {token_result.error_message}"
+            )
+            return None
+
         token: Optional[EbayToken] = ebay_account_service.get_token(db, ebay_account_id)
         if not token or not token.access_token:
             logger.warning(f"Returns worker: no token for account {ebay_account_id}")
             return None
+        
+        logger.info(
+            f"[returns_worker] Token retrieved: account={ebay_account_id} "
+            f"source={token_result.source} token_hash={token_result.token_hash} triggered_by={triggered_by}"
+        )
 
         ebay_user_id = account.ebay_user_id or "unknown"
 

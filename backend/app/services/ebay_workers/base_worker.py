@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Literal
 
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,8 @@ class BaseWorker:
         self.overlap_minutes = overlap_minutes
         self.initial_backfill_days = initial_backfill_days
         self.limit = limit
+        # Track how this worker was triggered for logging
+        self._triggered_by: Literal["manual", "scheduler", "unknown"] = "unknown"
 
     def _now_utc(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -53,7 +55,21 @@ class BaseWorker:
         """
         raise NotImplementedError
 
-    async def run_for_account(self, ebay_account_id: str) -> Optional[str]:
+    async def run_for_account(
+        self,
+        ebay_account_id: str,
+        triggered_by: Literal["manual", "scheduler", "unknown"] = "unknown",
+    ) -> Optional[str]:
+        """Run the worker for a specific eBay account.
+        
+        Args:
+            ebay_account_id: UUID of the eBay account
+            triggered_by: How this run was triggered ("manual", "scheduler", or "unknown")
+        
+        Returns:
+            Run ID if started successfully, None if skipped
+        """
+        self._triggered_by = triggered_by
         db: Session = SessionLocal()
         try:
             account: Optional[EbayAccount] = ebay_account_service.get_account(db, ebay_account_id)
@@ -61,10 +77,37 @@ class BaseWorker:
                 logger.warning(f"{self.api_family} worker: account {ebay_account_id} not found or inactive")
                 return None
 
+            # Use the unified token provider instead of direct DB access
+            from app.services.ebay_token_provider import get_valid_access_token
+            
+            token_result = await get_valid_access_token(
+                db,
+                ebay_account_id,
+                api_family=self.api_family,
+                force_refresh=False,
+                validate_with_identity_api=False,
+                triggered_by=f"worker_{triggered_by}",
+            )
+            
+            if not token_result.success:
+                logger.warning(
+                    f"{self.api_family} worker: token retrieval failed for account {ebay_account_id}: "
+                    f"{token_result.error_code} - {token_result.error_message}"
+                )
+                return None
+            
+            # Get the token object for backward compatibility with execute_sync signature
             token: Optional[EbayToken] = ebay_account_service.get_token(db, ebay_account_id)
             if not token or not token.access_token:
                 logger.warning(f"{self.api_family} worker: no token for account {ebay_account_id}")
                 return None
+            
+            # Log token info for debugging (never log raw token)
+            logger.info(
+                f"[{self.api_family}_worker] Token retrieved: account={ebay_account_id} "
+                f"source={token_result.source} token_hash={token_result.token_hash} "
+                f"environment={token_result.environment} triggered_by={triggered_by}"
+            )
 
             ebay_user_id = account.ebay_user_id or "unknown"
 
