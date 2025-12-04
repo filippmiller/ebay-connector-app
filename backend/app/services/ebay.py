@@ -3576,7 +3576,39 @@ class EbayService:
         """
         from app.services.ebay_database import ebay_db
         from app.services.sync_event_logger import SyncEventLogger
+        from app.utils.build_info import get_build_number
         import time
+        import traceback
+        
+        # CRITICAL: Log entry point and token status
+        build_number = get_build_number()
+        token_is_encrypted = access_token.startswith("ENC:") if access_token else False
+        token_prefix = access_token[:30] if access_token else "None"
+        caller_stack = "".join(traceback.format_stack()[-3:-1])  # Last 2 frames before this
+        
+        logger.error(
+            "[sync_all_transactions] ENTRY POINT: user_id=%s ebay_account_id=%s ebay_user_id=%s "
+            "run_id=%s mode=%s correlation_id=%s token_prefix=%s... token_is_encrypted=%s BUILD=%s",
+            user_id, ebay_account_id, ebay_user_id, run_id, mode, correlation_id,
+            token_prefix, token_is_encrypted, build_number
+        )
+        logger.error(
+            "[sync_all_transactions] CALLER STACK:\n%s",
+            caller_stack
+        )
+        
+        # CRITICAL: Fail immediately if token is encrypted
+        if token_is_encrypted:
+            logger.error(
+                "[sync_all_transactions] ⚠️⚠️⚠️ CRITICAL: ENCRYPTED TOKEN RECEIVED! "
+                "user_id=%s ebay_account_id=%s run_id=%s mode=%s token_prefix=%s... "
+                "This should NEVER happen - BaseWorker.run_for_account() should have decrypted it! BUILD=%s",
+                user_id, ebay_account_id, run_id, mode, token_prefix, build_number
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Access token is encrypted (ENC:v1:...) - decryption failed. Check SECRET_KEY configuration."
+            )
 
         # Use provided run_id if available, otherwise create new one
         event_logger = SyncEventLogger(user_id, 'transactions', run_id=run_id)
