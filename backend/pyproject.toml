@@ -31,14 +31,15 @@ loguru = "^0.7.2"
 supabase = "^2.10.0"
 openai = "^1.0.0"
 numpy = "^1.26.0"
+opencv-python-headless = "^4.10.0"
+pillow = "^10.0.0"
 
-# Computer Vision Module Dependencies (optional - heavy packages)
-opencv-python = {version = "^4.10.0", optional = true}
+# Computer Vision Module Dependencies (optional - heavy packages for GPU/advanced features)
 ultralytics = {version = "^8.3.0", optional = true}
 easyocr = {version = "^1.7.2", optional = true}
 
 [tool.poetry.extras]
-cv = ["opencv-python", "ultralytics", "easyocr"]
+cv-full = ["ultralytics", "easyocr"]
 
 [build-system]
 requires = ["poetry-core"]
