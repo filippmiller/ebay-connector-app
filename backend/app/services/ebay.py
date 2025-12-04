@@ -1568,6 +1568,20 @@ class EbayService:
                 detail="eBay access token required"
             )
         
+        # CRITICAL: Validate token is NOT encrypted before making API call
+        if access_token.startswith("ENC:"):
+            logger.error(
+                "[get_user_identity] ⚠️⚠️⚠️ CRITICAL: ENCRYPTED TOKEN RECEIVED! "
+                "user_id=%s user_email=%s token_prefix=%s... "
+                "This will cause 401 errors! Token must be decrypted before calling Identity API.",
+                user_id, user_email, access_token[:30] if access_token else "None",
+            )
+            return {
+                "username": None,
+                "userId": None,
+                "error": "Access token is encrypted (ENC:v1:...) - decryption failed. Check SECRET_KEY configuration.",
+            }
+        
         # Determine the correct base URL based on environment
         target_env = environment or settings.EBAY_ENVIRONMENT
         if target_env == "sandbox":
