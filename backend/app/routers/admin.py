@@ -30,6 +30,53 @@ FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+@router.get("/debug/environment")
+async def debug_environment(db: Session = Depends(get_db)):
+    """Debug endpoint to check environment configuration.
+    
+    This helps diagnose 401 errors by showing:
+    - Current EBAY_ENVIRONMENT setting
+    - Hash of JWT_SECRET (for verifying key consistency)
+    - Token decryption test results
+    """
+    import hashlib
+    from app.utils import crypto
+    
+    # Hash the secret key (never expose the actual key!)
+    secret_key_hash = hashlib.sha256(settings.secret_key.encode()).hexdigest()[:16]
+    
+    # Test token decryption on first active account
+    test_result = {"account": None, "decryption_works": None, "error": None}
+    try:
+        account = db.query(EbayAccount).filter(EbayAccount.is_active == True).first()
+        if account:
+            token = db.query(EbayToken).filter(EbayToken.ebay_account_id == account.id).first()
+            if token and token._access_token:
+                raw = token._access_token
+                is_encrypted = raw.startswith("ENC:v1:") if raw else False
+                decrypted = crypto.decrypt(raw) if raw else None
+                decryption_works = decrypted and not decrypted.startswith("ENC:v1:") if is_encrypted else True
+                
+                test_result = {
+                    "account": account.house_name,
+                    "token_is_encrypted": is_encrypted,
+                    "decryption_works": decryption_works,
+                    "decrypted_prefix": decrypted[:20] + "..." if decrypted else None,
+                    "token_hash": hashlib.sha256(decrypted.encode()).hexdigest()[:16] if decrypted else None,
+                }
+    except Exception as e:
+        test_result["error"] = str(e)
+    
+    return {
+        "EBAY_ENVIRONMENT": settings.EBAY_ENVIRONMENT,
+        "secret_key_hash": secret_key_hash,
+        "ebay_api_base_url": settings.ebay_api_base_url,
+        "ebay_finances_base_url": settings.ebay_finances_base_url,
+        "token_decryption_test": test_result,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 class TokenRefreshDebugRequest(BaseModel):
     """Request body for /ebay/token/refresh-debug.
 

@@ -1548,9 +1548,18 @@ class EbayService:
             )
     
     async def get_user_identity(self, access_token: str, user_scopes: Optional[List[str]] = None, 
-                                user_email: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
+                                user_email: Optional[str] = None, user_id: Optional[str] = None,
+                                environment: Optional[str] = None) -> Dict[str, Any]:
         """
         Get eBay user identity (username, userId) from access token using Identity API
+        
+        Args:
+            access_token: eBay OAuth access token
+            user_scopes: Optional list of user scopes (for logging)
+            user_email: Optional user email (for logging)
+            user_id: Optional user ID (for logging)
+            environment: Optional environment override ("sandbox" or "production")
+                        If not provided, uses settings.EBAY_ENVIRONMENT
         """
         if not access_token:
             raise HTTPException(
@@ -1558,7 +1567,14 @@ class EbayService:
                 detail="eBay access token required"
             )
         
-        api_url = f"{settings.ebay_api_base_url}/identity/v1/oauth2/userinfo"
+        # Determine the correct base URL based on environment
+        target_env = environment or settings.EBAY_ENVIRONMENT
+        if target_env == "sandbox":
+            base_url = "https://api.sandbox.ebay.com"
+        else:
+            base_url = "https://api.ebay.com"
+        
+        api_url = f"{base_url}/identity/v1/oauth2/userinfo"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -3451,7 +3467,8 @@ class EbayService:
             max_pages = 200  # Safety limit to prevent infinite loops
 
             # Get user identity for logging "who we are"
-            identity = await self.get_user_identity(access_token)
+            # Pass environment to ensure we call the correct API endpoint
+            identity = await self.get_user_identity(access_token, environment=environment)
             username = identity.get("username", "unknown")
             identity_ebay_user_id = identity.get("userId", "unknown")
 
@@ -3464,7 +3481,7 @@ class EbayService:
 
             days_span = (end_date - start_date).days
             event_logger.log_start(
-                f"Starting Transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}"
+                f"Starting Transactions sync from eBay ({environment or settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}"
             )
             event_logger.log_info(f"=== WHO WE ARE ===")
             event_logger.log_info(f"Connected as: {username} (eBay UserID: {effective_ebay_user_id})")
@@ -3812,7 +3829,8 @@ class EbayService:
             max_pages = 200  # Safety limit to prevent infinite loops
 
             # Get user identity for logging "who we are"
-            identity = await self.get_user_identity(access_token)
+            # Pass environment to ensure we call the correct API endpoint
+            identity = await self.get_user_identity(access_token, environment=environment)
             username = identity.get("username", "unknown")
             identity_ebay_user_id = identity.get("userId", "unknown")
 
@@ -3827,7 +3845,7 @@ class EbayService:
 
             days_span = (end_date - start_date).days
             event_logger.log_start(
-                f"Starting Finances transactions sync from eBay ({settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}"
+                f"Starting Finances transactions sync from eBay ({environment or settings.EBAY_ENVIRONMENT}) - using bulk limit={limit}"
             )
             event_logger.log_info("=== WHO WE ARE ===")
             event_logger.log_info(
