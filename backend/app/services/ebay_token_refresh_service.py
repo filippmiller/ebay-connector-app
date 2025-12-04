@@ -360,7 +360,24 @@ async def refresh_access_token_for_account(
             "http": None,
         }
 
-    env = settings.EBAY_ENVIRONMENT or "sandbox"
+    # ------------------------------------------------------------------
+    # 3. Determine environment from User (not global settings!)
+    # ------------------------------------------------------------------
+    # FIX: Get environment from the user who owns this account, not from
+    # global settings. This ensures production accounts refresh against
+    # production eBay API even if settings.EBAY_ENVIRONMENT defaults to sandbox.
+    from app.models_sqlalchemy.models import User
+    user = db.query(User).filter(User.id == account.org_id).first()
+    env = user.ebay_environment if user and user.ebay_environment else settings.EBAY_ENVIRONMENT or "sandbox"
+    
+    logger.info(
+        "[token_refresh] account=%s org_id=%s user_env=%s resolved_env=%s global_env=%s",
+        account.id,
+        account.org_id,
+        user.ebay_environment if user else "<no_user>",
+        env,
+        settings.EBAY_ENVIRONMENT,
+    )
 
     # Decide which low-level helper to use.
     # - capture_http=False -> use refresh_access_token (returns EbayTokenResponse)

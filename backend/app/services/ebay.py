@@ -1669,11 +1669,17 @@ class EbayService:
             # params['transactionType'] = 'SALE'  # Uncomment if you want only sales
             pass
         
+        # Log with actual resolved environment (target_env), not the global setting
+        logger.info(
+            "[fetch_transactions] target_env=%s base_url=%s api_url=%s",
+            target_env, base_url, api_url,
+        )
         ebay_logger.log_ebay_event(
             "fetch_transactions_request",
-            f"Fetching transactions from eBay ({settings.EBAY_ENVIRONMENT})",
+            f"Fetching transactions from eBay ({target_env})",
             request_data={
-                "environment": settings.EBAY_ENVIRONMENT,
+                "environment": target_env,
+                "global_environment": settings.EBAY_ENVIRONMENT,
                 "api_url": api_url,
                 "params": params
             }

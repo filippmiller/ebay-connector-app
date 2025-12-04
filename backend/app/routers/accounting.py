@@ -206,22 +206,30 @@ async def delete_rule(
 import hashlib
 from app.services.accounting_parsers.csv_parser import parse_csv_bytes
 from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
-from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes
+from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes, parse_pdf_with_metadata
 from app.services.accounting_rules_engine import apply_rules_to_bank_rows
 
 
 
 @router.post("/bank-statements", status_code=status.HTTP_201_CREATED)
 async def upload_bank_statement(
-    bank_name: str = Form(...),
+    file: UploadFile = File(...),
+    bank_name: Optional[str] = Form(None),  # Now optional - will be extracted from PDF
     account_last4: Optional[str] = Form(None),
     currency: Optional[str] = Form(None),
     statement_period_start: Optional[date] = Form(None),
     statement_period_end: Optional[date] = Form(None),
-    file: UploadFile = File(...),
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ):
+    """Upload and parse a bank statement file (CSV, XLSX, or PDF).
+    
+    For PDF files, OpenAI is used to extract:
+    - Bank name, account number, currency, statement period
+    - All individual transactions
+    
+    All fields except 'file' are optional - metadata will be auto-extracted when possible.
+    """
     # 1. Read file and compute hash
     file_bytes = await file.read()
     file_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -233,18 +241,67 @@ async def upload_bank_statement(
         .first()
     )
     if existing_stmt:
-        # If already uploaded, just return the existing one
-        # We could also check if it was parsed successfully and retry if not,
-        # but for now let's assume "uploaded" means we have it.
-        return {"id": existing_stmt.id, "status": existing_stmt.status, "message": "Statement already uploaded"}
+        return {
+            "id": existing_stmt.id, 
+            "status": existing_stmt.status, 
+            "message": "Statement already uploaded",
+            "rows_count": db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == existing_stmt.id).count()
+        }
+
+    ext = (file.filename or "").lower()
+    content_type = (file.content_type or "").lower()
+    is_csv_like = ext.endswith(".csv") or ext.endswith(".txt")
+    is_xlsx_like = ext.endswith(".xlsx") or ext.endswith(".xls")
+    is_pdf_like = ext.endswith(".pdf") or "pdf" in content_type
+
+    # For PDFs, try to extract metadata first
+    extracted_bank_name = bank_name
+    extracted_account_last4 = account_last4
+    extracted_currency = currency
+    extracted_period_start = statement_period_start
+    extracted_period_end = statement_period_end
+    parsed_transactions = []
+    parsing_error = None
+
+    if is_pdf_like:
+        try:
+            pdf_result = await parse_pdf_with_metadata(file_bytes)
+            
+            # Use extracted metadata if not provided by user
+            if not extracted_bank_name and pdf_result.bank_name:
+                extracted_bank_name = pdf_result.bank_name
+            if not extracted_account_last4 and pdf_result.account_last4:
+                extracted_account_last4 = pdf_result.account_last4
+            if not extracted_currency and pdf_result.currency:
+                extracted_currency = pdf_result.currency
+            if not extracted_period_start and pdf_result.period_start:
+                try:
+                    extracted_period_start = date.fromisoformat(pdf_result.period_start)
+                except Exception:
+                    pass
+            if not extracted_period_end and pdf_result.period_end:
+                try:
+                    extracted_period_end = date.fromisoformat(pdf_result.period_end)
+                except Exception:
+                    pass
+            
+            parsed_transactions = pdf_result.transactions
+            logger.info(f"PDF parsed: bank={extracted_bank_name}, transactions={len(parsed_transactions)}")
+        except Exception as e:
+            parsing_error = str(e)
+            logger.warning(f"Failed to parse PDF bank statement: {e}")
+
+    # Default bank name if still not set
+    if not extracted_bank_name:
+        extracted_bank_name = "Unknown Bank"
 
     # 3. Create new statement record
     stmt = AccountingBankStatement(
-        bank_name=bank_name,
-        account_last4=account_last4,
-        currency=currency,
-        statement_period_start=statement_period_start,
-        statement_period_end=statement_period_end,
+        bank_name=extracted_bank_name,
+        account_last4=extracted_account_last4,
+        currency=extracted_currency or "USD",
+        statement_period_start=extracted_period_start,
+        statement_period_end=extracted_period_end,
         status="uploaded",
         file_hash=file_hash,
         created_by_user_id=current_user.id,
@@ -254,7 +311,6 @@ async def upload_bank_statement(
     db.flush()
 
     storage_path = f"accounting/bank_statements/{stmt.id}/{file.filename}"
-    # NOTE: actual writing to storage/bucket is environment-specific and reused from existing infra (to be wired separately)
 
     stmt_file = AccountingBankStatementFile(
         bank_statement_id=stmt.id,
@@ -264,24 +320,18 @@ async def upload_bank_statement(
     )
     db.add(stmt_file)
 
-    ext = (file.filename or "").lower()
-    content_type = (file.content_type or "").lower()
-    is_csv_like = ext.endswith(".csv") or ext.endswith(".txt")
-    is_xlsx_like = ext.endswith(".xlsx") or ext.endswith(".xls")
-    is_pdf_like = ext.endswith(".pdf") or "pdf" in content_type
-
     new_rows = []
 
-    if is_pdf_like:
-        try:
-            parsed = await parse_pdf_bytes(file_bytes)
-            
-            # Helper to generate row dedupe key (reused)
-            def _make_row_dedupe_key(row_data: Dict[str, Any], stmt_id: int) -> str:
-                raw_str = f"{stmt_id}|{row_data.get('__index__')}|{row_data.get('date')}|{row_data.get('amount')}|{row_data.get('description')}"
-                return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
+    # Helper to generate row dedupe key
+    def _make_row_dedupe_key(row_data: Dict[str, Any], stmt_id: int) -> str:
+        raw_str = f"{stmt_id}|{row_data.get('__index__')}|{row_data.get('date')}|{row_data.get('amount')}|{row_data.get('description')}"
+        return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
 
-            for row in parsed:
+    if is_pdf_like:
+        if parsing_error:
+            stmt.status = "error_parsing_failed"
+        elif parsed_transactions:
+            for row in parsed_transactions:
                 amount_raw = row.get("amount")
                 try:
                     amount_val = Decimal(str(amount_raw)) if amount_raw not in (None, "") else Decimal("0")
@@ -313,7 +363,7 @@ async def upload_bank_statement(
                     description_raw=description_raw,
                     amount=amount_val,
                     balance_after=bal_val,
-                    currency=row.get("currency") or currency,
+                    currency=row.get("currency") or extracted_currency or "USD",
                     parsed_status="auto_parsed",
                     match_status="unmatched",
                     dedupe_key=dedupe_key,
@@ -324,23 +374,12 @@ async def upload_bank_statement(
                 new_rows.append(db_row)
 
             stmt.status = "parsed"
-        except Exception as e:
-            logger.warning(f"Failed to parse PDF bank statement: {e}")
-            stmt.status = "error_parsing_failed"
+        else:
+            stmt.status = "uploaded"  # No transactions found but no error
 
     elif is_csv_like or is_xlsx_like:
         try:
             parsed = parse_xlsx_bytes(file_bytes) if is_xlsx_like else parse_csv_bytes(file_bytes)
-            
-            # Helper to generate row dedupe key
-            def _make_row_dedupe_key(row_data: Dict[str, Any], stmt_id: int) -> str:
-                # Combine statement ID with row content to ensure uniqueness within the system
-                # but allow same transaction in different statements (if desired, or globally unique?)
-                # Requirement says: "At bank row level (idempotent re-upload of the same file)."
-                # Since we already dedupe the file by hash, this is a secondary check.
-                # Let's use a content hash.
-                raw_str = f"{stmt_id}|{row_data.get('__index__')}|{row_data.get('date')}|{row_data.get('amount')}|{row_data.get('description')}"
-                return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
 
             for row in parsed:
                 # The header normalizer stores keys in lower-case form, so we
@@ -404,7 +443,7 @@ async def upload_bank_statement(
                     description_raw=description_raw,
                     amount=amount_val,
                     balance_after=bal_val,
-                    currency=row.get("currency") or row.get("Currency") or currency,
+                    currency=row.get("currency") or row.get("Currency") or extracted_currency or "USD",
                     parsed_status="auto_parsed",
                     match_status="unmatched",
                     dedupe_key=dedupe_key,
@@ -419,7 +458,6 @@ async def upload_bank_statement(
             logger.warning(f"Failed to auto-parse bank statement table file: {e}")
             stmt.status = "uploaded"
     else:
-        # PDF and other formats: only store file, no parsing yet
         stmt.status = "uploaded"
 
     # Apply auto-categorization rules
@@ -429,7 +467,17 @@ async def upload_bank_statement(
     db.commit()
     db.refresh(stmt)
 
-    return {"id": stmt.id, "status": stmt.status}
+    return {
+        "id": stmt.id, 
+        "status": stmt.status,
+        "bank_name": stmt.bank_name,
+        "account_last4": stmt.account_last4,
+        "currency": stmt.currency,
+        "period_start": stmt.statement_period_start.isoformat() if stmt.statement_period_start else None,
+        "period_end": stmt.statement_period_end.isoformat() if stmt.statement_period_end else None,
+        "rows_count": len(new_rows),
+        "message": "Statement uploaded and parsed successfully" if new_rows else "Statement uploaded"
+    }
 
 
 @router.get("/bank-statements")

@@ -21,3 +21,6 @@
 2025-12-04T12:00:00+03:00 - Created API endpoints: /cv/brain/* (REST + WebSocket)
 2025-12-04T12:00:00+03:00 - Created Frontend: BrainInstructionPanel, SessionTimeline, BrainStatusPanel, VisionBrainPage
 2025-12-04T12:00:00+03:00 - Created documentation: docs/vision_brain_layer-20251204.md
+2025-12-04T14:42:00+03:00 - Bank Statement Upload Refactor: Enhanced PDF parser with metadata extraction (bank_name, account, period, currency via OpenAI)
+2025-12-04T14:42:00+03:00 - Backend: Made bank_name optional in /api/accounting/bank-statements, auto-extract from PDF
+2025-12-04T14:42:00+03:00 - Frontend: Simplified AccountingPage upload form - removed all manual fields, now just file picker + upload button with status feedback

@@ -26,6 +26,18 @@ interface AccountingRule {
   is_active: boolean;
 }
 
+interface UploadResult {
+  id: number;
+  status: string;
+  bank_name?: string;
+  account_last4?: string;
+  currency?: string;
+  period_start?: string;
+  period_end?: string;
+  rows_count?: number;
+  message?: string;
+}
+
 function BankStatementsList() {
   const navigate = useNavigate();
   const [bankName, setBankName] = useState('');
@@ -33,14 +45,12 @@ function BankStatementsList() {
   const [periodFrom, setPeriodFrom] = useState('');
   const [periodTo, setPeriodTo] = useState('');
 
-  const [bankNameUpload, setBankNameUpload] = useState('');
-  const [accountLast4, setAccountLast4] = useState('');
-  const [currency, setCurrency] = useState('USD');
-  const [periodStartUpload, setPeriodStartUpload] = useState('');
-  const [periodEndUpload, setPeriodEndUpload] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const fileInputRef = useState<HTMLInputElement | null>(null);
 
   const extraParams = useMemo(() => {
     const params: Record<string, string> = {};
@@ -54,21 +64,30 @@ function BankStatementsList() {
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !bankNameUpload) return;
+    if (!file) return;
+    
     setUploading(true);
+    setUploadResult(null);
+    setUploadError(null);
+    
     try {
       const form = new FormData();
-      form.append('bank_name', bankNameUpload);
-      if (accountLast4) form.append('account_last4', accountLast4);
-      if (currency) form.append('currency', currency);
-      if (periodStartUpload) form.append('statement_period_start', periodStartUpload);
-      if (periodEndUpload) form.append('statement_period_end', periodEndUpload);
       form.append('file', file);
-      await api.post('/api/accounting/bank-statements', form, {
+      
+      const response = await api.post<UploadResult>('/api/accounting/bank-statements', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      
+      setUploadResult(response.data);
       setRefreshKey((v) => v + 1);
       setFile(null);
+      
+      // Reset file input
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      if (fileInput) fileInput.value = '';
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.detail || err?.message || 'Upload failed';
+      setUploadError(errorMsg);
     } finally {
       setUploading(false);
     }
@@ -76,50 +95,127 @@ function BankStatementsList() {
 
   return (
     <div className="flex-1 flex flex-col gap-4">
-      <Card className="p-4">
-        <h2 className="text-lg font-semibold mb-2">Upload Statement</h2>
-        <form className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end" onSubmit={handleUpload}>
-          <div>
-            <Label className="block text-xs mb-1">Bank name</Label>
-            <Input value={bankNameUpload} onChange={(e) => setBankNameUpload(e.target.value)} required />
-          </div>
-          <div>
-            <Label className="block text-xs mb-1">Account last4</Label>
-            <Input value={accountLast4} onChange={(e) => setAccountLast4(e.target.value)} />
-          </div>
-          <div>
-            <Label className="block text-xs mb-1">Currency</Label>
-            <Input value={currency} onChange={(e) => setCurrency(e.target.value)} />
-          </div>
-          <div>
-            <Label className="block text-xs mb-1">Period start</Label>
-            <Input type="date" value={periodStartUpload} onChange={(e) => setPeriodStartUpload(e.target.value)} />
-          </div>
-          <div>
-            <Label className="block text-xs mb-1">Period end</Label>
-            <Input type="date" value={periodEndUpload} onChange={(e) => setPeriodEndUpload(e.target.value)} />
-          </div>
-          <div>
-            <Label className="block text-xs mb-1">File (CSV/PDF)</Label>
-            <Input type="file" accept=".csv,.txt,.pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </div>
-          <div className="md:col-span-3 flex justify-end mt-2">
-            <Button type="submit" disabled={uploading || !file || !bankNameUpload}>
-              {uploading ? 'Uploading...' : 'Upload Statement'}
-            </Button>
+      {/* Simple Upload Card */}
+      <Card className="p-5 border-2 border-dashed border-gray-200 hover:border-blue-300 transition-colors">
+        <form onSubmit={handleUpload}>
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-center">
+              <h2 className="text-lg font-semibold text-gray-800">Upload Bank Statement</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                PDF, CSV, or Excel files • AI will extract bank info and transactions automatically
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-4 w-full max-w-xl">
+              <div className="flex-1">
+                <Input 
+                  type="file" 
+                  accept=".csv,.txt,.pdf,.xlsx,.xls" 
+                  onChange={(e) => {
+                    setFile(e.target.files?.[0] ?? null);
+                    setUploadResult(null);
+                    setUploadError(null);
+                  }}
+                  className="cursor-pointer"
+                />
+              </div>
+              <Button 
+                type="submit" 
+                disabled={uploading || !file}
+                className="min-w-[140px]"
+              >
+                {uploading ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                    </svg>
+                    Parsing...
+                  </span>
+                ) : 'Upload & Parse'}
+              </Button>
+            </div>
+
+            {/* Upload Result */}
+            {uploadResult && (
+              <div className="w-full max-w-xl p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <svg className="w-5 h-5 text-emerald-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="flex-1">
+                    <p className="font-medium text-emerald-800">{uploadResult.message || 'Upload successful'}</p>
+                    <div className="mt-2 text-sm text-emerald-700 grid grid-cols-2 gap-x-4 gap-y-1">
+                      {uploadResult.bank_name && (
+                        <span><strong>Bank:</strong> {uploadResult.bank_name}</span>
+                      )}
+                      {uploadResult.account_last4 && (
+                        <span><strong>Account:</strong> ****{uploadResult.account_last4}</span>
+                      )}
+                      {uploadResult.currency && (
+                        <span><strong>Currency:</strong> {uploadResult.currency}</span>
+                      )}
+                      {uploadResult.rows_count !== undefined && (
+                        <span><strong>Transactions:</strong> {uploadResult.rows_count}</span>
+                      )}
+                      {uploadResult.period_start && uploadResult.period_end && (
+                        <span className="col-span-2">
+                          <strong>Period:</strong> {uploadResult.period_start} to {uploadResult.period_end}
+                        </span>
+                      )}
+                    </div>
+                    {uploadResult.id && (
+                      <Button 
+                        variant="link" 
+                        className="p-0 h-auto mt-2 text-emerald-700"
+                        onClick={() => navigate(`/accounting/bank-statements/${uploadResult.id}`)}
+                      >
+                        View Statement →
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Upload Error */}
+            {uploadError && (
+              <div className="w-full max-w-xl p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <svg className="w-5 h-5 text-red-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="font-medium text-red-800">Upload failed</p>
+                    <p className="text-sm text-red-700 mt-1">{uploadError}</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </form>
       </Card>
 
+      {/* Filters and Grid */}
       <div className="flex flex-col gap-3 flex-1 min-h-0">
         <div className="flex flex-wrap gap-3 items-end">
           <div>
             <Label className="block text-xs mb-1">Bank</Label>
-            <Input value={bankName} onChange={(e) => setBankName(e.target.value)} />
+            <Input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="Filter by bank..." />
           </div>
           <div>
             <Label className="block text-xs mb-1">Status</Label>
-            <Input value={status} onChange={(e) => setStatus(e.target.value)} placeholder="uploaded/parsed/review_in_progress/approved" />
+            <select 
+              className="border rounded px-2 py-1.5 text-sm"
+              value={status} 
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              <option value="">All statuses</option>
+              <option value="uploaded">Uploaded</option>
+              <option value="parsed">Parsed</option>
+              <option value="review_in_progress">In Review</option>
+              <option value="error_parsing_failed">Error</option>
+            </select>
           </div>
           <div>
             <Label className="block text-xs mb-1">From</Label>
