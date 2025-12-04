@@ -27,7 +27,7 @@ class LogLevel(str, Enum):
     """Log levels"""
     DEBUG = "debug"
     INFO = "info"
-    WARNING = "warn"
+    WARNING = "warning"
     ERROR = "error"
     CRITICAL = "critical"
 
