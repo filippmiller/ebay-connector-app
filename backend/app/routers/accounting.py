@@ -260,12 +260,22 @@ async def upload_bank_statement(
         .first()
     )
     if existing_stmt:
-        return {
-            "id": existing_stmt.id, 
-            "status": existing_stmt.status, 
-            "message": "Statement already uploaded",
-            "rows_count": db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == existing_stmt.id).count()
-        }
+        # Check if previous upload was empty/failed
+        rows_count = db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == existing_stmt.id).count()
+        
+        if rows_count == 0:
+            logger.info(f"Duplicate file hash {file_hash} found, but existing statement {existing_stmt.id} has 0 rows. Re-processing.")
+            # Delete the old empty record so we can start fresh
+            # Note: cascades in DB might handle rows/files, but we'll let SQLAlchemy handle it
+            db.delete(existing_stmt)
+            db.flush()
+        else:
+            return {
+                "id": existing_stmt.id, 
+                "status": existing_stmt.status, 
+                "message": "Statement already uploaded",
+                "rows_count": rows_count
+            }
 
     ext = (file.filename or "").lower()
     content_type = (file.content_type or "").lower()
