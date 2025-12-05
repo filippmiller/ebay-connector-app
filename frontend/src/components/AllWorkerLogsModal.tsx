@@ -319,7 +319,7 @@ export const AllWorkerLogsModal: React.FC<AllWorkerLogsModalProps> = ({
                       return (
                         <tr key={run.id} className="hover:bg-gray-50">
                           <td className="px-4 py-2">
-                            {started ? formatDateTimeLocal(started) : "-"}
+                            {run.started_at ? formatDateTimeLocal(run.started_at) : "-"}
                           </td>
                           <td className="px-4 py-2">
                             <div className="flex flex-col">
@@ -344,7 +344,7 @@ export const AllWorkerLogsModal: React.FC<AllWorkerLogsModalProps> = ({
                             </span>
                           </td>
                           <td className="px-4 py-2">
-                            {finished ? formatDateTimeLocal(finished) : "-"}
+                            {run.finished_at ? formatDateTimeLocal(run.finished_at) : "-"}
                           </td>
                           <td className="px-4 py-2">{duration}</td>
                           <td className="px-4 py-2">
