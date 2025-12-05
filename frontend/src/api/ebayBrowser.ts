@@ -4,6 +4,8 @@ export interface BrowseSearchRequest {
   category_hint?: string | null;
   exclude_keywords?: string[];
   limit?: number;
+  offset?: number;
+  sort?: string;
 }
 
 export interface BrowseListing {

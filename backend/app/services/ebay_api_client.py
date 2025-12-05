@@ -35,6 +35,8 @@ async def search_active_listings(
     keywords: str,
     *,
     limit: int = 20,
+    offset: int = 0,
+    sort: str = "newlyListed",
 ) -> List[EbayListingSummary]:
     """Search active listings for the given keywords via the Browse API.
 
@@ -50,12 +52,16 @@ async def search_active_listings(
     base = settings.ebay_api_base_url.rstrip("/")
     url = f"{base}/buy/browse/v1/item_summary/search"
 
+    # Map internal sort keys to eBay API sort keys if needed.
+    # For now we pass through, but we handle the price/newlyListed mapping in the caller or here.
+    # eBay API values: price, -price, newlyListed, etc.
+    
     params = {
         "q": keywords,
         # Limit the number of results per model to avoid flooding candidates.
-        "limit": str(max(1, min(limit, 50))),
-        # Prefer newly listed and active items first.
-        "sort": "NEWLY_LISTED",
+        "limit": str(max(1, min(limit, 200))),  # Increased max limit to 200
+        "offset": str(offset),
+        "sort": sort,
     }
 
     headers = {

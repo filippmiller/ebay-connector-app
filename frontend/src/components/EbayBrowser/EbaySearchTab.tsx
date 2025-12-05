@@ -3,6 +3,13 @@ import { searchBrowse, BrowseListing, BrowseSearchRequest } from '@/api/ebayBrow
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 type ConditionFilter = 'any' | 'working' | 'non_working';
 
@@ -16,11 +23,17 @@ export const EbaySearchTab: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSearch = async () => {
+  // Pagination & Sorting
+  const [offset, setOffset] = useState(0);
+  const [sort, setSort] = useState('newlyListed');
+  const [hasMore, setHasMore] = useState(true);
+
+  const handleSearch = async (isLoadMore = false) => {
     if (!keywords.trim()) return;
     setLoading(true);
     setError(null);
     try {
+      const currentOffset = isLoadMore ? offset : 0;
       const body: BrowseSearchRequest = {
         keywords: keywords.trim(),
         max_total_price: maxPrice,
@@ -30,15 +43,34 @@ export const EbaySearchTab: React.FC = () => {
           .map((s) => s.trim())
           .filter(Boolean),
         limit: 50,
+        offset: currentOffset,
+        sort: sort,
       };
       const data = await searchBrowse(body);
+
+      // Client-side filtering (still useful for condition/keywords, though less critical now)
       const filtered = data.filter((item) => filterByCondition(item, conditionFilter));
-      setRows(filtered);
+
+      if (isLoadMore) {
+        setRows((prev) => [...prev, ...filtered]);
+        setOffset((prev) => prev + 50);
+      } else {
+        setRows(filtered);
+        setOffset(50);
+      }
+
+      setHasMore(data.length === 50); // If we got full page, assume there's more
     } catch (e: any) {
       setError(e.message ?? String(e));
     } finally {
       setLoading(false);
     }
+  };
+
+  // Reset offset when filters change
+  const onFilterChange = () => {
+    setOffset(0);
+    setHasMore(true);
   };
 
   return (
@@ -116,10 +148,24 @@ export const EbaySearchTab: React.FC = () => {
             onChange={(e) => setExclude(e.target.value)}
           />
         </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-gray-700">Сортировка</label>
+          <Select value={sort} onValueChange={(val) => { setSort(val); onFilterChange(); }}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newlyListed">Newly Listed</SelectItem>
+              <SelectItem value="price">Price (Low to High)</SelectItem>
+              <SelectItem value="-price">Price (High to Low)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
-        <Button size="sm" onClick={handleSearch} disabled={loading || !keywords.trim()}>
+        <Button size="sm" onClick={() => handleSearch(false)} disabled={loading || !keywords.trim()}>
           {loading ? 'Ищу…' : 'Искать'}
         </Button>
         {error && <span className="text-xs text-red-600">{error}</span>}
@@ -185,6 +231,19 @@ export const EbaySearchTab: React.FC = () => {
           </table>
         )}
       </div>
+
+      {rows.length > 0 && hasMore && (
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleSearch(true)}
+            disabled={loading}
+          >
+            {loading ? 'Загрузка...' : 'Загрузить еще'}
+          </Button>
+        </div>
+      )}
     </div>
   );
 };

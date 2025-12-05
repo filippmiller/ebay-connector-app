@@ -6205,6 +6205,20 @@ class EbayService:
                         if not item_id and not sku:
                             continue
 
+                        # Define raw_payload for the insert statement
+                        raw_payload = {
+                            "ItemID": item_id,
+                            "SKU": sku,
+                            "Title": title,
+                            "Quantity": quantity_total,
+                            "QuantitySold": quantity_sold,
+                            "StartPrice": float(price_val) if price_val is not None else None,
+                            "Currency": currency,
+                            "ListingStatus": listing_status,
+                            "ConditionID": condition_id,
+                            "ConditionDisplayName": condition_text
+                        }
+
                         # Atomic upsert using PostgreSQL ON CONFLICT to prevent race conditions
                         from sqlalchemy.dialects.postgresql import insert as pg_insert
 

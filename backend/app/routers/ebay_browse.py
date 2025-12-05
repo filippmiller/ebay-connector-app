@@ -28,7 +28,9 @@ class BrowseSearchRequest(BaseModel):
         None,
         description="Case-insensitive words that must NOT appear in title or description (e.g. parts)",
     )
-    limit: int = Field(50, ge=1, le=50, description="Max number of listings to fetch from Browse API")
+    limit: int = Field(50, ge=1, le=200, description="Max number of listings to fetch from Browse API")
+    offset: int = Field(0, ge=0, description="Number of items to skip (pagination)")
+    sort: Optional[str] = Field("newlyListed", description="Sort order: price, -price, newlyListed")
 
 
 class BrowseListing(BaseModel):
@@ -104,6 +106,8 @@ async def search_ebay_browse(
         access_token,
         keywords,
         limit=payload.limit,
+        offset=payload.offset,
+        sort=payload.sort or "newlyListed",
     )
 
     results: List[BrowseListing] = []
