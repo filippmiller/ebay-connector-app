@@ -9,7 +9,7 @@ from typing import Iterable
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from app.models_sqlalchemy import get_db as get_db_sqla
 from app.models_sqlalchemy.models import (
@@ -609,8 +609,8 @@ async def get_bank_statement_detail(
     # Separate debit/credit totals
     sums = (
         db.query(
-            func.sum(func.case([(AccountingBankRow.amount > 0, AccountingBankRow.amount)], else_=0)),
-            func.sum(func.case([(AccountingBankRow.amount < 0, AccountingBankRow.amount)], else_=0)),
+            func.sum(case((AccountingBankRow.amount > 0, AccountingBankRow.amount), else_=0)),
+            func.sum(case((AccountingBankRow.amount < 0, AccountingBankRow.amount), else_=0)),
         )
         .filter(AccountingBankRow.bank_statement_id == stmt.id)
         .one()
