@@ -73,7 +73,7 @@ function BankStatementsList() {
   const handleTestOpenAI = async () => {
     setTestingOpenAI(true);
     try {
-      const resp = await api.post('/api/accounting/test-openai');
+      const resp = await api.post('/accounting/test-openai');
       alert(`OpenAI Test: ${resp.data.success ? 'SUCCESS' : 'FAILED'}\n${resp.data.message}\nLatency: ${resp.data.latency_ms}ms`);
     } catch (e: any) {
       alert(`Test Failed: ${e.message}`);
@@ -94,7 +94,7 @@ function BankStatementsList() {
       const form = new FormData();
       form.append('file', file);
 
-      const response = await api.post<UploadResult>('/api/accounting/bank-statements', form, {
+      const response = await api.post<UploadResult>('/accounting/bank-statements', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -294,9 +294,9 @@ function BankStatementDetail() {
     setLoading(true);
     try {
       const [summaryResp, rowsResp, catsResp] = await Promise.all([
-        api.get(`/api/accounting/bank-statements/${id}`),
-        api.get(`/api/accounting/bank-statements/${id}/rows`, { params: { limit: 1000, search: search || undefined } }),
-        api.get('/api/accounting/categories', { params: { is_active: true } }),
+        api.get(`/accounting/bank-statements/${id}`),
+        api.get(`/accounting/bank-statements/${id}/rows`, { params: { limit: 1000, search: search || undefined } }),
+        api.get('/accounting/categories', { params: { is_active: true } }),
       ]);
       setSummary(summaryResp.data);
       setRows(rowsResp.data.rows || []);
@@ -324,7 +324,7 @@ function BankStatementDetail() {
   const markIgnored = async () => {
     const ids = Array.from(selectedIds);
     for (const rowId of ids) {
-      await api.put(`/api/accounting/bank-rows/${rowId}`, { parsed_status: 'ignored' });
+      await api.put(`/accounting/bank-rows/${rowId}`, { parsed_status: 'ignored' });
     }
     await loadData();
   };
@@ -333,20 +333,20 @@ function BankStatementDetail() {
     if (!id || selectedIds.size === 0) return;
     const params = new URLSearchParams();
     Array.from(selectedIds).forEach((rid) => params.append('row_ids', String(rid)));
-    await api.post(`/api/accounting/bank-statements/${id}/commit-rows?${params.toString()}`);
+    await api.post(`/accounting/bank-statements/${id}/commit-rows?${params.toString()}`);
     await loadData();
   };
 
   const commitAll = async () => {
     if (!id) return;
-    await api.post(`/api/accounting/bank-statements/${id}/commit-rows`, {
+    await api.post(`/accounting/bank-statements/${id}/commit-rows`, {
       commit_all_non_ignored: true,
     });
     await loadData();
   };
 
   const updateRow = async (rowId: number, patch: any) => {
-    await api.put(`/api/accounting/bank-rows/${rowId}`, patch);
+    await api.put(`/accounting/bank-rows/${rowId}`, patch);
     setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r)));
   };
 
@@ -523,7 +523,7 @@ function CashExpensesTab() {
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await api.get('/api/accounting/categories', { params: { is_active: true } });
+      const { data } = await api.get('/accounting/categories', { params: { is_active: true } });
       setCategories(data || []);
     };
     void load();
@@ -536,7 +536,7 @@ function CashExpensesTab() {
     if (!dateValue || !amount || !categoryId) return;
     setSubmitting(true);
     try {
-      await api.post('/api/accounting/cash-expenses', {
+      await api.post('/accounting/cash-expenses', {
         date_value: dateValue,
         amount: Number(amount),
         currency,
@@ -638,7 +638,7 @@ function TransactionsTab() {
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await api.get('/api/accounting/categories', { params: { is_active: true } });
+      const { data } = await api.get('/accounting/categories', { params: { is_active: true } });
       setCategories(data || []);
     };
     void load();
@@ -664,7 +664,7 @@ function TransactionsTab() {
   useEffect(() => {
     const fetchTotals = async () => {
       try {
-        const { data } = await api.get('/api/accounting/transactions', { params: { ...extraParams, limit: 1, offset: 0 } });
+        const { data } = await api.get('/accounting/transactions', { params: { ...extraParams, limit: 1, offset: 0 } });
         if (typeof data.total_in === 'number' && typeof data.total_out === 'number' && typeof data.net === 'number') {
           setTotals({ total_in: data.total_in, total_out: data.total_out, net: data.net });
         } else {
@@ -684,7 +684,7 @@ function TransactionsTab() {
     if (selectedRow.storage_id !== undefined) payload.storage_id = selectedRow.storage_id;
     if (selectedRow.is_personal !== undefined) payload.is_personal = selectedRow.is_personal;
     if (selectedRow.is_internal_transfer !== undefined) payload.is_internal_transfer = selectedRow.is_internal_transfer;
-    await api.put(`/api/accounting/transactions/${selectedRow.id}`, payload);
+    await api.put(`/accounting/transactions/${selectedRow.id}`, payload);
     setRefreshKey((v) => v + 1);
   };
 
@@ -882,8 +882,8 @@ function RulesTab() {
       setLoading(true);
       try {
         const [rulesResp, catsResp] = await Promise.all([
-          api.get('/api/accounting/rules', { params: { is_active: true } }),
-          api.get('/api/accounting/categories', { params: { is_active: true } }),
+          api.get('/accounting/rules', { params: { is_active: true } }),
+          api.get('/accounting/categories', { params: { is_active: true } }),
         ]);
         setRules(rulesResp.data || []);
         setCategories(catsResp.data || []);
@@ -899,7 +899,7 @@ function RulesTab() {
     if (!patternValue || !categoryId) return;
     setSubmitting(true);
     try {
-      await api.post('/api/accounting/rules', {
+      await api.post('/accounting/rules', {
         pattern_type: patternType,
         pattern_value: patternValue,
         expense_category_id: Number(categoryId),
@@ -916,7 +916,7 @@ function RulesTab() {
 
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this rule?')) return;
-    await api.delete(`/api/accounting/rules/${id}`);
+    await api.delete(`/accounting/rules/${id}`);
     setRefreshKey((v) => v + 1);
   };
 
