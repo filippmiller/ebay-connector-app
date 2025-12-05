@@ -1,6 +1,9 @@
 from logging.config import fileConfig
 import os
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from sqlalchemy import engine_from_config, create_engine
 from sqlalchemy import pool

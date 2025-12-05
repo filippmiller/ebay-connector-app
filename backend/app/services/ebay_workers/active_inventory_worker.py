@@ -13,8 +13,8 @@ class ActiveInventoryWorker(BaseWorker):
     def __init__(self):
         super().__init__(
             api_family="active_inventory",
-            overlap_minutes=None,  # No window, full snapshot
-            initial_backfill_days=0,
+            overlap_minutes=30,  # 30-minute overlap for incremental sync
+            initial_backfill_days=0,  # No initial backfill, start from cursor
             limit=0,
         )
 
@@ -46,6 +46,8 @@ class ActiveInventoryWorker(BaseWorker):
             run_id=sync_run_id,
             ebay_account_id=account.id,
             ebay_user_id=account.ebay_user_id,
+            window_from=window_from,
+            window_to=window_to,
         )
         return result
 

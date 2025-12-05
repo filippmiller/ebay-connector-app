@@ -6009,6 +6009,8 @@ class EbayService:
         run_id: Optional[str] = None,
         ebay_account_id: Optional[str] = None,
         ebay_user_id: Optional[str] = None,
+        window_from: Optional[str] = None,
+        window_to: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Build Active Inventory snapshot using Trading GetMyeBaySelling.
 
@@ -6055,8 +6057,31 @@ class EbayService:
             from app.config import settings
             import asyncio
 
+            # Parse window timestamps for incremental sync
+            window_from_dt: Optional[datetime] = None
+            window_to_dt: Optional[datetime] = None
+            if window_from:
+                try:
+                    if window_from.endswith("Z"):
+                        window_from = window_from.replace("Z", "+00:00")
+                    window_from_dt = datetime.fromisoformat(window_from)
+                except Exception:
+                    logger.warning(f"Invalid window_from format: {window_from}")
+            if window_to:
+                try:
+                    if window_to.endswith("Z"):
+                        window_to = window_to.replace("Z", "+00:00")
+                    window_to_dt = datetime.fromisoformat(window_to)
+                except Exception:
+                    logger.warning(f"Invalid window_to format: {window_to}")
+
             event_logger.log_start(
-                f"Starting Active Inventory snapshot via Trading GetMyeBaySelling ({settings.EBAY_ENVIRONMENT})",
+                f"Starting Active Inventory sync via Trading GetMyeBaySelling ({settings.EBAY_ENVIRONMENT})",
+            )
+            sync_mode = "incremental" if window_from_dt else "full"
+            event_logger.log_info(
+                f"Sync mode: {sync_mode}, window_from={window_from_dt.isoformat() if window_from_dt else 'None'}, "
+                f"window_to={window_to_dt.isoformat() if window_to_dt else 'None'}"
             )
             event_logger.log_info(
                 "API Configuration: Trading GetMyeBaySelling ActiveList, paginate and upsert into ebay_active_inventory",
@@ -6066,9 +6091,28 @@ class EbayService:
             page_number = 1
             max_pages = 200
             has_more = True
+            total_items_skipped = 0  # Track total skipped items across all pages
 
             db_session = next(get_db())
             try:
+                # Pre-fetch existing items with their last_seen_at timestamps for incremental filtering
+                existing_items: Dict[tuple, datetime] = {}
+                if window_from_dt and ebay_account_id:
+                    existing_records = db_session.query(
+                        ActiveInventory.sku,
+                        ActiveInventory.item_id,
+                        ActiveInventory.last_seen_at
+                    ).filter(
+                        ActiveInventory.ebay_account_id == ebay_account_id
+                    ).all()
+                    for record in existing_records:
+                        key = (record.sku or "", record.item_id or "")
+                        if record.last_seen_at:
+                            existing_items[key] = record.last_seen_at
+                    
+                    event_logger.log_info(
+                        f"Loaded {len(existing_items)} existing items from database for incremental filtering"
+                    )
                 while has_more and page_number <= max_pages:
                     event_logger.log_info(
                         f"→ Requesting ActiveList page {page_number}: GetMyeBaySelling",
@@ -6150,10 +6194,12 @@ class EbayService:
                     total_fetched += fetched_this_page
 
                     event_logger.log_info(
-                        f"← Page {page_number}: received {fetched_this_page} active items",
+                        f"← Page {page_number}: received {fetched_this_page} active items, "
+                        f"skipped {items_skipped} (already up-to-date)"
                     )
 
                     now_utc = datetime.now(timezone.utc)
+                    items_skipped = 0
 
                     for item in item_elems:
                         def _text(path: str) -> Optional[str]:
@@ -6204,6 +6250,16 @@ class EbayService:
 
                         if not item_id and not sku:
                             continue
+
+                        # Incremental sync filtering: skip items that were recently updated
+                        if window_from_dt:
+                            item_key = (sku or "", item_id or "")
+                            existing_last_seen = existing_items.get(item_key)
+                            
+                            # Skip if item exists and was seen after window_from (already up-to-date)
+                            if existing_last_seen and existing_last_seen >= window_from_dt:
+                                items_skipped += 1
+                                continue
 
                         # Define raw_payload for the insert statement
                         raw_payload = {
@@ -6270,6 +6326,8 @@ class EbayService:
                             total_pages = 1
 
                     has_more = page_number < total_pages and fetched_this_page > 0
+                    total_items_skipped += items_skipped  # Accumulate skipped items before reset
+                    items_skipped = 0  # Reset counter for next page
                     page_number += 1
 
                     if has_more:
@@ -6289,8 +6347,9 @@ class EbayService:
                 records_stored=total_stored,
             )
 
+            skip_summary = f", {total_items_skipped} skipped (already up-to-date)" if total_items_skipped > 0 else ""
             event_logger.log_done(
-                f"Active inventory sync completed: {total_fetched} items fetched, {total_stored} stored in {duration_ms}ms",
+                f"Active inventory sync completed: {total_fetched} items fetched, {total_stored} stored{skip_summary} in {duration_ms}ms",
                 total_fetched,
                 total_stored,
                 duration_ms,

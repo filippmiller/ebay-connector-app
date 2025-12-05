@@ -1853,6 +1853,23 @@ class AccountingExpenseCategory(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class AccountingInternalCategory(Base):
+    """Internal classification reference table (bank_transaction_category_internal)."""
+    __tablename__ = "bank_transaction_category_internal"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(50), nullable=False, unique=True)
+    display_name = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    parent_id = Column(Integer, ForeignKey('bank_transaction_category_internal.id'), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    parent = relationship("AccountingInternalCategory", remote_side=[id])
+
+
 class AccountingBankStatement(Base):
     __tablename__ = "accounting_bank_statement"
 
@@ -1872,6 +1889,14 @@ class AccountingBankStatement(Base):
     created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+
+    # Supabase storage info
+    supabase_bucket = Column(Text, nullable=True)
+    supabase_path = Column(Text, nullable=True)
+    
+    # Error handling & debugging
+    error_message = Column(Text, nullable=True)
+    raw_header_json = Column(JSONB, nullable=True)
 
     __table_args__ = (
         Index('idx_accounting_bank_statement_file_hash', 'file_hash'),
@@ -1905,6 +1930,12 @@ class AccountingBankRow(Base):
     parsed_status = Column(Text, nullable=False, default="auto_parsed")
     match_status = Column(Text, nullable=False, default="unmatched")
     dedupe_key = Column(Text, nullable=True, index=True)
+    
+    # Classification
+    llm_category = Column(Text, nullable=False, server_default="unknown")
+    internal_category_id = Column(Integer, ForeignKey('bank_transaction_category_internal.id'), nullable=True)
+    internal_category_label = Column(Text, nullable=True)
+    
     expense_category_id = Column(BigInteger, ForeignKey('accounting_expense_category.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
@@ -2014,6 +2045,30 @@ class PayoutItem(Base):
         Index('idx_payout_item_payout_id', 'payout_id'),
         Index('idx_payout_item_reference_id', 'reference_id'),
     )
+
+
+class AccountingBankStatementImportRun(Base):
+    """Audit log of each bank statement import attempt."""
+    __tablename__ = "bank_statement_import_run"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bank_statement_id = Column(BigInteger, ForeignKey('accounting_bank_statement.id', ondelete='CASCADE'), nullable=False, index=True)
+    
+    started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    
+    status = Column(String(50), nullable=False, default="RUNNING")  # RUNNING, SUCCESS, FAILED
+    
+    openai_model = Column(String(50), nullable=True)
+    openai_request_id = Column(Text, nullable=True)
+    
+    transactions_total = Column(Integer, default=0)
+    transactions_inserted = Column(Integer, default=0)
+    duplicates_skipped = Column(Integer, default=0)
+    balance_difference = Column(Numeric(14, 2), nullable=True)
+    
+    error_message = Column(Text, nullable=True)
+    metadata_json = Column(JSONB, nullable=True)
 
 
 class Offer(Base):
