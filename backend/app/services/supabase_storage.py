@@ -11,12 +11,15 @@ def get_supabase_client() -> Client:
         return _supabase_client
     
     url = settings.SUPABASE_URL
-    key = settings.SUPABASE_SERVICE_KEY or settings.SUPABASE_KEY
+    key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY
     
     if not url or not key:
-        logger.warning("SUPABASE_URL or SUPABASE_KEY/SERVICE_KEY not set. Storage operations will fail.")
+        logger.warning("SUPABASE_URL or SUPABASE_KEY/SUPABASE_SERVICE_ROLE_KEY not set. Storage operations will fail.")
         return None
         
+    if not settings.SUPABASE_SERVICE_ROLE_KEY:
+        logger.warning("SUPABASE_SERVICE_ROLE_KEY not set. Using SUPABASE_KEY (Anon). Uploads may fail due to RLS.")
+    
     _supabase_client = create_client(url, key)
     return _supabase_client
 

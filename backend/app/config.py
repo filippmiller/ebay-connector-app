@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     # Supabase API Configuration
     SUPABASE_URL: Optional[str] = None
     SUPABASE_KEY: Optional[str] = None  # Anon key
-    SUPABASE_SERVICE_KEY: Optional[str] = None  # Service role key
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None  # Service role key
 
     
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
