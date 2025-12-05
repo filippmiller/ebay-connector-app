@@ -13,3 +13,4 @@ UPDATE camera_logs SET level = 'warning' WHERE level = 'warn';
 
 
 
+

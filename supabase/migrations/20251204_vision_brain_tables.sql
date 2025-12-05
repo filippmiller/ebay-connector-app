@@ -261,3 +261,4 @@ COMMENT ON FUNCTION cleanup_old_vision_data IS 'Delete old vision data older tha
 
 
 
+

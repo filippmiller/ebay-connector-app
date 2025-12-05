@@ -332,41 +332,66 @@ class OCRService:
         self._avg_processing_time: float = 0.0
     
     def initialize(self, engine: Optional[OCREngine] = None) -> bool:
-        """Initialize OCR engine"""
+        """Initialize OCR engine with automatic fallback"""
         engine = engine or cv_settings.ocr_engine
         
         cv_logger.ocr(f"Initializing OCR with engine: {engine.value}")
         
-        try:
-            if engine == OCREngine.EASYOCR:
-                self._engine = EasyOCREngine(
-                    languages=cv_settings.ocr_languages,
-                    gpu=cv_settings.ocr_gpu,
+        # Try primary engine first
+        engines_to_try = [engine]
+        
+        # Automatic fallback chain: EasyOCR -> Tesseract -> PaddleOCR
+        if engine == OCREngine.EASYOCR:
+            engines_to_try = [OCREngine.EASYOCR, OCREngine.TESSERACT, OCREngine.PADDLEOCR]
+        elif engine == OCREngine.PADDLEOCR:
+            engines_to_try = [OCREngine.PADDLEOCR, OCREngine.TESSERACT, OCREngine.EASYOCR]
+        elif engine == OCREngine.TESSERACT:
+            engines_to_try = [OCREngine.TESSERACT, OCREngine.EASYOCR, OCREngine.PADDLEOCR]
+        
+        for attempt_engine in engines_to_try:
+            try:
+                if attempt_engine == OCREngine.EASYOCR:
+                    self._engine = EasyOCREngine(
+                        languages=cv_settings.ocr_languages,
+                        gpu=cv_settings.ocr_gpu,
+                    )
+                elif attempt_engine == OCREngine.PADDLEOCR:
+                    self._engine = PaddleOCREngine(
+                        languages=cv_settings.ocr_languages,
+                        gpu=cv_settings.ocr_gpu,
+                    )
+                elif attempt_engine == OCREngine.TESSERACT:
+                    self._engine = TesseractEngine(
+                        languages=cv_settings.ocr_languages,
+                    )
+                else:
+                    continue
+                
+                self._initialized = self._engine.initialize()
+                
+                if self._initialized:
+                    if attempt_engine != engine:
+                        cv_logger.ocr(
+                            f"Primary engine {engine.value} unavailable, using {attempt_engine.value}",
+                            level=LogLevel.WARNING
+                        )
+                    cv_logger.set_status("ocr", "ready")
+                    cv_logger.ocr(f"OCR service initialized with {self._engine.get_name()}")
+                    return True
+                    
+            except Exception as e:
+                cv_logger.ocr(
+                    f"Failed to initialize {attempt_engine.value}: {e}",
+                    level=LogLevel.WARNING if attempt_engine != engine else LogLevel.ERROR
                 )
-            elif engine == OCREngine.PADDLEOCR:
-                self._engine = PaddleOCREngine(
-                    languages=cv_settings.ocr_languages,
-                    gpu=cv_settings.ocr_gpu,
-                )
-            elif engine == OCREngine.TESSERACT:
-                self._engine = TesseractEngine(
-                    languages=cv_settings.ocr_languages,
-                )
-            else:
-                cv_logger.ocr(f"Unknown OCR engine: {engine}", level=LogLevel.ERROR)
-                return False
-            
-            self._initialized = self._engine.initialize()
-            
-            if self._initialized:
-                cv_logger.set_status("ocr", "ready")
-                cv_logger.ocr(f"OCR service initialized with {self._engine.get_name()}")
-            
-            return self._initialized
-            
-        except Exception as e:
-            cv_logger.ocr(f"Failed to initialize OCR service: {e}", level=LogLevel.ERROR)
-            return False
+                continue
+        
+        # All engines failed
+        cv_logger.ocr(
+            "All OCR engines failed to initialize. OCR will be disabled.",
+            level=LogLevel.WARNING
+        )
+        return False
     
     def recognize_image(self, image: np.ndarray) -> List[OCRResult]:
         """Recognize text in image"""
