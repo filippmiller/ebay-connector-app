@@ -2167,3 +2167,141 @@ def _get_active_inventory_data(
         "total": total,
         "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
     }
+
+
+def _get_accounting_bank_statements_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+) -> Dict[str, Any]:
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    query = db.query(AccountingBankStatement)
+    total = query.count()
+
+    if sort_column and hasattr(AccountingBankStatement, sort_column):
+        order_attr = getattr(AccountingBankStatement, sort_column)
+        if sort_dir == "desc":
+            query = query.order_by(desc(order_attr))
+        else:
+            query = query.order_by(asc(order_attr))
+
+    rows_db = query.offset(offset).limit(limit).all()
+
+    # Preload row counts
+    stmt_ids = [r.id for r in rows_db]
+    counts_map = {}
+    if stmt_ids:
+        from sqlalchemy import func
+        from app.models_sqlalchemy.models import AccountingBankRow
+        counts = (
+            db.query(AccountingBankRow.bank_statement_id, func.count(AccountingBankRow.id))
+            .filter(AccountingBankRow.bank_statement_id.in_(stmt_ids))
+            .group_by(AccountingBankRow.bank_statement_id)
+            .all()
+        )
+        counts_map = {bid: c for bid, c in counts}
+
+    def _serialize(stmt: AccountingBankStatement) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            if col == "rows_count":
+                row[col] = counts_map.get(stmt.id, 0)
+                continue
+            
+            try:
+                value = getattr(stmt, col, None)
+                if value is None:
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                continue
+        return row
+
+    rows = [_serialize(r) for r in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
+
+
+def _get_accounting_cash_expenses_data(
+    db: Session,
+    current_user: UserModel,
+    selected_cols: List[str],
+    limit: int,
+    offset: int,
+    sort_column: Optional[str],
+    sort_dir: str,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> Dict[str, Any]:
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    query = db.query(AccountingCashExpense)
+
+    if date_from:
+        try:
+            from_dt = dt_type.fromisoformat(date_from.replace("Z", "+00:00"))
+            query = query.filter(AccountingCashExpense.date >= from_dt.date())
+        except Exception:
+            pass
+    if date_to:
+        try:
+            to_dt = dt_type.fromisoformat(date_to.replace("Z", "+00:00"))
+            query = query.filter(AccountingCashExpense.date <= to_dt.date())
+        except Exception:
+            pass
+
+    total = query.count()
+
+    if sort_column and hasattr(AccountingCashExpense, sort_column):
+        order_attr = getattr(AccountingCashExpense, sort_column)
+        if sort_dir == "desc":
+            query = query.order_by(desc(order_attr))
+        else:
+            query = query.order_by(asc(order_attr))
+
+    rows_db = query.offset(offset).limit(limit).all()
+
+    def _serialize(cash: AccountingCashExpense) -> Dict[str, Any]:
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            try:
+                value = getattr(cash, col, None)
+                if value is None:
+                    continue
+                if isinstance(value, dt_type):
+                    row[col] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    row[col] = float(value)
+                else:
+                    row[col] = value
+            except Exception:
+                continue
+        return row
+
+    rows = [_serialize(r) for r in rows_db]
+
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "sort": {"column": sort_column, "direction": sort_dir} if sort_column else None,
+    }
