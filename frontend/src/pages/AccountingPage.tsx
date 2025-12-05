@@ -36,6 +36,14 @@ interface UploadResult {
   period_end?: string;
   rows_count?: number;
   message?: string;
+
+  logs?: ProcessLog[];
+}
+
+interface ProcessLog {
+  timestamp: string;
+  level: string;
+  message: string;
 }
 
 function BankStatementsList() {
@@ -61,26 +69,39 @@ function BankStatementsList() {
     return params;
   }, [bankName, status, periodFrom, periodTo, refreshKey]);
 
+  const [testingOpenAI, setTestingOpenAI] = useState(false);
+  const handleTestOpenAI = async () => {
+    setTestingOpenAI(true);
+    try {
+      const resp = await api.post('/api/accounting/test-openai');
+      alert(`OpenAI Test: ${resp.data.success ? 'SUCCESS' : 'FAILED'}\n${resp.data.message}\nLatency: ${resp.data.latency_ms}ms`);
+    } catch (e: any) {
+      alert(`Test Failed: ${e.message}`);
+    } finally {
+      setTestingOpenAI(false);
+    }
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
-    
+
     setUploading(true);
     setUploadResult(null);
     setUploadError(null);
-    
+
     try {
       const form = new FormData();
       form.append('file', file);
-      
+
       const response = await api.post<UploadResult>('/api/accounting/bank-statements', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      
+
       setUploadResult(response.data);
       setRefreshKey((v) => v + 1);
       setFile(null);
-      
+
       // Reset file input
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
@@ -103,13 +124,19 @@ function BankStatementsList() {
               <p className="text-sm text-gray-500 mt-1">
                 PDF, CSV, or Excel files • AI will extract bank info and transactions automatically
               </p>
+
+              <div className="mt-2">
+                <Button variant="outline" size="sm" onClick={handleTestOpenAI} disabled={testingOpenAI}>
+                  {testingOpenAI ? 'Testing...' : 'Test OpenAI Connection'}
+                </Button>
+              </div>
             </div>
-            
+
             <div className="flex items-center gap-4 w-full max-w-xl">
               <div className="flex-1">
-                <Input 
-                  type="file" 
-                  accept=".csv,.txt,.pdf,.xlsx,.xls" 
+                <Input
+                  type="file"
+                  accept=".csv,.txt,.pdf,.xlsx,.xls"
                   onChange={(e) => {
                     setFile(e.target.files?.[0] ?? null);
                     setUploadResult(null);
@@ -118,16 +145,16 @@ function BankStatementsList() {
                   className="cursor-pointer"
                 />
               </div>
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={uploading || !file}
                 className="min-w-[140px]"
               >
                 {uploading ? (
                   <span className="flex items-center gap-2">
                     <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
                     Parsing...
                   </span>
@@ -164,14 +191,26 @@ function BankStatementsList() {
                       )}
                     </div>
                     {uploadResult.id && (
-                      <Button 
-                        variant="link" 
+                      <Button
+                        variant="link"
                         className="p-0 h-auto mt-2 text-emerald-700"
                         onClick={() => navigate(`/accounting/bank-statements/${uploadResult.id}`)}
                       >
                         View Statement →
                       </Button>
                     )}
+
+                    {uploadResult.logs && uploadResult.logs.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-emerald-200/50">
+                        <div className="text-xs font-semibold text-emerald-800 mb-1">Process Logs</div>
+                        <div className="max-h-32 overflow-auto text-[10px] font-mono flex flex-col gap-0.5 text-emerald-900/80">
+                          {uploadResult.logs.map((log, i) => (
+                            <div key={i}>[{new Date(log.timestamp).toLocaleTimeString()}] {log.message}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                   </div>
                 </div>
               </div>
@@ -204,9 +243,9 @@ function BankStatementsList() {
           </div>
           <div>
             <Label className="block text-xs mb-1">Status</Label>
-            <select 
+            <select
               className="border rounded px-2 py-1.5 text-sm"
-              value={status} 
+              value={status}
               onChange={(e) => setStatus(e.target.value)}
             >
               <option value="">All statuses</option>
@@ -236,7 +275,7 @@ function BankStatementsList() {
           />
         </div>
       </div>
-    </div>
+    </div >
   );
 }
 
@@ -348,6 +387,19 @@ function BankStatementDetail() {
           <div>
             <div className="font-semibold">Total debit</div>
             <div>{summary.total_debit}</div>
+          </div>
+        </Card>
+      )}
+
+      {summary?.logs && summary.logs.length > 0 && (
+        <Card className="p-4 bg-slate-50">
+          <h3 className="text-sm font-semibold mb-2">Process Logs</h3>
+          <div className="max-h-60 overflow-auto text-xs font-mono flex flex-col gap-1">
+            {summary.logs.map((log: ProcessLog, i: number) => (
+              <div key={i} className={log.level === 'ERROR' ? 'text-red-600' : 'text-slate-600'}>
+                [{new Date(log.timestamp).toLocaleTimeString()}] {log.level}: {log.message}
+              </div>
+            ))}
           </div>
         </Card>
       )}

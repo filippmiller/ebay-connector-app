@@ -20,10 +20,28 @@ from app.models_sqlalchemy.models import (
     AccountingCashExpense,
     AccountingTransaction,
     AccountingTransactionLog,
+    AccountingBankRule,
+    AccountingProcessLog,
     User,
 )
 from app.services.admin_auth import require_admin_user
 from app.utils.logger import logger
+
+
+def _log_process(db: Session, stmt_id: int, message: str, level: str = "INFO", details: Optional[Dict[str, Any]] = None):
+    try:
+        log_entry = AccountingProcessLog(
+            bank_statement_id=stmt_id,
+            message=message,
+            level=level,
+            details=details
+        )
+        db.add(log_entry)
+        # We don't commit here to avoid breaking the main transaction flow, 
+        # but in a production system we might want a separate db session for logs 
+        # to persist them even on rollback.
+    except Exception as e:
+        logger.error(f"Failed to write process log: {e}")
 
 
 router = APIRouter(prefix="/api/accounting", tags=["accounting"])
@@ -208,6 +226,7 @@ from app.services.accounting_parsers.csv_parser import parse_csv_bytes
 from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
 from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes, parse_pdf_with_metadata
 from app.services.accounting_rules_engine import apply_rules_to_bank_rows
+from app.services.supabase_storage import upload_file_to_storage
 
 
 
@@ -261,6 +280,7 @@ async def upload_bank_statement(
     extracted_period_start = statement_period_start
     extracted_period_end = statement_period_end
     parsed_transactions = []
+    pdf_raw_response: Optional[Dict[str, Any]] = None
     parsing_error = None
 
     if is_pdf_like:
@@ -286,6 +306,7 @@ async def upload_bank_statement(
                     pass
             
             parsed_transactions = pdf_result.transactions
+            pdf_raw_response = pdf_result.raw_json
             logger.info(f"PDF parsed: bank={extracted_bank_name}, transactions={len(parsed_transactions)}")
         except Exception as e:
             parsing_error = str(e)
@@ -309,8 +330,32 @@ async def upload_bank_statement(
     )
     db.add(stmt)
     db.flush()
+    
+    # Upload to Supabase Storage
+    # Path format: {stmt_id}/{filename} (e.g. "12/statement.pdf")
+    storage_filename = f"{stmt.id}/{file.filename}"
+    try:
+        # Use our new storage helper
+        logger.info(f"Uploading statement {stmt.id} to storage bucket 'bank-statements'")
+        uploaded_path = upload_file_to_storage("bank-statements", storage_filename, file_bytes, file.content_type or "application/octet-stream")
+        storage_path = uploaded_path  # e.g. "12/statement.pdf"
+    except Exception as e:
+        logger.error(f"Failed to upload bank statement file to Supabase: {e}")
+        # Assuming we want to FAIL the request if we can't archive the file securely
+        raise HTTPException(status_code=500, detail="Failed to upload file to secure storage.")
 
-    storage_path = f"accounting/bank_statements/{stmt.id}/{file.filename}"
+    # Update statement with storage info and raw response (if any)
+    stmt.supabase_bucket = "bank-statements"
+    stmt.supabase_path = storage_path
+    if pdf_raw_response:
+        stmt.raw_openai_response = pdf_raw_response
+    
+    db.add(stmt) # Mark as modified
+    stmt.status = "processing" # Update status to indicate work in progress
+    db.flush()
+    
+    _log_process(db, stmt.id, "Statement initialized.", details={"original_filename": file.filename, "file_hash": file_hash})
+    _log_process(db, stmt.id, f"File uploaded to Supabase: {storage_path}")
 
     stmt_file = AccountingBankStatementFile(
         bank_statement_id=stmt.id,
@@ -454,9 +499,13 @@ async def upload_bank_statement(
                 new_rows.append(db_row)
 
             stmt.status = "parsed"
+            _log_process(db, stmt.id, "PDF Parsing Successful", details={"transactions_found": len(new_rows)})
+            
         except Exception as e:
             logger.warning(f"Failed to auto-parse bank statement table file: {e}")
             stmt.status = "uploaded"
+            stmt.error_message = str(e)
+            _log_process(db, stmt.id, "Parsing Failed", level="ERROR", details={"error": str(e)})
     else:
         stmt.status = "uploaded"
 
@@ -476,7 +525,11 @@ async def upload_bank_statement(
         "period_start": stmt.statement_period_start.isoformat() if stmt.statement_period_start else None,
         "period_end": stmt.statement_period_end.isoformat() if stmt.statement_period_end else None,
         "rows_count": len(new_rows),
-        "message": "Statement uploaded and parsed successfully" if new_rows else "Statement uploaded"
+        "message": "Statement uploaded and parsed successfully" if new_rows else "Statement uploaded",
+        "logs": [
+            {"timestamp": log.timestamp.isoformat(), "level": log.level, "message": log.message} 
+            for log in db.query(AccountingProcessLog).filter(AccountingProcessLog.bank_statement_id == stmt.id).order_by(AccountingProcessLog.timestamp).all()
+        ]
     }
 
 
@@ -1168,3 +1221,58 @@ async def update_transaction(
 
     db.commit()
     return {"ok": True}
+
+
+@router.post("/test-openai", response_model=Dict[str, Any])
+async def test_openai_connection(
+    current_user: User = Depends(require_admin_user),
+):
+    """Test the OpenAI API configuration and connectivity."""
+    import httpx
+    import time
+    from app.config import settings
+
+    api_key = settings.OPENAI_API_KEY
+    if not api_key:
+        return {
+            "success": False, 
+            "message": "OPENAI_API_KEY is not configured in environment variables or settings."
+        }
+    
+    start_time = time.time()
+    try:
+        # Simple health check - list models
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            elapsed = time.time() - start_time
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                models = [m["id"] for m in data.get("data", [])]
+                model_count = len(models)
+                # Check if our configured model exists in the list
+                target_model = settings.OPENAI_MODEL or "gpt-4o"
+                has_model = any(target_model in m for m in models)
+                
+                return {
+                    "success": True,
+                    "message": f"OpenAI connection successful. Found {model_count} models.",
+                    "latency_ms": int(elapsed * 1000),
+                    "model_count": model_count,
+                    "target_model_available": has_model,
+                    "configured_model": target_model
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"OpenAI API returned error: {resp.status_code}",
+                    "details": resp.text
+                }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Connection failed: {str(e)}"
+        }

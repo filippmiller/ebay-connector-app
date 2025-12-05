@@ -75,6 +75,12 @@ class Settings(BaseSettings):
 
     # DATABASE_URL must be provided via environment from Railway (Supabase/Postgres)
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+
+    # Supabase API Configuration
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_KEY: Optional[str] = None  # Anon key
+    SUPABASE_SERVICE_KEY: Optional[str] = None  # Service role key
+
     
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     FRONTEND_URL: str = "http://localhost:5173"

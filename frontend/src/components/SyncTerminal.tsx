@@ -25,12 +25,13 @@ interface SyncEvent {
 }
 
 interface SyncTerminalProps {
-  runId: string;
+  runId: string | null;
   onComplete?: (doneEvent?: any) => void;
   onStop?: () => void;
+  onViewAllLogs?: () => void;
 }
 
-export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, onStop }) => {
+export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, onStop, onViewAllLogs }) => {
   const [events, setEvents] = useState<SyncEvent[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -425,6 +426,17 @@ export const SyncTerminal: React.FC<SyncTerminalProps> = ({ runId, onComplete, o
             >
               <Download className="w-4 h-4" />
             </Button>
+            {onViewAllLogs && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onViewAllLogs}
+                title="View all worker logs"
+                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+              >
+                <span className="text-xs">View All Logs</span>
+              </Button>
+            )}
           </div>
         </div>
       </CardHeader>

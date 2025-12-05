@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Date, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc, Table, inspect
+from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, Date, Text, ForeignKey, Enum, Boolean, Index, Numeric, CHAR, desc, Table, inspect, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -1897,6 +1897,7 @@ class AccountingBankStatement(Base):
     # Error handling & debugging
     error_message = Column(Text, nullable=True)
     raw_header_json = Column(JSONB, nullable=True)
+    raw_openai_response = Column(JSONB, nullable=True)
 
     __table_args__ = (
         Index('idx_accounting_bank_statement_file_hash', 'file_hash'),
@@ -2069,6 +2070,18 @@ class AccountingBankStatementImportRun(Base):
     
     error_message = Column(Text, nullable=True)
     metadata_json = Column(JSONB, nullable=True)
+
+
+class AccountingProcessLog(Base):
+    """Detailed logs for admin UI debugging."""
+    __tablename__ = "accounting_process_log"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bank_statement_id = Column(BigInteger, ForeignKey('accounting_bank_statement.id', ondelete='CASCADE'), nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    level = Column(Text, nullable=False, default='INFO')  # INFO, WARNING, ERROR
+    message = Column(Text, nullable=False)
+    details = Column(JSONB, nullable=True)
 
 
 class Offer(Base):
@@ -2277,6 +2290,55 @@ class EbayHealthEvent(Base):
         Index('idx_ebay_health_events_account_id', 'ebay_account_id'),
         Index('idx_ebay_health_events_checked_at', 'checked_at'),
         Index('idx_ebay_health_events_is_healthy', 'is_healthy'),
+    )
+
+
+class EbayOrder(Base):
+    __tablename__ = "ebay_orders"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    order_id = Column(String(100), nullable=False)
+    user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    ebay_account_id = Column(String(36), nullable=True)
+    ebay_user_id = Column(String(100), nullable=True)
+
+    creation_date = Column(DateTime(timezone=True), nullable=True)
+    last_modified_date = Column(DateTime(timezone=True), nullable=True)
+    
+    order_payment_status = Column(String(50), nullable=True)
+    order_fulfillment_status = Column(String(50), nullable=True)
+    
+    buyer_username = Column(String(100), nullable=True)
+    buyer_email = Column(String(100), nullable=True)
+    buyer_registered = Column(String(100), nullable=True)
+    
+    total_amount = Column(Numeric(14, 2), nullable=True)
+    total_currency = Column(String(10), nullable=True)
+    
+    order_total_value = Column(Numeric(14, 2), nullable=True)
+    order_total_currency = Column(String(10), nullable=True)
+    
+    line_items_count = Column(Integer, nullable=True)
+    
+    tracking_number = Column(String(100), nullable=True)
+    ship_to_name = Column(String(100), nullable=True)
+    ship_to_city = Column(String(100), nullable=True)
+    ship_to_state = Column(String(100), nullable=True)
+    ship_to_postal_code = Column(String(50), nullable=True)
+    ship_to_country_code = Column(String(10), nullable=True)
+    
+    order_data = Column(JSONB, nullable=True)
+    raw_payload = Column(JSONB, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index('idx_ebay_orders_user_id', 'user_id'),
+        Index('idx_ebay_orders_ebay_account_id', 'ebay_account_id'),
+        Index('idx_ebay_orders_creation_date', 'creation_date'),
+        Index('idx_ebay_orders_order_id', 'order_id'),
+        UniqueConstraint('order_id', 'user_id', name='uq_ebay_orders_order_id_user_id'),
     )
 
 

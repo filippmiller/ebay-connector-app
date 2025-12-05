@@ -59,9 +59,10 @@ interface EbayWorkersPanelProps {
   accountId: string;
   accountLabel: string;
   ebayUserId?: string;
+  onViewAllLogs?: () => void;
 }
 
-export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, accountLabel, ebayUserId }) => {
+export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, accountLabel, ebayUserId, onViewAllLogs }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<WorkerConfigResponse | null>(null);
@@ -835,6 +836,7 @@ export const EbayWorkersPanel: React.FC<EbayWorkersPanelProps> = ({ accountId, a
             runId={activeSyncRunId}
             onComplete={() => { }}
             onStop={() => { }}
+            onViewAllLogs={onViewAllLogs}
           />
         ) : (
           <div className="text-xs text-gray-500 border rounded p-2 bg-gray-50">

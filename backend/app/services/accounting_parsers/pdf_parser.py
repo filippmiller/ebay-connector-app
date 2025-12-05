@@ -51,6 +51,7 @@ class ParsedStatementResult:
     # Raw text for debugging
     raw_text_length: int = 0
     parsing_notes: Optional[str] = None
+    raw_json: Optional[Dict[str, Any]] = None
 
 
 async def parse_pdf_bytes(pdf_bytes: bytes) -> List[Dict[str, Any]]:
@@ -204,6 +205,7 @@ Important rules:
         transactions=parsed_rows,
         raw_text_length=len(full_text),
         parsing_notes=parsing_notes,
+        raw_json=result,
     )
 
 # Backward compatibility stubs - use parse_pdf_bytes or parse_pdf_with_metadata instead

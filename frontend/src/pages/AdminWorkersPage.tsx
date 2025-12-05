@@ -243,24 +243,16 @@ const AdminWorkersPage: React.FC = () => {
         <div className="w-full mx-auto space-y-3">
           {/* Ultra-compact header row: title + account selection + token worker summary + per-account token status */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm">
-                <h1 className="text-lg font-semibold tracking-tight">eBay Workers</h1>
-                <span
-                  className="inline-flex items-center justify-center h-4 w-4 rounded-full border border-gray-300 text-[10px] font-semibold text-gray-600 cursor-default"
-                  title={
-                    'Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно включать/выключать воркеры по аккаунту, запускать их вручную и смотреть подробные логи выполнения.'
-                  }
-                >
-                  i
-                </span>
-              </div>
-              <button
-                onClick={() => setAllLogsModalOpen(true)}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+            <div className="flex items-center gap-2 text-sm">
+              <h1 className="text-lg font-semibold tracking-tight">eBay Workers</h1>
+              <span
+                className="inline-flex items-center justify-center h-4 w-4 rounded-full border border-gray-300 text-[10px] font-semibold text-gray-600 cursor-default"
+                title={
+                  'Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно включать/выключать воркеры по аккаунту, запускать их вручную и смотреть подробные логи выполнения.'
+                }
               >
-                View All Logs
-              </button>
+                i
+              </span>
             </div>
 
             <div className="flex flex-col lg:flex-row gap-2 items-stretch">
@@ -1049,6 +1041,7 @@ const AdminWorkersPage: React.FC = () => {
                 accountId={selectedAccountId}
                 accountLabel={accountLabel}
                 ebayUserId={selectedAccount.ebay_user_id}
+                onViewAllLogs={() => setAllLogsModalOpen(true)}
               />
             </div>
           )}
