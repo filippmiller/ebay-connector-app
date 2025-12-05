@@ -837,6 +837,144 @@ async def get_worker_logs(
     }
 
 
+@router.get("/runs/all")
+async def get_all_worker_runs(
+    ebay_account_id: Optional[str] = Query(None, description="Filter by eBay account ID"),
+    api_family: Optional[str] = Query(None, description="Filter by API family (e.g., orders, transactions)"),
+    status_filter: Optional[str] = Query(None, description="Filter by status (running, completed, error)"),
+    limit: int = Query(500, ge=1, le=5000, description="Maximum number of runs to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get all worker runs across all accounts with optional filtering.
+    
+    Only returns runs for accounts owned by the current user.
+    """
+    from sqlalchemy import and_, or_
+    
+    # Get all account IDs owned by the current user
+    user_accounts = db.query(EbayAccount.id).filter(EbayAccount.org_id == current_user.id).all()
+    account_ids = [acc.id for acc in user_accounts]
+    
+    if not account_ids:
+        return {"runs": [], "total": 0}
+    
+    # Build query
+    query = db.query(EbayWorkerRun).filter(EbayWorkerRun.ebay_account_id.in_(account_ids))
+    
+    if ebay_account_id:
+        query = query.filter(EbayWorkerRun.ebay_account_id == ebay_account_id)
+    
+    if api_family:
+        query = query.filter(EbayWorkerRun.api_family == api_family)
+    
+    if status_filter:
+        query = query.filter(EbayWorkerRun.status == status_filter)
+    
+    # Get total count before pagination
+    total = query.count()
+    
+    # Apply pagination and ordering
+    runs = (
+        query.order_by(EbayWorkerRun.started_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    
+    # Get account details for each run
+    account_map = {}
+    for acc in db.query(EbayAccount).filter(EbayAccount.id.in_([r.ebay_account_id for r in runs])).all():
+        account_map[acc.id] = acc
+    
+    result = []
+    for r in runs:
+        account = account_map.get(r.ebay_account_id)
+        result.append(
+            {
+                "id": r.id,
+                "ebay_account_id": r.ebay_account_id,
+                "ebay_user_id": r.ebay_user_id,
+                "account_house_name": account.house_name if account else None,
+                "api_family": r.api_family,
+                "status": r.status,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "summary": r.summary_json,
+            }
+        )
+    
+    return {"runs": result, "total": total}
+
+
+@router.delete("/logs/cleanup")
+async def cleanup_old_worker_logs(
+    days_to_keep: int = Query(..., ge=2, le=5, description="Number of days to keep (2, 3, 4, or 5)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Delete all worker runs and their logs older than the specified number of days.
+    
+    Only deletes logs for accounts owned by the current user.
+    """
+    from datetime import datetime, timezone, timedelta
+    
+    # Get all account IDs owned by the current user
+    user_accounts = db.query(EbayAccount.id).filter(EbayAccount.org_id == current_user.id).all()
+    account_ids = [acc.id for acc in user_accounts]
+    
+    if not account_ids:
+        return {"deleted_runs": 0, "deleted_logs": 0, "message": "No accounts found"}
+    
+    # Calculate cutoff date
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_to_keep)
+    
+    # Find runs to delete (older than cutoff and owned by user)
+    runs_to_delete = (
+        db.query(EbayWorkerRun)
+        .filter(
+            EbayWorkerRun.ebay_account_id.in_(account_ids),
+            EbayWorkerRun.started_at < cutoff_date
+        )
+        .all()
+    )
+    
+    run_ids_to_delete = [r.id for r in runs_to_delete]
+    
+    # Delete logs first (they have foreign key to runs)
+    deleted_logs = 0
+    if run_ids_to_delete:
+        deleted_logs = (
+            db.query(EbayApiWorkerLog)
+            .filter(EbayApiWorkerLog.run_id.in_(run_ids_to_delete))
+            .delete(synchronize_session=False)
+        )
+    
+    # Delete runs
+    deleted_runs = 0
+    if run_ids_to_delete:
+        deleted_runs = (
+            db.query(EbayWorkerRun)
+            .filter(EbayWorkerRun.id.in_(run_ids_to_delete))
+            .delete(synchronize_session=False)
+        )
+    
+    db.commit()
+    
+    logger.info(
+        f"Cleaned up worker logs: deleted {deleted_runs} runs and {deleted_logs} log entries "
+        f"older than {days_to_keep} days for user {current_user.id}"
+    )
+    
+    return {
+        "deleted_runs": deleted_runs,
+        "deleted_logs": deleted_logs,
+        "cutoff_date": cutoff_date.isoformat(),
+        "message": f"Deleted {deleted_runs} runs and {deleted_logs} log entries older than {days_to_keep} days"
+    }
+
+
 # Note: a full run-cycle endpoint (for all accounts) will be added later once
 # we have a cheap way to enumerate all active accounts. For now the frontend or
 # external scheduler can call /run per account.

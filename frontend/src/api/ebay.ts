@@ -567,4 +567,38 @@ export const ebayApi = {
     );
     return response.data;
   },
+
+  async getAllWorkerRuns(params?: {
+    ebay_account_id?: string;
+    api_family?: string;
+    status_filter?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ runs: any[]; total: number }> {
+    const searchParams = new URLSearchParams();
+    if (params?.ebay_account_id) searchParams.set('ebay_account_id', params.ebay_account_id);
+    if (params?.api_family) searchParams.set('api_family', params.api_family);
+    if (params?.status_filter) searchParams.set('status_filter', params.status_filter);
+    if (params?.limit) searchParams.set('limit', String(params.limit));
+    if (params?.offset) searchParams.set('offset', String(params.offset));
+    const response = await apiClient.get<{ runs: any[]; total: number }>(
+      `/ebay/workers/runs/all?${searchParams.toString()}`,
+    );
+    return response.data;
+  },
+
+  async cleanupOldWorkerLogs(daysToKeep: number): Promise<{
+    deleted_runs: number;
+    deleted_logs: number;
+    cutoff_date: string;
+    message: string;
+  }> {
+    const response = await apiClient.delete<{
+      deleted_runs: number;
+      deleted_logs: number;
+      cutoff_date: string;
+      message: string;
+    }>(`/ebay/workers/logs/cleanup?days_to_keep=${daysToKeep}`);
+    return response.data;
+  },
 };

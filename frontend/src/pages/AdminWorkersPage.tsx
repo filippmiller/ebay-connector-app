@@ -12,6 +12,7 @@ import {
   WorkersLoopStatusItem,
 } from "../api/ebay";
 import { EbayWorkersPanel } from "../components/workers/EbayWorkersPanel";
+import { AllWorkerLogsModal } from "../components/AllWorkerLogsModal";
 import { formatDateTimeLocal, formatRelativeTime } from "../lib/dateUtils";
 
 interface EbayAccountWithToken {
@@ -63,6 +64,9 @@ const AdminWorkersPage: React.FC = () => {
   const [terminalLoading, setTerminalLoading] = useState(false);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalEntries, setTerminalEntries] = useState<any[]>([]);
+
+  // All worker logs modal
+  const [allLogsModalOpen, setAllLogsModalOpen] = useState(false);
 
   const loadTokenStatusAndWorker = async () => {
     try {
@@ -239,16 +243,24 @@ const AdminWorkersPage: React.FC = () => {
         <div className="w-full mx-auto space-y-3">
           {/* Ultra-compact header row: title + account selection + token worker summary + per-account token status */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-sm">
-              <h1 className="text-lg font-semibold tracking-tight">eBay Workers</h1>
-              <span
-                className="inline-flex items-center justify-center h-4 w-4 rounded-full border border-gray-300 text-[10px] font-semibold text-gray-600 cursor-default"
-                title={
-                  'Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно включать/выключать воркеры по аккаунту, запускать их вручную и смотреть подробные логи выполнения.'
-                }
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm">
+                <h1 className="text-lg font-semibold tracking-tight">eBay Workers</h1>
+                <span
+                  className="inline-flex items-center justify-center h-4 w-4 rounded-full border border-gray-300 text-[10px] font-semibold text-gray-600 cursor-default"
+                  title={
+                    'Централизованный интерфейс управления фоновыми воркерами eBay. Здесь можно включать/выключать воркеры по аккаунту, запускать их вручную и смотреть подробные логи выполнения.'
+                  }
+                >
+                  i
+                </span>
+              </div>
+              <button
+                onClick={() => setAllLogsModalOpen(true)}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
               >
-                i
-              </span>
+                View All Logs
+              </button>
             </div>
 
             <div className="flex flex-col lg:flex-row gap-2 items-stretch">
@@ -1042,6 +1054,12 @@ const AdminWorkersPage: React.FC = () => {
           )}
         </div>
       </main>
+
+      {/* All Worker Logs Modal */}
+      <AllWorkerLogsModal
+        isOpen={allLogsModalOpen}
+        onClose={() => setAllLogsModalOpen(false)}
+      />
     </div>
   );
 };
