@@ -3,15 +3,18 @@ from __future__ import annotations
 from typing import List, Optional, Dict, Any
 from datetime import date
 from decimal import Decimal
+import datetime as dt
 import csv
 import io
+import hashlib
+import asyncio
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
-from app.models_sqlalchemy import get_db as get_db_sqla
+from app.models_sqlalchemy import get_db as get_db_sqla, SessionLocal
 from app.models_sqlalchemy.models import (
     AccountingExpenseCategory,
     AccountingBankStatement,
@@ -26,6 +29,12 @@ from app.models_sqlalchemy.models import (
 )
 from app.services.admin_auth import require_admin_user
 from app.utils.logger import logger
+
+from app.services.accounting_parsers.csv_parser import parse_csv_bytes
+from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
+from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes, parse_pdf_with_metadata
+from app.services.accounting_rules_engine import apply_rules_to_bank_rows
+from app.services.supabase_storage import upload_file_to_storage
 
 
 def _log_process(db: Session, stmt_id: int, message: str, level: str = "INFO", details: Optional[Dict[str, Any]] = None):
@@ -42,6 +51,211 @@ def _log_process(db: Session, stmt_id: int, message: str, level: str = "INFO", d
         # to persist them even on rollback.
     except Exception as e:
         logger.error(f"Failed to write process log: {e}")
+
+
+async def process_bank_statement_background(statement_id: int, file_bytes: bytes, file_name: str, content_type: str, user_id: str):
+    """Background task to parse the file and update the statement."""
+    logger.info(f"Starting background processing for statement {statement_id}...")
+    
+    # New DB session for the background task
+    db = SessionLocal()
+    try:
+        stmt = db.query(AccountingBankStatement).get(statement_id)
+        if not stmt:
+            logger.error(f"Statement {statement_id} not found in background task.")
+            return
+
+        ext = (file_name or "").lower()
+        is_csv_like = ext.endswith(".csv") or ext.endswith(".txt")
+        is_xlsx_like = ext.endswith(".xlsx") or ext.endswith(".xls")
+        is_pdf_like = ext.endswith(".pdf") or "pdf" in content_type
+
+        # Default fallback metadata
+        extracted_bank_name = stmt.bank_name
+        extracted_account_last4 = stmt.account_last4
+        extracted_currency = stmt.currency
+        extracted_period_start = stmt.statement_period_start
+        extracted_period_end = stmt.statement_period_end
+        
+        parsed_transactions = []
+        pdf_raw_response: Optional[Dict[str, Any]] = None
+        parsing_error = None
+        new_rows = []
+
+        if is_pdf_like:
+            try:
+                # This is the slow part!
+                pdf_result = await parse_pdf_with_metadata(file_bytes)
+                
+                # Update metadata if not manually set
+                if stmt.bank_name == "Unknown Bank" and pdf_result.bank_name:
+                    extracted_bank_name = pdf_result.bank_name
+                if not stmt.account_last4 and pdf_result.account_last4:
+                    extracted_account_last4 = pdf_result.account_last4
+                if not stmt.currency or stmt.currency == "USD":
+                    if pdf_result.currency:
+                        extracted_currency = pdf_result.currency
+                
+                # Period handling
+                if not stmt.statement_period_start and pdf_result.period_start:
+                    try:
+                        extracted_period_start = date.fromisoformat(pdf_result.period_start)
+                    except Exception:
+                        pass
+                if not stmt.statement_period_end and pdf_result.period_end:
+                    try:
+                        extracted_period_end = date.fromisoformat(pdf_result.period_end)
+                    except Exception:
+                        pass
+                
+                parsed_transactions = pdf_result.transactions
+                pdf_raw_response = pdf_result.raw_json
+                
+                _log_process(db, stmt.id, f"PDF processed by OpenAI. Found {len(parsed_transactions)} transactions.", details={"bank": extracted_bank_name})
+                logger.info(f"PDF parsed for stmt {statement_id}: {len(parsed_transactions)} txs")
+
+            except Exception as e:
+                parsing_error = str(e)
+                logger.error(f"Failed to parse PDF bank statement {statement_id}: {e}")
+                stmt.status = "error_parsing_failed"
+                stmt.error_message = str(e)
+                _log_process(db, stmt.id, "Parsing Failed", level="ERROR", details={"error": str(e)})
+                db.commit()
+                return # Exit early on fatal parsing error
+        
+        elif is_csv_like or is_xlsx_like:
+            try:
+                parsed = parse_xlsx_bytes(file_bytes) if is_xlsx_like else parse_csv_bytes(file_bytes)
+                parsed_transactions = parsed # Use same list
+                _log_process(db, stmt.id, f"Spreadsheet parsed locally. Found {len(parsed_transactions)} rows.")
+            except Exception as e:
+                parsing_error = str(e)
+                logger.error(f"Failed to parse spreadsheet {statement_id}: {e}")
+                stmt.status = "error_parsing_failed"
+                stmt.error_message = str(e)
+                _log_process(db, stmt.id, "Parsing Failed", level="ERROR", details={"error": str(e)})
+                db.commit()
+                return
+
+        # Common Row Creation Logic
+        def _make_row_dedupe_key(row_data: Dict[str, Any], stmt_id: int) -> str:
+            raw_str = f"{stmt_id}|{row_data.get('__index__')}|{row_data.get('date')}|{row_data.get('amount')}|{row_data.get('description')}"
+            return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
+
+        if parsed_transactions:
+            for row in parsed_transactions:
+                # Normalization logic (handles both PDF result dicts and CSV dicts)
+                amount_raw = (
+                    row.get("amount")
+                    or row.get("transaction amount")
+                    or row.get("debit")
+                    or row.get("credit")
+                    or row.get("Amount")
+                    or row.get("AMOUNT")
+                )
+                try:
+                    amount_val = Decimal(str(amount_raw)) if amount_raw not in (None, "") else Decimal("0")
+                except Exception:
+                    amount_val = Decimal("0")
+
+                bal_raw = (
+                    row.get("balance")
+                    or row.get("running balance")
+                    or row.get("Balance")
+                    or row.get("BALANCE")
+                )
+                try:
+                    bal_val = Decimal(str(bal_raw)) if bal_raw not in (None, "") else None
+                except Exception:
+                    bal_val = None
+
+                op_date_raw = (
+                    row.get("date")
+                    or row.get("transaction date")
+                    or row.get("operation date")
+                    or row.get("posting date")
+                    or row.get("Date")
+                    or row.get("operation_date")
+                    or row.get("operation date")
+                )
+                op_date: Optional[date] = None
+                if op_date_raw:
+                    try:
+                        op_date = date.fromisoformat(str(op_date_raw))
+                    except Exception:
+                        op_date = None
+
+                description_raw = (
+                    row.get("description")
+                    or row.get("transaction description")
+                    or row.get("details")
+                    or row.get("memo")
+                    or row.get("Description")
+                    or row.get("DESC")
+                    or ""
+                )
+
+                dedupe_key = _make_row_dedupe_key(row, stmt.id)
+
+                db_row = AccountingBankRow(
+                    bank_statement_id=stmt.id,
+                    row_index=row.get("__index__"),
+                    operation_date=op_date,
+                    description_raw=description_raw,
+                    amount=amount_val,
+                    balance_after=bal_val,
+                    currency=row.get("currency") or row.get("Currency") or extracted_currency or "USD",
+                    parsed_status="auto_parsed",
+                    match_status="unmatched",
+                    dedupe_key=dedupe_key,
+                    created_by_user_id=user_id,
+                    updated_by_user_id=user_id,
+                )
+                db.add(db_row)
+                new_rows.append(db_row)
+
+            # Apply updates to Statement
+            stmt.bank_name = extracted_bank_name
+            stmt.account_last4 = extracted_account_last4
+            stmt.currency = extracted_currency
+            stmt.statement_period_start = extracted_period_start
+            stmt.statement_period_end = extracted_period_end
+            
+            if pdf_raw_response:
+                stmt.raw_openai_response = pdf_raw_response
+
+            stmt.status = "parsed"
+            _log_process(db, stmt.id, "Parsing Completed", details={"total_rows": len(new_rows)})
+
+        else:
+             # No rows found
+             stmt.status = "uploaded"
+             message = "No transactions extracted."
+             stmt.error_message = message if not stmt.error_message else stmt.error_message
+             _log_process(db, stmt.id, "Parsing Finished - No Rows", level="WARNING")
+
+        # Apply auto-categorization rules
+        if new_rows:
+            apply_rules_to_bank_rows(db, new_rows)
+            _log_process(db, stmt.id, "Auto-categorization rules applied.")
+
+        db.commit()
+    
+    except Exception as e:
+        logger.error(f"Fatal error in background statement processing: {e}")
+        try:
+            # Try to recover session to update status
+            db.rollback()
+            stmt = db.query(AccountingBankStatement).get(statement_id)
+            if stmt:
+                 stmt.status = "error_internal"
+                 stmt.error_message = f"System error: {str(e)}"
+                 db.commit()
+        except:
+            pass
+    finally:
+        db.close()
+        logger.info(f"Background task finished for statement {statement_id}")
 
 
 router = APIRouter(prefix="/api/accounting", tags=["accounting"])
@@ -221,19 +435,11 @@ async def delete_rule(
 # --- Bank statements upload & rows ---
 
 
-import hashlib
-from app.services.accounting_parsers.csv_parser import parse_csv_bytes
-from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
-from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes, parse_pdf_with_metadata
-from app.services.accounting_rules_engine import apply_rules_to_bank_rows
-from app.services.supabase_storage import upload_file_to_storage
-
-
-
-@router.post("/bank-statements", status_code=status.HTTP_201_CREATED)
+@router.post("/bank-statements", status_code=status.HTTP_202_ACCEPTED)
 async def upload_bank_statement(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    bank_name: Optional[str] = Form(None),  # Now optional - will be extracted from PDF
+    bank_name: Optional[str] = Form(None),
     account_last4: Optional[str] = Form(None),
     currency: Optional[str] = Form(None),
     statement_period_start: Optional[date] = Form(None),
@@ -241,14 +447,13 @@ async def upload_bank_statement(
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ):
-    """Upload and parse a bank statement file (CSV, XLSX, or PDF).
-    
-    For PDF files, OpenAI is used to extract:
-    - Bank name, account number, currency, statement period
-    - All individual transactions
-    
-    All fields except 'file' are optional - metadata will be auto-extracted when possible.
+    """Upload a bank statement file (CSV, XLSX, or PDF) and process it in the background.
+
+    For PDF files, processing via OpenAI can take a while, so we return 202 immediately.
+    Clients should poll the statements list to see the status update from 'processing' to 'parsed'.
     """
+    logger.info(f"Upload request received for: {file.filename}")
+    
     # 1. Read file and compute hash
     file_bytes = await file.read()
     file_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -265,8 +470,6 @@ async def upload_bank_statement(
         
         if rows_count == 0:
             logger.info(f"Duplicate file hash {file_hash} found, but existing statement {existing_stmt.id} has 0 rows. Re-processing.")
-            # Delete the old empty record so we can start fresh
-            # Note: cascades in DB might handle rows/files, but we'll let SQLAlchemy handle it
             db.delete(existing_stmt)
             db.flush()
         else:
@@ -274,99 +477,46 @@ async def upload_bank_statement(
                 "id": existing_stmt.id, 
                 "status": existing_stmt.status, 
                 "message": "Statement already uploaded",
-                "rows_count": rows_count
+                "rows_count": rows_count,
+                 "period_start": existing_stmt.statement_period_start.isoformat() if existing_stmt.statement_period_start else None,
             }
-
-    ext = (file.filename or "").lower()
-    content_type = (file.content_type or "").lower()
-    is_csv_like = ext.endswith(".csv") or ext.endswith(".txt")
-    is_xlsx_like = ext.endswith(".xlsx") or ext.endswith(".xls")
-    is_pdf_like = ext.endswith(".pdf") or "pdf" in content_type
-
-    # For PDFs, try to extract metadata first
-    extracted_bank_name = bank_name
-    extracted_account_last4 = account_last4
-    extracted_currency = currency
-    extracted_period_start = statement_period_start
-    extracted_period_end = statement_period_end
-    parsed_transactions = []
-    pdf_raw_response: Optional[Dict[str, Any]] = None
-    parsing_error = None
-
-    if is_pdf_like:
-        try:
-            pdf_result = await parse_pdf_with_metadata(file_bytes)
-            
-            # Use extracted metadata if not provided by user
-            if not extracted_bank_name and pdf_result.bank_name:
-                extracted_bank_name = pdf_result.bank_name
-            if not extracted_account_last4 and pdf_result.account_last4:
-                extracted_account_last4 = pdf_result.account_last4
-            if not extracted_currency and pdf_result.currency:
-                extracted_currency = pdf_result.currency
-            if not extracted_period_start and pdf_result.period_start:
-                try:
-                    extracted_period_start = date.fromisoformat(pdf_result.period_start)
-                except Exception:
-                    pass
-            if not extracted_period_end and pdf_result.period_end:
-                try:
-                    extracted_period_end = date.fromisoformat(pdf_result.period_end)
-                except Exception:
-                    pass
-            
-            parsed_transactions = pdf_result.transactions
-            pdf_raw_response = pdf_result.raw_json
-            logger.info(f"PDF parsed: bank={extracted_bank_name}, transactions={len(parsed_transactions)}")
-        except Exception as e:
-            parsing_error = str(e)
-            logger.warning(f"Failed to parse PDF bank statement: {e}")
-
-    # Default bank name if still not set
-    if not extracted_bank_name:
-        extracted_bank_name = "Unknown Bank"
 
     # 3. Create new statement record
     stmt = AccountingBankStatement(
-        bank_name=extracted_bank_name,
-        account_last4=extracted_account_last4,
-        currency=extracted_currency or "USD",
-        statement_period_start=extracted_period_start,
-        statement_period_end=extracted_period_end,
-        status="uploaded",
+        bank_name=bank_name or "Unknown Bank",
+        account_last4=account_last4,
+        currency=currency or "USD",
+        statement_period_start=statement_period_start,
+        statement_period_end=statement_period_end,
+        status="processing",
         file_hash=file_hash,
         created_by_user_id=current_user.id,
         updated_by_user_id=current_user.id,
     )
     db.add(stmt)
-    db.flush()
+    db.flush()  # get ID
     
     # Upload to Supabase Storage
-    # Path format: {stmt_id}/{filename} (e.g. "12/statement.pdf")
     storage_filename = f"{stmt.id}/{file.filename}"
+    storage_path = ""
     try:
-        # Use our new storage helper
         logger.info(f"Uploading statement {stmt.id} to storage bucket 'bank-statements'")
         uploaded_path = upload_file_to_storage("bank-statements", storage_filename, file_bytes, file.content_type or "application/octet-stream")
-        storage_path = uploaded_path  # e.g. "12/statement.pdf"
+        storage_path = uploaded_path
     except Exception as e:
         logger.error(f"Failed to upload bank statement file to Supabase: {e}")
         # Assuming we want to FAIL the request if we can't archive the file securely
         raise HTTPException(status_code=500, detail="Failed to upload file to secure storage.")
 
-    # Update statement with storage info and raw response (if any)
+    # Update statement with storage info
     stmt.supabase_bucket = "bank-statements"
     stmt.supabase_path = storage_path
-    if pdf_raw_response:
-        stmt.raw_openai_response = pdf_raw_response
-    
-    db.add(stmt) # Mark as modified
-    stmt.status = "processing" # Update status to indicate work in progress
-    db.flush()
+    db.add(stmt)
     
     _log_process(db, stmt.id, "Statement initialized.", details={"original_filename": file.filename, "file_hash": file_hash})
     _log_process(db, stmt.id, f"File uploaded to Supabase: {storage_path}")
 
+    # Track file record
     stmt_file = AccountingBankStatementFile(
         bank_statement_id=stmt.id,
         file_type=file.content_type or "",
@@ -374,172 +524,25 @@ async def upload_bank_statement(
         uploaded_by_user_id=current_user.id,
     )
     db.add(stmt_file)
-
-    new_rows = []
-
-    # Helper to generate row dedupe key
-    def _make_row_dedupe_key(row_data: Dict[str, Any], stmt_id: int) -> str:
-        raw_str = f"{stmt_id}|{row_data.get('__index__')}|{row_data.get('date')}|{row_data.get('amount')}|{row_data.get('description')}"
-        return hashlib.sha256(raw_str.encode('utf-8')).hexdigest()
-
-    if is_pdf_like:
-        if parsing_error:
-            stmt.status = "error_parsing_failed"
-        elif parsed_transactions:
-            for row in parsed_transactions:
-                amount_raw = row.get("amount")
-                try:
-                    amount_val = Decimal(str(amount_raw)) if amount_raw not in (None, "") else Decimal("0")
-                except Exception:
-                    amount_val = Decimal("0")
-
-                bal_raw = row.get("balance")
-                try:
-                    bal_val = Decimal(str(bal_raw)) if bal_raw not in (None, "") else None
-                except Exception:
-                    bal_val = None
-
-                op_date_raw = row.get("date")
-                op_date: Optional[date] = None
-                if op_date_raw:
-                    try:
-                        op_date = date.fromisoformat(str(op_date_raw))
-                    except Exception:
-                        op_date = None
-
-                description_raw = row.get("description") or ""
-
-                dedupe_key = _make_row_dedupe_key(row, stmt.id)
-
-                db_row = AccountingBankRow(
-                    bank_statement_id=stmt.id,
-                    row_index=row.get("__index__"),
-                    operation_date=op_date,
-                    description_raw=description_raw,
-                    amount=amount_val,
-                    balance_after=bal_val,
-                    currency=row.get("currency") or extracted_currency or "USD",
-                    parsed_status="auto_parsed",
-                    match_status="unmatched",
-                    dedupe_key=dedupe_key,
-                    created_by_user_id=current_user.id,
-                    updated_by_user_id=current_user.id,
-                )
-                db.add(db_row)
-                new_rows.append(db_row)
-
-            stmt.status = "parsed"
-        else:
-            stmt.status = "uploaded"  # No transactions found but no error
-
-    elif is_csv_like or is_xlsx_like:
-        try:
-            parsed = parse_xlsx_bytes(file_bytes) if is_xlsx_like else parse_csv_bytes(file_bytes)
-
-            for row in parsed:
-                # The header normalizer stores keys in lower-case form, so we
-                # first try those and then fall back to a few common variants
-                # used by legacy exports.
-                amount_raw = (
-                    row.get("amount")
-                    or row.get("transaction amount")
-                    or row.get("debit")
-                    or row.get("credit")
-                    or row.get("Amount")
-                    or row.get("AMOUNT")
-                )
-                try:
-                    amount_val = Decimal(str(amount_raw)) if amount_raw not in (None, "") else Decimal("0")
-                except Exception:
-                    amount_val = Decimal("0")
-
-                bal_raw = (
-                    row.get("balance")
-                    or row.get("running balance")
-                    or row.get("Balance")
-                    or row.get("BALANCE")
-                )
-                try:
-                    bal_val = Decimal(str(bal_raw)) if bal_raw not in (None, "") else None
-                except Exception:
-                    bal_val = None
-
-                op_date_raw = (
-                    row.get("date")
-                    or row.get("transaction date")
-                    or row.get("operation date")
-                    or row.get("posting date")
-                    or row.get("Date")
-                    or row.get("operation_date")
-                )
-                op_date: Optional[date] = None
-                if op_date_raw:
-                    try:
-                        op_date = date.fromisoformat(str(op_date_raw))
-                    except Exception:
-                        op_date = None
-
-                description_raw = (
-                    row.get("description")
-                    or row.get("transaction description")
-                    or row.get("details")
-                    or row.get("memo")
-                    or row.get("Description")
-                    or row.get("DESC")
-                    or ""
-                )
-
-                dedupe_key = _make_row_dedupe_key(row, stmt.id)
-
-                db_row = AccountingBankRow(
-                    bank_statement_id=stmt.id,
-                    row_index=row.get("__index__"),
-                    operation_date=op_date,
-                    description_raw=description_raw,
-                    amount=amount_val,
-                    balance_after=bal_val,
-                    currency=row.get("currency") or row.get("Currency") or extracted_currency or "USD",
-                    parsed_status="auto_parsed",
-                    match_status="unmatched",
-                    dedupe_key=dedupe_key,
-                    created_by_user_id=current_user.id,
-                    updated_by_user_id=current_user.id,
-                )
-                db.add(db_row)
-                new_rows.append(db_row)
-
-            stmt.status = "parsed"
-            _log_process(db, stmt.id, "PDF Parsing Successful", details={"transactions_found": len(new_rows)})
-            
-        except Exception as e:
-            logger.warning(f"Failed to auto-parse bank statement table file: {e}")
-            stmt.status = "uploaded"
-            stmt.error_message = str(e)
-            _log_process(db, stmt.id, "Parsing Failed", level="ERROR", details={"error": str(e)})
-    else:
-        stmt.status = "uploaded"
-
-    # Apply auto-categorization rules
-    if new_rows:
-        apply_rules_to_bank_rows(db, new_rows)
-
     db.commit()
     db.refresh(stmt)
 
+    # 4. Trigger Background Processing
+    background_tasks.add_task(
+        process_bank_statement_background,
+        statement_id=stmt.id,
+        file_bytes=file_bytes,
+        file_name=file.filename,
+        content_type=file.content_type or "",
+        user_id=current_user.id
+    )
+
     return {
         "id": stmt.id, 
-        "status": stmt.status,
+        "status": "processing",
+        "message": "Statement uploaded. Parsing started in background.",
         "bank_name": stmt.bank_name,
-        "account_last4": stmt.account_last4,
-        "currency": stmt.currency,
-        "period_start": stmt.statement_period_start.isoformat() if stmt.statement_period_start else None,
-        "period_end": stmt.statement_period_end.isoformat() if stmt.statement_period_end else None,
-        "rows_count": len(new_rows),
-        "message": "Statement uploaded and parsed successfully" if new_rows else "Statement uploaded",
-        "logs": [
-            {"timestamp": log.timestamp.isoformat(), "level": log.level, "message": log.message} 
-            for log in db.query(AccountingProcessLog).filter(AccountingProcessLog.bank_statement_id == stmt.id).order_by(AccountingProcessLog.timestamp).all()
-        ]
+        "rows_count": 0
     }
 
 
@@ -633,663 +636,96 @@ async def get_bank_statement_detail(
         "bank_name": stmt.bank_name,
         "account_last4": stmt.account_last4,
         "currency": stmt.currency,
-        "statement_period_start": stmt.statement_period_start.isoformat() if stmt.statement_period_start else None,
-        "statement_period_end": stmt.statement_period_end.isoformat() if stmt.statement_period_end else None,
+        "statement_period_start": stmt.statement_period_start,
+        "statement_period_end": stmt.statement_period_end,
         "status": stmt.status,
+        "created_at": stmt.created_at,
         "rows_count": rows_count,
-        "total_credit": float(total_credit),
-        "total_debit": float(total_debit),
+        "total_credit": total_credit,
+        "total_debit": total_debit,
+        "error_message": stmt.error_message,
+        "raw_response": stmt.raw_openai_response,
+        "logs": [
+            {"timestamp": log.timestamp, "level": log.level, "message": log.message, "details": log.details}
+            for log in db.query(AccountingProcessLog).filter(AccountingProcessLog.bank_statement_id == stmt.id).order_by(AccountingProcessLog.timestamp).all()
+        ]
     }
 
 
 @router.get("/bank-statements/{statement_id}/rows")
-async def list_bank_rows(
+async def get_bank_statement_rows(
     statement_id: int,
-    limit: int = Query(200, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
-    search: Optional[str] = None,
-    parsed_status: Optional[str] = None,
-    match_status: Optional[str] = None,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """Return all rows for a statement."""
+    rows = (
+        db.query(AccountingBankRow)
+        .filter(AccountingBankRow.bank_statement_id == statement_id)
+        .order_by(AccountingBankRow.row_index.asc())
+        .all()
+    )
+    return rows
+
+
+@router.delete("/bank-statements/{statement_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_bank_statement(
+    statement_id: int,
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ):
     stmt = db.query(AccountingBankStatement).get(statement_id)
     if not stmt:
-        raise HTTPException(status_code=404, detail="Bank statement not found")
-
-    query = db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == stmt.id)
-    if search:
-        like = f"%{search}%"
-        query = query.filter(
-            AccountingBankRow.description_raw.ilike(like)
-            | AccountingBankRow.description_clean.ilike(like)
-        )
-    if parsed_status:
-        query = query.filter(AccountingBankRow.parsed_status == parsed_status)
-    if match_status:
-        query = query.filter(AccountingBankRow.match_status == match_status)
-
-    total = query.count()
-    rows = (
-        query.order_by(AccountingBankRow.operation_date, AccountingBankRow.row_index)
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    return {
-        "rows": [
-            {
-                "id": r.id,
-                "row_index": r.row_index,
-                "operation_date": r.operation_date.isoformat() if r.operation_date else None,
-                "posting_date": r.posting_date.isoformat() if r.posting_date else None,
-                "description_raw": r.description_raw,
-                "description_clean": r.description_clean,
-                "amount": float(r.amount) if r.amount is not None else None,
-                "balance_after": float(r.balance_after) if r.balance_after is not None else None,
-                "currency": r.currency,
-                "parsed_status": r.parsed_status,
-                "match_status": r.match_status,
-                "expense_category_id": r.expense_category_id,
-                "auto_guessed_category": None,
-            }
-            for r in rows
-        ],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
-
-
-@router.put("/bank-rows/{row_id}")
-async def update_bank_row(
-    row_id: int,
-    description_clean: Optional[str] = None,
-    parsed_status: Optional[str] = None,
-    match_status: Optional[str] = None,
-    expense_category_id: Optional[int] = None,
-    db: Session = Depends(get_db_sqla),
-    current_user: User = Depends(require_admin_user),
-):
-    row = db.query(AccountingBankRow).get(row_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Bank row not found")
-
-    if description_clean is not None:
-        row.description_clean = description_clean
-    if parsed_status is not None:
-        row.parsed_status = parsed_status
-    if match_status is not None:
-        row.match_status = match_status
-    if expense_category_id is not None:
-        row.expense_category_id = expense_category_id
-
-    row.updated_by_user_id = current_user.id
+        raise HTTPException(status_code=404, detail="Statement not found")
+    
+    # Rows and files should cascade if configured, but let's be explicit if needed
+    db.delete(stmt)
     db.commit()
-    db.refresh(row)
-    return {"ok": True}
+    return None
 
 
-@router.post("/bank-statements/{statement_id}/commit-rows")
-async def commit_bank_rows(
-    statement_id: int,
-    row_ids: Optional[List[int]] = None,
-    commit_all_non_ignored: bool = False,
-    default_account_name: Optional[str] = None,
-    mark_as_internal_transfer: bool = False,
-    mark_as_personal: bool = False,
-    db: Session = Depends(get_db_sqla),
-    current_user: User = Depends(require_admin_user),
-):
-    stmt = db.query(AccountingBankStatement).get(statement_id)
-    if not stmt:
-        raise HTTPException(status_code=404, detail="Bank statement not found")
+# --- Test endpoint ---
 
-    query = db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == stmt.id)
-    if row_ids:
-        query = query.filter(AccountingBankRow.id.in_(row_ids))
-    elif commit_all_non_ignored:
-        query = query.filter(AccountingBankRow.parsed_status != "ignored")
-
-    rows = query.all()
-    if not rows:
-        return {"created": 0}
-
-    def _make_dedupe_key(
-        *,
-        txn_date: date,
-        direction: str,
-        amount_abs: Decimal,
-        description: str,
-        currency: Optional[str],
-        account_name: Optional[str],
-    ) -> str:
-        """Create a deterministic dedupe key for ledger transactions.
-
-        This is computed purely in Python and **not** stored in the database;
-        we use it to search for an existing AccountingTransaction that matches
-        the same logical movement of money. This keeps the behaviour
-        idempotent across repeated imports without requiring a schema change.
-        """
-
-        import hashlib
-
-        desc_norm = " ".join((description or "").strip().lower().split())
-        parts = [
-            txn_date.isoformat(),
-            direction,
-            f"{amount_abs:.2f}",
-            desc_norm,
-            (currency or "").upper(),
-            (account_name or ""),
-        ]
-        raw = "|".join(parts)
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    created_count = 0
-    for r in rows:
-        amount = Decimal(str(r.amount)) if r.amount is not None else Decimal("0")
-        if amount == 0:
-            continue
-        direction = "in" if amount > 0 else "out"
-        amount_abs = abs(amount)
-        txn_date_val: date = r.operation_date or stmt.statement_period_start or date.today()
-        account_name_val = default_account_name or f"{stmt.bank_name} ****{stmt.account_last4}".strip()
-        description_val = r.description_clean or r.description_raw or ""
-
-        # Compute an in-memory dedupe key and search for an existing transaction
-        # that matches the same logical movement. This protects against
-        # duplicate ledger entries when the same statement (or its fragment) is
-        # uploaded and committed multiple times.
-        dedupe_key = _make_dedupe_key(
-            txn_date=txn_date_val,
-            direction=direction,
-            amount_abs=amount_abs,
-            description=description_val,
-            currency=stmt.currency,
-            account_name=account_name_val,
-        )
-
-        existing = (
-            db.query(AccountingTransaction)
-            .filter(
-                AccountingTransaction.date == txn_date_val,
-                AccountingTransaction.direction == direction,
-                AccountingTransaction.amount == amount_abs,
-                AccountingTransaction.account_name == account_name_val,
-                AccountingTransaction.description == description_val,
-                AccountingTransaction.source_type == "bank_statement",
-            )
-            .first()
-        )
-        if existing:
-            # Mark the bank row as matched, but do not create a duplicate
-            # AccountingTransaction.
-            r.match_status = "matched_to_transaction"
-            r.updated_by_user_id = current_user.id
-            continue
-
-        txn = AccountingTransaction(
-            date=txn_date_val,
-            amount=amount_abs,
-            direction=direction,
-            source_type="bank_statement",
-            source_id=r.id,
-            bank_row_id=r.id,
-            account_name=account_name_val,
-            account_id=None,
-            counterparty=None,
-            description=description_val,
-            expense_category_id=r.expense_category_id,
-            is_personal=mark_as_personal,
-            is_internal_transfer=mark_as_internal_transfer,
-            created_by_user_id=current_user.id,
-            updated_by_user_id=current_user.id,
-        )
-        db.add(txn)
-        db.flush()
-
-        log = AccountingTransactionLog(
-            transaction_id=txn.id,
-            changed_by_user_id=current_user.id,
-            field_name="create",
-            old_value=None,
-            new_value="created from bank_statement_row",
-        )
-        db.add(log)
-
-        r.match_status = "matched_to_transaction"
-        r.updated_by_user_id = current_user.id
-        created_count += 1
-
-    stmt.status = "review_in_progress"
-    db.commit()
-
-    return {"created": created_count, "statement_status": stmt.status}
-
-
-# --- Cash expenses ---
-
-
-@router.post("/cash-expenses", status_code=status.HTTP_201_CREATED)
-async def create_cash_expense(
-    date_value: date,
-    amount: Decimal,
-    currency: Optional[str] = None,
-    paid_by_user_id: Optional[str] = None,
-    counterparty: Optional[str] = None,
-    description: Optional[str] = None,
-    expense_category_id: int = None,
-    storage_id: Optional[str] = None,
-    receipt_image_path: Optional[str] = None,
-    db: Session = Depends(get_db_sqla),
-    current_user: User = Depends(require_admin_user),
-):
-    paid_by = paid_by_user_id or current_user.id
-    if expense_category_id is None:
-        raise HTTPException(status_code=400, detail="expense_category_id is required")
-
-    cash = AccountingCashExpense(
-        date=date_value,
-        amount=amount,
-        currency=currency,
-        paid_by_user_id=paid_by,
-        counterparty=counterparty,
-        description=description,
-        expense_category_id=expense_category_id,
-        storage_id=storage_id,
-        receipt_image_path=receipt_image_path,
-        created_by_user_id=current_user.id,
-        updated_by_user_id=current_user.id,
-    )
-    db.add(cash)
-    db.flush()
-
-    txn = AccountingTransaction(
-        date=date_value,
-        amount=abs(amount),
-        direction="out",
-        source_type="cash_manual",
-        source_id=cash.id,
-        account_name="Cash",
-        description=description,
-        expense_category_id=expense_category_id,
-        storage_id=storage_id,
-        is_personal=False,
-        is_internal_transfer=False,
-        created_by_user_id=current_user.id,
-        updated_by_user_id=current_user.id,
-    )
-    db.add(txn)
-    db.flush()
-
-    log = AccountingTransactionLog(
-        transaction_id=txn.id,
-        changed_by_user_id=current_user.id,
-        field_name="create",
-        old_value=None,
-        new_value="created from cash_expense",
-    )
-    db.add(log)
-
-    db.commit()
-    db.refresh(cash)
-
-    return {"id": cash.id}
-
-
-@router.get("/cash-expenses")
-async def list_cash_expenses(
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
-    expense_category_id: Optional[int] = None,
-    paid_by_user_id: Optional[str] = None,
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db_sqla),
-    current_user: User = Depends(require_admin_user),
-):
-    query = db.query(AccountingCashExpense)
-
-    if date_from:
-        query = query.filter(AccountingCashExpense.date >= date_from)
-    if date_to:
-        query = query.filter(AccountingCashExpense.date <= date_to)
-    if expense_category_id:
-        query = query.filter(AccountingCashExpense.expense_category_id == expense_category_id)
-    if paid_by_user_id:
-        query = query.filter(AccountingCashExpense.paid_by_user_id == paid_by_user_id)
-
-    total = query.count()
-    rows = (
-        query.order_by(AccountingCashExpense.date.desc(), AccountingCashExpense.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    return {
-        "rows": [
-            {
-                "id": r.id,
-                "date": r.date.isoformat() if r.date else None,
-                "amount": float(r.amount) if r.amount is not None else None,
-                "currency": r.currency,
-                "paid_by_user_id": r.paid_by_user_id,
-                "counterparty": r.counterparty,
-                "description": r.description,
-                "expense_category_id": r.expense_category_id,
-                "storage_id": r.storage_id,
-                "receipt_image_path": r.receipt_image_path,
-                "created_by_user_id": r.created_by_user_id,
-            }
-            for r in rows
-        ],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
-
-
-@router.put("/cash-expenses/{expense_id}")
-async def update_cash_expense(
-    expense_id: int,
-    date_value: Optional[date] = None,
-    amount: Optional[Decimal] = None,
-    currency: Optional[str] = None,
-    counterparty: Optional[str] = None,
-    description: Optional[str] = None,
-    expense_category_id: Optional[int] = None,
-    storage_id: Optional[str] = None,
-    db: Session = Depends(get_db_sqla),
-    current_user: User = Depends(require_admin_user),
-):
-    cash = db.query(AccountingCashExpense).get(expense_id)
-    if not cash:
-        raise HTTPException(status_code=404, detail="Cash expense not found")
-
-    old_values: Dict[str, Any] = {
-        "date": cash.date,
-        "amount": cash.amount,
-        "currency": cash.currency,
-        "counterparty": cash.counterparty,
-        "description": cash.description,
-        "expense_category_id": cash.expense_category_id,
-        "storage_id": cash.storage_id,
-    }
-
-    if date_value is not None:
-        cash.date = date_value
-    if amount is not None:
-        cash.amount = amount
-    if currency is not None:
-        cash.currency = currency
-    if counterparty is not None:
-        cash.counterparty = counterparty
-    if description is not None:
-        cash.description = description
-    if expense_category_id is not None:
-        cash.expense_category_id = expense_category_id
-    if storage_id is not None:
-        cash.storage_id = storage_id
-
-    cash.updated_by_user_id = current_user.id
-
-    txn = (
-        db.query(AccountingTransaction)
-        .filter(
-            AccountingTransaction.source_type == "cash_manual",
-            AccountingTransaction.source_id == cash.id,
-        )
-        .first()
-    )
-
-    if txn:
-        fields_to_check = ["date", "amount", "expense_category_id", "storage_id"]
-        for field in fields_to_check:
-            old_val = old_values.get(field)
-            new_val = getattr(cash, field) if hasattr(cash, field) else getattr(txn, field)
-            if field == "amount":
-                txn.amount = abs(cash.amount)
-                new_val = txn.amount
-            elif field == "date":
-                txn.date = cash.date
-                new_val = txn.date
-            elif field == "expense_category_id":
-                txn.expense_category_id = cash.expense_category_id
-                new_val = txn.expense_category_id
-            elif field == "storage_id":
-                txn.storage_id = cash.storage_id
-                new_val = txn.storage_id
-
-            if str(old_val) != str(new_val):
-                log = AccountingTransactionLog(
-                    transaction_id=txn.id,
-                    changed_by_user_id=current_user.id,
-                    field_name=field,
-                    old_value=str(old_val) if old_val is not None else None,
-                    new_value=str(new_val) if new_val is not None else None,
-                )
-                db.add(log)
-
-        txn.description = cash.description
-        txn.updated_by_user_id = current_user.id
-
-    db.commit()
-    return {"ok": True}
-
-
-# --- Unified transactions ---
-
-
-@router.get("/transactions")
-async def list_transactions(
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
-    category_id: Optional[int] = Query(None, alias="category_id"),
-    source_type: Optional[str] = None,
-    storage_id: Optional[str] = None,
-    is_personal: Optional[bool] = None,
-    is_internal_transfer: Optional[bool] = None,
-    direction_filter: Optional[str] = Query(None, alias="direction"),
-    min_amount: Optional[Decimal] = None,
-    max_amount: Optional[Decimal] = None,
-    account_name: Optional[str] = None,
-    limit: int = Query(200, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db_sqla),
-    current_user: User = Depends(require_admin_user),
-):
-    query = db.query(AccountingTransaction)
-
-    if date_from:
-        query = query.filter(AccountingTransaction.date >= date_from)
-    if date_to:
-        query = query.filter(AccountingTransaction.date <= date_to)
-    if category_id:
-        query = query.filter(AccountingTransaction.expense_category_id == category_id)
-    if source_type:
-        query = query.filter(AccountingTransaction.source_type == source_type)
-    if storage_id:
-        query = query.filter(AccountingTransaction.storage_id == storage_id)
-    if is_personal is not None:
-        query = query.filter(AccountingTransaction.is_personal == is_personal)
-    if is_internal_transfer is not None:
-        query = query.filter(AccountingTransaction.is_internal_transfer == is_internal_transfer)
-    if direction_filter in {"in", "out"}:
-        query = query.filter(AccountingTransaction.direction == direction_filter)
-    if min_amount is not None:
-        query = query.filter(AccountingTransaction.amount >= min_amount)
-    if max_amount is not None:
-        query = query.filter(AccountingTransaction.amount <= max_amount)
-    if account_name:
-        like = f"%{account_name}%"
-        query = query.filter(AccountingTransaction.account_name.ilike(like))
-
-    total = query.count()
-
-    # Aggregate totals for ledger-style overview (Total In / Total Out / Net)
-    sums = (
-        db.query(
-            func.sum(func.case([(AccountingTransaction.direction == "in", AccountingTransaction.amount)], else_=0)),
-            func.sum(func.case([(AccountingTransaction.direction == "out", AccountingTransaction.amount)], else_=0)),
-        )
-        .select_from(AccountingTransaction)
-        .filter(query.whereclause if query.whereclause is not None else True)
-        .one()
-    )
-    total_in = sums[0] or Decimal("0")
-    total_out = sums[1] or Decimal("0")
-    net = (total_in or Decimal("0")) - (total_out or Decimal("0"))
-
-    rows = (
-        query.order_by(AccountingTransaction.date.desc(), AccountingTransaction.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    return {
-        "rows": [
-            {
-                "id": r.id,
-                "date": r.date.isoformat() if r.date else None,
-                "amount": float(r.amount) if r.amount is not None else None,
-                "direction": r.direction,
-                "source_type": r.source_type,
-                "source_id": r.source_id,
-                "account_name": r.account_name,
-                "account_id": r.account_id,
-                "counterparty": r.counterparty,
-                "description": r.description,
-                "expense_category_id": r.expense_category_id,
-                "subcategory": r.subcategory,
-                "storage_id": r.storage_id,
-                "linked_object_type": r.linked_object_type,
-                "linked_object_id": r.linked_object_id,
-                "is_personal": r.is_personal,
-                "is_internal_transfer": r.is_internal_transfer,
-            }
-            for r in rows
-        ],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "total_in": float(total_in),
-        "total_out": float(total_out),
-        "net": float(net),
-    }
-
-
-@router.put("/transactions/{transaction_id}")
-async def update_transaction(
-    transaction_id: int,
-    expense_category_id: Optional[int] = None,
-    is_personal: Optional[bool] = None,
-    is_internal_transfer: Optional[bool] = None,
-    storage_id: Optional[str] = None,
-    db: Session = Depends(get_db_sqla),
-    current_user: User = Depends(require_admin_user),
-):
-    txn = db.query(AccountingTransaction).get(transaction_id)
-    if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-
-    changes: List[AccountingTransactionLog] = []
-
-    def _log(field: str, old: Any, new: Any) -> None:
-        if str(old) == str(new):
-            return
-        changes.append(
-            AccountingTransactionLog(
-                transaction_id=txn.id,
-                changed_by_user_id=current_user.id,
-                field_name=field,
-                old_value=str(old) if old is not None else None,
-                new_value=str(new) if new is not None else None,
-            )
-        )
-
-    if expense_category_id is not None:
-        _log("expense_category_id", txn.expense_category_id, expense_category_id)
-        txn.expense_category_id = expense_category_id
-    if is_personal is not None:
-        _log("is_personal", txn.is_personal, is_personal)
-        txn.is_personal = is_personal
-    if is_internal_transfer is not None:
-        _log("is_internal_transfer", txn.is_internal_transfer, is_internal_transfer)
-        txn.is_internal_transfer = is_internal_transfer
-    if storage_id is not None:
-        _log("storage_id", txn.storage_id, storage_id)
-        txn.storage_id = storage_id
-
-    txn.updated_by_user_id = current_user.id
-
-    for log in changes:
-        db.add(log)
-
-    db.commit()
-    return {"ok": True}
-
-
-@router.post("/test-openai", response_model=Dict[str, Any])
+@router.post("/test-openai")
 async def test_openai_connection(
     current_user: User = Depends(require_admin_user),
 ):
-    """Test the OpenAI API configuration and connectivity."""
-    import httpx
-    import time
-    from app.config import settings
-
-    raw_key = settings.OPENAI_API_KEY
-    if not raw_key:
-        return {
-            "success": False, 
-            "message": "OPENAI_API_KEY is not configured in environment variables or settings."
-        }
-    
-    # Sanitize key (remove potential quoting from env vars)
-    api_key = raw_key.strip().strip("'").strip('"')
-    masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "***"
-
-    start_time = time.time()
+    """Simple test to verify OpenAI API key is valid and models are reachable."""
     try:
-        # Simple health check - list models
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://api.openai.com/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"}
-            )
-            elapsed = time.time() - start_time
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                models = [m["id"] for m in data.get("data", [])]
-                model_count = len(models)
-                # Check if our configured model exists in the list
-                target_model = settings.OPENAI_MODEL or "gpt-4o"
-                has_model = any(target_model in m for m in models)
-                
-                return {
-                    "success": True,
-                    "message": f"OpenAI connection successful. Found {model_count} models.",
-                    "latency_ms": int(elapsed * 1000),
-                    "model_count": model_count,
-                    "target_model_available": has_model,
-                    "configured_model": target_model,
-                    "masked_key": masked_key
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": f"OpenAI API returned error: {resp.status_code}",
-                    "details": resp.text,
-                    "masked_key": masked_key
-                }
+        from app.config import settings
+        import openai
+        import time
+
+        if not settings.OPENAI_API_KEY:
+             return {"success": False, "message": "OPENAI_API_KEY is not set in environment."}
+
+        client = openai.Client(api_key=settings.OPENAI_API_KEY)
+        
+        start = time.time()
+        # Just list models - quick and cheap
+        resp = client.models.list()
+        elapsed = time.time() - start
+
+        model_count = len(list(resp))
+        masked_key = f"{settings.OPENAI_API_KEY[:6]}...{settings.OPENAI_API_KEY[-4:]}"
+        
+        # Check if our target model exists
+        models = [m.id for m in resp]
+        target_model = settings.OPENAI_MODEL or "gpt-4o"
+        has_model = any(target_model in m for m in models)
+
+        return {
+            "success": True,
+            "message": f"OpenAI connection successful. Found {model_count} models.",
+            "latency_ms": int(elapsed * 1000),
+            "model_count": model_count,
+            "target_model_available": has_model,
+            "configured_model": target_model,
+            "masked_key": masked_key
+        }
     except Exception as e:
         return {
             "success": False,
             "message": f"Connection failed: {str(e)}",
-            "masked_key": masked_key
+            "masked_key": settings.OPENAI_API_KEY[:6] + "..." if settings.OPENAI_API_KEY else "None"
         }
