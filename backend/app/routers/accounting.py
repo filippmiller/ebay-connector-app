@@ -1232,13 +1232,17 @@ async def test_openai_connection(
     import time
     from app.config import settings
 
-    api_key = settings.OPENAI_API_KEY
-    if not api_key:
+    raw_key = settings.OPENAI_API_KEY
+    if not raw_key:
         return {
             "success": False, 
             "message": "OPENAI_API_KEY is not configured in environment variables or settings."
         }
     
+    # Sanitize key (remove potential quoting from env vars)
+    api_key = raw_key.strip().strip("'").strip('"')
+    masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "***"
+
     start_time = time.time()
     try:
         # Simple health check - list models
@@ -1263,16 +1267,19 @@ async def test_openai_connection(
                     "latency_ms": int(elapsed * 1000),
                     "model_count": model_count,
                     "target_model_available": has_model,
-                    "configured_model": target_model
+                    "configured_model": target_model,
+                    "masked_key": masked_key
                 }
             else:
                 return {
                     "success": False,
                     "message": f"OpenAI API returned error: {resp.status_code}",
-                    "details": resp.text
+                    "details": resp.text,
+                    "masked_key": masked_key
                 }
     except Exception as e:
         return {
             "success": False,
-            "message": f"Connection failed: {str(e)}"
+            "message": f"Connection failed: {str(e)}",
+            "masked_key": masked_key
         }
