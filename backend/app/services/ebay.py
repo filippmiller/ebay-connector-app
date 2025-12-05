@@ -6193,13 +6193,9 @@ class EbayService:
                     fetched_this_page = len(item_elems)
                     total_fetched += fetched_this_page
 
-                    event_logger.log_info(
-                        f"← Page {page_number}: received {fetched_this_page} active items, "
-                        f"skipped {items_skipped} (already up-to-date)"
-                    )
-
                     now_utc = datetime.now(timezone.utc)
-                    items_skipped = 0
+                    items_skipped = 0  # Initialize before processing items
+                    items_stored_this_page = 0  # Track items stored in this page
 
                     for item in item_elems:
                         def _text(path: str) -> Optional[str]:
@@ -6311,6 +6307,14 @@ class EbayService:
                         )
                         db_session.execute(stmt)
                         total_stored += 1
+                        items_stored_this_page += 1
+
+                    # Log page results after processing
+                    event_logger.log_info(
+                        f"← Page {page_number}: received {fetched_this_page} active items, "
+                        f"stored {items_stored_this_page}, "
+                        f"skipped {items_skipped} (already up-to-date)"
+                    )
 
                     db_session.commit()
 
