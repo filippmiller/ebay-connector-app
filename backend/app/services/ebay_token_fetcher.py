@@ -61,6 +61,12 @@ async def fetch_active_ebay_token(
     Raises:
         None - returns None on any error (caller should handle)
     """
+    # INTENSE LOGGING: Log start of token fetch
+    logger.info(
+        "HELLO FROM NEW CODE! [fetch_active_ebay_token] START: account_id=%s triggered_by=%s api_family=%s",
+        ebay_account_id, triggered_by, api_family
+    )
+
     # Use the unified token provider which handles decryption correctly
     token_result = await get_valid_access_token(
         db,
@@ -119,6 +125,12 @@ async def fetch_active_ebay_token(
         api_family,
         decrypted_token[:15] if decrypted_token else "None",
         build_number,
+    )
+    
+    # INTENSE LOGGING: Log end of token fetch
+    logger.info(
+        "[fetch_active_ebay_token] END: account_id=%s triggered_by=%s api_family=%s success=YES",
+        ebay_account_id, triggered_by, api_family
     )
     
     return decrypted_token

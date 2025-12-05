@@ -47,41 +47,30 @@ async def run_returns_worker_for_account(
             logger.warning(f"Returns worker: account {ebay_account_id} not found or inactive")
             return None
 
-        # Use the unified token provider
-        from app.services.ebay_token_provider import get_valid_access_token
+        # Use the unified token fetcher - single source of truth
+        from app.services.ebay_token_fetcher import fetch_active_ebay_token
         
-        token_result = await get_valid_access_token(
-            db,
-            ebay_account_id,
-            api_family="returns",
-            triggered_by=f"worker_{triggered_by}",
+        logger.info(
+            f"HELLO FROM WORKER! [returns_worker] Calling fetch_active_ebay_token: account_id={ebay_account_id} "
+            f"triggered_by={triggered_by}"
         )
         
-        if not token_result.success:
-            logger.warning(
-                f"Returns worker: token retrieval failed for account {ebay_account_id}: "
-                f"{token_result.error_code} - {token_result.error_message}"
-            )
-            return None
-
-        # CRITICAL: Use decrypted token from token_result, not token.access_token
-        # token.access_token may return ENC:v1:... if decryption fails
-        decrypted_access_token = token_result.access_token
-        if not decrypted_access_token:
-            logger.warning(f"Returns worker: no decrypted access token for account {ebay_account_id}")
-            return None
+        decrypted_access_token = await fetch_active_ebay_token(
+            db,
+            ebay_account_id,
+            triggered_by=triggered_by,
+            api_family="returns",
+        )
         
-        # Validate token is decrypted
-        if decrypted_access_token.startswith("ENC:"):
-            logger.error(
-                f"[returns_worker] ⚠️ TOKEN STILL ENCRYPTED! account={ebay_account_id} "
-                f"token_hash={token_result.token_hash}. Check SECRET_KEY/JWT_SECRET in worker environment."
+        if not decrypted_access_token:
+            logger.warning(
+                f"Returns worker: failed to fetch decrypted token for account {ebay_account_id}"
             )
             return None
         
         logger.info(
             f"[returns_worker] Token retrieved: account={ebay_account_id} "
-            f"source={token_result.source} token_hash={token_result.token_hash} triggered_by={triggered_by} "
+            f"triggered_by={triggered_by} "
             f"token_prefix={decrypted_access_token[:15]}..."
         )
 

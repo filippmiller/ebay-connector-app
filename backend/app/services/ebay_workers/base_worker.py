@@ -115,7 +115,7 @@ class BaseWorker:
             from app.services.ebay_token_fetcher import fetch_active_ebay_token
             
             logger.info(
-                f"[{self.api_family}_worker] Calling fetch_active_ebay_token: account_id={ebay_account_id} "
+                f"HELLO FROM WORKER! [{self.api_family}_worker] Calling fetch_active_ebay_token: account_id={ebay_account_id} "
                 f"triggered_by={triggered_by} BUILD={build_number}"
             )
             

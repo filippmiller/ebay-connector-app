@@ -28,8 +28,17 @@ class OffersWorker(BaseWorker):
         window_from: Optional[str],
         window_to: Optional[str],
     ) -> Dict[str, Any]:
-        # Use the new service
-        stats = await ebay_offers_service.sync_offers_for_account(db, account)
+        # Use the new service, passing the safely decrypted token
+        # CRITICAL: Use helper to safely get decrypted token
+        access_token = self._get_decrypted_token(token, account.id)
+        if not access_token:
+            return {
+                "total_fetched": 0,
+                "total_stored": 0,
+                "error_message": "Access token unavailable or encrypted",
+            }
+            
+        stats = await ebay_offers_service.sync_offers_for_account(db, account, access_token=access_token)
 
         return {
             "total_fetched": stats.get("fetched", 0),

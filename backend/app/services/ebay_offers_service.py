@@ -98,18 +98,29 @@ class EbayOffersService:
             resp.raise_for_status()
             return resp.json()
 
-    async def sync_offers_for_account(self, db: Session, account: EbayAccount) -> Dict[str, int]:
-        """Sync offers for a single account."""
+    async def sync_offers_for_account(self, db: Session, account: EbayAccount, access_token: Optional[str] = None) -> Dict[str, int]:
+        """Sync offers for a single account.
+        
+        Args:
+            db: Database session
+            account: EbayAccount to sync
+            access_token: Optional decrypted access token. If not provided, will try to fetch from DB (legacy).
+        """
         stats = {"fetched": 0, "created": 0, "updated": 0, "events": 0, "errors": 0}
         
-        token = ebay_account_service.get_token(db, account.id)
-        if not token or not token.access_token:
-            logger.error(f"No access token for account {account.id}")
-            stats["errors"] += 1
-            return stats
+        if not access_token:
+            logger.warning(
+                f"[offers_service] No access_token provided for account {account.id}. "
+                f"Falling back to legacy token fetching (deprecated)."
+            )
+            token = ebay_account_service.get_token(db, account.id)
+            if not token or not token.access_token:
+                logger.error(f"No access token for account {account.id}")
+                stats["errors"] += 1
+                return stats
+            access_token = token.access_token
 
         # CRITICAL: Validate token is decrypted (not ENC:v1:...)
-        access_token = token.access_token
         if access_token.startswith("ENC:"):
             logger.error(
                 f"[offers_service] ⚠️ TOKEN STILL ENCRYPTED! account={account.id} "
