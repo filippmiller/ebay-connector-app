@@ -766,31 +766,30 @@ def _get_buying_data(
     """Buying grid backed by legacy Supabase table tbl_ebay_buyer (quoted column names)."""
     from datetime import datetime as dt_type
     from decimal import Decimal
-
     # Discover actual column name for ebay account FK to avoid casing issues.
-    account_fk_candidates = [
-        "EbayAccountID",
-        "EbayAccountId",
-        "ebay_account_id",
-        "ebayaccountid",
-    ]
-    account_fk_col = "EbayAccountID"
+    fk_col = "EbayAccountID"
     try:
-        col_rows = db.execute(
+        row_fk = db.execute(
             sa_text(
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'tbl_ebay_buyer'
-                  AND lower(column_name) IN :names
+                WHERE table_schema = 'public'
+                  AND table_name = 'tbl_ebay_buyer'
+                  AND (lower(column_name) IN ('ebayaccountid','ebay_account_id','ebayaccount_id','ebayaccountid')
+                       OR column_name ILIKE '%account%id%')
+                LIMIT 1
                 """
-            ),
-            {"names": tuple([c.lower() for c in account_fk_candidates])},
-        ).fetchall()
-        if col_rows:
-            account_fk_col = col_rows[0][0]
+            )
+        ).fetchone()
+        if row_fk and row_fk[0]:
+            fk_col = row_fk[0]
     except Exception:
-        account_fk_col = "EbayAccountID"
+        fk_col = "EbayAccountID"
+
+    # Status columns are typically "ID"/"Label" in tbl_ebay_status_buyer.
+    status_id_col = "ID"
+    status_label_col = "Label"
 
     # Map allowed sort columns to quoted SQL fragments; default newest by ID.
     sort_map = {
@@ -804,30 +803,28 @@ def _get_buying_data(
     sort_col_sql = sort_map.get((sort_column or "").lower(), 'b."ID"')
     sort_dir_sql = "asc" if (sort_dir or "").lower() == "asc" else "desc"
 
-    fk_col = account_fk_col
-
     data_sql = f"""
         SELECT
-            b."id" AS id,
-            b."tracking_number" AS tracking_number,
-            b."refund_flag" AS refund_flag,
-            b."storage" AS storage,
-            b."profit" AS profit,
-            b."buyer_id" AS buyer_id,
-            b."seller_id" AS seller_id,
-            b."paid_time" AS paid_time,
-            COALESCE(b."total_transaction_price", b."current_price") AS amount_paid,
+            b."ID" AS id,
+            b."TrackingNumber" AS tracking_number,
+            b."RefundFlag" AS refund_flag,
+            b."Storage" AS storage,
+            b."Profit" AS profit,
+            b."BuyerID" AS buyer_id,
+            b."SellerID" AS seller_id,
+            b."PaidTime" AS paid_time,
+            COALESCE(b."TotalTransactionPrice", b."CurrentPrice") AS amount_paid,
             CASE
-                WHEN b."paid_time" IS NULL THEN NULL
-                ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - b."paid_time")) AS INT), 0)
+                WHEN b."PaidTime" IS NULL THEN NULL
+                ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - b."PaidTime")) AS INT), 0)
             END AS days_since_paid,
-            sb."label" AS status_label,
-            b."record_created_at" AS record_created_at,
-            b."title" AS title,
-            b."comment" AS comment
+            sb."{status_label_col}" AS status_label,
+            b."RecCreated" AS record_created_at,
+            b."Title" AS title,
+            b."Comment" AS comment
         FROM "tbl_ebay_buyer" b
         JOIN ebay_accounts ea ON b."{fk_col}" = ea.id
-        LEFT JOIN "tbl_ebay_status_buyer" sb ON b."item_status_id" = sb."id"
+        LEFT JOIN "tbl_ebay_status_buyer" sb ON b."ItemStatusID" = sb."{status_id_col}"
         WHERE ea.org_id = :org_id
         ORDER BY {sort_col_sql} {sort_dir_sql}
         LIMIT :limit OFFSET :offset
