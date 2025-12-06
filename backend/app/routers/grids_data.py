@@ -289,8 +289,8 @@ async def get_buying_logs(
         FROM "tbl_ebay_buyer_log" l
         JOIN "tbl_ebay_buyer" b ON l."EbayBuyerID" = b."ID"
         JOIN ebay_accounts ea ON b."EbayAccountID" = ea.id
-        LEFT JOIN "tbl_ebay_status_buyer" sb_old ON l."OldStatusID" = sb_old."Status"
-        LEFT JOIN "tbl_ebay_status_buyer" sb_new ON l."NewStatusID" = sb_new."Status"
+        LEFT JOIN (SELECT DISTINCT "Status", "StatusName" FROM "tbl_ebay_status_buyer") sb_old ON l."OldStatusID" = sb_old."Status"
+        LEFT JOIN (SELECT DISTINCT "Status", "StatusName" FROM "tbl_ebay_status_buyer") sb_new ON l."NewStatusID" = sb_new."Status"
         WHERE l."EbayBuyerID" = :buyer_id
           AND ea.org_id = :org_id
         ORDER BY l."ChangedAt" DESC, l."ID" DESC
@@ -799,7 +799,7 @@ def _get_buying_data(
             b."PaidTime" AS paid_time,
             COALESCE(b."TotalTransactionPrice", b."CurrentPrice") AS amount_paid,
             CASE
-                WHEN b."PaidTime" IS NULL THEN NULL
+                WHEN b."PaidTime" IS NULL OR b."PaidTime" = '' THEN NULL
                 ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - CAST(b."PaidTime" AS TIMESTAMP))) AS INT), 0)
             END AS days_since_paid,
             sb."{status_label_col}" AS status_label,
@@ -807,7 +807,9 @@ def _get_buying_data(
             b."Title" AS title,
             b."Comment" AS comment
         FROM "tbl_ebay_buyer" b
-        LEFT JOIN "tbl_ebay_status_buyer" sb ON b."ItemStatus" = sb."{status_id_col}"
+        LEFT JOIN (
+            SELECT DISTINCT "Status", "StatusName" FROM "tbl_ebay_status_buyer"
+        ) sb ON b."ItemStatus" = sb."{status_id_col}"
         ORDER BY {sort_col_sql} {sort_dir_sql}
         LIMIT :limit OFFSET :offset
     """
