@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, asc, or_
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import text as sa_text
 import enum
 
 from app.database import get_db
@@ -29,6 +30,29 @@ from app.models.user import User as UserModel
 from app.routers.grid_layouts import _allowed_columns_for_grid
 
 router = APIRouter(prefix="/api/grids", tags=["grids_data"])
+
+
+@router.get("/inventory/statuses")
+async def get_inventory_statuses(db: Session = Depends(get_db)):
+    """Expose inventory status list (id, label, color) for filters/dropdowns."""
+    try:
+        sql = sa_text(
+            'SELECT "InventoryStatus_ID" AS id, "InventoryShortStatus_Name" AS label, "Color" AS color '
+            'FROM "tbl_parts_inventorystatus" ORDER BY "InventoryStatus_ID"'
+        )
+        result = db.execute(sql)
+        items = []
+        for row in result:
+            items.append(
+                {
+                    "id": int(row.id),
+                    "label": str(row.label) if row.label is not None else "",
+                    "color": str(row.color) if row.color is not None else None,
+                }
+            )
+        return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load statuses: {e}")
 
 
 @router.get("/cases/detail")
