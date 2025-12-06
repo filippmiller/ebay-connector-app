@@ -170,7 +170,9 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
       }
     };
     fetchData();
-  }, [gridKey, limit, offset, search, extraParams, gridPrefs.columns?.sort]);
+    // Depends on extraParamsKey (stable string) instead of extraParams object to prevent re-fetching on parent re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gridKey, limit, offset, search, extraParamsKey, gridPrefs.columns?.sort]);
 
   // Handle layout changes from the grid (order & widths).
   // IMPORTANT: this only updates local in-memory preferences; persistence now

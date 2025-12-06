@@ -52,6 +52,7 @@ import AdminAiSettingsPage from './pages/AdminAiSettingsPage';
 import CameraVisionPage from './pages/CameraVisionPage';
 import VisionBrainPage from './pages/VisionBrainPage';
 import './App.css';
+import HeroPage from './pages/HeroPage';
 import './App.css';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -102,7 +103,7 @@ function App() {
     <Router>
       <AuthProvider>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<HeroPage />} />
           <Route
             path="/login"
             element={
