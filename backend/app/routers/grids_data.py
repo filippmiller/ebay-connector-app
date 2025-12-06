@@ -766,30 +766,66 @@ def _get_buying_data(
     """Buying grid backed by legacy Supabase table tbl_ebay_buyer (quoted column names)."""
     from datetime import datetime as dt_type
     from decimal import Decimal
-    # Discover actual column name for ebay account FK to avoid casing issues.
-    fk_col = "EbayAccountID"
+    # Discover actual column names for account FK and status label to avoid casing issues.
+    fk_col = "ebay_account_id"
+    status_id_col = "id"
+    status_label_col = "label"
+
     try:
-        row_fk = db.execute(
+        buyer_cols = db.execute(
             sa_text(
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = 'tbl_ebay_buyer'
-                  AND (lower(column_name) IN ('ebayaccountid','ebay_account_id','ebayaccount_id','ebayaccountid')
-                       OR column_name ILIKE '%account%id%')
-                LIMIT 1
+                WHERE table_schema = 'public' AND table_name = 'tbl_ebay_buyer'
                 """
             )
-        ).fetchone()
-        if row_fk and row_fk[0]:
-            fk_col = row_fk[0]
+        ).fetchall()
+        col_names = [r[0] for r in buyer_cols if r and r[0]]
+        lowered = {c.lower(): c for c in col_names}
+        # Preferred FK candidates in order
+        candidates = [
+            "ebay_account_id",
+            "ebayaccountid",
+            "ebayaccount_id",
+            "ebay_accountid",
+            "ebay_account",
+        ]
+        for cand in candidates:
+            if cand in lowered:
+                fk_col = lowered[cand]
+                break
+        else:
+            # fallback: first column containing both 'account' and 'id'
+            for name in col_names:
+                ln = name.lower()
+                if "account" in ln and "id" in ln:
+                    fk_col = name
+                    break
     except Exception:
-        fk_col = "EbayAccountID"
+        fk_col = "ebay_account_id"
 
-    # Status columns are typically "ID"/"Label" in tbl_ebay_status_buyer.
-    status_id_col = "ID"
-    status_label_col = "Label"
+    try:
+        status_cols = db.execute(
+            sa_text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'tbl_ebay_status_buyer'
+                """
+            )
+        ).fetchall()
+        s_names = [r[0] for r in status_cols if r and r[0]]
+        s_lower = {c.lower(): c for c in s_names}
+        if "id" in s_lower:
+            status_id_col = s_lower["id"]
+        elif "statusid" in s_lower:
+            status_id_col = s_lower["statusid"]
+        if "label" in s_lower:
+            status_label_col = s_lower["label"]
+    except Exception:
+        status_id_col = "id"
+        status_label_col = "label"
 
     # Map allowed sort columns to quoted SQL fragments; default newest by ID.
     sort_map = {
