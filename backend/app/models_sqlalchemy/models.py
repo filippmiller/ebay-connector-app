@@ -752,6 +752,15 @@ except (NoSuchTableError, OperationalError) as exc:
     tbl_parts_models_table = None
 
 
+
+if tbl_parts_models_table is not None:
+    class TblPartsModels(Base):
+        __table__ = tbl_parts_models_table
+else:
+    class TblPartsModels(Base):
+        __abstract__ = True
+
+
 # Optional reflection of legacy internal categories table used for the
 # Internal category dropdown when available (tbl_parts_category). Missing
 # tables and transient connection errors are tolerated.

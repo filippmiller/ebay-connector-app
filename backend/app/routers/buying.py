@@ -208,12 +208,12 @@ async def search_models(
     """Search for models in tbl_parts_models by name."""
     models = (
         db.query(TblPartsModels)
-        .filter(TblPartsModels.model.ilike(f"%{q}%"))
+        .filter(TblPartsModels.Model.ilike(f"%{q}%"))
         .limit(20)
         .all()
     )
     return [
-        {"id": m.model_id, "label": m.model}
+        {"id": m.Model_ID, "label": m.Model}
         for m in models
     ]
 
