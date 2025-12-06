@@ -255,13 +255,18 @@ SNIPER_SNIPES_COLUMNS_META: List[ColumnMeta] = [
 ]
 
 # Buying grid: logical view over ebay_buyer (legacy tbl_ebay_buyer equivalent).
+# Buying grid: logical view over ebay_buyer (legacy tbl_ebay_buyer equivalent).
 BUYING_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=80),
+  ColumnMeta(name="item_id", label="Item ID", type="string", width_default=160),
+  ColumnMeta(name="transaction_id", label="Transaction ID", type="string", width_default=180),
+  ColumnMeta(name="order_line_item_id", label="Order Line Item ID", type="string", width_default=220),
   ColumnMeta(name="tracking_number", label="Tracking #", type="string", width_default=180),
   ColumnMeta(name="refund_flag", label="Refund", type="boolean", width_default=80),
   ColumnMeta(name="storage", label="Storage", type="string", width_default=120),
   ColumnMeta(name="profit", label="Profit", type="money", width_default=120),
   ColumnMeta(name="buyer_id", label="Buyer (eBay)", type="string", width_default=160),
+  ColumnMeta(name="global_buyer_id", label="Global Buyer ID", type="string", width_default=160),
   ColumnMeta(name="seller_id", label="Seller ID", type="string", width_default=160),
   ColumnMeta(name="paid_time", label="Paid time", type="datetime", width_default=180),
   ColumnMeta(name="amount_paid", label="Amount paid", type="money", width_default=140),
@@ -270,6 +275,27 @@ BUYING_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="record_created_at", label="Rec created", type="datetime", width_default=180),
   ColumnMeta(name="title", label="Title", type="string", width_default=260),
   ColumnMeta(name="comment", label="Comment", type="string", width_default=260),
+  ColumnMeta(name="condition_display_name", label="Condition", type="string", width_default=140),
+  ColumnMeta(name="quantity_purchased", label="Qty", type="number", width_default=80),
+  ColumnMeta(name="total_price", label="Total Price", type="money", width_default=120),
+  ColumnMeta(name="shipping_carrier", label="Carrier", type="string", width_default=100),
+  ColumnMeta(name="shipping_service", label="Service", type="string", width_default=140),
+  ColumnMeta(name="shipping_service_cost", label="Shipping Cost", type="money", width_default=100),
+  ColumnMeta(name="shipped_time", label="Shipped Time", type="datetime", width_default=180),
+  ColumnMeta(name="feedback", label="Feedback", type="number", width_default=80),
+  ColumnMeta(name="author", label="Author", type="string", width_default=120),
+  ColumnMeta(name="payment_email", label="Payment Email", type="string", width_default=200),
+  ColumnMeta(name="seller_email", label="Seller Email", type="string", width_default=200),
+  ColumnMeta(name="seller_location", label="Seller Location", type="string", width_default=140),
+  ColumnMeta(name="seller_site", label="Seller Site", type="string", width_default=100),
+  ColumnMeta(name="buyer_payment_status", label="Payment Status", type="string", width_default=120),
+  ColumnMeta(name="buyer_checkout_message", label="Checkout Msg", type="string", width_default=200),
+  ColumnMeta(name="description", label="Description", type="string", width_default=260),
+  ColumnMeta(name="gallery_url", label="Gallery URL", type="string", width_default=120),
+  ColumnMeta(name="model_id", label="Model ID", type="number", width_default=100),
+  ColumnMeta(name="model", label="Model", type="string", width_default=180),
+  ColumnMeta(name="record_updated", label="Updated", type="datetime", width_default=180),
+  ColumnMeta(name="record_updated_by", label="Updated By", type="string", width_default=120),
 ]
 
 

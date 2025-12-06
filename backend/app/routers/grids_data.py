@@ -910,11 +910,37 @@ def _get_buying_data(
             sb."{status_label_col}" AS status_label,
             b."record_created" AS record_created_at,
             b."Title" AS title,
-            b."Comment" AS comment
+            b."Comment" AS comment,
+            b."ItemID" AS item_id,
+            b."TransactionID" AS transaction_id,
+            b."OrderLineItemID" AS order_line_item_id,
+            b."GlobalBuyerID" AS global_buyer_id,
+            b."ConditionDisplayName" AS condition_display_name,
+            b."QuantityPurchased" AS quantity_purchased,
+            b."TotalPrice" AS total_price,
+            b."ShippingCarrier" AS shipping_carrier,
+            b."ShippingService" AS shipping_service,
+            b."ShippingServiceCost" AS shipping_service_cost,
+            b."ShippedTime" AS shipped_time,
+            b."feedback" AS feedback,
+            b."Author" AS author,
+            b."payment_email" AS payment_email,
+            b."SellerEmail" AS seller_email,
+            b."SellerLocation" AS seller_location,
+            b."SellerSite" AS seller_site,
+            b."BuyerPaymentStatus" AS buyer_payment_status,
+            b."BuyerCheckoutMessage" AS buyer_checkout_message,
+            b."Description" AS description,
+            b."GalleryURL" AS gallery_url,
+            COALESCE(b."Model_ID", b."ModelID") AS model_id,
+            m."Model" AS model,
+            b."record_updated" AS record_updated,
+            b."record_updated_by" AS record_updated_by
         FROM "tbl_ebay_buyer" b
         LEFT JOIN (
             SELECT DISTINCT "Status", "StatusName" FROM "tbl_ebay_status_buyer"
         ) sb ON b."ItemStatus" = sb."{status_id_col}"
+        LEFT JOIN "tbl_parts_models" m ON COALESCE(b."Model_ID", b."ModelID") = m."Model_ID"
         {where_clause}
         ORDER BY {sort_col_sql} {sort_dir_sql}
         LIMIT :limit OFFSET :offset
