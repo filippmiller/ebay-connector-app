@@ -763,74 +763,22 @@ def _get_buying_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    """Buying grid backed by legacy Supabase table tbl_ebay_buyer (quoted column names)."""
+    """Buying grid backed by legacy Supabase table tbl_ebay_buyer (quoted column names).
+
+    Note: tbl_ebay_buyer has no ebay_account FK; we do NOT join ebay_accounts and
+    simply return all rows in the table. Upstream auth should already scope access.
+    """
     from datetime import datetime as dt_type
     from decimal import Decimal
-    # Discover actual column names for account FK and status label to avoid casing issues.
-    fk_col = "ebay_account_id"
-    status_id_col = "id"
-    status_label_col = "label"
 
-    try:
-        buyer_cols = db.execute(
-            sa_text(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = 'tbl_ebay_buyer'
-                """
-            )
-        ).fetchall()
-        col_names = [r[0] for r in buyer_cols if r and r[0]]
-        lowered = {c.lower(): c for c in col_names}
-        # Preferred FK candidates in order
-        candidates = [
-            "ebay_account_id",
-            "ebayaccountid",
-            "ebayaccount_id",
-            "ebay_accountid",
-            "ebay_account",
-        ]
-        for cand in candidates:
-            if cand in lowered:
-                fk_col = lowered[cand]
-                break
-        else:
-            # fallback: first column containing both 'account' and 'id'
-            for name in col_names:
-                ln = name.lower()
-                if "account" in ln and "id" in ln:
-                    fk_col = name
-                    break
-    except Exception:
-        fk_col = "ebay_account_id"
-
-    try:
-        status_cols = db.execute(
-            sa_text(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = 'tbl_ebay_status_buyer'
-                """
-            )
-        ).fetchall()
-        s_names = [r[0] for r in status_cols if r and r[0]]
-        s_lower = {c.lower(): c for c in s_names}
-        if "id" in s_lower:
-            status_id_col = s_lower["id"]
-        elif "statusid" in s_lower:
-            status_id_col = s_lower["statusid"]
-        if "label" in s_lower:
-            status_label_col = s_lower["label"]
-    except Exception:
-        status_id_col = "id"
-        status_label_col = "label"
+    # Fixed column names from Supabase (PascalCase / mixed):
+    status_id_col = "ID"
+    status_label_col = "Label"
 
     # Map allowed sort columns to quoted SQL fragments; default newest by ID.
     sort_map = {
         "paid_time": 'b."PaidTime"',
-        "record_created_at": 'b."RecCreated"',
+        "record_created_at": 'b."record_created"',
         "buyer_id": 'b."BuyerID"',
         "seller_id": 'b."SellerID"',
         "profit": 'b."Profit"',
@@ -855,26 +803,22 @@ def _get_buying_data(
                 ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - b."PaidTime")) AS INT), 0)
             END AS days_since_paid,
             sb."{status_label_col}" AS status_label,
-            b."RecCreated" AS record_created_at,
+            b."record_created" AS record_created_at,
             b."Title" AS title,
             b."Comment" AS comment
         FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."{fk_col}" = ea.id
-        LEFT JOIN "tbl_ebay_status_buyer" sb ON b."ItemStatusID" = sb."{status_id_col}"
-        WHERE ea.org_id = :org_id
+        LEFT JOIN "tbl_ebay_status_buyer" sb ON b."ItemStatus" = sb."{status_id_col}"
         ORDER BY {sort_col_sql} {sort_dir_sql}
         LIMIT :limit OFFSET :offset
     """
 
-    count_sql = f"""
+    count_sql = """
         SELECT COUNT(*) AS total
-        FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."{fk_col}" = ea.id
-        WHERE ea.org_id = :org_id
+        FROM "tbl_ebay_buyer"
     """
 
-    total = db.execute(sa_text(count_sql), {"org_id": current_user.id}).scalar() or 0
-    result = db.execute(sa_text(data_sql), {"org_id": current_user.id, "limit": limit, "offset": offset})
+    total = db.execute(sa_text(count_sql)).scalar() or 0
+    result = db.execute(sa_text(data_sql), {"limit": limit, "offset": offset})
 
     rows: List[Dict[str, Any]] = []
     for r in result:
