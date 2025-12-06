@@ -48,5 +48,6 @@
 2025-12-06T22:46:47.5785861+03:00 - Added numpy>=1.26.0 to backend requirements to satisfy cv camera imports
 2025-12-06T23:05:10.8100557+03:00 - Added BUYING logs endpoint (tbl_ebay_buyer_log), appended Logs button column, modal shows status/comment history per buyer
 2025-12-06T23:08:56.5369444+03:00 - Fixed build: import ColDef from ag-grid-community in DataGridPage extraColumns typing
+2025-12-06T23:15:07.0849855+03:00 - Fixed BUYING SQL column casing to snake_case, default sort now id desc to show newest rows on top
 2025-12-06T21:18:00Z - Added bank statement multi-select delete flow with confirmation prompt (type DELETE)
 2025-12-06T21:27:00Z - DataGridPage auto-recovers hidden columns by restoring all available columns when prefs are empty

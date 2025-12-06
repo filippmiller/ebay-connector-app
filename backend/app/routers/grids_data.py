@@ -767,41 +767,41 @@ def _get_buying_data(
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    # Map allowed sort columns to SQL fragments
+    # Map allowed sort columns to SQL fragments (snake_case).
     sort_map = {
-        "paid_time": '"b"."paid_time"',
-        "record_created_at": '"b"."record_created_at"',
-        "buyer_id": '"b"."buyer_id"',
-        "seller_id": '"b"."seller_id"',
-        "profit": '"b"."profit"',
-        "id": '"b"."id"',
+        "paid_time": "b.paid_time",
+        "record_created_at": "b.record_created_at",
+        "buyer_id": "b.buyer_id",
+        "seller_id": "b.seller_id",
+        "profit": "b.profit",
+        "id": "b.id",
     }
-    sort_col_sql = sort_map.get(sort_column or "") or '"b"."paid_time"'
+    sort_col_sql = sort_map.get((sort_column or "").lower()) or "b.id"
     sort_dir_sql = "desc" if (sort_dir or "").lower() == "desc" else "asc"
 
     # Base SQL selecting required columns; amount_paid derives from total_transaction_price/current_price.
     sql = f"""
         SELECT
-            b."ID" AS id,
-            b."TrackingNumber" AS tracking_number,
-            b."RefundFlag" AS refund_flag,
-            b."Storage" AS storage,
-            b."Profit" AS profit,
-            b."BuyerID" AS buyer_id,
-            b."SellerID" AS seller_id,
-            b."PaidTime" AS paid_time,
-            COALESCE(b."TotalTransactionPrice", b."CurrentPrice") AS amount_paid,
+            b.id AS id,
+            b.tracking_number AS tracking_number,
+            b.refund_flag AS refund_flag,
+            b.storage AS storage,
+            b.profit AS profit,
+            b.buyer_id AS buyer_id,
+            b.seller_id AS seller_id,
+            b.paid_time AS paid_time,
+            COALESCE(b.total_transaction_price, b.current_price) AS amount_paid,
             CASE
-                WHEN b."PaidTime" IS NULL THEN NULL
-                ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - b."PaidTime")) AS INT), 0)
+                WHEN b.paid_time IS NULL THEN NULL
+                ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - b.paid_time)) AS INT), 0)
             END AS days_since_paid,
-            sb."Label" AS status_label,
-            b."RecCreated" AS record_created_at,
-            b."Title" AS title,
-            b."Comment" AS comment
-        FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."EbayAccountID" = ea.id
-        LEFT JOIN "tbl_ebay_status_buyer" sb ON b."ItemStatusID" = sb."ID"
+            sb.label AS status_label,
+            b.record_created_at AS record_created_at,
+            b.title AS title,
+            b.comment AS comment
+        FROM ebay_buyer b
+        JOIN ebay_accounts ea ON b.ebay_account_id = ea.id
+        LEFT JOIN tbl_ebay_status_buyer sb ON b.item_status_id = sb.id
         WHERE ea.org_id = :org_id
         ORDER BY {sort_col_sql} {sort_dir_sql}
         LIMIT :limit OFFSET :offset
@@ -810,8 +810,8 @@ def _get_buying_data(
     # Total count (without pagination)
     count_sql = """
         SELECT COUNT(*) AS total
-        FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."EbayAccountID" = ea.id
+        FROM ebay_buyer b
+        JOIN ebay_accounts ea ON b.ebay_account_id = ea.id
         WHERE ea.org_id = :org_id
     """
 
