@@ -42,3 +42,5 @@
 2025-12-06T20:59:00Z - Added backend commit endpoint to convert bank rows into accounting transactions for Ledger/Statements flow
 2025-12-06T21:04:27.5811335+03:00 - Slimmed inventory layout, removed duplicate top filters, added StatusSKU dropdown fed from tbl_parts_inventorystatus, tightened padding
 2025-12-06T21:14:28.1773934+03:00 - Made inventory filters compact single-row with fixed widths and added Reset button to clear all filters
+2025-12-06T21:21:55.1350146+03:00 - Removed filter labels/“Filter” text, kept single Inventory heading, placed compact filters between title and grid toolbar
+2025-12-06T21:18:00Z - Added bank statement multi-select delete flow with confirmation prompt (type DELETE)

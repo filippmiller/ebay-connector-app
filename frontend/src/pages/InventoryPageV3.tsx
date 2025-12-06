@@ -61,10 +61,7 @@ export default function InventoryPageV3() {
       <FixedHeader />
       <div className="pt-10 flex-1 px-4 py-4 overflow-hidden">
         <div className="w-full h-full flex flex-col">
-          <div className="flex items-center justify-between mb-2">
-            <h1 className="text-2xl font-bold">Inventory</h1>
-            <span className="text-[11px] text-gray-500">Press Enter to apply column filters.</span>
-          </div>
+          <h1 className="text-2xl font-bold mb-2">Inventory</h1>
 
           {/* Compact column-specific filters (apply on Enter) */}
           <div className="mb-2 flex flex-wrap items-end gap-2 text-[11px]">
@@ -78,7 +75,6 @@ export default function InventoryPageV3() {
               { key: 'serial', label: 'Serial Number', width: 'w-36' },
             ].map((f) => (
               <div key={f.key} className={`flex flex-col gap-1 ${f.width}`}>
-                <label className="text-[11px] text-gray-600">{f.label}</label>
                 {f.key === 'statusSku' ? (
                   <select
                     className="border rounded px-2 py-1 text-[11px]"
@@ -100,7 +96,7 @@ export default function InventoryPageV3() {
                   <input
                     className="border rounded px-2 py-1 text-[11px]"
                     value={filterInputs[f.key as keyof typeof filterInputs]}
-                    placeholder={`Filter ${f.label} (Enter)`}
+                    placeholder={f.label}
                     onChange={(e) => handleFilterInputChange(f.key as keyof typeof filterInputs, e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -121,7 +117,7 @@ export default function InventoryPageV3() {
           </div>
 
           <div className="flex-1 min-h-0">
-            <DataGridPage gridKey="inventory" title="Inventory" extraParams={extraParams} />
+            <DataGridPage gridKey="inventory" title="" extraParams={extraParams} />
           </div>
         </div>
       </div>
