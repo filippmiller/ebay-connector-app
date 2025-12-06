@@ -800,7 +800,7 @@ def _get_buying_data(
             COALESCE(b."TotalTransactionPrice", b."CurrentPrice") AS amount_paid,
             CASE
                 WHEN b."PaidTime" IS NULL THEN NULL
-                ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - b."PaidTime")) AS INT), 0)
+                ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - CAST(b."PaidTime" AS TIMESTAMP))) AS INT), 0)
             END AS days_since_paid,
             sb."{status_label_col}" AS status_label,
             b."record_created" AS record_created_at,
