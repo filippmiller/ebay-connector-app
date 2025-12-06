@@ -460,7 +460,42 @@ async def get_sq_item(
     else:
         logger.info(f"Skipping model lookup. Model ID: {item.model_id}, Table Reflected: {tbl_parts_models_table is not None}")
 
-    result = SqItemRead.model_validate(item)
+    # Coerce DB booleans that may be stored as numeric/text into real bools to
+    # satisfy strict Pydantic parsing.
+    bool_fields = {
+        "alert_flag",
+        "domestic_only_flag",
+        "external_category_flag",
+        "use_standard_template_for_external_category_flag",
+        "use_ebay_motors_site_flag",
+        "custom_template_flag",
+        "color_flag",
+        "epid_flag",
+        "record_status_flag",
+        "clone_sku_flag",
+        "one_time_auction",
+        "manual_condition_value_flag",
+    }
+
+    data: dict = {}
+    for attr in item.__mapper__.attrs:  # type: ignore[attr-defined]
+        key = attr.key
+        value = getattr(item, key, None)
+        if key in bool_fields:
+            if value is None:
+                data[key] = None
+            elif isinstance(value, bool):
+                data[key] = value
+            else:
+                try:
+                    data[key] = bool(int(value))
+                except Exception:
+                    # Last resort: truthy conversion
+                    data[key] = bool(value)
+        else:
+            data[key] = value
+
+    result = SqItemRead.model_validate(data)
     # Log the result dict (excluding huge fields if any) to verify content
     logger.info(f"Returning Item Data: SKU={result.sku}, Title={result.title}, Price={result.price}")
     return result
