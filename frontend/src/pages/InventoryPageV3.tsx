@@ -63,61 +63,66 @@ export default function InventoryPageV3() {
         <div className="w-full h-full flex flex-col">
           <h1 className="text-2xl font-bold mb-2">Inventory</h1>
 
-          {/* Compact column-specific filters (apply on Enter) */}
-          <div className="mb-2 flex flex-wrap items-end gap-2 text-[11px]">
-            {[
-              { key: 'id', label: 'ID', width: 'w-24' },
-              { key: 'sku', label: 'SKU', width: 'w-32' },
-              { key: 'itemId', label: 'ItemID', width: 'w-32' },
-              { key: 'title', label: 'Title', width: 'w-40' },
-              { key: 'statusSku', label: 'StatusSKU', width: 'w-36' },
-              { key: 'storage', label: 'Storage', width: 'w-28' },
-              { key: 'serial', label: 'Serial Number', width: 'w-36' },
-            ].map((f) => (
-              <div key={f.key} className={`flex flex-col gap-1 ${f.width}`}>
-                {f.key === 'statusSku' ? (
-                  <select
-                    className="border rounded px-2 py-1 text-[11px]"
-                    value={filterInputs.statusSku}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      handleFilterInputChange('statusSku', value);
-                      applyFilter('statusSku');
-                    }}
-                  >
-                    <option value="">All</option>
-                    {statusOptions.map((opt) => (
-                      <option key={opt.id} value={opt.label}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    className="border rounded px-2 py-1 text-[11px]"
-                    value={filterInputs[f.key as keyof typeof filterInputs]}
-                    placeholder={f.label}
-                    onChange={(e) => handleFilterInputChange(f.key as keyof typeof filterInputs, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        applyFilter(f.key as keyof typeof filterInputs);
-                      }
-                    }}
-                  />
-                )}
-              </div>
-            ))}
-            <button
-              type="button"
-              className="ml-1 px-3 py-2 border rounded bg-white hover:bg-gray-50 text-[11px]"
-              onClick={resetFilters}
-            >
-              Reset
-            </button>
-          </div>
-
           <div className="flex-1 min-h-0">
-            <DataGridPage gridKey="inventory" title="" extraParams={extraParams} />
+            <DataGridPage
+              gridKey="inventory"
+              title=""
+              hideTitle
+              extraParams={extraParams}
+              topContent={
+                <div className="flex flex-wrap items-end gap-2 text-[11px]">
+                  {[
+                    { key: 'id', label: 'ID', width: 'w-24' },
+                    { key: 'sku', label: 'SKU', width: 'w-32' },
+                    { key: 'itemId', label: 'ItemID', width: 'w-32' },
+                    { key: 'title', label: 'Title', width: 'w-40' },
+                    { key: 'statusSku', label: 'StatusSKU', width: 'w-36' },
+                    { key: 'storage', label: 'Storage', width: 'w-28' },
+                    { key: 'serial', label: 'Serial Number', width: 'w-36' },
+                  ].map((f) => (
+                    <div key={f.key} className={`flex flex-col gap-1 ${f.width}`}>
+                      {f.key === 'statusSku' ? (
+                        <select
+                          className="border rounded px-2 py-1 text-[11px]"
+                          value={filterInputs.statusSku}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            handleFilterInputChange('statusSku', value);
+                            applyFilter('statusSku');
+                          }}
+                        >
+                          <option value="">All</option>
+                          {statusOptions.map((opt) => (
+                            <option key={opt.id} value={opt.label}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          className="border rounded px-2 py-1 text-[11px]"
+                          value={filterInputs[f.key as keyof typeof filterInputs]}
+                          placeholder={f.label}
+                          onChange={(e) => handleFilterInputChange(f.key as keyof typeof filterInputs, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              applyFilter(f.key as keyof typeof filterInputs);
+                            }
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="ml-1 px-3 py-2 border rounded bg-white hover:bg-gray-50 text-[11px]"
+                    onClick={resetFilters}
+                  >
+                    Reset
+                  </button>
+                </div>
+              }
+            />
           </div>
         </div>
       </div>
