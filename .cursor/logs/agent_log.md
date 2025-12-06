@@ -46,5 +46,6 @@
 2025-12-06T21:37:44.2423490+03:00 - Moved inventory filters into grid topContent below toolbar, added DataGridPage hideTitle/topContent props to drop extra Inventory label
 2025-12-06T22:41:00.8207855+03:00 - Rewired buying grid to legacy Supabase table tbl_ebay_buyer with tbl_ebay_status_buyer for status labels
 2025-12-06T22:46:47.5785861+03:00 - Added numpy>=1.26.0 to backend requirements to satisfy cv camera imports
+2025-12-06T23:05:10.8100557+03:00 - Added BUYING logs endpoint (tbl_ebay_buyer_log), appended Logs button column, modal shows status/comment history per buyer
 2025-12-06T21:18:00Z - Added bank statement multi-select delete flow with confirmation prompt (type DELETE)
 2025-12-06T21:27:00Z - DataGridPage auto-recovers hidden columns by restoring all available columns when prefs are empty

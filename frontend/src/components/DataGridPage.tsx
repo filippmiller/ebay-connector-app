@@ -35,6 +35,7 @@ interface DataGridPageProps {
   title?: string;
   hideTitle?: boolean;
   topContent?: ReactNode;
+  extraColumns?: import('./datagrid/AppDataGrid').ColDef[];
   /** Additional query params to pass to the backend /data endpoint (e.g. filters). */
   extraParams?: Record<string, any>;
   /** Optional row click handler (e.g. for detail panels). */
@@ -56,6 +57,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   title,
   hideTitle = false,
   topContent,
+  extraColumns,
   extraParams,
   onRowClick,
   selectionMode,
@@ -428,6 +430,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
             rows={rows ?? []}
             columnMetaByName={availableColumnsMap}
             loading={loadingData}
+            extraColumns={extraColumns}
             onRowClick={onRowClick}
             selectionMode={selectionMode}
             onSelectionChange={onSelectionChange}

@@ -266,6 +266,61 @@ async def get_buying_rows(
         db_sqla.close()
 
 
+@router.get("/buying/{buyer_id}/logs")
+async def get_buying_logs(
+    buyer_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db_sqla),
+):
+    """Return status/comment change logs for a BUYING row (tbl_ebay_buyer_log)."""
+    sql = sa_text(
+        """
+        SELECT
+            l."ID" AS id,
+            l."ChangeType" AS change_type,
+            l."OldStatusID" AS old_status_id,
+            l."NewStatusID" AS new_status_id,
+            l."OldComment" AS old_comment,
+            l."NewComment" AS new_comment,
+            l."ChangedByUserName" AS changed_by_username,
+            l."ChangedAt" AS changed_at,
+            sb_old."Label" AS old_status_label,
+            sb_new."Label" AS new_status_label
+        FROM "tbl_ebay_buyer_log" l
+        JOIN "tbl_ebay_buyer" b ON l."EbayBuyerID" = b."ID"
+        JOIN ebay_accounts ea ON b."EbayAccountID" = ea.id
+        LEFT JOIN "tbl_ebay_status_buyer" sb_old ON l."OldStatusID" = sb_old."ID"
+        LEFT JOIN "tbl_ebay_status_buyer" sb_new ON l."NewStatusID" = sb_new."ID"
+        WHERE l."EbayBuyerID" = :buyer_id
+          AND ea.org_id = :org_id
+        ORDER BY l."ChangedAt" DESC, l."ID" DESC
+        """
+    )
+    rows = db.execute(sql, {"buyer_id": buyer_id, "org_id": current_user.id}).fetchall()
+    logs = []
+    for r in rows:
+        item: Dict[str, Any] = {}
+        for key in [
+            "id",
+            "change_type",
+            "old_status_id",
+            "new_status_id",
+            "old_comment",
+            "new_comment",
+            "changed_by_username",
+            "old_status_label",
+            "new_status_label",
+        ]:
+            item[key] = getattr(r, key, None)
+        dtv = getattr(r, "changed_at", None)
+        if isinstance(dtv, dt_type):
+            item["changed_at"] = dtv.isoformat()
+        else:
+            item["changed_at"] = None
+        logs.append(item)
+    return {"logs": logs}
+
+
 @router.get("/{grid_key}/data")
 async def get_grid_data(
     grid_key: str,

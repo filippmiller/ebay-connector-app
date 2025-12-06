@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 import api from '@/lib/apiClient';
+import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 
 interface BuyingStatus {
   id: number;
@@ -33,6 +34,19 @@ interface BuyingDetail {
   comment?: string | null;
 }
 
+interface BuyingLogEntry {
+  id: number;
+  change_type?: string | null;
+  old_status_id?: number | null;
+  new_status_id?: number | null;
+  old_status_label?: string | null;
+  new_status_label?: string | null;
+  old_comment?: string | null;
+  new_comment?: string | null;
+  changed_by_username?: string | null;
+  changed_at?: string | null;
+}
+
 export default function BuyingPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<BuyingDetail | null>(null);
@@ -40,6 +54,10 @@ export default function BuyingPage() {
   const [pendingStatusId, setPendingStatusId] = useState<number | null | undefined>(undefined);
   const [pendingComment, setPendingComment] = useState<string>('');
   const [saving, setSaving] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logs, setLogs] = useState<BuyingLogEntry[]>([]);
+  const [logsBuyerId, setLogsBuyerId] = useState<number | null>(null);
 
   useEffect(() => {
     const loadStatuses = async () => {
@@ -89,6 +107,52 @@ export default function BuyingPage() {
     }
   };
 
+  const loadLogs = async (buyerId: number) => {
+    setLogsBuyerId(buyerId);
+    setLogsOpen(true);
+    setLogsLoading(true);
+    try {
+      const resp = await api.get<{ logs: BuyingLogEntry[] }>(`/api/grids/buying/${buyerId}/logs`);
+      setLogs(resp.data?.logs || []);
+    } catch (e) {
+      console.error('Failed to load BUYING logs', e);
+      setLogs([]);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const extraColumns = useMemo(() => {
+    return [
+      {
+        colId: 'logs',
+        field: 'logs',
+        headerName: 'Logs',
+        width: 90,
+        sortable: false,
+        filter: false,
+        cellRenderer: (params: any) => {
+          const id = params?.data?.id;
+          return (
+            <button
+              type="button"
+              className="px-2 py-1 text-xs border rounded bg-white hover:bg-gray-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (typeof id === 'number') {
+                  void loadLogs(id);
+                }
+              }}
+            >
+              View
+            </button>
+          );
+        },
+      },
+    ];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const currentStatusColor = (statusId: number | null | undefined) => {
     const s = statuses.find((st) => st.id === statusId);
     return {
@@ -108,6 +172,7 @@ export default function BuyingPage() {
               <DataGridPage
                 gridKey="buying"
                 title="Buying (Purchases)"
+                  extraColumns={extraColumns}
                 // Simple row click: rows are plain objects with an "id" field from the grid backend
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 onRowClick={(row: any) => {
@@ -214,6 +279,46 @@ export default function BuyingPage() {
           </div>
         </div>
       </div>
+
+      <DraggableResizableDialog
+        open={logsOpen}
+        onOpenChange={(open) => setLogsOpen(open)}
+        title={`Logs ${logsBuyerId ? `for #${logsBuyerId}` : ''}`}
+        defaultWidth="60%"
+        defaultHeight="60%"
+      >
+        <div className="h-full p-3 text-sm overflow-auto">
+          {logsLoading ? (
+            <div className="text-gray-600">Loading logs…</div>
+          ) : logs.length === 0 ? (
+            <div className="text-gray-600">No logs found.</div>
+          ) : (
+            <div className="space-y-2">
+              {logs.map((log) => (
+                <div key={log.id} className="border rounded p-2 bg-gray-50">
+                  <div className="flex flex-wrap gap-2 text-xs text-gray-600">
+                    <span>ID: {log.id}</span>
+                    <span>Type: {log.change_type || '-'}</span>
+                    <span>Changed by: {log.changed_by_username || '-'}</span>
+                    <span>
+                      At:{' '}
+                      {log.changed_at ? new Date(log.changed_at).toLocaleString() : '-'}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs">
+                    <div>
+                      Status: {log.old_status_label || '(none)'} → {log.new_status_label || '(none)'}
+                    </div>
+                    <div className="mt-1">
+                      Comment: {(log.old_comment || '').trim() || '—'} → {(log.new_comment || '').trim() || '—'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </DraggableResizableDialog>
     </div>
   );
 }

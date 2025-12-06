@@ -60,6 +60,8 @@ export interface AppDataGridProps {
   gridKey?: string;
   /** Per-grid theme configuration coming from /api/grid/preferences. */
   gridTheme?: GridThemeConfig | null;
+  /** Extra column definitions to append (e.g. action buttons). */
+  extraColumns?: ColDef[];
 }
 
 function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): string {
@@ -142,6 +144,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   onSelectionChange,
   gridKey,
   gridTheme,
+  extraColumns,
 }, ref) => {
   const layoutDebounceRef = useRef<number | null>(null);
   const gridApiRef = useRef<GridApi | null>(null);
@@ -164,7 +167,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       | Record<string, ColumnStyle>
       | undefined;
 
-    return columns.map((col) => {
+    const defs = columns.map((col) => {
       const meta = columnMetaByName[col.name];
       const type = meta?.type;
       const lowerName = col.name.toLowerCase();
@@ -323,7 +326,13 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
 
       return colDef;
     });
-  }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme]);
+
+    if (extraColumns && extraColumns.length) {
+      defs.push(...extraColumns);
+    }
+
+    return defs;
+  }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme, extraColumns]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
