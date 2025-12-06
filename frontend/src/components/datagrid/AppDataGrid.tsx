@@ -19,7 +19,7 @@ import 'ag-grid-community/styles/ag-theme-quartz.css';
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
 import type { GridColumnMeta } from '@/components/DataGridPage';
-import { buildLegacyGridTheme } from '@/components/datagrid/legacyGridTheme';
+
 import type { GridThemeConfig, ColumnStyle } from '@/hooks/useGridPreferences';
 
 export interface AppDataGridColumnState {
@@ -381,7 +381,6 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       ) : (
         <>
           <AgGridReact
-            theme={buildLegacyGridTheme(gridTheme)}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             rowData={rows}
