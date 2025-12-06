@@ -744,18 +744,34 @@ try:
         Base.metadata,
         autoload_with=engine,
     )
+    # Inspect for primary key, falling back to "Model_ID" if not explicitly defined
+    inspector = inspect(engine)
+    pk_info = inspector.get_pk_constraint(
+        tbl_parts_models_table.name,
+        schema=tbl_parts_models_table.schema,
+    )
+    pk_cols_models = list(pk_info.get("constrained_columns") or [])
+    if not pk_cols_models:
+        # Fallback heuristic: check for likely PK columns
+        if "Model_ID" in tbl_parts_models_table.c:
+            pk_cols_models = ["Model_ID"]
+        elif "ID" in tbl_parts_models_table.c:
+            pk_cols_models = ["ID"]
 except (NoSuchTableError, OperationalError) as exc:
     logger.warning(
         "tbl_parts_models reflection failed (%s); model search endpoint will return an empty result set",
         type(exc).__name__,
     )
     tbl_parts_models_table = None
+    pk_cols_models = []
 
 
-
-if tbl_parts_models_table is not None:
+if tbl_parts_models_table is not None and pk_cols_models:
     class TblPartsModels(Base):
         __table__ = tbl_parts_models_table
+        __mapper_args__ = {
+            "primary_key": tuple(tbl_parts_models_table.c[col] for col in pk_cols_models),
+        }
 else:
     class TblPartsModels(Base):
         __abstract__ = True
