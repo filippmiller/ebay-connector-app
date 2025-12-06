@@ -1811,39 +1811,26 @@ export default function AccountingPage() {
       <FixedHeader />
       <div className="pt-16 px-4 pb-4 flex-1 flex flex-col">
         <h1 className="text-3xl font-bold mb-4">Accounting</h1>
-        <Tabs
-          defaultValue="bank-statements"
-          value={activeTab}
-          onValueChange={handleTabChange}
-          className="flex-1 flex flex-col"
-        >
+
+        <Tabs value={activeTab} className="w-full">
           <TabsList>
-            <TabsTrigger value="bank-statements">Statements</TabsTrigger>
-            <TabsTrigger value="cash">Cash Expenses</TabsTrigger>
-            <TabsTrigger value="transactions">Ledger</TabsTrigger>
-            <TabsTrigger value="rules">Rules</TabsTrigger>
+            <TabsTrigger value="bank-statements" onClick={() => navigate('/accounting/bank-statements')}>Statements</TabsTrigger>
+            <TabsTrigger value="cash" onClick={() => navigate('/accounting/cash')}>Cash Expenses</TabsTrigger>
+            <TabsTrigger value="transactions" onClick={() => navigate('/accounting/transactions')}>Ledger</TabsTrigger>
+            <TabsTrigger value="rules" onClick={() => navigate('/accounting/rules')}>Rules</TabsTrigger>
           </TabsList>
-
-          <TabsContent value="bank-statements" className="flex-1 flex flex-col">
-            <Routes>
-              <Route path="bank-statements" element={<BankStatementsList />} />
-              <Route path="bank-statements/:id" element={<BankStatementDetail />} />
-              <Route path="*" element={<Navigate to="/accounting/bank-statements" replace />} />
-            </Routes>
-          </TabsContent>
-
-          <TabsContent value="cash" className="flex-1 flex flex-col">
-            <CashExpensesTab />
-          </TabsContent>
-
-          <TabsContent value="transactions" className="flex-1 flex flex-col">
-            <TransactionsTab />
-          </TabsContent>
-
-          <TabsContent value="rules" className="flex-1 flex flex-col">
-            <RulesTab />
-          </TabsContent>
         </Tabs>
+
+        <div className="flex-1 flex flex-col mt-4">
+          <Routes>
+            <Route path="bank-statements" element={<BankStatementsList />} />
+            <Route path="bank-statements/:id" element={<BankStatementDetail />} />
+            <Route path="cash" element={<CashExpensesTab />} />
+            <Route path="transactions" element={<TransactionsTab />} />
+            <Route path="rules" element={<RulesTab />} />
+            <Route path="*" element={<Navigate to="bank-statements" replace />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );

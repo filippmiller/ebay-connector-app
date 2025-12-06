@@ -13,6 +13,8 @@ import type {
   ICellRendererParams,
   CellStyleFunc,
 } from 'ag-grid-community';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
 
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
