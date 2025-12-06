@@ -434,8 +434,8 @@ async def get_grid_data(
         default_sort_col = "ID"
     elif grid_key == "buying":
         # Buying grid (purchases): newest purchases first.
-        # _get_buying_data will map this to EbayBuyer.record_created_at when needed.
-        default_sort_col = "record_created_at" if "record_created_at" in allowed_cols else None
+        # We prefer ID DESC as requested by the user.
+        default_sort_col = "id"
     elif grid_key in {"sku_catalog", "active_inventory", "accounting_bank_statements", "accounting_cash_expenses", "accounting_transactions", "ledger_transactions"}:
         # These all have a real numeric/id or primary timestamp column named "id"
         # (or similar) in their ColumnMeta; prefer that when available.
