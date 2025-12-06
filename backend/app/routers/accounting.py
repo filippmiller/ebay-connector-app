@@ -732,7 +732,7 @@ async def commit_bank_rows_to_transactions(
             date=r.operation_date or r.posting_date or stmt.statement_period_start or dt.date.today(),
             amount=amount,
             direction=direction,
-            source_type=r.source_type or "bank_statement",
+            source_type="bank_statement",
             source_id=r.bank_statement_id,
             bank_row_id=r.id,
             account_name=(f"{stmt.bank_name} ****{stmt.account_last4}" if stmt.account_last4 else stmt.bank_name),
