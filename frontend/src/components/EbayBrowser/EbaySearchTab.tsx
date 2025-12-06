@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { searchBrowse, BrowseListing, BrowseSearchRequest } from '@/api/ebayBrowser';
+import {
+  searchBrowse,
+  BrowseListing,
+  BrowseSearchRequest,
+  CategoryRefinement,
+  ConditionRefinement,
+  AspectRefinement,
+  TaxonomySuggestion,
+} from '@/api/ebayBrowser';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -11,7 +19,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+const TARGET_ASPECTS = ['Screen Size', 'Processor', 'Operating System', 'Brand'] as const;
+
 type ConditionFilter = 'any' | 'working' | 'non_working';
+
+type AspectSelection = Record<string, string[]>;
 
 export const EbaySearchTab: React.FC = () => {
   const [keywords, setKeywords] = useState('');
@@ -22,6 +34,16 @@ export const EbaySearchTab: React.FC = () => {
   const [rows, setRows] = useState<BrowseListing[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Facets & meta
+  const [categories, setCategories] = useState<CategoryRefinement[]>([]);
+  const [conditions, setConditions] = useState<ConditionRefinement[]>([]);
+  const [aspects, setAspects] = useState<AspectRefinement[]>([]);
+  const [taxonomySuggestions, setTaxonomySuggestions] = useState<TaxonomySuggestion[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedConditionIds, setSelectedConditionIds] = useState<string[]>([]);
+  const [selectedAspectValues, setSelectedAspectValues] = useState<AspectSelection>({});
+  const [total, setTotal] = useState<number | undefined>(undefined);
 
   // Pagination & Sorting
   const [offset, setOffset] = useState(0);
@@ -34,22 +56,45 @@ export const EbaySearchTab: React.FC = () => {
     setError(null);
     try {
       const currentOffset = isLoadMore ? offset : 0;
+
+      // Prepare aspect_filters payload
+      const aspect_filters: AspectSelection = Object.fromEntries(
+        Object.entries(selectedAspectValues)
+          .map(([name, values]) => [name, values.filter(Boolean)])
+          .filter(([, values]) => values.length > 0),
+      );
+
       const body: BrowseSearchRequest = {
         keywords: keywords.trim(),
         max_total_price: maxPrice,
+        category_id: selectedCategoryId,
         category_hint: onlyLaptops ? 'laptop' : 'all',
         exclude_keywords: exclude
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean),
+        condition_ids:
+          selectedConditionIds.length > 0 ? selectedConditionIds : undefined,
+        aspect_filters: Object.keys(aspect_filters).length
+          ? aspect_filters
+          : undefined,
         limit: 50,
         offset: currentOffset,
         sort: sort,
+        include_refinements: true,
+        use_taxonomy_suggestions: true,
       };
+
       const data = await searchBrowse(body);
 
-      // Client-side filtering (still useful for condition/keywords, though less critical now)
-      const filtered = data.filter((item) => filterByCondition(item, conditionFilter));
+      // Server handles conditionIds; fall back to local heuristics only
+      // when no explicit conditionIds are active.
+      let filtered: BrowseListing[] = data.items;
+      if (selectedConditionIds.length === 0 && conditionFilter !== 'any') {
+        filtered = data.items.filter((item) =>
+          filterByCondition(item, conditionFilter),
+        );
+      }
 
       if (isLoadMore) {
         setRows((prev) => [...prev, ...filtered]);
@@ -59,7 +104,13 @@ export const EbaySearchTab: React.FC = () => {
         setOffset(50);
       }
 
-      setHasMore(data.length === 50); // If we got full page, assume there's more
+      setCategories(data.categories ?? []);
+      setConditions(data.conditions ?? []);
+      setAspects(data.aspects ?? []);
+      setTaxonomySuggestions(data.taxonomy_suggestions ?? []);
+      setTotal(typeof data.total === 'number' ? data.total : undefined);
+
+      setHasMore(data.items.length === 50); // If we got full page, assume there's more
     } catch (e: any) {
       setError(e.message ?? String(e));
     } finally {
@@ -71,6 +122,52 @@ export const EbaySearchTab: React.FC = () => {
   const onFilterChange = () => {
     setOffset(0);
     setHasMore(true);
+  };
+
+  const handleCategoryClick = (cat: CategoryRefinement | null) => {
+    setSelectedCategoryId(cat ? cat.id : null);
+    onFilterChange();
+    void handleSearch(false);
+  };
+
+  const handleConditionFilterChange = (next: ConditionFilter) => {
+    setConditionFilter(next);
+    const ids = recomputeConditionSelection(next, conditions);
+    setSelectedConditionIds(ids);
+    onFilterChange();
+    void handleSearch(false);
+  };
+
+  const toggleAspectValue = (aspectName: string, value: string) => {
+    setSelectedAspectValues((prev) => {
+      const current = prev[aspectName] ?? [];
+      const exists = current.includes(value);
+      const nextValues = exists
+        ? current.filter((v) => v !== value)
+        : [...current, value];
+      const next: AspectSelection = { ...prev };
+      if (nextValues.length === 0) {
+        delete next[aspectName];
+      } else {
+        next[aspectName] = nextValues;
+      }
+      return next;
+    });
+    onFilterChange();
+    void handleSearch(false);
+  };
+
+  const relevantAspects = pickRelevantAspects(aspects);
+
+  const handleClearFilters = () => {
+    setOnlyLaptops(true);
+    setMaxPrice(200);
+    setConditionFilter('any');
+    setExclude('for parts, not working, не работает');
+    setSelectedCategoryId(null);
+    setSelectedConditionIds([]);
+    setSelectedAspectValues({});
+    onFilterChange();
   };
 
   return (
@@ -117,7 +214,7 @@ export const EbaySearchTab: React.FC = () => {
               <input
                 type="radio"
                 checked={conditionFilter === 'any'}
-                onChange={() => setConditionFilter('any')}
+                onChange={() => handleConditionFilterChange('any')}
               />
               Любое
             </label>
@@ -125,7 +222,7 @@ export const EbaySearchTab: React.FC = () => {
               <input
                 type="radio"
                 checked={conditionFilter === 'working'}
-                onChange={() => setConditionFilter('working')}
+                onChange={() => handleConditionFilterChange('working')}
               />
               Только рабочие
             </label>
@@ -133,7 +230,7 @@ export const EbaySearchTab: React.FC = () => {
               <input
                 type="radio"
                 checked={conditionFilter === 'non_working'}
-                onChange={() => setConditionFilter('non_working')}
+                onChange={() => handleConditionFilterChange('non_working')}
               />
               Только нерабочие
             </label>
@@ -165,11 +262,83 @@ export const EbaySearchTab: React.FC = () => {
       </div>
 
       <div className="flex items-center gap-3">
-        <Button size="sm" onClick={() => handleSearch(false)} disabled={loading || !keywords.trim()}>
+        <Button
+          size="sm"
+          onClick={() => handleSearch(false)}
+          disabled={loading || !keywords.trim()}
+        >
           {loading ? 'Ищу…' : 'Искать'}
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleClearFilters}
+          disabled={loading}
+        >
+          Сбросить фильтры
+        </Button>
         {error && <span className="text-xs text-red-600">{error}</span>}
+        {typeof total === 'number' && (
+          <span className="text-xs text-gray-600">Найдено на eBay: {total}</span>
+        )}
       </div>
+          <button
+            type="button"
+            className={`px-2 py-1 rounded border text-xs ${
+              selectedCategoryId === null
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white'
+            }`}
+            onClick={() => handleCategoryClick(null)}
+          >
+            Все
+          </button>
+          {categories.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`px-2 py-1 rounded border text-xs whitespace-nowrap ${
+                selectedCategoryId === c.id
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white hover:bg-gray-50'
+              }`}
+              onClick={() => handleCategoryClick(c)}
+            >
+              {c.name} ({c.match_count})
+            </button>
+          ))}
+        </div>
+      )}
+
+      {relevantAspects.length > 0 && (
+        <div className="text-[11px] text-gray-700 flex flex-col gap-2">
+          {relevantAspects.map((aspect) => (
+            <div key={aspect.name} className="flex flex-col gap-1">
+              <span className="font-semibold">{aspect.name}</span>
+              <div className="flex flex-wrap gap-2">
+                {aspect.values.slice(0, 12).map((v) => (
+                  <label
+                    key={v.value}
+                    className="flex items-center gap-1 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={
+                        selectedAspectValues[aspect.name]?.includes(v.value) ??
+                        false
+                      }
+                      onChange={() => toggleAspectValue(aspect.name, v.value)}
+                    />
+                    <span>
+                      {v.value} ({v.match_count})
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 border rounded bg-white overflow-auto text-xs">
         {rows.length === 0 ? (
@@ -247,6 +416,31 @@ export const EbaySearchTab: React.FC = () => {
     </div>
   );
 };
+
+function recomputeConditionSelection(
+  filter: ConditionFilter,
+  conditions: ConditionRefinement[],
+): string[] {
+  if (filter === 'any') return [];
+
+  const nonWorking = conditions.find((c) => {
+    const name = c.name.toLowerCase();
+    return name.includes('for parts') || name.includes('not working');
+  });
+
+  if (!nonWorking) return [];
+
+  if (filter === 'non_working') return [nonWorking.id];
+
+  // "Working" = any condition except the explicit non-working one.
+  return conditions.filter((c) => c.id !== nonWorking.id).map((c) => c.id);
+}
+
+function pickRelevantAspects(all: AspectRefinement[]): AspectRefinement[] {
+  if (!all.length) return [];
+  const targetSet = new Set<string>(TARGET_ASPECTS as readonly string[]);
+  return all.filter((a) => targetSet.has(a.name));
+}
 
 function filterByCondition(item: BrowseListing, filter: ConditionFilter): boolean {
   if (filter === 'any') return true;
