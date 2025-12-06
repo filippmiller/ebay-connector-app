@@ -66,6 +66,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
   const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [styleColumn, setStyleColumn] = useState<string | null>(null);
 
   const gridRef = React.useRef<AppDataGridHandle | null>(null);
@@ -311,17 +312,38 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 md:gap-3 text-sm md:justify-end">
-          <input className="px-2 py-1 border rounded-md text-xs bg-white placeholder:text-gray-400 w-full md:w-56 lg:w-72" placeholder="Search all columns" value={search} onChange={e => {
-            const value = e.target.value;
-            setSearch(value);
-            // Also apply client-side quick filter on the current page when possible.
-            try {
-              // gridRef may be null during initial layout load; that's fine.
-              (gridRef.current as any)?.setQuickFilter?.(value);
-            } catch {
-              // best-effort only
-            }
-          }} />
+          <div className="flex items-center gap-1 w-full md:w-56 lg:w-72">
+            <input
+              className="px-2 py-1 border rounded-md text-xs bg-white placeholder:text-gray-400 flex-1"
+              placeholder="Search all columns (press Enter)"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  setSearch(searchInput);
+                  try {
+                    (gridRef.current as any)?.setQuickFilter?.(searchInput);
+                  } catch {
+                    // best-effort only
+                  }
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="px-2 py-1 border rounded-md text-xs bg-white hover:bg-gray-50"
+              onClick={() => {
+                setSearch(searchInput);
+                try {
+                  (gridRef.current as any)?.setQuickFilter?.(searchInput);
+                } catch {
+                  // best-effort only
+                }
+              }}
+            >
+              Go
+            </button>
+          </div>
           <div className="flex items-center gap-1 text-xs text-gray-600">
             <span>Sort:</span>
             <select className="px-2 py-1 border rounded-md bg-white" value={currentSort?.column || ''} onChange={e => {

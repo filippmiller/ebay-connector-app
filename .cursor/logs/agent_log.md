@@ -35,3 +35,4 @@
 2025-12-06T20:28:26.5790198+03:00 - Updated inventory grid status mapping to InventoryShortStatus_Name with color, added frontend renderer to apply status color
 2025-12-06T20:30:40.6643627+03:00 - Fixed /api/sq/items/{id} to coerce legacy boolean fields before Pydantic validation to unblock SKU edit prefill
 2025-12-06T20:34:45.4404481+03:00 - Coerced external_category_id and other numeric fields to strings and added use_ebay_id to boolean coercion for SKU read endpoint
+2025-12-06T20:38:34.9602834+03:00 - Disabled live search in DataGridPage; search now applies on Enter/Go click with same %...% semantics to reduce load on large datasets
