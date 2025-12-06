@@ -262,9 +262,16 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
 
         const external = Boolean(item.external_category_flag);
 
+        const normalizedTitle = item.title || item.part || '';
+        const normalizedModel =
+          item.model ||
+          (item.model_id != null ? String(item.model_id) : '') ||
+          item.part ||
+          '';
+
         setForm({
-          title: item.title || '',
-          model: item.model || '',
+          title: normalizedTitle,
+          model: normalizedModel,
           modelId: item.model_id != null ? Number(item.model_id) : null,
           autoSku: !item.sku,
           sku: item.sku != null ? String(item.sku) : '',

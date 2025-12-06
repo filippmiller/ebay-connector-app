@@ -36,3 +36,4 @@
 2025-12-06T20:30:40.6643627+03:00 - Fixed /api/sq/items/{id} to coerce legacy boolean fields before Pydantic validation to unblock SKU edit prefill
 2025-12-06T20:34:45.4404481+03:00 - Coerced external_category_id and other numeric fields to strings and added use_ebay_id to boolean coercion for SKU read endpoint
 2025-12-06T20:38:34.9602834+03:00 - Disabled live search in DataGridPage; search now applies on Enter/Go click with same %...% semantics to reduce load on large datasets
+2025-12-06T20:41:21.2480611+03:00 - Prefill fallback: SKU edit modal now uses part/title/model_id to populate title/model when fields are empty in DB
