@@ -369,50 +369,56 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
 
   return (
     <div
-      className="w-full h-full app-grid__ag-root"
-      style={{ position: 'relative', height: '100%', width: '100%' }}
+      className="w-full h-full app-grid__ag-root ag-theme-quartz"
+      style={{ position: 'relative', height: '100%', width: '100%', minHeight: '500px' }}
     >
       {columnDefs.length === 0 ? (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">
           No columns configured
         </div>
       ) : (
-        <AgGridReact
-          theme={buildLegacyGridTheme(gridTheme)}
-          columnDefs={columnDefs}
-          defaultColDef={defaultColDef}
-          rowData={rows}
-          rowSelection={{
-            mode: selectionMode,
-            checkboxes: selectionMode === 'multiRow',
-            headerCheckbox: selectionMode === 'multiRow',
-          }}
-          suppressMultiSort
-          suppressScrollOnNewData
-          suppressAggFuncInHeader
-          animateRows
-          onGridReady={(params) => {
-            gridApiRef.current = params.api as GridApi;
-          }}
-          onSelectionChanged={(event) => {
-            if (onSelectionChange && event.api) {
-              onSelectionChange(event.api.getSelectedRows());
-            }
-          }}
-          onColumnResized={handleColumnEvent}
-          onColumnMoved={handleColumnEvent}
-          onColumnVisible={handleColumnEvent}
-          onSortChanged={handleSortChanged}
-          onRowClicked={
-            onRowClick
-              ? (event) => {
-                if (event.data) {
-                  onRowClick(event.data as Record<string, any>);
-                }
+        <>
+          <AgGridReact
+            theme={buildLegacyGridTheme(gridTheme)}
+            columnDefs={columnDefs}
+            defaultColDef={defaultColDef}
+            rowData={rows}
+            rowSelection={{
+              mode: selectionMode,
+              checkboxes: selectionMode === 'multiRow',
+              headerCheckbox: selectionMode === 'multiRow',
+            }}
+            suppressMultiSort
+            suppressScrollOnNewData
+            suppressAggFuncInHeader
+            animateRows
+            onGridReady={(params) => {
+              gridApiRef.current = params.api as GridApi;
+            }}
+            onSelectionChanged={(event) => {
+              if (onSelectionChange && event.api) {
+                onSelectionChange(event.api.getSelectedRows());
               }
-              : undefined
-          }
-        />
+            }}
+            onColumnResized={handleColumnEvent}
+            onColumnMoved={handleColumnEvent}
+            onColumnVisible={handleColumnEvent}
+            onSortChanged={handleSortChanged}
+            onRowClicked={
+              onRowClick
+                ? (event) => {
+                  if (event.data) {
+                    onRowClick(event.data as Record<string, any>);
+                  }
+                }
+                : undefined
+            }
+          />
+          {/* Debug Info Overlay */}
+          <div className="absolute bottom-0 right-0 bg-red-100 text-red-800 text-[10px] p-1 opacity-50 pointer-events-none z-50">
+            DEBUG: Rows={rows.length} Cols={columnDefs.length} Fields={columnDefs.map(c => c.field).join(',')}
+          </div>
+        </>
       )}
       {loading && rows.length === 0 && columnDefs.length > 0 && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500 bg-white/60 z-10">

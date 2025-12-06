@@ -438,25 +438,32 @@ async def get_sq_item(
 ) -> SqItemRead:
     """Return full detail for a single SQ catalog item."""
 
+    logger.info(f"Fetching SQ Item ID: {item_id}")
     item = db.query(SqItem).filter(SqItem.id == item_id).first()
     if not item:
+        logger.warning(f"SQ Item ID {item_id} NOT FOUND")
         raise HTTPException(status_code=404, detail="SQ item not found")
 
     # Populate model name from legacy table if available
     if item.model_id and tbl_parts_models_table is not None:
         try:
-            # tbl_parts_models_table.c.Model -> string name
-            # tbl_parts_models_table.c.ID -> primary key (older legacy used Model_ID but ID is safer if available)
-            # Actually, SqItem.model_id usually maps to tbl_parts_models.ID.
-            # Let's verify standard usage: list_sq_items filters on SqItem.model_id == model_id.
+            logger.info(f"Looking up Model ID {item.model_id} for Item {item_id}")
             stmt = select(tbl_parts_models_table.c.Model).where(tbl_parts_models_table.c.ID == item.model_id)
             model_name = db.execute(stmt).scalar()
             if model_name:
                 item.model = str(model_name)
+                logger.info(f"Found model name: {item.model}")
+            else:
+                logger.warning(f"Model ID {item.model_id} yielded no name")
         except Exception as e:
             logger.warning(f"Failed to resolve model name for ID {item.model_id}: {e}")
+    else:
+        logger.info(f"Skipping model lookup. Model ID: {item.model_id}, Table Reflected: {tbl_parts_models_table is not None}")
 
-    return SqItemRead.model_validate(item)
+    result = SqItemRead.model_validate(item)
+    # Log the result dict (excluding huge fields if any) to verify content
+    logger.info(f"Returning Item Data: SKU={result.sku}, Title={result.title}, Price={result.price}")
+    return result
 
 
 @router.post("/items", response_model=SqItemRead)
