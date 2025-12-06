@@ -52,6 +52,8 @@ function BankStatementsList() {
   const [status, setStatus] = useState('');
   const [periodFrom, setPeriodFrom] = useState('');
   const [periodTo, setPeriodTo] = useState('');
+  const [selectedStatements, setSelectedStatements] = useState<any[]>([]);
+  const [deleting, setDeleting] = useState(false);
 
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -110,6 +112,32 @@ function BankStatementsList() {
       setUploadError(errorMsg);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (!selectedStatements.length) return;
+    const confirmation = prompt(
+      `You are about to delete ${selectedStatements.length} statement(s).\n` +
+      'This will remove statements and their parsed rows.\n\nType DELETE to confirm:'
+    );
+    if (!confirmation || confirmation.trim().toUpperCase() !== 'DELETE') {
+      alert('Deletion cancelled: you must type DELETE to proceed.');
+      return;
+    }
+    setDeleting(true);
+    try {
+      for (const row of selectedStatements) {
+        if (!row?.id) continue;
+        await api.delete(`/accounting/bank-statements/${row.id}`);
+      }
+      alert(`Deleted ${selectedStatements.length} statement(s).`);
+      setSelectedStatements([]);
+      setRefreshKey((v) => v + 1);
+    } catch (e: any) {
+      alert(`Delete failed: ${e?.message || e}`);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -268,6 +296,16 @@ function BankStatementsList() {
             <Label className="block text-xs mb-1">To</Label>
             <Input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} />
           </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!selectedStatements.length || deleting}
+              onClick={handleDeleteSelected}
+            >
+              {deleting ? 'Deleting...' : `Delete selected (${selectedStatements.length || 0})`}
+            </Button>
+          </div>
         </div>
         <div className="flex-1 min-h-0">
           <DataGridPage
@@ -277,6 +315,8 @@ function BankStatementsList() {
             onRowClick={(row) => {
               if (row.id) navigate(`/accounting/bank-statements/${row.id}`);
             }}
+            selectionMode="multiRow"
+            onSelectionChange={(rows) => setSelectedStatements(rows)}
           />
         </div>
       </div>

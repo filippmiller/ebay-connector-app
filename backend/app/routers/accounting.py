@@ -10,7 +10,7 @@ import hashlib
 import asyncio
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
@@ -675,6 +675,86 @@ async def get_bank_statement_rows(
         .all()
     )
     return rows
+
+
+@router.post("/bank-statements/{statement_id}/commit-rows")
+async def commit_bank_rows_to_transactions(
+    statement_id: int,
+    row_ids: Optional[List[int]] = Query(None, alias="row_ids"),
+    commit_all_non_ignored: bool = Body(False),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Create accounting transactions from parsed bank rows.
+    - If commit_all_non_ignored is True: commit all rows for the statement whose parsed_status != 'ignored'.
+    - Else if row_ids provided: commit only those rows.
+    Skips rows already committed (bank_row_id unique).
+    """
+    stmt = db.query(AccountingBankStatement).get(statement_id)
+    if not stmt:
+        raise HTTPException(status_code=404, detail="Bank statement not found")
+
+    rows_q = db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == stmt.id)
+    if commit_all_non_ignored:
+        rows_q = rows_q.filter(AccountingBankRow.parsed_status != "ignored")
+    elif row_ids:
+        rows_q = rows_q.filter(AccountingBankRow.id.in_(row_ids))
+    else:
+        raise HTTPException(status_code=400, detail="Provide row_ids or set commit_all_non_ignored=true")
+
+    rows = rows_q.all()
+    if not rows:
+        return {"committed": 0, "skipped_existing": 0, "total_selected": 0}
+
+    from decimal import Decimal
+
+    committed = 0
+    skipped = 0
+
+    for r in rows:
+        # Skip if already committed (unique bank_row_id)
+        existing = db.query(AccountingTransaction).filter(AccountingTransaction.bank_row_id == r.id).first()
+        if existing:
+            skipped += 1
+            continue
+
+        raw_amount: Decimal = r.amount or Decimal("0")
+        # Determine direction and absolute amount
+        if r.direction and r.direction.upper() in ("CREDIT", "DEBIT"):
+            direction = "in" if r.direction.upper() == "CREDIT" else "out"
+            amount = abs(raw_amount)
+        else:
+            direction = "in" if raw_amount >= 0 else "out"
+            amount = abs(raw_amount)
+
+        txn = AccountingTransaction(
+            date=r.operation_date or r.posting_date or stmt.statement_period_start or dt.date.today(),
+            amount=amount,
+            direction=direction,
+            source_type=r.source_type or "bank_statement",
+            source_id=r.bank_statement_id,
+            bank_row_id=r.id,
+            account_name=(f"{stmt.bank_name} ****{stmt.account_last4}" if stmt.account_last4 else stmt.bank_name),
+            counterparty=None,
+            description=r.description_clean or r.description_raw,
+            expense_category_id=r.expense_category_id,
+            storage_id=None,
+            is_personal=False,
+            is_internal_transfer=False,
+            created_by_user_id=current_user.id,
+            updated_by_user_id=current_user.id,
+        )
+        db.add(txn)
+        committed += 1
+
+    db.commit()
+
+    return {
+        "committed": committed,
+        "skipped_existing": skipped,
+        "total_selected": len(rows),
+    }
 
 
 @router.delete("/bank-statements/{statement_id}", status_code=status.HTTP_204_NO_CONTENT)
