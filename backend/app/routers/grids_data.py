@@ -232,8 +232,22 @@ async def get_case_detail(
 async def get_buying_rows(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    sort_by: Optional[str] = Query("paid_time"),
+    sort_by: Optional[str] = Query("id"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    # Filters
+    buyer_id: Optional[str] = Query(None),
+    status_id: Optional[int] = Query(None),
+    paid_from: Optional[str] = Query(None),
+    paid_to: Optional[str] = Query(None),
+    created_from: Optional[str] = Query(None),
+    created_to: Optional[str] = Query(None),
+    seller_id: Optional[str] = Query(None),
+    storage_mode: Optional[str] = Query(None, description="any|exact|section"),
+    storage_value: Optional[str] = Query(None),
+    title: Optional[str] = Query(None),
+    tracking_number: Optional[str] = Query(None),
+    item_id: Optional[str] = Query(None),
+    id_filter: Optional[str] = Query(None, alias="id"),
     current_user: UserModel = Depends(get_current_user),
 ):
     """Specialized endpoint for the BUYING grid rows.
@@ -255,6 +269,20 @@ async def get_buying_rows(
             offset,
             sort_by,
             sort_dir,
+            # Pass filters
+            buyer_id=buyer_id,
+            status_id=status_id,
+            paid_from=paid_from,
+            paid_to=paid_to,
+            created_from=created_from,
+            created_to=created_to,
+            seller_id=seller_id,
+            storage_mode=storage_mode,
+            storage_value=storage_value,
+            title=title,
+            tracking_number=tracking_number,
+            item_id=item_id,
+            id_filter=id_filter,
         )
         return {
             "rows": data.get("rows", []),
@@ -762,6 +790,20 @@ def _get_buying_data(
     offset: int,
     sort_column: Optional[str],
     sort_dir: str,
+    # Filters
+    buyer_id: Optional[str] = None,
+    status_id: Optional[int] = None,
+    paid_from: Optional[str] = None,
+    paid_to: Optional[str] = None,
+    created_from: Optional[str] = None,
+    created_to: Optional[str] = None,
+    seller_id: Optional[str] = None,
+    storage_mode: Optional[str] = None,
+    storage_value: Optional[str] = None,
+    title: Optional[str] = None,
+    tracking_number: Optional[str] = None,
+    item_id: Optional[str] = None,
+    id_filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Buying grid backed by legacy Supabase table tbl_ebay_buyer (quoted column names).
 
@@ -787,6 +829,69 @@ def _get_buying_data(
     sort_col_sql = sort_map.get((sort_column or "").lower(), 'b."ID"')
     sort_dir_sql = "asc" if (sort_dir or "").lower() == "asc" else "desc"
 
+    # Building filters
+    filters = []
+    params = {"limit": limit, "offset": offset}
+
+    if buyer_id:
+        filters.append('b."BuyerID" = :buyer_id')
+        params["buyer_id"] = buyer_id
+    
+    if status_id is not None:
+        filters.append('b."ItemStatus" = :status_id')
+        params["status_id"] = status_id
+    
+    if seller_id:
+        filters.append('b."SellerID" ILIKE :seller_id')
+        params["seller_id"] = f"%{seller_id}%"
+
+    if title:
+        filters.append('b."Title" ILIKE :title')
+        params["title"] = f"%{title}%"
+
+    if tracking_number:
+        filters.append('b."TrackingNumber" ILIKE :tracking_number')
+        params["tracking_number"] = f"%{tracking_number}%"
+    
+    if item_id:
+        filters.append('b."ItemID" ILIKE :item_id')
+        params["item_id"] = f"%{item_id}%"
+    
+    if id_filter:
+        # Cast to text for loose searching
+        filters.append('CAST(b."ID" AS TEXT) ILIKE :id_filter')
+        params["id_filter"] = f"%{id_filter}%"
+
+    # Dates: PaidTime is text (ISO), record_created is timestamp
+    if paid_from:
+        filters.append('b."PaidTime" >= :paid_from')
+        params["paid_from"] = paid_from
+    if paid_to:
+        filters.append('b."PaidTime" <= :paid_to')
+        params["paid_to"] = paid_to
+    
+    if created_from:
+        filters.append('b."record_created" >= :created_from')
+        params["created_from"] = created_from
+    if created_to:
+        filters.append('b."record_created" <= :created_to')
+        params["created_to"] = created_to
+
+    # Storage logic
+    if storage_value:
+        if storage_mode == "exact":
+            filters.append('b."Storage" = :storage_value')
+            params["storage_value"] = storage_value
+        elif storage_mode == "section":
+            filters.append('b."Storage" ILIKE :storage_value_pattern')
+            params["storage_value_pattern"] = f"{storage_value}%"
+        else:
+            # Any matches (default)
+            filters.append('b."Storage" ILIKE :storage_value_pattern')
+            params["storage_value_pattern"] = f"%{storage_value}%"
+
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+
     data_sql = f"""
         SELECT
             b."ID" AS id,
@@ -810,17 +915,19 @@ def _get_buying_data(
         LEFT JOIN (
             SELECT DISTINCT "Status", "StatusName" FROM "tbl_ebay_status_buyer"
         ) sb ON b."ItemStatus" = sb."{status_id_col}"
+        {where_clause}
         ORDER BY {sort_col_sql} {sort_dir_sql}
         LIMIT :limit OFFSET :offset
     """
-
-    count_sql = """
+    
+    count_sql = f"""
         SELECT COUNT(*) AS total
-        FROM "tbl_ebay_buyer"
+        FROM "tbl_ebay_buyer" b
+        {where_clause}
     """
 
-    total = db.execute(sa_text(count_sql)).scalar() or 0
-    result = db.execute(sa_text(data_sql), {"limit": limit, "offset": offset})
+    total = db.execute(sa_text(count_sql), params).scalar() or 0
+    result = db.execute(sa_text(data_sql), params)
 
     rows: List[Dict[str, Any]] = []
     for r in result:

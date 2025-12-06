@@ -111,6 +111,8 @@ async def get_purchase_detail(
         "item_status_id": buyer.item_status_id,
         "item_status_label": status.label if status else None,
         "comment": buyer.comment,
+        "gallery_url": getattr(buyer, "gallery_url", None),
+        "picture_url": getattr(buyer, "picture_url0", None),
         "history": history,
     }
 
