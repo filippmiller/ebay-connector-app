@@ -175,7 +175,7 @@ export default function BuyingPage() {
         width: 50,
         sortable: false,
         filter: false,
-        cellRenderer: (params: any) => {
+        cellRenderer: () => {
           // Grid usually doesn't return full details, just safe fields. 
           // If we had image in grid row we could show a thumbnail.
           return null; // Placeholder
