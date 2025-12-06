@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import FixedHeader from '@/components/FixedHeader';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/auth/AuthContext';
 import { DataGridPage } from '@/components/DataGridPage';
 import api from '@/lib/apiClient';
@@ -1799,12 +1799,7 @@ export default function AccountingPage() {
         ? 'rules'
         : 'bank-statements';
 
-  const handleTabChange = (val: string) => {
-    if (val === 'cash') navigate('/accounting/cash');
-    else if (val === 'transactions') navigate('/accounting/transactions');
-    else if (val === 'rules') navigate('/accounting/rules');
-    else navigate('/accounting/bank-statements');
-  };
+
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
