@@ -63,3 +63,40 @@ def get_signed_url(bucket_name: str, path: str, expiry_seconds: int = 3600) -> s
     except Exception as e:
         logger.error(f"Failed to get signed URL: {e}")
         return ""
+
+def delete_file(bucket_name: str, path: str) -> bool:
+    """
+    Delete a file from Supabase Storage.
+    Returns True if successful, False otherwise.
+    """
+    client = get_supabase_client()
+    if not client:
+        return False
+    
+    try:
+        client.storage.from_(bucket_name).remove([path])
+        logger.info(f"Deleted file from storage: bucket={bucket_name}, path={path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete file from storage: {e}")
+        return False
+
+def delete_files(bucket_name: str, paths: list[str]) -> bool:
+    """
+    Delete multiple files from Supabase Storage.
+    Returns True if successful, False otherwise.
+    """
+    client = get_supabase_client()
+    if not client:
+        return False
+    
+    if not paths:
+        return True
+    
+    try:
+        client.storage.from_(bucket_name).remove(paths)
+        logger.info(f"Deleted {len(paths)} files from storage: bucket={bucket_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete files from storage: {e}")
+        return False

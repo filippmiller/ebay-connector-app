@@ -37,7 +37,7 @@ from app.services.accounting_parsers.csv_parser import parse_csv_bytes
 from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
 from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes, parse_pdf_with_metadata
 from app.services.accounting_rules_engine import apply_rules_to_bank_rows
-from app.services.supabase_storage import upload_file_to_storage
+from app.services.supabase_storage import upload_file_to_storage, delete_files
 
 # Bank Statement v1.0 imports
 from app.services.accounting_parsers.import_service import (
@@ -763,13 +763,49 @@ async def delete_bank_statement(
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ):
+    """
+    Delete a bank statement along with all associated data:
+    - Committed ledger transactions (accounting_transaction)
+    - Parsed rows (accounting_bank_row) - cascade via FK
+    - File records (accounting_bank_statement_file) - cascade via FK
+    - Files in Supabase storage
+    """
     stmt = db.query(AccountingBankStatement).get(statement_id)
     if not stmt:
         raise HTTPException(status_code=404, detail="Statement not found")
     
-    # Rows and files should cascade if configured, but let's be explicit if needed
+    # 1. Delete committed transactions that reference this statement's rows
+    # (accounting_transaction.bank_row_id doesn't have CASCADE, so manual cleanup)
+    row_ids = [r.id for r in db.query(AccountingBankRow.id).filter(
+        AccountingBankRow.bank_statement_id == statement_id
+    ).all()]
+    
+    if row_ids:
+        deleted_txns = db.query(AccountingTransaction).filter(
+            AccountingTransaction.bank_row_id.in_(row_ids)
+        ).delete(synchronize_session=False)
+        logger.info(f"Deleted {deleted_txns} committed transactions for statement {statement_id}")
+    
+    # 2. Get file records for storage cleanup
+    file_records = db.query(AccountingBankStatementFile).filter(
+        AccountingBankStatementFile.bank_statement_id == statement_id
+    ).all()
+    
+    storage_paths = [f.storage_path for f in file_records if f.storage_path]
+    
+    # 3. Delete the statement (rows and file records will cascade)
     db.delete(stmt)
     db.commit()
+    
+    # 4. Clean up Supabase storage
+    if storage_paths:
+        try:
+            delete_files("bank-statements", storage_paths)
+            logger.info(f"Deleted {len(storage_paths)} files from storage for statement {statement_id}")
+        except Exception as e:
+            logger.error(f"Failed to delete files from storage: {e}")
+            # Don't fail the request - DB cleanup is more important
+    
     return None
 
 
@@ -913,6 +949,7 @@ async def import_json_bank_statement(
     3. Creates AccountingBankStatement and AccountingBankRow records
     4. Applies rule-based classification
     5. Verifies totals against summary
+    6. Saves the original JSON file to Supabase storage
     
     Returns structured result with counts and status.
     """
@@ -920,12 +957,15 @@ async def import_json_bank_statement(
     
     # Get JSON data from file or body
     statement_data: Optional[Dict[str, Any]] = None
+    file_bytes: Optional[bytes] = None
+    original_filename: Optional[str] = None
     
     if file and file.filename:
         # Read JSON from uploaded file
         try:
             file_bytes = await file.read()
             statement_data = json_module.loads(file_bytes.decode('utf-8'))
+            original_filename = file.filename
         except json_module.JSONDecodeError as e:
             raise HTTPException(
                 status_code=400,
@@ -938,6 +978,9 @@ async def import_json_bank_statement(
             )
     elif json_body:
         statement_data = json_body
+        # Generate JSON bytes from body for storage
+        file_bytes = json_module.dumps(statement_data, indent=2).encode('utf-8')
+        original_filename = "statement.json"
     
     if not statement_data:
         raise HTTPException(
@@ -958,6 +1001,39 @@ async def import_json_bank_statement(
             status_code=400,
             detail=result.error_message or "Import failed"
         )
+    
+    # Save the original JSON file to storage and create file record
+    if result.success and result.statement_id and file_bytes:
+        try:
+            # Upload JSON to storage: bank-statements/{statement_id}/{filename}
+            storage_filename = f"{result.statement_id}/{original_filename}"
+            storage_path = upload_file_to_storage(
+                "bank-statements",
+                storage_filename,
+                file_bytes,
+                "application/json"
+            )
+            
+            # Update statement with storage path
+            stmt = db.query(AccountingBankStatement).get(result.statement_id)
+            if stmt:
+                stmt.supabase_bucket = "bank-statements"
+                stmt.supabase_path = storage_path
+                
+                # Create file record
+                stmt_file = AccountingBankStatementFile(
+                    bank_statement_id=result.statement_id,
+                    file_type="application/json",
+                    storage_path=storage_path,
+                    uploaded_by_user_id=current_user.id,
+                )
+                db.add(stmt_file)
+                db.commit()
+                
+                logger.info(f"Saved JSON file for statement {result.statement_id} to {storage_path}")
+        except Exception as e:
+            logger.error(f"Failed to save JSON file to storage: {e}")
+            # Don't fail the import if storage fails - statement is already imported
     
     return result.to_dict()
 
@@ -1026,29 +1102,13 @@ async def upload_td_pdf_statement(
             detail="File too large. Maximum size is 10MB."
         )
     
-    # Upload to storage first
-    file_hash = hashlib.sha256(file_bytes).hexdigest()
-    storage_filename = f"td_uploads/{file_hash}/{file.filename}"
-    storage_path = ""
-    
-    try:
-        storage_path = upload_file_to_storage(
-            "bank-statements", 
-            storage_filename, 
-            file_bytes, 
-            "application/pdf"
-        )
-    except Exception as e:
-        logger.error(f"Failed to upload TD PDF to storage: {e}")
-        # Continue anyway - storage is nice to have but not critical
-    
-    # Parse and import
+    # Parse and import first (need statement_id for storage path)
     result = import_td_pdf_bytes(
         db=db,
         pdf_bytes=file_bytes,
         user_id=current_user.id,
         source_filename=file.filename,
-        storage_path=storage_path,
+        storage_path=None,  # Will set after upload
     )
     
     if not result.success:
@@ -1056,6 +1116,39 @@ async def upload_td_pdf_statement(
             status_code=400,
             detail=result.error_message or "TD PDF parsing failed"
         )
+    
+    # Upload PDF to storage and create file record
+    if result.statement_id:
+        try:
+            # Upload to consistent path: bank-statements/{statement_id}/{filename}
+            storage_filename = f"{result.statement_id}/{file.filename}"
+            storage_path = upload_file_to_storage(
+                "bank-statements", 
+                storage_filename, 
+                file_bytes, 
+                "application/pdf"
+            )
+            
+            # Update statement with storage path
+            stmt = db.query(AccountingBankStatement).get(result.statement_id)
+            if stmt:
+                stmt.supabase_bucket = "bank-statements"
+                stmt.supabase_path = storage_path
+                
+                # Create file record
+                stmt_file = AccountingBankStatementFile(
+                    bank_statement_id=result.statement_id,
+                    file_type="application/pdf",
+                    storage_path=storage_path,
+                    uploaded_by_user_id=current_user.id,
+                )
+                db.add(stmt_file)
+                db.commit()
+                
+                logger.info(f"Saved TD PDF for statement {result.statement_id} to {storage_path}")
+        except Exception as e:
+            logger.error(f"Failed to save TD PDF to storage: {e}")
+            # Don't fail the import if storage fails - statement is already imported
     
     return result.to_dict()
 

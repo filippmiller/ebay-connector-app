@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Dialog } from '@/components/ui/dialog';
 
 interface AccountingCategory {
   id: number;
@@ -585,6 +586,10 @@ function BankStatementDetail() {
   const [categories, setCategories] = useState<AccountingCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteConfirmStep, setDeleteConfirmStep] = useState(1);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const loadData = async () => {
     if (!id) return;
@@ -647,6 +652,35 @@ function BankStatementDetail() {
     setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r)));
   };
 
+  const handleDeleteStatement = () => {
+    setDeleteModalOpen(true);
+    setDeleteConfirmStep(1);
+    setDeleteConfirmText('');
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (deleteConfirmStep === 1) {
+      setDeleteConfirmStep(2);
+      return;
+    }
+    
+    if (deleteConfirmText.toLowerCase() !== 'delete') {
+      alert('You must type "delete" to confirm.');
+      return;
+    }
+    
+    setDeleting(true);
+    try {
+      await api.delete(`/accounting/bank-statements/${id}`);
+      setDeleteModalOpen(false);
+      navigate('/accounting/bank-statements');
+    } catch (e: any) {
+      alert(`Delete failed: ${e?.message || e}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (!id) return null;
 
   return (
@@ -655,7 +689,78 @@ function BankStatementDetail() {
         <Button variant="ghost" size="sm" onClick={() => navigate('/accounting/bank-statements')}>
           ← Back to list
         </Button>
+        <Button variant="destructive" size="sm" onClick={handleDeleteStatement}>
+          Delete Statement
+        </Button>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex flex-col gap-4">
+              {deleteConfirmStep === 1 ? (
+                <>
+                  <div className="flex items-start gap-3">
+                    <svg className="w-6 h-6 text-red-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-lg">Delete Bank Statement?</h3>
+                      <p className="text-sm text-gray-600 mt-2">
+                        You are about to delete this statement and all associated data:
+                      </p>
+                      <ul className="text-sm text-gray-600 mt-2 list-disc list-inside space-y-1">
+                        <li>All parsed transactions ({rows.length} rows)</li>
+                        <li>All committed ledger entries</li>
+                        <li>The original uploaded file</li>
+                      </ul>
+                      <p className="text-sm font-semibold text-red-600 mt-3">
+                        This action cannot be undone!
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" onClick={() => setDeleteModalOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button variant="destructive" onClick={handleDeleteConfirm}>
+                      Continue
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">Final Confirmation</h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                      Type <span className="font-mono font-bold">delete</span> below to confirm deletion:
+                    </p>
+                    <Input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="Type 'delete' to confirm"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" onClick={() => setDeleteModalOpen(false)} disabled={deleting}>
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={handleDeleteConfirm}
+                      disabled={deleting || deleteConfirmText.toLowerCase() !== 'delete'}
+                    >
+                      {deleting ? 'Deleting...' : 'Delete Permanently'}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {summary && (
         <Card className="p-4 flex flex-col gap-4">
