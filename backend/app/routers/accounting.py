@@ -468,21 +468,10 @@ async def upload_bank_statement(
         .first()
     )
     if existing_stmt:
-        # Check if previous upload was empty/failed
-        rows_count = db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == existing_stmt.id).count()
-        
-        if rows_count == 0:
-            logger.info(f"Duplicate file hash {file_hash} found, but existing statement {existing_stmt.id} has 0 rows. Re-processing.")
-            db.delete(existing_stmt)
-            db.flush()
-        else:
-            return {
-                "id": existing_stmt.id, 
-                "status": existing_stmt.status, 
-                "message": "Statement already uploaded",
-                "rows_count": rows_count,
-                 "period_start": existing_stmt.statement_period_start.isoformat() if existing_stmt.statement_period_start else None,
-            }
+        # Always allow re-processing of the same file. Delete the old one.
+        logger.info(f"Duplicate file hash {file_hash} found (ID {existing_stmt.id}). Deleting and re-processing.")
+        db.delete(existing_stmt)
+        db.flush()
 
     # 3. Create new statement record
     stmt = AccountingBankStatement(

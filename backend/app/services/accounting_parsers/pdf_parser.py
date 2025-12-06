@@ -86,43 +86,41 @@ async def parse_pdf_with_metadata(pdf_bytes: bytes) -> ParsedStatementResult:
         
         system_instruction = """
 You are an expert banking data extraction system. Your job is to extract structured data from the attached bank statement PDF.
-You must analyze the document (using OCR/Vision/File Search capabilities) and output the data in a STRICT JSON format.
+You MUST use the 'code_interpreter' tool to write and execute Python code to read the PDF file text and extract the data reliably. 
+Do not rely on your internal knowledge or simple text search. Write code to parse the text.
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON object. Do not wrap it in markdown code blocks like ```json ... ```. 
+Return ONLY a valid JSON object. Do not wrap it in markdown code blocks.
 The JSON must adhere to this schema:
 
 {
   "metadata": {
-    "bank_name": "Name of the bank (e.g. Chase, TD, Relay, Bank of America)",
-    "account_last4": "Last 4 digits of account number (or null if not found)",
+    "bank_name": "Name of the bank",
+    "account_last4": "Last 4 digits",
     "currency": "Currency code (USD, EUR, etc.)",
-    "period_start": "YYYY-MM-DD (Statement Start Date)",
-    "period_end": "YYYY-MM-DD (Statement End Date)"
+    "period_start": "YYYY-MM-DD",
+    "period_end": "YYYY-MM-DD"
   },
   "transactions": [
     {
       "date": "YYYY-MM-DD",
       "description": "Full transaction description",
-      "amount": number (Float. Negative for debits/expenses, Positive for credits/deposits),
-      "balance": number (Running balance if available, or null)
+      "amount": number (Float),
+      "balance": number (Float or null)
     }
   ]
 }
 
 EXTRACTION RULES:
-1. Extract ALL transactions visible in the statement tables. Do not summarize.
-2. Ensure the 'amount' sign is correct based on the 'Debit'/'Credit' columns or section headers.
-   - Withdrawals/Checks/Fees -> Negative
-   - Deposits/Transfers In -> Positive
-3. If the date in the row doesn't have a year, use the statement period to determine the correct year.
-4. If multiple accounts are present, extract transactions for the MAIN checking/savings account.
+1. Extract ALL transactions.
+2. Ensure correct sign for amount (negative for debits, positive for credits).
+3. Handle dates carefully (year might be in header).
 """
 
         assistant = await client.beta.assistants.create(
             name="Bank Statement Parser Temp",
             instructions=system_instruction,
-            tools=[{"type": "file_search"}], # Enable file search to "read" the document
+            tools=[{"type": "code_interpreter"}], 
             model=settings.OPENAI_MODEL or "gpt-4o",
         )
 
@@ -131,11 +129,11 @@ EXTRACTION RULES:
             messages=[
                 {
                     "role": "user",
-                    "content": "Extract the data from the attached bank statement PDF into JSON format.",
+                    "content": "Extract the data from the attached bank statement PDF into JSON format using Python code.",
                     "attachments": [
                         {
                             "file_id": openai_file.id,
-                            "tools": [{"type": "file_search"}]
+                            "tools": [{"type": "code_interpreter"}]
                         }
                     ]
                 }
