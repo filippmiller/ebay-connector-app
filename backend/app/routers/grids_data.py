@@ -767,16 +767,41 @@ def _get_buying_data(
     from datetime import datetime as dt_type
     from decimal import Decimal
 
+    # Discover actual column name for ebay account FK to avoid casing issues.
+    account_fk_candidates = [
+        "EbayAccountID",
+        "EbayAccountId",
+        "ebay_account_id",
+        "ebayaccountid",
+    ]
+    account_fk_col = "EbayAccountID"
+    try:
+        col_rows = db.execute(
+            sa_text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'tbl_ebay_buyer'
+                  AND lower(column_name) IN :names
+                """
+            ),
+            {"names": tuple([c.lower() for c in account_fk_candidates])},
+        ).fetchall()
+        if col_rows:
+            account_fk_col = col_rows[0][0]
+    except Exception:
+        account_fk_col = "EbayAccountID"
+
     # Map allowed sort columns to quoted SQL fragments; default newest by ID.
     sort_map = {
-        "paid_time": 'b."paid_time"',
-        "record_created_at": 'b."record_created_at"',
-        "buyer_id": 'b."buyer_id"',
-        "seller_id": 'b."seller_id"',
-        "profit": 'b."profit"',
-        "id": 'b."id"',
+        "paid_time": 'b."PaidTime"',
+        "record_created_at": 'b."RecCreated"',
+        "buyer_id": 'b."BuyerID"',
+        "seller_id": 'b."SellerID"',
+        "profit": 'b."Profit"',
+        "id": 'b."ID"',
     }
-    sort_col_sql = sort_map.get((sort_column or "").lower(), 'b."id"')
+    sort_col_sql = sort_map.get((sort_column or "").lower(), 'b."ID"')
     sort_dir_sql = "asc" if (sort_dir or "").lower() == "asc" else "desc"
 
     data_sql = f"""
@@ -799,7 +824,7 @@ def _get_buying_data(
             b."title" AS title,
             b."comment" AS comment
         FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."ebay_account_id" = ea.id
+        JOIN ebay_accounts ea ON b."{account_fk_col}" = ea.id
         LEFT JOIN "tbl_ebay_status_buyer" sb ON b."item_status_id" = sb."id"
         WHERE ea.org_id = :org_id
         ORDER BY {sort_col_sql} {sort_dir_sql}
@@ -809,7 +834,7 @@ def _get_buying_data(
     count_sql = """
         SELECT COUNT(*) AS total
         FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."ebay_account_id" = ea.id
+        JOIN ebay_accounts ea ON b."{account_fk_col}" = ea.id
         WHERE ea.org_id = :org_id
     """
 
