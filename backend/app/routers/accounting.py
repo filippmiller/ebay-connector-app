@@ -25,8 +25,11 @@ from app.models_sqlalchemy.models import (
     AccountingTransactionLog,
     AccountingBankRule,
     AccountingProcessLog,
+    AccountingGroup,
+    AccountingClassificationCode,
     User,
 )
+
 from app.services.admin_auth import require_admin_user
 from app.utils.logger import logger
 
@@ -35,6 +38,20 @@ from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
 from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes, parse_pdf_with_metadata
 from app.services.accounting_rules_engine import apply_rules_to_bank_rows
 from app.services.supabase_storage import upload_file_to_storage
+
+# Bank Statement v1.0 imports
+from app.services.accounting_parsers.import_service import (
+    import_bank_statement_json,
+    import_td_pdf_bytes,
+    get_supported_banks,
+    validate_json_format,
+    ImportResult,
+)
+from app.services.accounting_parsers.bank_statement_schema import (
+    BankStatementV1,
+    validate_bank_statement_json,
+)
+
 
 
 def _log_process(db: Session, stmt_id: int, message: str, level: str = "INFO", details: Optional[Dict[str, Any]] = None):
@@ -721,3 +738,483 @@ async def test_openai_connection(
             "message": f"Connection failed: {str(e)}",
             "masked_key": settings.OPENAI_API_KEY[:6] + "..." if settings.OPENAI_API_KEY else "None"
         }
+
+
+# ============================================================================
+# Bank Statement v1.0 — Internal Parser Endpoints (NO OpenAI)
+# ============================================================================
+
+@router.get("/bank-statements/supported-banks")
+async def list_supported_banks(
+    current_user: User = Depends(require_admin_user),
+):
+    """Get list of banks supported for internal PDF parsing (no OpenAI)."""
+    return {
+        "banks": get_supported_banks(),
+        "json_schema_version": "1.0",
+    }
+
+
+@router.post("/bank-statements/import-json")
+async def import_json_bank_statement(
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+    file: UploadFile = File(None),
+    json_body: Optional[Dict[str, Any]] = None,
+):
+    """
+    Import a Bank Statement v1.0 JSON file or request body.
+    
+    This endpoint accepts the canonical Bank Statement v1.0 JSON format.
+    It uses deterministic rule-based classification (NO OpenAI).
+    
+    You can either:
+    - Upload a .json file via multipart form
+    - POST the JSON directly in the request body
+    
+    The endpoint:
+    1. Validates the JSON against BankStatementV1 schema
+    2. Checks for duplicate statements (idempotency by bank+account+period)
+    3. Creates AccountingBankStatement and AccountingBankRow records
+    4. Applies rule-based classification
+    5. Verifies totals against summary
+    
+    Returns structured result with counts and status.
+    """
+    import json as json_module
+    
+    # Get JSON data from file or body
+    statement_data: Optional[Dict[str, Any]] = None
+    
+    if file and file.filename:
+        # Read JSON from uploaded file
+        try:
+            file_bytes = await file.read()
+            statement_data = json_module.loads(file_bytes.decode('utf-8'))
+        except json_module.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid JSON file: {str(e)}"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to read file: {str(e)}"
+            )
+    elif json_body:
+        statement_data = json_body
+    
+    if not statement_data:
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide either a JSON file or JSON body"
+        )
+    
+    # Import the statement
+    result = import_bank_statement_json(
+        db=db,
+        statement_data=statement_data,
+        user_id=current_user.id,
+        source_type="JSON_UPLOAD",
+    )
+    
+    if not result.success and result.status != "DUPLICATE":
+        raise HTTPException(
+            status_code=400,
+            detail=result.error_message or "Import failed"
+        )
+    
+    return result.to_dict()
+
+
+@router.post("/bank-statements/import-json-body")
+async def import_json_bank_statement_body(
+    statement_data: Dict[str, Any],
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Import a Bank Statement v1.0 JSON from request body.
+    
+    This is an alternative endpoint that accepts JSON directly in the body
+    (easier to use from code/scripts).
+    """
+    result = import_bank_statement_json(
+        db=db,
+        statement_data=statement_data,
+        user_id=current_user.id,
+        source_type="JSON_UPLOAD",
+    )
+    
+    if not result.success and result.status != "DUPLICATE":
+        raise HTTPException(
+            status_code=400,
+            detail=result.error_message or "Import failed"
+        )
+    
+    return result.to_dict()
+
+
+@router.post("/bank-statements/upload-pdf-td")
+async def upload_td_pdf_statement(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Upload a TD Bank PDF statement and parse it using internal parser (NO OpenAI).
+    
+    This endpoint:
+    1. Validates the file is a PDF
+    2. Parses using deterministic TD Bank PDF parser
+    3. Converts to Bank Statement v1.0 JSON
+    4. Imports via standard JSON import pipeline
+    5. Stores the original PDF in Supabase
+    
+    Use this for TD Bank statements when you want fast, predictable parsing
+    without AI costs.
+    """
+    # Validate file type
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are accepted for TD Bank parser"
+        )
+    
+    # Read file
+    file_bytes = await file.read()
+    
+    # Validate file size (max 10MB)
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Maximum size is 10MB."
+        )
+    
+    # Upload to storage first
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    storage_filename = f"td_uploads/{file_hash}/{file.filename}"
+    storage_path = ""
+    
+    try:
+        storage_path = upload_file_to_storage(
+            "bank-statements", 
+            storage_filename, 
+            file_bytes, 
+            "application/pdf"
+        )
+    except Exception as e:
+        logger.error(f"Failed to upload TD PDF to storage: {e}")
+        # Continue anyway - storage is nice to have but not critical
+    
+    # Parse and import
+    result = import_td_pdf_bytes(
+        db=db,
+        pdf_bytes=file_bytes,
+        user_id=current_user.id,
+        source_filename=file.filename,
+        storage_path=storage_path,
+    )
+    
+    if not result.success:
+        raise HTTPException(
+            status_code=400,
+            detail=result.error_message or "TD PDF parsing failed"
+        )
+    
+    return result.to_dict()
+
+
+@router.post("/bank-statements/validate-json")
+async def validate_json_schema(
+    statement_data: Dict[str, Any],
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Validate a JSON object against Bank Statement v1.0 schema.
+    
+    Does NOT import the data, just validates the structure.
+    Useful for testing JSON before actual import.
+    """
+    is_valid, error_message = validate_json_format(statement_data)
+    
+    return {
+        "valid": is_valid,
+        "error": error_message,
+        "schema_version": "1.0",
+    }
+
+
+# ============================================================================
+# CLASSIFICATION CODES MANAGEMENT
+# ============================================================================
+
+@router.get("/classification-groups")
+async def list_classification_groups(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """List all accounting groups with their classification codes counts."""
+    query = db.query(AccountingGroup)
+    if not include_inactive:
+        query = query.filter(AccountingGroup.is_active == True)
+    
+    groups = query.order_by(AccountingGroup.sort_order).all()
+    
+    result = []
+    for g in groups:
+        # Count codes in this group
+        code_count = db.query(AccountingClassificationCode).filter(
+            AccountingClassificationCode.accounting_group == g.code,
+            AccountingClassificationCode.is_active == True
+        ).count()
+        
+        result.append({
+            "id": g.id,
+            "code": g.code,
+            "name": g.name,
+            "description": g.description,
+            "color": g.color,
+            "sort_order": g.sort_order,
+            "is_active": g.is_active,
+            "codes_count": code_count,
+        })
+    
+    return result
+
+
+@router.get("/classification-codes")
+async def list_classification_codes(
+    group: Optional[str] = None,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """List all classification codes, optionally filtered by group."""
+    query = db.query(AccountingClassificationCode)
+    
+    if group:
+        query = query.filter(AccountingClassificationCode.accounting_group == group)
+    if not include_inactive:
+        query = query.filter(AccountingClassificationCode.is_active == True)
+    
+    codes = query.order_by(
+        AccountingClassificationCode.accounting_group,
+        AccountingClassificationCode.sort_order
+    ).all()
+    
+    return [
+        {
+            "id": c.id,
+            "code": c.code,
+            "name": c.name,
+            "description": c.description,
+            "accounting_group": c.accounting_group,
+            "keywords": c.keywords,
+            "sort_order": c.sort_order,
+            "is_active": c.is_active,
+            "is_system": c.is_system,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        }
+        for c in codes
+    ]
+
+
+@router.post("/classification-codes")
+async def create_classification_code(
+    code: str = Form(...),
+    name: str = Form(...),
+    accounting_group: str = Form(...),
+    description: Optional[str] = Form(None),
+    keywords: Optional[str] = Form(None),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """Create a new classification code."""
+    # Validate code format (uppercase, underscores)
+    code = code.upper().replace(" ", "_")
+    
+    # Check if code already exists
+    existing = db.query(AccountingClassificationCode).filter(
+        AccountingClassificationCode.code == code
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Code '{code}' already exists")
+    
+    # Validate group exists
+    group = db.query(AccountingGroup).filter(AccountingGroup.code == accounting_group).first()
+    if not group:
+        raise HTTPException(status_code=400, detail=f"Group '{accounting_group}' not found")
+    
+    # Get next sort order
+    max_order = db.query(func.max(AccountingClassificationCode.sort_order)).filter(
+        AccountingClassificationCode.accounting_group == accounting_group
+    ).scalar() or 0
+    
+    new_code = AccountingClassificationCode(
+        code=code,
+        name=name,
+        description=description,
+        accounting_group=accounting_group,
+        keywords=keywords,
+        sort_order=max_order + 1,
+        is_system=False,  # User-created codes are not system
+    )
+    db.add(new_code)
+    db.commit()
+    db.refresh(new_code)
+    
+    return {
+        "id": new_code.id,
+        "code": new_code.code,
+        "name": new_code.name,
+        "description": new_code.description,
+        "accounting_group": new_code.accounting_group,
+        "keywords": new_code.keywords,
+        "sort_order": new_code.sort_order,
+        "is_active": new_code.is_active,
+        "is_system": new_code.is_system,
+    }
+
+
+@router.put("/classification-codes/{code_id}")
+async def update_classification_code(
+    code_id: int,
+    name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    keywords: Optional[str] = Form(None),
+    is_active: Optional[bool] = Form(None),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """Update an existing classification code."""
+    code_obj = db.query(AccountingClassificationCode).get(code_id)
+    if not code_obj:
+        raise HTTPException(status_code=404, detail="Code not found")
+    
+    if name is not None:
+        code_obj.name = name
+    if description is not None:
+        code_obj.description = description
+    if keywords is not None:
+        code_obj.keywords = keywords
+    if is_active is not None:
+        code_obj.is_active = is_active
+    
+    db.commit()
+    db.refresh(code_obj)
+    
+    return {
+        "id": code_obj.id,
+        "code": code_obj.code,
+        "name": code_obj.name,
+        "description": code_obj.description,
+        "accounting_group": code_obj.accounting_group,
+        "keywords": code_obj.keywords,
+        "sort_order": code_obj.sort_order,
+        "is_active": code_obj.is_active,
+        "is_system": code_obj.is_system,
+    }
+
+
+@router.delete("/classification-codes/{code_id}")
+async def delete_classification_code(
+    code_id: int,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """Delete a classification code (soft delete for system codes)."""
+    code_obj = db.query(AccountingClassificationCode).get(code_id)
+    if not code_obj:
+        raise HTTPException(status_code=404, detail="Code not found")
+    
+    if code_obj.is_system:
+        # Soft delete for system codes - just deactivate
+        code_obj.is_active = False
+        db.commit()
+        return {"message": f"System code '{code_obj.code}' deactivated (cannot be deleted)"}
+    
+    # Hard delete for user-created codes
+    db.delete(code_obj)
+    db.commit()
+    return {"message": f"Code '{code_obj.code}' deleted"}
+
+
+@router.post("/classification-groups")
+async def create_classification_group(
+    code: str = Form(...),
+    name: str = Form(...),
+    description: Optional[str] = Form(None),
+    color: Optional[str] = Form("#6b7280"),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """Create a new accounting group."""
+    code = code.upper().replace(" ", "_")
+    
+    existing = db.query(AccountingGroup).filter(AccountingGroup.code == code).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Group '{code}' already exists")
+    
+    max_order = db.query(func.max(AccountingGroup.sort_order)).scalar() or 0
+    
+    new_group = AccountingGroup(
+        code=code,
+        name=name,
+        description=description,
+        color=color,
+        sort_order=max_order + 1,
+    )
+    db.add(new_group)
+    db.commit()
+    db.refresh(new_group)
+    
+    return {
+        "id": new_group.id,
+        "code": new_group.code,
+        "name": new_group.name,
+        "description": new_group.description,
+        "color": new_group.color,
+        "sort_order": new_group.sort_order,
+        "is_active": new_group.is_active,
+    }
+
+
+@router.put("/classification-groups/{group_id}")
+async def update_classification_group(
+    group_id: int,
+    name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    color: Optional[str] = Form(None),
+    is_active: Optional[bool] = Form(None),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    """Update an accounting group."""
+    group = db.query(AccountingGroup).get(group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    if name is not None:
+        group.name = name
+    if description is not None:
+        group.description = description
+    if color is not None:
+        group.color = color
+    if is_active is not None:
+        group.is_active = is_active
+    
+    db.commit()
+    db.refresh(group)
+    
+    return {
+        "id": group.id,
+        "code": group.code,
+        "name": group.name,
+        "description": group.description,
+        "color": group.color,
+        "sort_order": group.sort_order,
+        "is_active": group.is_active,
+    }

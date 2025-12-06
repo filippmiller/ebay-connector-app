@@ -1870,10 +1870,49 @@ class AccountingInternalCategory(Base):
     parent = relationship("AccountingInternalCategory", remote_side=[id])
 
 
+class AccountingGroup(Base):
+    """Accounting group categories (INCOME, COGS, OPEX, etc.)."""
+    __tablename__ = "accounting_group"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(Text, nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    color = Column(Text, nullable=True, server_default='#6b7280')
+    sort_order = Column(Integer, nullable=False, server_default='0')
+    is_active = Column(Boolean, nullable=False, server_default='true')
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # Relationship to codes
+    classification_codes = relationship("AccountingClassificationCode", back_populates="group_rel", foreign_keys="AccountingClassificationCode.accounting_group")
+
+
+class AccountingClassificationCode(Base):
+    """Classification codes for bank transactions (user-manageable)."""
+    __tablename__ = "accounting_classification_code"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(Text, nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    accounting_group = Column(Text, nullable=False)  # References AccountingGroup.code
+    keywords = Column(Text, nullable=True)  # Comma-separated keywords for auto-classification
+    sort_order = Column(Integer, nullable=False, server_default='0')
+    is_active = Column(Boolean, nullable=False, server_default='true')
+    is_system = Column(Boolean, nullable=False, server_default='false')  # System codes can't be deleted
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # Relationship to group
+    group_rel = relationship("AccountingGroup", back_populates="classification_codes", foreign_keys=[accounting_group], primaryjoin="AccountingClassificationCode.accounting_group == AccountingGroup.code")
+
+
 class AccountingBankStatement(Base):
     __tablename__ = "accounting_bank_statement"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
+
     bank_name = Column(Text, nullable=False)
     account_last4 = Column(Text, nullable=True)
     currency = Column(Text, nullable=True)
@@ -1886,7 +1925,8 @@ class AccountingBankStatement(Base):
     status = Column(Text, nullable=False, default="uploaded")
     file_hash = Column(Text, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=False)
+    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)  # Made nullable for script imports
+
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     updated_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
 
@@ -1898,9 +1938,17 @@ class AccountingBankStatement(Base):
     error_message = Column(Text, nullable=True)
     raw_header_json = Column(JSONB, nullable=True)
     raw_openai_response = Column(JSONB, nullable=True)
+    
+    # Bank Statement v1.0 fields
+    raw_json = Column(JSONB, nullable=True)  # Full Bank Statement v1.0 JSON
+    statement_hash = Column(Text, nullable=True, index=True)  # For idempotency
+    source_type = Column(Text, nullable=True, server_default="MANUAL")  # JSON_UPLOAD, PDF_TD, CSV, XLSX, OPENAI
+    bank_code = Column(Text, nullable=True, index=True)  # Short bank code (TD, BOA, CITI)
 
     __table_args__ = (
         Index('idx_accounting_bank_statement_file_hash', 'file_hash'),
+        Index('idx_accounting_bank_statement_stmt_hash', 'statement_hash'),
+        Index('idx_accounting_bank_statement_bank_code', 'bank_code'),
     )
 
 
@@ -1932,12 +1980,24 @@ class AccountingBankRow(Base):
     match_status = Column(Text, nullable=False, default="unmatched")
     dedupe_key = Column(Text, nullable=True, index=True)
     
-    # Classification
+    # Classification (legacy)
     llm_category = Column(Text, nullable=False, server_default="unknown")
     internal_category_id = Column(Integer, ForeignKey('bank_transaction_category_internal.id'), nullable=True)
     internal_category_label = Column(Text, nullable=True)
     
     expense_category_id = Column(BigInteger, ForeignKey('accounting_expense_category.id'), nullable=True)
+    
+    # Bank Statement v1.0 classification fields
+    bank_code = Column(Text, nullable=True, index=True)  # TD, BOA, CITI
+    bank_section = Column(Text, nullable=True, index=True)  # ELECTRONIC_DEPOSIT, CHECKS_PAID, etc.
+    bank_subtype = Column(Text, nullable=True)  # CCD DEPOSIT, ACH DEBIT, etc.
+    direction = Column(Text, nullable=True, index=True)  # CREDIT or DEBIT
+    accounting_group = Column(Text, nullable=True, index=True)  # INCOME, COGS, OPERATING_EXPENSE, etc.
+    classification = Column(Text, nullable=True, index=True)  # INCOME_EBAY_PAYOUT, etc.
+    classification_status = Column(Text, nullable=True, server_default="UNKNOWN", index=True)  # OK, UNKNOWN, ERROR
+    check_number = Column(Text, nullable=True)  # Check number if applicable
+    raw_transaction_json = Column(JSONB, nullable=True)  # Raw JSON from Bank Statement v1.0
+    
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
@@ -1945,6 +2005,12 @@ class AccountingBankRow(Base):
 
     __table_args__ = (
         Index('idx_accounting_bank_row_dedupe_key', 'dedupe_key'),
+        Index('idx_accounting_bank_row_bank_code', 'bank_code'),
+        Index('idx_accounting_bank_row_bank_section', 'bank_section'),
+        Index('idx_accounting_bank_row_direction', 'direction'),
+        Index('idx_accounting_bank_row_accounting_group', 'accounting_group'),
+        Index('idx_accounting_bank_row_classification', 'classification'),
+        Index('idx_accounting_bank_row_classification_status', 'classification_status'),
     )
 
 

@@ -234,6 +234,10 @@ function BankStatementsList() {
         </form>
       </Card>
 
+      {/* JSON/Internal Parser Upload Card */}
+      <InternalParserUpload onSuccess={() => setRefreshKey((v) => v + 1)} />
+
+
       {/* Filters and Grid */}
       <div className="flex flex-col gap-3 flex-1 min-h-0">
         <div className="flex flex-wrap gap-3 items-end">
@@ -280,7 +284,259 @@ function BankStatementsList() {
   );
 }
 
+// ============================================================================
+// Internal Parser Upload Component (JSON / TD PDF without OpenAI)
+// ============================================================================
+
+interface InternalUploadResult {
+  success: boolean;
+  statement_id?: number;
+  status: string;
+  transactions_total: number;
+  transactions_inserted: number;
+  duplicates_skipped: number;
+  classification_unknown: number;
+  bank_name?: string;
+  bank_code?: string;
+  account_number?: string;
+  period_start?: string;
+  period_end?: string;
+  verification_passed?: boolean;
+  verification_message?: string;
+  error_message?: string;
+}
+
+function InternalParserUpload({ onSuccess }: { onSuccess: () => void }) {
+  const navigate = useNavigate();
+  const [uploadMode, setUploadMode] = useState<'json' | 'td-pdf'>('json');
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState<InternalUploadResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) return;
+
+    setUploading(true);
+    setResult(null);
+    setError(null);
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+
+      let endpoint = '/accounting/bank-statements/import-json';
+      if (uploadMode === 'td-pdf') {
+        endpoint = '/accounting/bank-statements/upload-pdf-td';
+      }
+
+      const response = await api.post<InternalUploadResult>(endpoint, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      setResult(response.data);
+      if (response.data.success) {
+        onSuccess();
+        setFile(null);
+        const fileInput = document.querySelector('#internal-parser-file') as HTMLInputElement;
+        if (fileInput) fileInput.value = '';
+      }
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.detail || err?.message || 'Upload failed';
+      setError(errorMsg);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Card className={`border-2 ${collapsed ? 'border-gray-100' : 'border-dashed border-purple-200 hover:border-purple-300'} transition-colors`}>
+      {/* Collapsed Header */}
+      <button
+        type="button"
+        className="w-full p-3 flex items-center justify-between text-left"
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
+            <svg className="w-4 h-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-800">JSON / Internal Parser</span>
+            <span className="text-sm text-gray-500 ml-2">(No OpenAI)</span>
+          </div>
+        </div>
+        <svg
+          className={`w-5 h-5 text-gray-400 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {/* Expanded Content */}
+      {!collapsed && (
+        <div className="px-5 pb-5 border-t border-gray-100">
+          <form onSubmit={handleUpload} className="mt-4">
+            <div className="flex flex-col gap-4">
+              {/* Mode Selector */}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setUploadMode('json')}
+                  className={`flex-1 p-3 rounded-lg border-2 transition-all ${uploadMode === 'json'
+                    ? 'border-purple-500 bg-purple-50 text-purple-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                >
+                  <div className="font-medium">📄 JSON File</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Pre-formatted Bank Statement v1.0 JSON
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUploadMode('td-pdf')}
+                  className={`flex-1 p-3 rounded-lg border-2 transition-all ${uploadMode === 'td-pdf'
+                    ? 'border-purple-500 bg-purple-50 text-purple-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                >
+                  <div className="font-medium">🏦 TD Bank PDF</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Direct parsing, no OpenAI
+                  </div>
+                </button>
+              </div>
+
+              {/* File Input */}
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Input
+                    id="internal-parser-file"
+                    type="file"
+                    accept={uploadMode === 'json' ? '.json' : '.pdf'}
+                    onChange={(e) => {
+                      setFile(e.target.files?.[0] ?? null);
+                      setResult(null);
+                      setError(null);
+                    }}
+                    className="cursor-pointer"
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  disabled={uploading || !file}
+                  className="min-w-[140px] bg-purple-600 hover:bg-purple-700"
+                >
+                  {uploading ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Importing...
+                    </span>
+                  ) : 'Import'}
+                </Button>
+              </div>
+
+              {/* Success Result */}
+              {result && result.success && (
+                <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div className="flex-1">
+                      <p className="font-medium text-purple-800">
+                        {result.status === 'DUPLICATE' ? 'Statement already exists' : 'Import successful!'}
+                      </p>
+                      <div className="mt-2 text-sm text-purple-700 grid grid-cols-2 gap-x-4 gap-y-1">
+                        {result.bank_name && <span><strong>Bank:</strong> {result.bank_name}</span>}
+                        {result.account_number && <span><strong>Account:</strong> {result.account_number}</span>}
+                        <span><strong>Transactions:</strong> {result.transactions_inserted} inserted</span>
+                        {result.classification_unknown > 0 && (
+                          <span className="text-amber-600"><strong>Needs Review:</strong> {result.classification_unknown}</span>
+                        )}
+                        {result.period_start && result.period_end && (
+                          <span className="col-span-2"><strong>Period:</strong> {result.period_start} to {result.period_end}</span>
+                        )}
+                        {result.verification_passed !== undefined && (
+                          <span className="col-span-2">
+                            <strong>Balance Check:</strong>{' '}
+                            {result.verification_passed ? '✅ Passed' : '⚠️ Warning'}
+                          </span>
+                        )}
+                      </div>
+                      {result.statement_id && (
+                        <Button
+                          variant="link"
+                          className="p-0 h-auto mt-2 text-purple-700"
+                          onClick={() => navigate(`/accounting/bank-statements/${result.statement_id}`)}
+                        >
+                          View Statement →
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Duplicate Notice */}
+              {result && result.status === 'DUPLICATE' && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-amber-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div>
+                      <p className="font-medium text-amber-800">Statement already imported</p>
+                      <p className="text-sm text-amber-700 mt-1">This statement has already been imported (same bank, account, and period).</p>
+                      {result.statement_id && (
+                        <Button
+                          variant="link"
+                          className="p-0 h-auto mt-2 text-amber-700"
+                          onClick={() => navigate(`/accounting/bank-statements/${result.statement_id}`)}
+                        >
+                          View Existing Statement →
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Error */}
+              {error && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-red-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="font-medium text-red-800">Import failed</p>
+                      <p className="text-sm text-red-700 mt-1">{error}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </form>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function BankStatementDetail() {
+
   const { id } = useParams();
   const navigate = useNavigate();
   const [summary, setSummary] = useState<any | null>(null);
@@ -890,6 +1146,465 @@ function TransactionsTab() {
 }
 
 function RulesTab() {
+  const [activeSubTab, setActiveSubTab] = useState<'rules' | 'codes'>('rules');
+
+  return (
+    <div className="flex-1 flex flex-col gap-4">
+      {/* Sub-tabs */}
+      <div className="flex gap-2 border-b pb-2">
+        <button
+          className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${activeSubTab === 'rules'
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          onClick={() => setActiveSubTab('rules')}
+        >
+          Auto-Categorization Rules
+        </button>
+        <button
+          className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${activeSubTab === 'codes'
+              ? 'bg-purple-600 text-white'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          onClick={() => setActiveSubTab('codes')}
+        >
+          Classification Codes
+        </button>
+      </div>
+
+      {activeSubTab === 'rules' ? <RulesSubTab /> : <ClassificationCodesManager />}
+    </div>
+  );
+}
+
+// ============================================================================
+// Classification Codes Manager Component
+// ============================================================================
+
+interface ClassificationGroup {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  color: string;
+  codes_count: number;
+  is_active: boolean;
+}
+
+interface ClassificationCode {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  accounting_group: string;
+  keywords: string | null;
+  sort_order: number;
+  is_active: boolean;
+  is_system: boolean;
+}
+
+function ClassificationCodesManager() {
+  const [groups, setGroups] = useState<ClassificationGroup[]>([]);
+  const [codes, setCodes] = useState<ClassificationCode[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingCode, setEditingCode] = useState<ClassificationCode | null>(null);
+
+  // Form state
+  const [newCode, setNewCode] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [newKeywords, setNewKeywords] = useState('');
+  const [newGroup, setNewGroup] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [groupsResp, codesResp] = await Promise.all([
+        api.get('/accounting/classification-groups'),
+        api.get('/accounting/classification-codes'),
+      ]);
+      setGroups(groupsResp.data || []);
+      setCodes(codesResp.data || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCode || !newName || !newGroup) return;
+    setSubmitting(true);
+    try {
+      const form = new FormData();
+      form.append('code', newCode);
+      form.append('name', newName);
+      form.append('accounting_group', newGroup);
+      if (newDescription) form.append('description', newDescription);
+      if (newKeywords) form.append('keywords', newKeywords);
+
+      await api.post('/accounting/classification-codes', form);
+      setShowAddModal(false);
+      setNewCode('');
+      setNewName('');
+      setNewDescription('');
+      setNewKeywords('');
+      setNewGroup('');
+      await loadData();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleUpdate = async (codeId: number, updates: Partial<ClassificationCode>) => {
+    const form = new FormData();
+    if (updates.name !== undefined) form.append('name', updates.name);
+    if (updates.description !== undefined) form.append('description', updates.description || '');
+    if (updates.keywords !== undefined) form.append('keywords', updates.keywords || '');
+    if (updates.is_active !== undefined) form.append('is_active', String(updates.is_active));
+
+    await api.put(`/accounting/classification-codes/${codeId}`, form);
+    await loadData();
+    setEditingCode(null);
+  };
+
+  const handleDelete = async (codeId: number) => {
+    if (!confirm('Delete this classification code?')) return;
+    await api.delete(`/accounting/classification-codes/${codeId}`);
+    await loadData();
+  };
+
+  const getCodesForGroup = (groupCode: string) =>
+    codes.filter((c) => c.accounting_group === groupCode);
+
+  return (
+    <div className="flex-1 flex flex-col gap-4 overflow-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800">Classification Codes</h2>
+          <p className="text-sm text-gray-500">
+            Manage transaction categories for bank statement classification
+          </p>
+        </div>
+        <Button
+          onClick={() => {
+            setShowAddModal(true);
+            if (groups.length > 0) setNewGroup(groups[0].code);
+          }}
+          className="bg-purple-600 hover:bg-purple-700"
+        >
+          + Add Code
+        </Button>
+      </div>
+
+      {/* Groups List */}
+      <div className="space-y-3">
+        {groups.map((group) => {
+          const groupCodes = getCodesForGroup(group.code);
+          const isExpanded = expandedGroup === group.code;
+
+          return (
+            <Card key={group.id} className="overflow-hidden">
+              {/* Group Header */}
+              <button
+                className="w-full p-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors"
+                onClick={() => setExpandedGroup(isExpanded ? null : group.code)}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-4 h-4 rounded-full"
+                    style={{ backgroundColor: group.color }}
+                  />
+                  <div>
+                    <span className="font-semibold text-gray-800">{group.name}</span>
+                    <span className="ml-2 text-xs text-gray-500 font-mono">{group.code}</span>
+                  </div>
+                  <span className="ml-2 px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
+                    {groupCodes.length} codes
+                  </span>
+                </div>
+                <svg
+                  className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {/* Expanded Codes */}
+              {isExpanded && (
+                <div className="border-t bg-gray-50 p-4">
+                  {groupCodes.length === 0 ? (
+                    <p className="text-sm text-gray-500 text-center py-4">
+                      No codes in this group yet
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {groupCodes.map((code) => (
+                        <div
+                          key={code.id}
+                          className={`p-3 bg-white rounded-lg border flex items-start justify-between transition-opacity ${!code.is_active ? 'opacity-50' : ''
+                            }`}
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-sm font-medium text-purple-700">
+                                {code.code}
+                              </span>
+                              {code.is_system && (
+                                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] rounded">
+                                  SYSTEM
+                                </span>
+                              )}
+                              {!code.is_active && (
+                                <span className="px-1.5 py-0.5 bg-gray-200 text-gray-600 text-[10px] rounded">
+                                  INACTIVE
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-800 mt-1">{code.name}</p>
+                            {code.description && (
+                              <p className="text-xs text-gray-500 mt-0.5">{code.description}</p>
+                            )}
+                            {code.keywords && (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {code.keywords.split(',').map((kw, i) => (
+                                  <span
+                                    key={i}
+                                    className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[10px] rounded-full"
+                                  >
+                                    {kw.trim()}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-1 ml-4">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingCode(code)}
+                              className="text-gray-500 hover:text-gray-700"
+                            >
+                              Edit
+                            </Button>
+                            {!code.is_system && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDelete(code.id)}
+                                className="text-red-500 hover:text-red-700"
+                              >
+                                Delete
+                              </Button>
+                            )}
+                            {code.is_system && !code.is_active && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleUpdate(code.id, { is_active: true })}
+                                className="text-green-500 hover:text-green-700"
+                              >
+                                Activate
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+          );
+        })}
+
+        {loading && (
+          <div className="text-center py-8 text-gray-500">Loading...</div>
+        )}
+      </div>
+
+      {/* Add Code Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold mb-4">Add Classification Code</h3>
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div>
+                <Label className="block text-xs mb-1">Code (uppercase, underscores)</Label>
+                <Input
+                  value={newCode}
+                  onChange={(e) => setNewCode(e.target.value.toUpperCase().replace(/\s/g, '_'))}
+                  placeholder="e.g. INCOME_REFUND"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Display Name</Label>
+                <Input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="e.g. Refund Income"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Group</Label>
+                <select
+                  className="border rounded px-2 py-1.5 text-sm w-full"
+                  value={newGroup}
+                  onChange={(e) => setNewGroup(e.target.value)}
+                  required
+                >
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.code}>
+                      {g.name} ({g.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Description (optional)</Label>
+                <Input
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="Brief description of when to use this code"
+                />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Keywords (comma-separated, for auto-match)</Label>
+                <Input
+                  value={newKeywords}
+                  onChange={(e) => setNewKeywords(e.target.value)}
+                  placeholder="e.g. refund,return,credit"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowAddModal(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={submitting || !newCode || !newName || !newGroup}
+                  className="bg-purple-600 hover:bg-purple-700"
+                >
+                  {submitting ? 'Creating...' : 'Create Code'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit Code Modal */}
+      {editingCode && (
+        <EditCodeModal
+          code={editingCode}
+          onClose={() => setEditingCode(null)}
+          onSave={(updates) => handleUpdate(editingCode.id, updates)}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditCodeModal({
+  code,
+  onClose,
+  onSave,
+}: {
+  code: ClassificationCode;
+  onClose: () => void;
+  onSave: (updates: Partial<ClassificationCode>) => void;
+}) {
+  const [name, setName] = useState(code.name);
+  const [description, setDescription] = useState(code.description || '');
+  const [keywords, setKeywords] = useState(code.keywords || '');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSave({ name, description, keywords });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <Card className="w-full max-w-md p-6">
+        <h3 className="text-lg font-semibold mb-4">
+          Edit: <span className="font-mono text-purple-600">{code.code}</span>
+        </h3>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label className="block text-xs mb-1">Display Name</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Description</Label>
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Keywords (comma-separated)</Label>
+            <Input
+              value={keywords}
+              onChange={(e) => setKeywords(e.target.value)}
+              placeholder="e.g. refund,return,credit"
+            />
+          </div>
+          <div className="flex justify-between items-center pt-2">
+            {code.is_system ? (
+              <span className="text-xs text-gray-500">System codes cannot be deleted</span>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={saving || !name}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {saving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
+          </div>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================================
+// Rules Sub-Tab (original rules content)
+// ============================================================================
+
+function RulesSubTab() {
   const [rules, setRules] = useState<AccountingRule[]>([]);
   const [categories, setCategories] = useState<AccountingCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -946,7 +1661,7 @@ function RulesTab() {
   };
 
   return (
-    <div className="flex-1 flex flex-col gap-4">
+    <>
       <Card className="p-4">
         <h2 className="text-lg font-semibold mb-2">New Auto-Categorization Rule</h2>
         <form className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end" onSubmit={handleCreate}>
@@ -1049,9 +1764,10 @@ function RulesTab() {
           </tbody>
         </table>
       </div>
-    </div>
+    </>
   );
 }
+
 
 export default function AccountingPage() {
   const { user } = useAuth();

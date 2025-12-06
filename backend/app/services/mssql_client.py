@@ -123,26 +123,35 @@ def test_connection(config: MssqlConnectionConfig) -> Dict[str, Any]:
 
 
 def get_schema_tree(config: MssqlConnectionConfig) -> Dict[str, Any]:
-    """Return database -> schemas -> tables tree.
+    """Return database -> schemas -> tables tree with row count estimates.
 
     Example:
     {
         "database": "DB_A28F26_parts",
         "schemas": [
-            {"name": "dbo", "tables": [{"name": "tbl_ebay_seller_info"}, ...]},
+            {"name": "dbo", "tables": [{"name": "tbl_ebay_seller_info", "row_estimate": 12345}, ...]},
         ],
     }
     """
 
     engine = _create_engine(config)
     with engine.connect() as conn:
+        # Get table names and approximate row counts using sys.dm_db_partition_stats
+        # This is similar to using pg_class.reltuples in PostgreSQL
         result = conn.execute(
             text(
                 """
-                SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_TYPE = 'BASE TABLE'
-                ORDER BY TABLE_SCHEMA, TABLE_NAME
+                SELECT 
+                    s.name AS schema_name,
+                    t.name AS table_name,
+                    SUM(p.rows) AS row_estimate
+                FROM sys.tables t
+                INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+                INNER JOIN sys.partitions p ON t.object_id = p.object_id
+                WHERE t.type = 'U'  -- User tables only
+                  AND p.index_id IN (0, 1)  -- Heap (0) or clustered index (1)
+                GROUP BY s.name, t.name
+                ORDER BY s.name, t.name
                 """
             )
         )
@@ -152,9 +161,13 @@ def get_schema_tree(config: MssqlConnectionConfig) -> Dict[str, Any]:
     for row in rows:
         schema_name = row["schema_name"]
         table_name = row["table_name"]
+        row_estimate = row["row_estimate"]
         if schema_name not in schemas:
             schemas[schema_name] = {"name": schema_name, "tables": []}
-        schemas[schema_name]["tables"].append({"name": table_name})
+        schemas[schema_name]["tables"].append({
+            "name": table_name,
+            "row_estimate": int(row_estimate) if row_estimate is not None else None,
+        })
 
     return {
         "database": config.database,

@@ -56,6 +56,7 @@ from app.routers import (
     inventory_offers,
     cv_camera,
     cv_brain,
+    db_compare,
 )
 from app.utils.logger import logger
 import os
@@ -161,6 +162,7 @@ app.include_router(ebay_search_watches.router)
 app.include_router(inventory_offers.router)
 app.include_router(cv_camera.router)
 app.include_router(cv_brain.router)
+app.include_router(db_compare.router)
 
 @app.on_event("startup")
 async def startup_event():
