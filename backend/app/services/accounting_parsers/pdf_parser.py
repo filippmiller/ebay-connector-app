@@ -151,7 +151,14 @@ EXTRACTION RULES:
         if run.status != 'completed':
             logger.error(f"Assistant run failed with status: {run.status}")
             if run.last_error:
-                logger.error(f"Run error: {run.last_error}")
+                error_code = run.last_error.code
+                error_message = run.last_error.message
+                logger.error(f"Run error code: {error_code}, message: {error_message}")
+            try:
+                # Log full run object for deep debugging
+                logger.error(f"Full Run Object: {run.model_dump_json()}")
+            except:
+                pass
             raise RuntimeError(f"OpenAI Assistant failed to process document: {run.status}")
 
         # 5. Get Messages
