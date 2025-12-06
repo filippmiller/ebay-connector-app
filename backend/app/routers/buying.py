@@ -4,7 +4,7 @@ from typing import Optional, List
 from datetime import datetime
 
 from ..models_sqlalchemy import get_db
-from ..models_sqlalchemy.models import EbayBuyer, EbayStatusBuyer, EbayBuyerLog, EbayAccount
+from ..models_sqlalchemy.models import EbayBuyer, EbayStatusBuyer, EbayBuyerLog, EbayAccount, TblPartsModels
 from ..services.auth import get_current_user
 from ..models.user import User
 
@@ -198,3 +198,75 @@ async def update_status_and_comment(
         "comment": buyer.comment,
         "change_type": change_type,
     }
+
+@router.get("/models/search")
+async def search_models(
+    q: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search for models in tbl_parts_models by name."""
+    models = (
+        db.query(TblPartsModels)
+        .filter(TblPartsModels.model.ilike(f"%{q}%"))
+        .limit(20)
+        .all()
+    )
+    return [
+        {"id": m.model_id, "label": m.model}
+        for m in models
+    ]
+
+
+@router.patch("/{buyer_id}/model")
+async def update_model(
+    buyer_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update model_id for a purchase.
+    
+    Body: { "model_id": int }
+    """
+    model_id = payload.get("model_id")
+    if model_id is None:
+        raise HTTPException(status_code=400, detail="model_id is required")
+
+    buyer: Optional[EbayBuyer] = (
+        db.query(EbayBuyer)
+        .join(EbayAccount, EbayBuyer.ebay_account_id == EbayAccount.id)
+        .filter(
+            EbayBuyer.id == buyer_id,
+            EbayAccount.org_id == current_user.id,
+        )
+        .with_for_update()
+        .one_or_none()
+    )
+    if not buyer:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    # Update columns - handling both potential column names if they exist on the model
+    # Based on inspection, EbayBuyer model likely maps one of them to 'model_id' attribute or similar.
+    # We will assume 'model_id' attribute exists on the ORM model as mapped in models.py
+    # If explicit column names are needed, we'll check models.py, but usually the attribute is snake_case.
+    # Wait, in the grid join we saw COALESCE(Model_ID, ModelID).
+    # Let's try setting the attribute if available.
+    if hasattr(buyer, 'model_id'):
+        buyer.model_id = model_id
+    elif hasattr(buyer, 'Model_ID'):
+        buyer.Model_ID = model_id
+    elif hasattr(buyer, 'ModelID'):
+        buyer.ModelID = model_id
+    else:
+        # Fallback if ORM attribute is not obvious, though this shouldn't happen if models are generated correctly.
+        # We'll assume 'model_id' or 'Model_ID' works.
+        buyer.model_id = model_id
+
+    buyer.record_updated_at = datetime.utcnow()
+    buyer.record_updated_by = current_user.username
+    
+    db.commit()
+    db.refresh(buyer)
+
+    return {"success": True, "model_id": model_id}

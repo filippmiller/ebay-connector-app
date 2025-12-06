@@ -3,6 +3,7 @@ import FixedHeader from '@/components/FixedHeader';
 import { DataGridPage } from '@/components/DataGridPage';
 import api from '@/lib/apiClient';
 import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
+import { ModelEditor } from '@/components/buying/ModelEditor';
 
 interface BuyingStatus {
   id: number;
@@ -180,6 +181,18 @@ export default function BuyingPage() {
           // If we had image in grid row we could show a thumbnail.
           return null; // Placeholder
         },
+      },
+      {
+        colId: 'model',
+        field: 'model', // Matches backend field
+        headerName: 'Model',
+        width: 200,
+        sortable: true,
+        filter: true,
+        editable: true,
+        cellEditor: ModelEditor,
+        cellEditorPopup: true,
+        cellEditorPopupPosition: 'under' as const, // Show under the cell
       }
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps

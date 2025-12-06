@@ -328,9 +328,21 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
     });
 
     if (extraColumns && extraColumns.length) {
-      defs.push(...extraColumns);
+      const extraMap = new Map(extraColumns.map(c => [c.colId, c]));
+      // Replace existing columns if they are defined in extraColumns
+      const mergedDefs = defs.map(col => {
+        if (col.colId && extraMap.has(col.colId)) {
+          const extra = extraMap.get(col.colId)!;
+          extraMap.delete(col.colId);
+          // Merge generic props, but let extra overwrite
+          return { ...col, ...extra };
+        }
+        return col;
+      });
+      // Append remaining extra columns
+      mergedDefs.push(...Array.from(extraMap.values()));
+      return mergedDefs;
     }
-
     return defs;
   }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme, extraColumns]);
 

@@ -928,7 +928,6 @@ def _get_buying_data(
             b."SellerEmail" AS seller_email,
             b."SellerLocation" AS seller_location,
             b."SellerSite" AS seller_site,
-            b."BuyerPaymentStatus" AS buyer_payment_status,
             b."BuyerCheckoutMessage" AS buyer_checkout_message,
             b."Description" AS description,
             b."GalleryURL" AS gallery_url,
