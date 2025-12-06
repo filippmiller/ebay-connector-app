@@ -1,5 +1,6 @@
 // DataGridPage component – fixed implementation
 import React, { useEffect, useState, useMemo, type ReactNode } from 'react';
+import type { ColDef } from 'ag-grid-community';
 import api from '@/lib/apiClient';
 import { useGridPreferences } from '@/hooks/useGridPreferences';
 import { AppDataGrid, type AppDataGridHandle } from '@/components/datagrid/AppDataGrid';
@@ -35,7 +36,7 @@ interface DataGridPageProps {
   title?: string;
   hideTitle?: boolean;
   topContent?: ReactNode;
-  extraColumns?: import('./datagrid/AppDataGrid').ColDef[];
+  extraColumns?: ColDef[];
   /** Additional query params to pass to the backend /data endpoint (e.g. filters). */
   extraParams?: Record<string, any>;
   /** Optional row click handler (e.g. for detail panels). */
