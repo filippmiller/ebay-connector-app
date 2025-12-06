@@ -250,6 +250,7 @@ function BankStatementsList() {
             >
               <option value="">All statuses</option>
               <option value="uploaded">Uploaded</option>
+              <option value="processing">Processing (Pending)</option>
               <option value="parsed">Parsed</option>
               <option value="review_in_progress">In Review</option>
               <option value="error_parsing_failed">Error</option>
@@ -361,32 +362,56 @@ function BankStatementDetail() {
       </div>
 
       {summary && (
-        <Card className="p-4 flex flex-wrap gap-6 text-sm">
-          <div>
-            <div className="font-semibold">Bank</div>
-            <div>{summary.bank_name} ****{summary.account_last4}</div>
-          </div>
-          <div>
-            <div className="font-semibold">Period</div>
+        <Card className="p-4 flex flex-col gap-4">
+          <div className="flex flex-wrap gap-6 text-sm">
             <div>
-              {summary.statement_period_start} – {summary.statement_period_end}
+              <div className="font-semibold">Bank</div>
+              <div>{summary.bank_name} ****{summary.account_last4}</div>
+            </div>
+            <div>
+              <div className="font-semibold">Period</div>
+              <div>
+                {summary.statement_period_start} – {summary.statement_period_end}
+              </div>
+            </div>
+            <div>
+              <div className="font-semibold">Status</div>
+              <div className={
+                summary.status === 'processing' ? 'text-amber-600 font-bold' :
+                  summary.status === 'error_parsing_failed' ? 'text-red-600 font-bold' :
+                    'text-gray-900'
+              }>
+                {summary.status?.toUpperCase()}
+              </div>
+            </div>
+            <div>
+              <div className="font-semibold">Rows</div>
+              <div>{summary.rows_count}</div>
+            </div>
+            <div>
+              <div className="font-semibold">Total credit</div>
+              <div>{summary.total_credit}</div>
+            </div>
+            <div>
+              <div className="font-semibold">Total debit</div>
+              <div>{summary.total_debit}</div>
             </div>
           </div>
-          <div>
-            <div className="font-semibold">Status</div>
-            <div>{summary.status}</div>
-          </div>
-          <div>
-            <div className="font-semibold">Rows</div>
-            <div>{summary.rows_count}</div>
-          </div>
-          <div>
-            <div className="font-semibold">Total credit</div>
-            <div>{summary.total_credit}</div>
-          </div>
-          <div>
-            <div className="font-semibold">Total debit</div>
-            <div>{summary.total_debit}</div>
+
+          <div className="flex gap-2">
+            {summary.raw_response && (
+              <Button variant="outline" size="sm" onClick={() => {
+                const newWindow = window.open('', '_blank');
+                if (newWindow) {
+                  newWindow.document.write('<pre>' + JSON.stringify(summary.raw_response, null, 2) + '</pre>');
+                  newWindow.document.title = `Raw Response - Statement ${id}`;
+                } else {
+                  alert('Pop-up blocked. ' + JSON.stringify(summary.raw_response));
+                }
+              }}>
+                View Raw AI Response
+              </Button>
+            )}
           </div>
         </Card>
       )}

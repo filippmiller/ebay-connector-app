@@ -111,6 +111,9 @@ async def process_bank_statement_background(statement_id: int, file_bytes: bytes
                 parsed_transactions = pdf_result.transactions
                 pdf_raw_response = pdf_result.raw_json
                 
+                # Save raw response for debugging
+                stmt.raw_openai_response = pdf_raw_response
+
                 _log_process(db, stmt.id, f"PDF processed by OpenAI. Found {len(parsed_transactions)} transactions.", details={"bank": extracted_bank_name})
                 logger.info(f"PDF parsed for stmt {statement_id}: {len(parsed_transactions)} txs")
 

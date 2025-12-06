@@ -224,7 +224,19 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
             v.includes('ok') ||
             v.includes('complete') ||
             v.includes('resolved') ||
-            v.includes('success')
+            v.includes('success') ||
+            v.includes('parsed') ||
+            v.includes('uploaded')
+          );
+        };
+        cellClassRules['ag-legacy-status-warning'] = (params) => {
+          if (typeof params.value !== 'string') return false;
+          const v = params.value.toLowerCase();
+          return (
+            v.includes('processing') ||
+            v.includes('pending') ||
+            v.includes('wait') ||
+            v.includes('review')
           );
         };
       }

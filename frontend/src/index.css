@@ -1,10 +1,10 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
 @layer base {
   :root {
-    --radius: 0.5rem
-  ;
+    --radius: 0.5rem;
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
     --sidebar-primary: 240 5.9% 10%;
@@ -64,12 +64,17 @@
     --grid-row-height: 32px;
     --grid-header-height: 32px;
     --grid-font-size: 13px;
-    --grid-header-bg: #f3f4f6; /* gray-100 */
-    --grid-header-text-color: #4b5563; /* gray-600 */
+    --grid-header-bg: #f3f4f6;
+    /* gray-100 */
+    --grid-header-text-color: #4b5563;
+    /* gray-600 */
     --grid-row-bg: #ffffff;
-    --grid-row-alt-bg: #f9fafb; /* gray-50 */
-    --grid-row-hover-bg: #eef2ff; /* indigo-50 */
-    --grid-row-selected-bg: #e0f2fe; /* sky-100 */
+    --grid-row-alt-bg: #f9fafb;
+    /* gray-50 */
+    --grid-row-hover-bg: #eef2ff;
+    /* indigo-50 */
+    --grid-row-selected-bg: #e0f2fe;
+    /* sky-100 */
   }
 
   html {
@@ -91,6 +96,7 @@
 
 /* Grid theming helpers applied on .app-grid wrapper in DataGridPage */
 @layer components {
+
   /* Top header navigation tabs */
   .ui-nav-tab {
     font-size: calc(0.875rem * var(--ui-nav-scale));
@@ -140,22 +146,32 @@
   }
 
   .ag-legacy-status-error {
-    color: #b91c1c; /* red-700 */
+    color: #b91c1c;
+    /* red-700 */
+    font-weight: 600;
+  }
+
+  .ag-legacy-status-warning {
+    color: #b45309;
+    /* amber-700 */
     font-weight: 600;
   }
 
   .ag-legacy-status-ok {
-    color: #166534; /* green-700 */
+    color: #166534;
+    /* green-700 */
     font-weight: 600;
   }
 
   .ag-legacy-price-positive {
-    color: #15803d; /* green-700 */
+    color: #15803d;
+    /* green-700 */
     text-align: right;
   }
 
   .ag-legacy-price-negative {
-    color: #b91c1c; /* red-700 */
+    color: #b91c1c;
+    /* red-700 */
     text-align: right;
   }
 
@@ -217,15 +233,17 @@
     --grid-header-text-color: #1d4ed8;
   }
 
-.app-grid.grid-theme-dark {
+  .app-grid.grid-theme-dark {
     --grid-header-bg: #111827;
     --grid-header-text-color: #e5e7eb;
   }
 
   /* Full dark theme: dark background + light text for all grid elements */
   .app-grid.grid-theme-dark {
-    background-color: #020617; /* slate-950 */
-    color: #e5e7eb; /* gray-200 */
+    background-color: #020617;
+    /* slate-950 */
+    color: #e5e7eb;
+    /* gray-200 */
   }
 
   .app-grid.grid-theme-dark table,
@@ -241,7 +259,8 @@
   }
 
   .app-grid.grid-theme-dark tbody tr:hover {
-    background-color: #1f2937; /* slate-800 */
+    background-color: #1f2937;
+    /* slate-800 */
   }
 
   /* Override Tailwind background utilities inside dark grids */
@@ -282,7 +301,8 @@
   }
 
   .app-grid__ag-root .ag-header-cell-resize::after {
-    background-color: rgba(148, 163, 184, 0.6); /* gray-400 */
+    background-color: rgba(148, 163, 184, 0.6);
+    /* gray-400 */
   }
 
   .app-grid__ag-root .ag-center-cols-container .ag-row {
@@ -317,6 +337,7 @@
 }
 
 @layer utilities {
+
   /* Typography role utilities */
   .ui-page-title {
     font-size: calc(var(--ui-font-scale-page-title) * 1.1rem * var(--ui-font-scale));
