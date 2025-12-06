@@ -1154,8 +1154,8 @@ function RulesTab() {
       <div className="flex gap-2 border-b pb-2">
         <button
           className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${activeSubTab === 'rules'
-              ? 'bg-blue-600 text-white'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            ? 'bg-blue-600 text-white'
+            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           onClick={() => setActiveSubTab('rules')}
         >
@@ -1163,8 +1163,8 @@ function RulesTab() {
         </button>
         <button
           className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${activeSubTab === 'codes'
-              ? 'bg-purple-600 text-white'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            ? 'bg-purple-600 text-white'
+            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           onClick={() => setActiveSubTab('codes')}
         >
@@ -1828,29 +1828,20 @@ export default function AccountingPage() {
             <Routes>
               <Route path="bank-statements" element={<BankStatementsList />} />
               <Route path="bank-statements/:id" element={<BankStatementDetail />} />
-              <Route path="*" element={<Navigate to="bank-statements" replace />} />
+              <Route path="*" element={<Navigate to="/accounting/bank-statements" replace />} />
             </Routes>
           </TabsContent>
 
           <TabsContent value="cash" className="flex-1 flex flex-col">
-            <Routes>
-              <Route path="cash" element={<CashExpensesTab />} />
-              <Route path="*" element={<Navigate to="cash" replace />} />
-            </Routes>
+            <CashExpensesTab />
           </TabsContent>
 
           <TabsContent value="transactions" className="flex-1 flex flex-col">
-            <Routes>
-              <Route path="transactions" element={<TransactionsTab />} />
-              <Route path="*" element={<Navigate to="transactions" replace />} />
-            </Routes>
+            <TransactionsTab />
           </TabsContent>
 
           <TabsContent value="rules" className="flex-1 flex flex-col">
-            <Routes>
-              <Route path="rules" element={<RulesTab />} />
-              <Route path="*" element={<Navigate to="rules" replace />} />
-            </Routes>
+            <RulesTab />
           </TabsContent>
         </Tabs>
       </div>
