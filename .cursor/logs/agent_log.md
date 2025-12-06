@@ -1,3 +1,4 @@
+2025-12-06T17:20:00Z – Reviewed AccountingPage/DataGridPage and backend grids (ledger/statements) for missing data.
 2025-11-08T20:53:41.7734824+03:00 - Cloned repo from GitHub to C:\dev\ebay-connector-app
 2025-11-08T20:55:10.9328222+03:00 - Starting comparison with archived project
 2025-11-08T20:56:48.7831915+03:00 - Completed directory diff with archived project (no differences reported)
@@ -37,3 +38,4 @@
 2025-12-06T20:34:45.4404481+03:00 - Coerced external_category_id and other numeric fields to strings and added use_ebay_id to boolean coercion for SKU read endpoint
 2025-12-06T20:38:34.9602834+03:00 - Disabled live search in DataGridPage; search now applies on Enter/Go click with same %...% semantics to reduce load on large datasets
 2025-12-06T20:41:21.2480611+03:00 - Prefill fallback: SKU edit modal now uses part/title/model_id to populate title/model when fields are empty in DB
+2025-12-06T20:54:15.8809348+03:00 - Added inventory column filters (ID, SKU, ItemID, Title, StatusSKU, Storage, Serial) applied on Enter; backend supports per-column ilike filters

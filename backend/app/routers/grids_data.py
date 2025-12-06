@@ -276,6 +276,14 @@ async def get_grid_data(
     category: Optional[str] = Query(None),
     part_number: Optional[str] = Query(None),
     title: Optional[str] = Query(None),
+    # Inventory column-specific filters
+    inv_id: Optional[str] = Query(None, alias="inv_id"),
+    inv_sku: Optional[str] = Query(None, alias="inv_sku"),
+    inv_item_id: Optional[str] = Query(None, alias="inv_item_id"),
+    inv_title: Optional[str] = Query(None, alias="inv_title"),
+    inv_statussku: Optional[str] = Query(None, alias="inv_statussku"),
+    inv_storage: Optional[str] = Query(None, alias="inv_storage"),
+    inv_serial_number: Optional[str] = Query(None, alias="inv_serial_number"),
     search: Optional[str] = None,
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -400,6 +408,13 @@ async def get_grid_data(
                 storage_id=storage_id,
                 ebay_status=ebay_status,
                 search=search,
+                inv_id=inv_id,
+                inv_sku=inv_sku,
+                inv_item_id=inv_item_id,
+                inv_title=inv_title,
+                inv_statussku=inv_statussku,
+                inv_storage=inv_storage,
+                inv_serial_number=inv_serial_number,
             )
         finally:
             db_sqla.close()
@@ -954,6 +969,13 @@ def _get_inventory_data(
     storage_id: Optional[str],
     ebay_status: Optional[str],
     search: Optional[str],
+    inv_id: Optional[str],
+    inv_sku: Optional[str],
+    inv_item_id: Optional[str],
+    inv_title: Optional[str],
+    inv_statussku: Optional[str],
+    inv_storage: Optional[str],
+    inv_serial_number: Optional[str],
 ) -> Dict[str, Any]:
     """Inventory grid backed directly by the Supabase table tbl_parts_inventory.
 
@@ -984,6 +1006,23 @@ def _get_inventory_data(
     # Query rows as plain row mappings using the reflected table columns.
     columns = list(table.columns)
     query = db.query(*columns)
+
+    def _apply_ilike_filter(value: Optional[str], candidate_keys: List[str]) -> None:
+        nonlocal query
+        if not value:
+            return
+        v = value.strip()
+        if not v:
+            return
+        like = f"%{v}%"
+        for name in candidate_keys:
+            key = name.lower()
+            col = cols_by_lower.get(key)
+            if col is not None and isinstance(
+                col.type, (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)
+            ):
+                query = query.filter(col.ilike(like))
+                return
 
     # Optional filters: Storage ID / Storage location
     if storage_id:
@@ -1031,6 +1070,15 @@ def _get_inventory_data(
         ]
         if string_cols:
             query = query.filter(or_(*[c.ilike(like) for c in string_cols]))
+
+    # Column-specific filters (applied individually, Enter-driven on FE).
+    _apply_ilike_filter(inv_id, ["id"])
+    _apply_ilike_filter(inv_sku, ["sku", "sku_code"])
+    _apply_ilike_filter(inv_item_id, ["itemid", "item_id"])
+    _apply_ilike_filter(inv_title, ["overridetitle", "override_title", "title"])
+    _apply_ilike_filter(inv_statussku, ["statussku", "status_sku"])
+    _apply_ilike_filter(inv_storage, ["storage", "storageid", "storage_id", "storagealias", "storage_alias"])
+    _apply_ilike_filter(inv_serial_number, ["serialnumber", "serial_number"])
 
     total = query.count()
 
