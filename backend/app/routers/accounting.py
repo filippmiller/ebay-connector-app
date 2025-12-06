@@ -693,7 +693,62 @@ async def delete_bank_statement(
     return None
 
 
-# --- Test endpoint ---
+@router.get("/transactions")
+async def get_transactions_totals(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    source_type: Optional[str] = None,
+    storage_id: Optional[str] = None,
+    category_id: Optional[int] = None,
+    direction: Optional[str] = None,
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
+    account_name: Optional[str] = None,
+    is_personal: Optional[bool] = None,
+    is_internal_transfer: Optional[bool] = None,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    query = db.query(AccountingTransaction)
+
+    if date_from:
+        query = query.filter(AccountingTransaction.date >= date_from)
+    if date_to:
+        query = query.filter(AccountingTransaction.date <= date_to)
+    if source_type:
+        query = query.filter(AccountingTransaction.source_type == source_type)
+    if storage_id:
+        query = query.filter(AccountingTransaction.storage_id.ilike(f"%{storage_id}%"))
+    if category_id:
+        query = query.filter(AccountingTransaction.expense_category_id == category_id)
+    if direction:
+        query = query.filter(AccountingTransaction.direction == direction)
+    if min_amount is not None:
+        query = query.filter(AccountingTransaction.amount >= min_amount)
+    if max_amount is not None:
+        query = query.filter(AccountingTransaction.amount <= max_amount)
+    if account_name:
+        query = query.filter(AccountingTransaction.account_name.ilike(f"%{account_name}%"))
+    if is_personal is not None:
+        query = query.filter(AccountingTransaction.is_personal == is_personal)
+    if is_internal_transfer is not None:
+        query = query.filter(AccountingTransaction.is_internal_transfer == is_internal_transfer)
+
+    # Calculate totals
+    sums = query.with_entities(
+        func.sum(case((AccountingTransaction.direction == 'in', AccountingTransaction.amount), else_=0)),
+        func.sum(case((AccountingTransaction.direction == 'out', AccountingTransaction.amount), else_=0))
+    ).first()
+
+    total_in = sums[0] or Decimal("0")
+    total_out = sums[1] or Decimal("0")
+    net = total_in - total_out
+
+    return {
+        "total_in": float(total_in),
+        "total_out": float(total_out),
+        "net": float(net)
+    }
 
 @router.post("/test-openai")
 async def test_openai_connection(
