@@ -44,5 +44,6 @@
 2025-12-06T21:14:28.1773934+03:00 - Made inventory filters compact single-row with fixed widths and added Reset button to clear all filters
 2025-12-06T21:21:55.1350146+03:00 - Removed filter labels/“Filter” text, kept single Inventory heading, placed compact filters between title and grid toolbar
 2025-12-06T21:37:44.2423490+03:00 - Moved inventory filters into grid topContent below toolbar, added DataGridPage hideTitle/topContent props to drop extra Inventory label
+2025-12-06T22:41:00.8207855+03:00 - Rewired buying grid to legacy Supabase table tbl_ebay_buyer with tbl_ebay_status_buyer for status labels
 2025-12-06T21:18:00Z - Added bank statement multi-select delete flow with confirmation prompt (type DELETE)
 2025-12-06T21:27:00Z - DataGridPage auto-recovers hidden columns by restoring all available columns when prefs are empty

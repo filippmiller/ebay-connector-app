@@ -708,91 +708,78 @@ def _get_buying_data(
     sort_column: Optional[str],
     sort_dir: str,
 ) -> Dict[str, Any]:
-    """Buying grid backed by ebay_buyer joined to ebay_status_buyer.
-
-    Exposes one row per ebay_buyer record (per account) filtered by the current
-    org/user's eBay accounts. This is the backend for the BUYING tab grid.
-    """
+    """Buying grid backed by legacy Supabase table tbl_ebay_buyer."""
     from datetime import datetime as dt_type
     from decimal import Decimal
 
-    from app.models_sqlalchemy.models import EbayBuyer, EbayStatusBuyer, EbayAccount
+    # Map allowed sort columns to SQL fragments
+    sort_map = {
+        "paid_time": '"b"."paid_time"',
+        "record_created_at": '"b"."record_created_at"',
+        "buyer_id": '"b"."buyer_id"',
+        "seller_id": '"b"."seller_id"',
+        "profit": '"b"."profit"',
+        "id": '"b"."id"',
+    }
+    sort_col_sql = sort_map.get(sort_column or "") or '"b"."paid_time"'
+    sort_dir_sql = "desc" if (sort_dir or "").lower() == "desc" else "asc"
 
-    # Scope rows to ebay_accounts that belong to the current org/user.
-    query = (
-        db.query(EbayBuyer, EbayStatusBuyer)
-        .join(EbayAccount, EbayBuyer.ebay_account_id == EbayAccount.id)
-        .outerjoin(EbayStatusBuyer, EbayBuyer.item_status_id == EbayStatusBuyer.id)
-        .filter(EbayAccount.org_id == current_user.id)
+    # Base SQL selecting required columns; amount_paid derives from total_transaction_price/current_price.
+    sql = f"""
+        SELECT
+            b."ID" AS id,
+            b."TrackingNumber" AS tracking_number,
+            b."RefundFlag" AS refund_flag,
+            b."Storage" AS storage,
+            b."Profit" AS profit,
+            b."BuyerID" AS buyer_id,
+            b."SellerID" AS seller_id,
+            b."PaidTime" AS paid_time,
+            COALESCE(b."TotalTransactionPrice", b."CurrentPrice") AS amount_paid,
+            CASE
+                WHEN b."PaidTime" IS NULL THEN NULL
+                ELSE GREATEST(CAST(EXTRACT(DAY FROM (NOW() - b."PaidTime")) AS INT), 0)
+            END AS days_since_paid,
+            sb."Label" AS status_label,
+            b."RecCreated" AS record_created_at,
+            b."Title" AS title,
+            b."Comment" AS comment
+        FROM "tbl_ebay_buyer" b
+        JOIN ebay_accounts ea ON b."EbayAccountID" = ea.id
+        LEFT JOIN "tbl_ebay_status_buyer" sb ON b."ItemStatusID" = sb."ID"
+        WHERE ea.org_id = :org_id
+        ORDER BY {sort_col_sql} {sort_dir_sql}
+        LIMIT :limit OFFSET :offset
+    """
+
+    # Total count (without pagination)
+    count_sql = """
+        SELECT COUNT(*) AS total
+        FROM "tbl_ebay_buyer" b
+        JOIN ebay_accounts ea ON b."EbayAccountID" = ea.id
+        WHERE ea.org_id = :org_id
+    """
+
+    total = db.execute(sa_text(count_sql), {"org_id": current_user.id}).scalar() or 0
+    result = db.execute(
+        sa_text(sql),
+        {"org_id": current_user.id, "limit": limit, "offset": offset},
     )
 
-    total = query.count()
-
-    # Sorting: allow a small, safe subset of real columns.
-    allowed_sort_cols = {
-        "paid_time": EbayBuyer.paid_time,
-        "record_created_at": EbayBuyer.record_created_at,
-        "buyer_id": EbayBuyer.buyer_id,
-        "seller_id": EbayBuyer.seller_id,
-        "profit": EbayBuyer.profit,
-    }
-    sort_attr = allowed_sort_cols.get(sort_column or "")
-    if sort_attr is None:
-        sort_attr = EbayBuyer.paid_time
-    if sort_dir == "desc":
-        query = query.order_by(desc(sort_attr))
-    else:
-        query = query.order_by(asc(sort_attr))
-
-    rows_db: List[tuple] = query.offset(offset).limit(limit).all()
-
-    def _serialize(buyer: EbayBuyer, status: Optional[EbayStatusBuyer]) -> Dict[str, Any]:
-        row: Dict[str, Any] = {}
-
-        # Derived fields for the grid
-        days_since_paid: Optional[int] = None
-        if buyer.paid_time:
-            delta = dt_type.utcnow().replace(tzinfo=None) - buyer.paid_time.replace(tzinfo=None)
-            days_since_paid = max(int(delta.days), 0)
-
-        amount_paid = buyer.total_transaction_price or buyer.current_price
-
-        base_values: Dict[str, Any] = {
-            "id": buyer.id,
-            "tracking_number": buyer.tracking_number,
-            "refund_flag": buyer.refund_flag,
-            "storage": buyer.storage,
-            "profit": float(buyer.profit) if isinstance(buyer.profit, Decimal) else buyer.profit,
-            "buyer_id": buyer.buyer_id,
-            "seller_id": buyer.seller_id,
-            "paid_time": buyer.paid_time,
-            "amount_paid": float(amount_paid) if isinstance(amount_paid, Decimal) else amount_paid,
-            "days_since_paid": days_since_paid,
-            "status_label": status.label if status else None,
-            "record_created_at": buyer.record_created_at,
-            "title": buyer.title,
-            "comment": buyer.comment,
-        }
-
+    rows: List[Dict[str, Any]] = []
+    for r in result:
         row: Dict[str, Any] = {}
         for col in selected_cols:
-            try:
-                value = base_values.get(col)
-                if value is None:
-                    # Column not in base_values - skip it
-                    continue
-                if isinstance(value, dt_type):
-                    row[col] = value.isoformat()
-                elif isinstance(value, Decimal):
-                    row[col] = float(value)
-                else:
-                    row[col] = value
-            except Exception:
-                # Skip columns that cause errors
+            value = getattr(r, col, None)
+            if value is None:
                 continue
-        return row
-
-    rows = [_serialize(b, s) for (b, s) in rows_db]
+            if isinstance(value, dt_type):
+                row[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                row[col] = float(value)
+            else:
+                row[col] = value
+        rows.append(row)
 
     return {
         "rows": rows,
