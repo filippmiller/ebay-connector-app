@@ -804,6 +804,8 @@ def _get_buying_data(
     sort_col_sql = sort_map.get((sort_column or "").lower(), 'b."ID"')
     sort_dir_sql = "asc" if (sort_dir or "").lower() == "asc" else "desc"
 
+    fk_col = account_fk_col
+
     data_sql = f"""
         SELECT
             b."id" AS id,
@@ -824,17 +826,17 @@ def _get_buying_data(
             b."title" AS title,
             b."comment" AS comment
         FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."{account_fk_col}" = ea.id
+        JOIN ebay_accounts ea ON b."{fk_col}" = ea.id
         LEFT JOIN "tbl_ebay_status_buyer" sb ON b."item_status_id" = sb."id"
         WHERE ea.org_id = :org_id
         ORDER BY {sort_col_sql} {sort_dir_sql}
         LIMIT :limit OFFSET :offset
     """
 
-    count_sql = """
+    count_sql = f"""
         SELECT COUNT(*) AS total
         FROM "tbl_ebay_buyer" b
-        JOIN ebay_accounts ea ON b."{account_fk_col}" = ea.id
+        JOIN ebay_accounts ea ON b."{fk_col}" = ea.id
         WHERE ea.org_id = :org_id
     """
 
