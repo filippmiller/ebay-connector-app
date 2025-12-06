@@ -34,3 +34,4 @@
 2025-12-06T20:21:02.8658590+03:00 - Added skuId validation on edit open, enforced numeric ID in SkuFormModal fetch, and added loading overlay for SKU prefill
 2025-12-06T20:28:26.5790198+03:00 - Updated inventory grid status mapping to InventoryShortStatus_Name with color, added frontend renderer to apply status color
 2025-12-06T20:30:40.6643627+03:00 - Fixed /api/sq/items/{id} to coerce legacy boolean fields before Pydantic validation to unblock SKU edit prefill
+2025-12-06T20:34:45.4404481+03:00 - Coerced external_category_id and other numeric fields to strings and added use_ebay_id to boolean coercion for SKU read endpoint

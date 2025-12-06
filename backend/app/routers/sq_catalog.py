@@ -475,6 +475,23 @@ async def get_sq_item(
         "clone_sku_flag",
         "one_time_auction",
         "manual_condition_value_flag",
+        "use_ebay_id",
+    }
+
+    # Fields that should always be serialized to string to satisfy Pydantic when
+    # DB returns Decimals/ints.
+    string_fields = {
+        "external_category_id",
+        "external_category_name",
+        "category",
+        "sku",
+        "sku2",
+        "model_id",
+        "shipping_group",
+        "site_id",
+        "item_grade_id",
+        "condition_id",
+        "part_id",
     }
 
     data: dict = {}
@@ -492,6 +509,11 @@ async def get_sq_item(
                 except Exception:
                     # Last resort: truthy conversion
                     data[key] = bool(value)
+        elif key in string_fields:
+            if value is None:
+                data[key] = None
+            else:
+                data[key] = str(value)
         else:
             data[key] = value
 
