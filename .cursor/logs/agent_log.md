@@ -39,4 +39,6 @@
 2025-12-06T20:38:34.9602834+03:00 - Disabled live search in DataGridPage; search now applies on Enter/Go click with same %...% semantics to reduce load on large datasets
 2025-12-06T20:41:21.2480611+03:00 - Prefill fallback: SKU edit modal now uses part/title/model_id to populate title/model when fields are empty in DB
 2025-12-06T20:54:15.8809348+03:00 - Added inventory column filters (ID, SKU, ItemID, Title, StatusSKU, Storage, Serial) applied on Enter; backend supports per-column ilike filters
+2025-12-06T20:59:00Z - Added backend commit endpoint to convert bank rows into accounting transactions for Ledger/Statements flow
 2025-12-06T21:04:27.5811335+03:00 - Slimmed inventory layout, removed duplicate top filters, added StatusSKU dropdown fed from tbl_parts_inventorystatus, tightened padding
+2025-12-06T21:14:28.1773934+03:00 - Made inventory filters compact single-row with fixed widths and added Reset button to clear all filters

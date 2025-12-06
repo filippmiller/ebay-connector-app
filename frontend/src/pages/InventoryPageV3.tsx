@@ -4,7 +4,7 @@ import { DataGridPage } from '@/components/DataGridPage';
 import api from '@/lib/apiClient';
 
 export default function InventoryPageV3() {
-  const [filterInputs, setFilterInputs] = useState({
+  const initialFilterState = {
     id: '',
     sku: '',
     itemId: '',
@@ -12,16 +12,9 @@ export default function InventoryPageV3() {
     statusSku: '',
     storage: '',
     serial: '',
-  });
-  const [filters, setFilters] = useState({
-    id: '',
-    sku: '',
-    itemId: '',
-    title: '',
-    statusSku: '',
-    storage: '',
-    serial: '',
-  });
+  };
+  const [filterInputs, setFilterInputs] = useState(initialFilterState);
+  const [filters, setFilters] = useState(initialFilterState);
   const [statusOptions, setStatusOptions] = useState<{ id: number; label: string; color?: string | null }[]>([]);
 
   const extraParams = useMemo(() => {
@@ -42,6 +35,11 @@ export default function InventoryPageV3() {
 
   const applyFilter = (key: keyof typeof filterInputs) => {
     setFilters((prev) => ({ ...prev, [key]: filterInputs[key] }));
+  };
+
+  const resetFilters = () => {
+    setFilterInputs(initialFilterState);
+    setFilters(initialFilterState);
   };
 
   useEffect(() => {
@@ -68,18 +66,18 @@ export default function InventoryPageV3() {
             <span className="text-[11px] text-gray-500">Press Enter to apply column filters.</span>
           </div>
 
-          {/* Column-specific filters (apply on Enter) */}
-          <div className="mb-2 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 text-[11px]">
+          {/* Compact column-specific filters (apply on Enter) */}
+          <div className="mb-2 flex flex-wrap items-end gap-2 text-[11px]">
             {[
-              { key: 'id', label: 'ID' },
-              { key: 'sku', label: 'SKU' },
-              { key: 'itemId', label: 'ItemID' },
-              { key: 'title', label: 'Title' },
-              { key: 'statusSku', label: 'StatusSKU' },
-              { key: 'storage', label: 'Storage' },
-              { key: 'serial', label: 'Serial Number' },
+              { key: 'id', label: 'ID', width: 'w-24' },
+              { key: 'sku', label: 'SKU', width: 'w-32' },
+              { key: 'itemId', label: 'ItemID', width: 'w-32' },
+              { key: 'title', label: 'Title', width: 'w-40' },
+              { key: 'statusSku', label: 'StatusSKU', width: 'w-36' },
+              { key: 'storage', label: 'Storage', width: 'w-28' },
+              { key: 'serial', label: 'Serial Number', width: 'w-36' },
             ].map((f) => (
-              <div key={f.key} className="flex flex-col gap-1">
+              <div key={f.key} className={`flex flex-col gap-1 ${f.width}`}>
                 <label className="text-[11px] text-gray-600">{f.label}</label>
                 {f.key === 'statusSku' ? (
                   <select
@@ -113,6 +111,13 @@ export default function InventoryPageV3() {
                 )}
               </div>
             ))}
+            <button
+              type="button"
+              className="ml-1 px-3 py-2 border rounded bg-white hover:bg-gray-50 text-[11px]"
+              onClick={resetFilters}
+            >
+              Reset
+            </button>
           </div>
 
           <div className="flex-1 min-h-0">
