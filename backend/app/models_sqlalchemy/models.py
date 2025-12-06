@@ -1884,8 +1884,8 @@ class AccountingGroup(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    # Relationship to codes
-    classification_codes = relationship("AccountingClassificationCode", back_populates="group_rel", foreign_keys="AccountingClassificationCode.accounting_group")
+    # Note: No relationship to AccountingClassificationCode because we use text-based FK (code)
+    # Join manually in queries: db.query(...).filter(AccountingClassificationCode.accounting_group == AccountingGroup.code)
 
 
 class AccountingClassificationCode(Base):
@@ -1896,7 +1896,7 @@ class AccountingClassificationCode(Base):
     code = Column(Text, nullable=False, unique=True)
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
-    accounting_group = Column(Text, nullable=False)  # References AccountingGroup.code
+    accounting_group = Column(Text, nullable=False)  # References AccountingGroup.code (no FK constraint)
     keywords = Column(Text, nullable=True)  # Comma-separated keywords for auto-classification
     sort_order = Column(Integer, nullable=False, server_default='0')
     is_active = Column(Boolean, nullable=False, server_default='true')
@@ -1904,8 +1904,7 @@ class AccountingClassificationCode(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    # Relationship to group
-    group_rel = relationship("AccountingGroup", back_populates="classification_codes", foreign_keys=[accounting_group], primaryjoin="AccountingClassificationCode.accounting_group == AccountingGroup.code")
+    # Note: No relationship to AccountingGroup - use manual joins
 
 
 class AccountingBankStatement(Base):
