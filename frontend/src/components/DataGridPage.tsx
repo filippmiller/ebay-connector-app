@@ -127,6 +127,25 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
 
   // Build column definitions for the grid
   useEffect(() => {
+    // If user prefs ended up with no visible columns, fall back to all available
+    if (orderedVisibleColumns.length === 0 && gridPrefs.availableColumns.length > 0) {
+      const allNames = gridPrefs.availableColumns.map(c => c.name).filter(name => !!availableColumnsMap[name]);
+      const fallbackCols: ColumnState[] = allNames.map(name => {
+        const meta = availableColumnsMap[name];
+        const width = meta?.width_default || 150;
+        return { name, label: meta?.label || name, width };
+      });
+      setColumns(fallbackCols);
+      setStyleColumn(fallbackCols.length ? fallbackCols[0].name : null);
+      // Also update in-memory prefs to the fallback
+      gridPrefs.setColumns({
+        visible: allNames,
+        order: allNames,
+        widths: {},
+        sort: gridPrefs.columns?.sort || null,
+      });
+      return;
+    }
     if (orderedVisibleColumns.length === 0) {
       setColumns([]);
       setStyleColumn(null);
