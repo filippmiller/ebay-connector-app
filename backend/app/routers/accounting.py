@@ -674,7 +674,7 @@ async def get_bank_statement_rows(
         .order_by(AccountingBankRow.row_index.asc())
         .all()
     )
-    return rows
+    return {"rows": rows}
 
 
 @router.post("/bank-statements/{statement_id}/commit-rows")
