@@ -50,6 +50,10 @@ export interface AppDataGridProps {
   sortConfig?: { column: string; direction: 'asc' | 'desc' } | null;
   /** Callback when sort model changes via header clicks. */
   onSortChange?: (sort: { column: string; direction: 'asc' | 'desc' } | null) => void;
+  /** Checkbox selection mode: 'singleRow' or 'multiRow'. Default is 'singleRow'. */
+  selectionMode?: 'singleRow' | 'multiRow';
+  /** Callback when selection changes. */
+  onSelectionChange?: (selectedRows: Record<string, any>[]) => void;
   /** Optional grid key used for targeted debug logging (e.g. finances_fees). */
   gridKey?: string;
   /** Per-grid theme configuration coming from /api/grid/preferences. */
@@ -132,6 +136,8 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   onLayoutChange,
   sortConfig,
   onSortChange,
+  selectionMode = 'singleRow',
+  onSelectionChange,
   gridKey,
   gridTheme,
 }, ref) => {
@@ -364,13 +370,22 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           rowData={rows}
-          rowSelection={{ mode: 'singleRow' }}
+          rowSelection={{
+            mode: selectionMode,
+            checkboxes: selectionMode === 'multiRow',
+            headerCheckbox: selectionMode === 'multiRow',
+          }}
           suppressMultiSort
           suppressScrollOnNewData
           suppressAggFuncInHeader
           animateRows
           onGridReady={(params) => {
             gridApiRef.current = params.api as GridApi;
+          }}
+          onSelectionChanged={(event) => {
+            if (onSelectionChange && event.api) {
+              onSelectionChange(event.api.getSelectedRows());
+            }
           }}
           onColumnResized={handleColumnEvent}
           onColumnMoved={handleColumnEvent}
@@ -379,10 +394,10 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
           onRowClicked={
             onRowClick
               ? (event) => {
-                  if (event.data) {
-                    onRowClick(event.data as Record<string, any>);
-                  }
+                if (event.data) {
+                  onRowClick(event.data as Record<string, any>);
                 }
+              }
               : undefined
           }
         />

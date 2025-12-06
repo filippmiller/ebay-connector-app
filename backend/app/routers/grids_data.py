@@ -812,6 +812,20 @@ def _get_sku_catalog_data(
     if title:
         query = query.filter(SqItem.title.ilike(f"%{title}%"))
 
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                SqItem.sku.ilike(like),
+                SqItem.title.ilike(like),
+                SqItem.description.ilike(like),
+                SqItem.part.ilike(like),
+                SqItem.part_number.ilike(like),
+                SqItem.mpn.ilike(like),
+                SqItem.upc.ilike(like),
+            )
+        )
+
     total = query.count()
 
     # Allow sorting on a subset of real columns using SqItem fields.

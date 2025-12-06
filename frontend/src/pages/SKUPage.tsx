@@ -4,15 +4,36 @@ import { DataGridPage } from '@/components/DataGridPage';
 import { SkuFormModal, type SkuFormMode } from '@/components/SkuFormModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { X } from 'lucide-react';
+import { X, Trash2 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
+import api from '@/lib/apiClient';
 
 export default function SKUPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedRow, setSelectedRow] = useState<Record<string, any> | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Record<string, any>[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<SkuFormMode>('create');
   const [editingId, setEditingId] = useState<number | null>(null);
+
+  // Delete flow state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const { toast } = useToast();
 
   const [filters, setFilters] = useState({
     model: '',
@@ -22,31 +43,35 @@ export default function SKUPage() {
     sku: ''
   });
 
-  // Локальное состояние для поля Model в панели фильтров.
-  // Это позволяет избежать "live-search" при каждом нажатии клавиши и
-  // отправлять фильтр только по Enter.
-  const [modelFilterInput, setModelFilterInput] = useState('');
-
-  // Синхронизируем локальный инпут при очистке/смене фильтров.
-  if (modelFilterInput !== filters.model) {
-    // Простая синхронизация без useEffect, чтобы избежать лишних импортов.
-    // В реальном коде можно заменить на useEffect, но здесь достаточно check-а.
-    // eslint-disable-next-line no-constant-condition
-    if (true) {
-      // Небольшой хак: не вызывать setState в каждом рендере, только когда
-      // действительно есть расхождение.
-    }
-  }
+  // Local state for filter inputs to avoid live search
+  const [localFilters, setLocalFilters] = useState({
+    model: '',
+    category: '',
+    part_number: '',
+    title: '',
+    sku: ''
+  });
 
   const clearFilters = () => {
-    setFilters({
+    const empty = {
       model: '',
       category: '',
       part_number: '',
       title: '',
       sku: ''
-    });
-    setModelFilterInput('');
+    };
+    setFilters(empty);
+    setLocalFilters(empty);
+  };
+
+  const handleFilterKeyDown = (key: string, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      setFilters(prev => ({ ...prev, [key]: localFilters[key as keyof typeof localFilters].trim() }));
+    }
+  };
+
+  const handleFilterChange = (key: string, value: string) => {
+    setLocalFilters(prev => ({ ...prev, [key]: value }));
   };
 
   const handleOpenCreate = () => {
@@ -67,7 +92,47 @@ export default function SKUPage() {
     setRefreshKey((prev) => prev + 1);
     setFormOpen(false);
     setEditingId(id);
-    // The grid does not expose a selected-row API; we keep the old detail until user clicks again.
+  };
+
+  const handleDeleteClick = () => {
+    if (selectedRows.length === 0) return;
+    setDeleteStep(1);
+    setDeleteConfirmInput('');
+    setDeleteDialogOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (deleteStep === 1) {
+      setDeleteStep(2);
+      return;
+    }
+
+    if (deleteConfirmInput !== 'DELETE') {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const ids = selectedRows.map((r) => r.id);
+      const res = await api.post('/api/sq/items/bulk-delete', { ids });
+      const count = res.data.count;
+      toast({
+        title: 'Deleted successfully',
+        description: `Deleted ${count} items.`,
+      });
+      setRefreshKey((prev) => prev + 1);
+      setSelectedRows([]);
+      setSelectedRow(null);
+      setDeleteDialogOpen(false);
+    } catch (error) {
+      toast({
+        title: 'Delete failed',
+        description: 'Failed to delete items. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -82,6 +147,17 @@ export default function SKUPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {selectedRows.length > 0 && (
+              <Button
+                size="sm"
+                variant="destructive"
+                className="text-xs"
+                onClick={handleDeleteClick}
+              >
+                <Trash2 className="w-3 h-3 mr-1" />
+                Delete ({selectedRows.length})
+              </Button>
+            )}
             <Button size="sm" className="text-xs" onClick={handleOpenCreate}>
               Add SKU
             </Button>
@@ -104,37 +180,37 @@ export default function SKUPage() {
               <Input
                 placeholder="Model"
                 className="h-8 text-xs w-32"
-                value={modelFilterInput}
-                onChange={(e) => setModelFilterInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    setFilters({ ...filters, model: modelFilterInput.trim() });
-                  }
-                }}
+                value={localFilters.model}
+                onChange={(e) => handleFilterChange('model', e.target.value)}
+                onKeyDown={(e) => handleFilterKeyDown('model', e)}
               />
               <Input
                 placeholder="Category"
                 className="h-8 text-xs w-32"
-                value={filters.category}
-                onChange={(e) => setFilters({ ...filters, category: e.target.value })}
+                value={localFilters.category}
+                onChange={(e) => handleFilterChange('category', e.target.value)}
+                onKeyDown={(e) => handleFilterKeyDown('category', e)}
               />
               <Input
                 placeholder="Part Number"
                 className="h-8 text-xs w-32"
-                value={filters.part_number}
-                onChange={(e) => setFilters({ ...filters, part_number: e.target.value })}
+                value={localFilters.part_number}
+                onChange={(e) => handleFilterChange('part_number', e.target.value)}
+                onKeyDown={(e) => handleFilterKeyDown('part_number', e)}
               />
               <Input
                 placeholder="Title"
                 className="h-8 text-xs flex-1"
-                value={filters.title}
-                onChange={(e) => setFilters({ ...filters, title: e.target.value })}
+                value={localFilters.title}
+                onChange={(e) => handleFilterChange('title', e.target.value)}
+                onKeyDown={(e) => handleFilterKeyDown('title', e)}
               />
               <Input
                 placeholder="SKU"
                 className="h-8 text-xs w-32"
-                value={filters.sku}
-                onChange={(e) => setFilters({ ...filters, sku: e.target.value })}
+                value={localFilters.sku}
+                onChange={(e) => handleFilterChange('sku', e.target.value)}
+                onKeyDown={(e) => handleFilterKeyDown('sku', e)}
               />
             </div>
           </div>
@@ -143,13 +219,19 @@ export default function SKUPage() {
           <div className="flex-[2] min-h-0 border rounded-lg bg-white flex flex-col">
             <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 text-xs">
               <div className="font-semibold">SKU grid</div>
-              <div className="text-gray-500">Click a row to see details below.</div>
+              <div className="text-gray-500">
+                {selectedRows.length > 0
+                  ? `${selectedRows.length} rows selected`
+                  : 'Click a row to see details below.'}
+              </div>
             </div>
             <div className="flex-1 min-h-0">
               <DataGridPage
                 gridKey="sku_catalog"
                 title="SKU catalog"
                 extraParams={{ _refresh: refreshKey, ...filters }}
+                selectionMode="multiRow"
+                onSelectionChange={setSelectedRows}
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 onRowClick={(row: any) => {
                   setSelectedRow(row || null);
@@ -271,6 +353,46 @@ export default function SKUPage() {
         onSaved={handleSaved}
         onClose={() => setFormOpen(false)}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteStep === 1 ? (
+                <span>
+                  This action cannot be undone. This will permanently delete{' '}
+                  <span className="font-bold">{selectedRows.length}</span> SKU records.
+                </span>
+              ) : (
+                <div className="space-y-2">
+                  <span>To confirm deletion, please type <span className="font-bold font-mono text-red-600">DELETE</span> in the box below.</span>
+                  <Input
+                    value={deleteConfirmInput}
+                    onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                    placeholder="Type DELETE"
+                    className="border-red-300 focus:ring-red-500"
+                  />
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteDialogOpen(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleConfirmDelete();
+              }}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+              disabled={deleteStep === 2 && deleteConfirmInput !== 'DELETE'}
+            >
+              {isDeleting ? 'Deleting...' : deleteStep === 1 ? 'Yes, continue' : 'Confirm Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

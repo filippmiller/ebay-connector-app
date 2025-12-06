@@ -37,6 +37,10 @@ interface DataGridPageProps {
   extraParams?: Record<string, any>;
   /** Optional row click handler (e.g. for detail panels). */
   onRowClick?: (row: Record<string, any>) => void;
+  /** Checkbox selection mode: 'singleRow' or 'multiRow'. Default is 'singleRow'. */
+  selectionMode?: 'singleRow' | 'multiRow';
+  /** Callback when selection changes. */
+  onSelectionChange?: (selectedRows: Record<string, any>[]) => void;
 }
 
 interface ColumnState {
@@ -45,7 +49,14 @@ interface ColumnState {
   width: number;
 }
 
-export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extraParams, onRowClick }) => {
+export const DataGridPage: React.FC<DataGridPageProps> = ({
+  gridKey,
+  title,
+  extraParams,
+  onRowClick,
+  selectionMode,
+  onSelectionChange
+}) => {
   const [columns, setColumns] = useState<ColumnState[]>([]);
   const [rows, setRows] = useState<Record<string, any>[]>([]);
   const [limit, setLimit] = useState(50);
@@ -367,6 +378,8 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({ gridKey, title, extr
             columnMetaByName={availableColumnsMap}
             loading={loadingData}
             onRowClick={onRowClick}
+            selectionMode={selectionMode}
+            onSelectionChange={onSelectionChange}
             onLayoutChange={({ order, widths }) => handleGridLayoutChange(order, widths)}
             sortConfig={gridPrefs.columns?.sort ?? null}
             onSortChange={handleSortChangeFromGrid}

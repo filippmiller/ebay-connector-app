@@ -695,6 +695,38 @@ async def update_sq_item(
     return SqItemRead.model_validate(item)
 
 
+@router.post("/items/bulk-delete")
+async def bulk_delete_sq_items(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> dict:
+    """Delete multiple SKU items by ID.
+
+    Double-confirmation is handled on the client side. This endpoint simply
+    executes the deletion for the provided list of IDs.
+    """
+    ids = payload.get("ids", [])
+    if not ids:
+        return {"count": 0}
+
+    # Use SQLAlchemy delete for efficiency
+    try:
+        stmt = (
+            SqItem.__table__.delete()
+            .where(SqItem.id.in_(ids))
+        )
+        result = db.execute(stmt)
+        db.commit()
+        count = result.rowcount
+        logger.info(f"Deleted {count} SKU items for user {current_user.id}")
+        return {"count": count}
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to bulk delete SKU items", exc_info=e)
+        raise HTTPException(status_code=500, detail="Failed to delete items")
+
+
 async def _debug_print_categories_and_shipping(db):
     try:
         # 1) simply count rows
