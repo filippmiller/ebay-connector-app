@@ -274,6 +274,22 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
         colDef.cellStyle = styleFn;
       }
 
+      // Special case: inventory StatusSKU should render with dynamic color from lookup.
+      if (gridKey === 'inventory' && col.name === 'StatusSKU') {
+        colDef.valueFormatter = undefined;
+        colDef.cellRenderer = (params: ICellRendererParams) => {
+          const raw = params.value;
+          const color = (params.data as any)?.StatusSKU_color as string | undefined;
+          const value = formatCellValue(raw, type);
+          if (!value) return '';
+          return (
+            <span style={color ? { color } : undefined}>
+              {value}
+            </span>
+          );
+        };
+      }
+
       // Special case: make sniper_snipes.item_id clickable to open the eBay page.
       if (gridKey === 'sniper_snipes' && col.name === 'item_id') {
         colDef.valueFormatter = undefined;

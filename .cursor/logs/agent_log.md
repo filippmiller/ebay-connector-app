@@ -32,3 +32,4 @@
 2025-12-04T18:30:00+03:00 - Documentation: Created docs/worker-token-endpoint-20251204.md with full implementation details
 2025-12-06T20:10:04.6566310+03:00 - Investigated blank Edit SKU form; reviewed SKUPage.tsx and SkuFormModal.tsx for prefill flow
 2025-12-06T20:21:02.8658590+03:00 - Added skuId validation on edit open, enforced numeric ID in SkuFormModal fetch, and added loading overlay for SKU prefill
+2025-12-06T20:28:26.5790198+03:00 - Updated inventory grid status mapping to InventoryShortStatus_Name with color, added frontend renderer to apply status color

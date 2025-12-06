@@ -1057,16 +1057,19 @@ def _get_inventory_data(
     # Optional mapping of StatusSKU numeric codes to human-readable names from
     # tbl_parts_inventorystatus. If the lookup table is missing in this
     # environment, we silently fall back to showing the raw numeric code.
-    status_label_by_id: Dict[int, str] = {}
+    status_label_by_id: Dict[int, Dict[str, Any]] = {}
     try:
         status_sql = sa_text(
-            'SELECT "InventoryStatus_ID" AS id, "InventoryStatus_Name" AS name '
+            'SELECT "InventoryStatus_ID" AS id, "InventoryShortStatus_Name" AS label, "Color" AS color '
             'FROM "tbl_parts_inventorystatus"'
         )
         result = db.execute(status_sql)
         for row in result:
             try:
-                status_label_by_id[int(row.id)] = str(row.name)
+                status_label_by_id[int(row.id)] = {
+                    "label": str(row.label) if row.label is not None else None,
+                    "color": str(row.color) if row.color is not None else None,
+                }
             except Exception:
                 continue
     except Exception:
@@ -1086,10 +1089,16 @@ def _get_inventory_data(
                 if col == "StatusSKU" and status_label_by_id:
                     try:
                         key = int(value)
-                        label = status_label_by_id.get(key)
+                        meta = status_label_by_id.get(key) or {}
+                        label = meta.get("label")
+                        color = meta.get("color")
                         if label is not None:
                             row[col] = label
+                            if color:
+                                row["StatusSKU_color"] = color
                             continue
+                        if color:
+                            row["StatusSKU_color"] = color
                     except Exception:
                         # Fall through to generic serialization on failure.
                         pass
