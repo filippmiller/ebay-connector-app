@@ -237,13 +237,22 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
       return;
     }
 
-    if (!skuId) return;
+    if (skuId == null) return;
 
     const loadItem = async () => {
       try {
         setLoadingItem(true);
+        const numericId = Number(skuId);
+        if (!Number.isFinite(numericId)) {
+          toast({
+            title: 'Invalid SKU ID',
+            description: `Cannot load SKU: invalid id "${skuId}".`,
+            variant: 'destructive',
+          });
+          return;
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const resp = await api.get<any>(`/api/sq/items/${skuId}`);
+        const resp = await api.get<any>(`/api/sq/items/${numericId}`);
         const item = resp.data || {};
 
         const pics: string[] = [];
@@ -1141,6 +1150,11 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           </div>
         </div>
       </DraggableResizableDialog>
+      {mode === 'edit' && loadingItem && (
+        <div className="fixed inset-0 z-[52] flex items-center justify-center bg-black/20 text-sm font-medium text-white">
+          Loading SKU data…
+        </div>
+      )}
 
       {/* Models Browse/Create Modal */}
       <ModelsModal

@@ -82,8 +82,17 @@ export default function SKUPage() {
 
   const handleOpenEditFromSelection = () => {
     if (!selectedRow || typeof selectedRow.id !== 'number') return;
+    const numericId = Number(selectedRow.id);
+    if (!Number.isFinite(numericId)) {
+      toast({
+        title: 'Invalid SKU ID',
+        description: 'Cannot edit: selected row has no valid ID.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setFormMode('edit');
-    setEditingId(selectedRow.id);
+    setEditingId(numericId);
     setFormOpen(true);
   };
 
