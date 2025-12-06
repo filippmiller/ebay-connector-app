@@ -145,6 +145,43 @@ if ! ensure_python_package "sqlalchemy_pytds" "sqlalchemy-pytds==1.0.2"; then
   exit 1
 fi
 
+# Ensure CV module dependencies are available
+if ! ensure_python_package "numpy" "numpy>=1.26.0"; then
+  echo "[entry] FATAL: numpy is required for CV module" >&2
+  exit 1
+fi
+
+if ! ensure_python_package "openai" "openai>=1.55.0"; then
+  echo "[entry] FATAL: openai is required" >&2
+  exit 1
+fi
+
+if ! ensure_python_package "supabase" "supabase>=2.10.0"; then
+  echo "[entry] FATAL: supabase is required" >&2
+  exit 1
+fi
+
+if ! ensure_python_package "loguru" "loguru>=0.7.2"; then
+  echo "[entry] FATAL: loguru is required" >&2
+  exit 1
+fi
+
+if ! ensure_python_package "openpyxl" "openpyxl>=3.1.5"; then
+  echo "[entry] FATAL: openpyxl is required" >&2
+  exit 1
+fi
+
+if ! ensure_python_package "PIL" "pillow>=10.4.0"; then
+  echo "[entry] FATAL: pillow is required" >&2
+  exit 1
+fi
+
+# cv2 (opencv-python-headless) usually imports as cv2
+if ! ensure_python_package "cv2" "opencv-python-headless>=4.10.0.84"; then
+  echo "[entry] FATAL: opencv-python-headless is required" >&2
+  exit 1
+fi
+
 export PYTHONUNBUFFERED=1
 echo "[entry] Starting backend service..."
 echo "[entry] PORT=${PORT:-8000}"

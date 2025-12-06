@@ -284,13 +284,13 @@ async def get_buying_logs(
             l."NewComment" AS new_comment,
             l."ChangedByUserName" AS changed_by_username,
             l."ChangedAt" AS changed_at,
-            sb_old."Label" AS old_status_label,
-            sb_new."Label" AS new_status_label
+            sb_old."StatusName" AS old_status_label,
+            sb_new."StatusName" AS new_status_label
         FROM "tbl_ebay_buyer_log" l
         JOIN "tbl_ebay_buyer" b ON l."EbayBuyerID" = b."ID"
         JOIN ebay_accounts ea ON b."EbayAccountID" = ea.id
-        LEFT JOIN "tbl_ebay_status_buyer" sb_old ON l."OldStatusID" = sb_old."ID"
-        LEFT JOIN "tbl_ebay_status_buyer" sb_new ON l."NewStatusID" = sb_new."ID"
+        LEFT JOIN "tbl_ebay_status_buyer" sb_old ON l."OldStatusID" = sb_old."Status"
+        LEFT JOIN "tbl_ebay_status_buyer" sb_new ON l."NewStatusID" = sb_new."Status"
         WHERE l."EbayBuyerID" = :buyer_id
           AND ea.org_id = :org_id
         ORDER BY l."ChangedAt" DESC, l."ID" DESC
@@ -772,8 +772,8 @@ def _get_buying_data(
     from decimal import Decimal
 
     # Fixed column names from Supabase (PascalCase / mixed):
-    status_id_col = "ID"
-    status_label_col = "Label"
+    status_id_col = "Status"
+    status_label_col = "StatusName"
 
     # Map allowed sort columns to quoted SQL fragments; default newest by ID.
     sort_map = {
