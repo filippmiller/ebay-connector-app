@@ -1,5 +1,5 @@
 // DataGridPage component – fixed implementation
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, type ReactNode } from 'react';
 import api from '@/lib/apiClient';
 import { useGridPreferences } from '@/hooks/useGridPreferences';
 import { AppDataGrid, type AppDataGridHandle } from '@/components/datagrid/AppDataGrid';
@@ -33,6 +33,8 @@ export interface GridDataResponse {
 interface DataGridPageProps {
   gridKey: string;
   title?: string;
+  hideTitle?: boolean;
+  topContent?: ReactNode;
   /** Additional query params to pass to the backend /data endpoint (e.g. filters). */
   extraParams?: Record<string, any>;
   /** Optional row click handler (e.g. for detail panels). */
@@ -52,6 +54,8 @@ interface ColumnState {
 export const DataGridPage: React.FC<DataGridPageProps> = ({
   gridKey,
   title,
+  hideTitle = false,
+  topContent,
   extraParams,
   onRowClick,
   selectionMode,
@@ -323,7 +327,9 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
     <div className={`flex flex-col h-full app-grid grid-density-${density} grid-theme-${colorScheme}`} style={{ fontSize: bodyFontSizePx, backgroundColor: gridBackgroundColor || undefined }}>
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
+          {!hideTitle && (
+            <h2 className="text-lg font-semibold tracking-tight">{gridTitle}</h2>
+          )}
           {(buttonLayout === 'left' || buttonLayout === 'split') && (
             <button className="px-3 py-2 border rounded-md text-xs bg-white hover:bg-gray-50 shadow-sm" onClick={() => setShowColumnsPanel(true)}>
               Columns
@@ -406,6 +412,8 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
       </div>
 
       {error && <div className="mb-2 text-xs text-red-600">{error}</div>}
+
+      {topContent && <div className="mb-2">{topContent}</div>}
 
       <div className="flex-1 min-h-0 border rounded-lg bg-white" style={gridBackgroundColor ? { backgroundColor: gridBackgroundColor } : undefined}>
         {gridPrefs.loading ? (
