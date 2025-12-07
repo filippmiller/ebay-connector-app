@@ -62,14 +62,9 @@ export interface BrowseSearchResponse {
   total?: number | null;
 }
 
+import api from '@/lib/apiClient';
+
 export async function searchBrowse(payload: BrowseSearchRequest): Promise<BrowseSearchResponse> {
-  const resp = await fetch('/api/ebay/browse/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!resp.ok) {
-    throw new Error(await resp.text());
-  }
-  return resp.json();
+  const resp = await api.post<BrowseSearchResponse>('/ebay/browse/search', payload);
+  return resp.data;
 }

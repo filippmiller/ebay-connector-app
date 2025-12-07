@@ -58,7 +58,7 @@ export const OrdersPage = () => {
       <FixedHeader />
       {/* Main content area under fixed header: full width, grid fills all available space */}
       <div className="pt-16 flex-1 px-4 py-6 overflow-hidden">
-        <div className="w-full h-full flex flex-col">
+        <div className="w-full h-full flex flex-col min-h-0">
           <h1 className="text-2xl font-bold mb-4">Orders</h1>
 
           {stats && (
@@ -98,6 +98,7 @@ export const OrdersPage = () => {
 
             <select
               className="px-4 py-2 border rounded-md w-full md:w-auto"
+              aria-label="Filter by order status"
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
             >
@@ -114,7 +115,7 @@ export const OrdersPage = () => {
             </Button>
           </div>
 
-          <div className="mt-6 flex-1">
+          <div className="mt-6 flex-1 min-h-0">
             <DataGridPage gridKey="orders" title="Orders" />
           </div>
         </div>

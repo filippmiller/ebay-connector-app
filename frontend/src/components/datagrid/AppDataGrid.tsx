@@ -421,15 +421,16 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   return (
     <div
       className="w-full h-full app-grid__ag-root ag-theme-quartz"
-      style={{ position: 'relative', minHeight: '500px', display: 'flex', flexDirection: 'column' }}
+      style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: '200px' }}
     >
       {columnDefs.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }} className="text-sm text-gray-500">
           No columns configured
         </div>
       ) : (
-        <div style={{ width: '100%', height: '500px', minHeight: '500px' }}>
+        <div style={{ width: '100%', flex: 1, minHeight: 0, minWidth: 0 }}>
           <AgGridReact
+            className="w-full h-full"
             theme="legacy"
             rowModelType="clientSide"
             columnDefs={columnDefs}

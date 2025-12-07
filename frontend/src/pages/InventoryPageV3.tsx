@@ -60,7 +60,7 @@ export default function InventoryPageV3() {
     <div className="h-screen flex flex-col bg-gray-50">
       <FixedHeader />
       <div className="pt-10 flex-1 px-4 py-4 overflow-hidden">
-        <div className="w-full h-full flex flex-col">
+        <div className="w-full h-full flex flex-col min-h-0">
           <h1 className="text-2xl font-bold mb-2">Inventory</h1>
 
           <div className="flex-1 min-h-0">
@@ -84,6 +84,7 @@ export default function InventoryPageV3() {
                       {f.key === 'statusSku' ? (
                         <select
                           className="border rounded px-2 py-1 text-[11px]"
+                          aria-label="Filter by StatusSKU"
                           value={filterInputs.statusSku}
                           onChange={(e) => {
                             const value = e.target.value;

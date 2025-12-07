@@ -21,14 +21,15 @@ export default function FinancialsPage() {
       <FixedHeader />
       {/* Main content area under fixed header: full width, grid fills all available space */}
       <div className="pt-16 flex-1 px-4 py-6 overflow-hidden">
-        <div className="w-full h-full flex flex-col">
+        <div className="w-full h-full flex flex-col min-h-0">
           <h1 className="text-3xl font-bold mb-4">Finances</h1>
 
           <div className="flex-1 min-h-0 flex flex-col gap-3">
             <div className="flex flex-wrap items-end gap-4 mb-4">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+                <label htmlFor="fin-from" className="block text-xs font-medium text-gray-600 mb-1">From</label>
                 <input
+                  id="fin-from"
                   type="date"
                   className="border rounded px-2 py-1 text-sm"
                   value={fromDate}
@@ -36,8 +37,9 @@ export default function FinancialsPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+                <label htmlFor="fin-to" className="block text-xs font-medium text-gray-600 mb-1">To</label>
                 <input
+                  id="fin-to"
                   type="date"
                   className="border rounded px-2 py-1 text-sm"
                   value={toDate}
@@ -45,8 +47,9 @@ export default function FinancialsPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Fee type</label>
+                <label htmlFor="fin-fee-type" className="block text-xs font-medium text-gray-600 mb-1">Fee type</label>
                 <select
+                  id="fin-fee-type"
                   className="border rounded px-2 py-1 text-sm w-56"
                   value={feeType}
                   onChange={(e) => setFeeType(e.target.value)}

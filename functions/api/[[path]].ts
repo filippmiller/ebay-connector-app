@@ -46,8 +46,10 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const upstream = new URL(apiBase);
   
-  const strippedPath = url.pathname.replace(/^\/api/, '') || '/';
-  upstream.pathname = strippedPath;
+  // Preserve full /api path so backend routes like /api/ebay/browse/search work
+  // without being stripped to /ebay/browse/search (which causes 404).
+  const preservedPath = url.pathname || '/';
+  upstream.pathname = preservedPath;
   upstream.search = url.search;
   
   const headers = new Headers(request.headers);
@@ -116,7 +118,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       error: error.message,
       errorName: error.name,
       apiBase: apiBase,
-      path: strippedPath
+      path: preservedPath
     };
     
     console.error('[CF Proxy] Error proxying request:', errorDetails);

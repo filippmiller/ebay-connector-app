@@ -7,9 +7,9 @@ export default function TransactionsPage() {
       <FixedHeader />
       {/* Main content area under fixed header: full width, grid fills all available space */}
       <div className="pt-16 flex-1 px-4 py-6 overflow-hidden">
-        <div className="w-full h-full flex flex-col">
+        <div className="w-full h-full flex flex-col min-h-0">
           <h1 className="text-3xl font-bold mb-6">Transactions (Sales)</h1>
-          <div className="flex-1">
+          <div className="flex-1 min-h-0">
             <DataGridPage gridKey="transactions" title="Transactions" />
           </div>
         </div>

@@ -53,3 +53,6 @@
 2025-12-06T21:27:00Z - DataGridPage auto-recovers hidden columns by restoring all available columns when prefs are empty
 2025-12-07T08:45:00Z - Fixed Ledger grid not displaying rows: changed AppDataGrid wrapper to use flex layout (flex flex-col, flex-1 min-h-0) to ensure AG Grid receives proper height instead of relying on broken height:100% chain
 2025-12-07T09:00:00Z - Fixed AG Grid v33+ theme conflict: added theme="legacy" prop to AgGridReact to use CSS file themes instead of conflicting Theming API
+2025-12-07T13:10:00Z - Investigating eBrowser search 404 (“detail”:“Not Found”) and API wiring
+2025-12-07T15:10:00Z - Adjusted AppDataGrid to flex 100% height and updated inventory/financials/transactions/orders pages to let grids fill available vertical space
+2025-12-07T15:25:00Z - Fixed CF proxy to preserve /api path and switched eBrowser search to auth-enabled api client
