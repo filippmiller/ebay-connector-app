@@ -63,3 +63,4 @@
 2025-12-07T16:25:00Z - Proxy now forces /api prefix if missing (fallback for prod stripping)
 2025-12-07T17:40:00Z - Reported BUYING fonts (filters, headers, grid cells)
 2025-12-07T17:55:00Z - Tightened grid typography to legacy-like compact black text
+2025-12-07T18:05:00Z - Updated DataGridPage fetch to fall back to items array so bank statements grid renders rows

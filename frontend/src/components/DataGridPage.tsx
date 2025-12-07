@@ -188,8 +188,17 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
           Object.entries(extraParams).forEach(([k, v]) => params.append(k, String(v)));
         }
         const resp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data?${params.toString()}`);
-        setRows(resp.data.rows);
-        setTotal(resp.data.total);
+
+        // Some endpoints may return `items` instead of `rows`; fall back safely.
+        const payload: any = resp.data as any;
+        const dataRows = Array.isArray(payload?.rows)
+          ? payload.rows
+          : Array.isArray(payload?.items)
+            ? payload.items
+            : [];
+
+        setRows(dataRows);
+        setTotal(typeof payload?.total === 'number' ? payload.total : dataRows.length);
       } catch (e: any) {
         setError(e.message || 'Failed to load data');
       } finally {
