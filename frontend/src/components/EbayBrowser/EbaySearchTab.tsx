@@ -282,6 +282,29 @@ export const EbaySearchTab: React.FC = () => {
           <span className="text-xs text-gray-600">Найдено на eBay: {total}</span>
         )}
       </div>
+
+      {taxonomySuggestions.length > 0 && (
+        <div className="text-[11px] text-gray-700 flex flex-wrap items-center gap-2">
+          <span className="font-semibold mr-1">Рекомендуемые категории:</span>
+          {taxonomySuggestions.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className="px-2 py-1 rounded border text-xs whitespace-nowrap bg-white hover:bg-gray-50"
+              onClick={() =>
+                handleCategoryClick({ id: s.id, name: s.name, match_count: 0 })
+              }
+              title={s.path}
+            >
+              {s.path}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {categories.length > 0 && (
+        <div className="text-[11px] text-gray-700 flex flex-wrap items-center gap-2">
+          <span className="font-semibold mr-1">Категории:</span>
           <button
             type="button"
             className={`px-2 py-1 rounded border text-xs ${
