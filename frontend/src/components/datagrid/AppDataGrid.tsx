@@ -394,7 +394,19 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
     if (columnDefs.length === 0 && columns.length > 0) {
       console.warn('[AppDataGrid] columnDefs is empty but columns prop has', columns.length, 'items');
     }
-    if (rows.length > 0 && columnDefs.length > 0) {
+    console.log(`[AppDataGrid] ${gridKey || 'unknown'}: rows type=${Array.isArray(rows) ? 'array' : typeof rows}, rows.length=${rows?.length || 0}, columnDefs.length=${columnDefs.length}`);
+    if (!Array.isArray(rows)) {
+      console.error('[AppDataGrid] rows prop is not an array!', rows);
+    }
+    if (rows && rows.length > 0) {
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: First row:`, rows[0]);
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: First row keys:`, Object.keys(rows[0]));
+    }
+    if (columnDefs.length > 0) {
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: Column defs:`, columnDefs.slice(0, 3));
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: Column fields:`, columnDefs.map(d => d.field));
+    }
+    if (rows && rows.length > 0 && columnDefs.length > 0) {
       const firstRowKeys = Object.keys(rows[0] || {});
       const columnFields = columnDefs.map((d) => d.field).filter((f): f is string => !!f);
       const missingFields = columnFields.filter((f) => !firstRowKeys.includes(f));
@@ -418,9 +430,14 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       ) : (
         <>
           <AgGridReact
+            rowModelType="clientSide"
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             rowData={rows}
+            getRowId={(params) => {
+              // Use 'id' field if available, otherwise use row index
+              return params.data?.id != null ? String(params.data.id) : `row-${params.node.rowIndex}`;
+            }}
             rowSelection={{
               mode: selectionMode,
               checkboxes: selectionMode === 'multiRow',
