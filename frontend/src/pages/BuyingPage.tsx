@@ -4,6 +4,7 @@ import { DataGridPage } from '@/components/DataGridPage';
 import api from '@/lib/apiClient';
 import { DraggableResizableDialog } from '@/components/ui/draggable-dialog';
 import { ModelEditor } from '@/components/buying/ModelEditor';
+import { useAuth } from '@/auth/AuthContext';
 
 interface BuyingStatus {
   id: number;
@@ -51,6 +52,7 @@ interface BuyingLogEntry {
 }
 
 export default function BuyingPage() {
+  const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<BuyingDetail | null>(null);
   const [statuses, setStatuses] = useState<BuyingStatus[]>([]);
