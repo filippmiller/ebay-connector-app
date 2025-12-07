@@ -266,23 +266,23 @@ export default function BuyingPage() {
 
         <div className="flex-1 min-h-0 flex flex-col gap-3">
           {/* Container 2: Ultra-Dense Filter Bar (2 lines max) */}
-          <div className="p-1.5 bg-white border rounded shadow-sm">
-            {/* Row 1 */}
-            <div className="flex items-center gap-1.5 mb-1">
+          <div className="p-1 bg-white border rounded shadow-sm">
+            {/* Single Ultra-Compact Filter Row */}
+            <div className="flex items-center gap-1 flex-wrap">
               <button
                 onClick={handleClearFilters}
-                className="text-red-600 text-[10px] hover:bg-red-50 px-2 py-1 rounded whitespace-nowrap"
+                className="text-red-600 text-[9px] hover:bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap"
               >
                 ✖ Clear
               </button>
               <input
-                className="border rounded px-2 py-1 h-8 text-xs w-24"
+                className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-20"
                 placeholder="BuyerID"
                 value={filterBuyerId}
                 onChange={e => setFilterBuyerId(e.target.value)}
               />
               <select
-                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                className="border rounded px-1 py-0.5 h-7 text-[10px] w-24"
                 value={filterStatusId}
                 onChange={e => setFilterStatusId(e.target.value)}
               >
@@ -291,82 +291,82 @@ export default function BuyingPage() {
               </select>
               <input
                 type="date"
-                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                className="border rounded px-1 py-0.5 h-7 text-[10px] w-28"
                 value={filterPaidFrom}
                 onChange={e => setFilterPaidFrom(e.target.value)}
                 title="Paid From"
               />
-              <span className="text-gray-400">-</span>
+              <span className="text-[10px] text-gray-400">-</span>
               <input
                 type="date"
-                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                className="border rounded px-1 py-0.5 h-7 text-[10px] w-28"
                 value={filterPaidTo}
                 onChange={e => setFilterPaidTo(e.target.value)}
                 title="Paid To"
               />
               <input
                 type="date"
-                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                className="border rounded px-1 py-0.5 h-7 text-[10px] w-28"
                 value={filterCreatedFrom}
                 onChange={e => setFilterCreatedFrom(e.target.value)}
                 title="Created From"
               />
-              <span className="text-gray-400">-</span>
+              <span className="text-[10px] text-gray-400">-</span>
               <input
                 type="date"
-                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                className="border rounded px-1 py-0.5 h-7 text-[10px] w-28"
                 value={filterCreatedTo}
                 onChange={e => setFilterCreatedTo(e.target.value)}
                 title="Created To"
               />
               <input
-                className="border rounded px-2 py-1 h-8 text-xs w-24"
+                className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-20"
                 placeholder="SellerID"
                 value={filterSellerId}
                 onChange={e => setFilterSellerId(e.target.value)}
               />
 
               {/* Storage filters */}
-              <div className="flex items-center gap-1 border rounded px-2 py-1 h-8 bg-gray-50">
-                <label className="flex items-center gap-1 text-xs cursor-pointer">
-                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'any'} onChange={() => setFilterStorageMode('any')} className="w-3 h-3" />
+              <div className="flex items-center gap-0.5 border rounded px-1 py-0.5 h-7 bg-gray-50">
+                <label className="flex items-center gap-0.5 text-[9px] cursor-pointer">
+                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'any'} onChange={() => setFilterStorageMode('any')} className="w-2.5 h-2.5" />
                   <span>Any</span>
                 </label>
-                <label className="flex items-center gap-1 text-xs cursor-pointer">
-                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'exact'} onChange={() => setFilterStorageMode('exact')} className="w-3 h-3" />
+                <label className="flex items-center gap-0.5 text-[9px] cursor-pointer">
+                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'exact'} onChange={() => setFilterStorageMode('exact')} className="w-2.5 h-2.5" />
                   <span>Exact</span>
                 </label>
-                <label className="flex items-center gap-1 text-xs cursor-pointer">
-                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'section'} onChange={() => setFilterStorageMode('section')} className="w-3 h-3" />
+                <label className="flex items-center gap-0.5 text-[9px] cursor-pointer">
+                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'section'} onChange={() => setFilterStorageMode('section')} className="w-2.5 h-2.5" />
                   <span>Sect</span>
                 </label>
               </div>
               <input
-                className="border rounded px-2 py-1 h-8 text-xs w-28"
+                className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-20"
                 placeholder="Storage"
                 value={filterStorageValue}
                 onChange={e => setFilterStorageValue(e.target.value)}
               />
               <input
-                className="border rounded px-2 py-1 h-8 text-xs w-48"
+                className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-32"
                 placeholder="Title"
                 value={filterTitle}
                 onChange={e => setFilterTitle(e.target.value)}
               />
               <input
-                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-24"
                 placeholder="Tracking"
                 value={filterTracking}
                 onChange={e => setFilterTracking(e.target.value)}
               />
               <input
-                className="border rounded px-2 py-1 h-8 text-xs w-28"
+                className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-20"
                 placeholder="ItemID"
                 value={filterItemId}
                 onChange={e => setFilterItemId(e.target.value)}
               />
               <input
-                className="border rounded px-2 py-1 h-8 text-xs w-20"
+                className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-16"
                 placeholder="ID"
                 value={filterId}
                 onChange={e => setFilterId(e.target.value)}
