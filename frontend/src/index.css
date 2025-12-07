@@ -128,6 +128,13 @@
 
   .app-grid__ag-root {
     font-size: var(--grid-font-size);
+    /* Force denser, darker legacy-like typography across all AG grids */
+    --ag-font-size: var(--grid-font-size);
+    --ag-row-height: 28px;
+    --ag-header-height: 30px;
+    --ag-foreground-color: #111827;
+    --ag-header-foreground-color: #111827;
+    --ag-secondary-foreground-color: #111827;
   }
 
   /* Legacy semantic cell styling (shared across all grids using AppDataGrid). */
@@ -213,20 +220,20 @@
   }
 
   .app-grid.grid-density-normal {
-    --grid-row-height: 32px;
-    --grid-header-height: 32px;
-    --grid-font-size: 13px;
+    --grid-row-height: 28px;
+    --grid-header-height: 30px;
+    --grid-font-size: 12px;
   }
 
   .app-grid.grid-density-comfortable {
-    --grid-row-height: 40px;
-    --grid-header-height: 40px;
-    --grid-font-size: 14px;
+    --grid-row-height: 34px;
+    --grid-header-height: 34px;
+    --grid-font-size: 13px;
   }
 
   .app-grid.grid-theme-default {
     --grid-header-bg: #f3f4f6;
-    --grid-header-text-color: #4b5563;
+    --grid-header-text-color: #111827;
   }
 
   .app-grid.grid-theme-blue {
@@ -293,12 +300,13 @@
     background-color: var(--grid-header-bg);
     color: var(--grid-header-text-color);
     font-size: calc(var(--ui-font-scale-table-header) * 0.78rem * var(--ui-font-scale));
-    font-weight: var(--ui-font-weight-table-header);
+    font-weight: 600;
   }
 
   .app-grid__ag-root .ag-header-cell,
   .app-grid__ag-root .ag-header-cell-label {
     font-family: inherit;
+    color: var(--grid-header-text-color);
   }
 
   .app-grid__ag-root .ag-header-cell-resize::after {
@@ -334,6 +342,12 @@
     -moz-user-select: text;
     -ms-user-select: text;
     user-select: text;
+    font-size: var(--grid-font-size);
+    color: var(--ui-color-text-primary);
+  }
+
+  .app-grid__ag-root .ag-cell {
+    line-height: 1.35;
   }
 }
 

@@ -61,3 +61,5 @@
 2025-12-07T16:05:00Z - Added proxy path comment to document preserving /api prefix to prevent 404
 2025-12-07T16:15:00Z - Added API_PUBLIC_EBROWSER_BASE_URL override in CF proxy to isolate eBrowser backend base
 2025-12-07T16:25:00Z - Proxy now forces /api prefix if missing (fallback for prod stripping)
+2025-12-07T17:40:00Z - Reported BUYING fonts (filters, headers, grid cells)
+2025-12-07T17:55:00Z - Tightened grid typography to legacy-like compact black text
