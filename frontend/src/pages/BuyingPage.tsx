@@ -358,7 +358,7 @@ export default function BuyingPage() {
                 onChange={e => setFilterStorageValue(e.target.value)}
               />
               <input
-                className="border rounded px-2 py-1 h-8 text-xs flex-1"
+                className="border rounded px-2 py-1 h-8 text-xs w-48"
                 placeholder="Title"
                 value={filterTitle}
                 onChange={e => setFilterTitle(e.target.value)}
@@ -386,10 +386,6 @@ export default function BuyingPage() {
 
           {/* Grid Section */}
           <div className="flex-[2] min-h-0 border rounded-lg bg-white flex flex-col">
-            <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 text-xs">
-              <div className="font-semibold">Buying grid</div>
-              <div className="text-gray-500">Click a row to see details below.</div>
-            </div>
             <div className="flex-1 min-h-0">
               <DataGridPage
                 gridKey="buying"
