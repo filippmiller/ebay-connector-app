@@ -153,9 +153,7 @@ export default function BuyingPage() {
     const extraColumns = useMemo(() => {
         return [
             {
-                col
-
-Id: 'logs',
+                colId: 'logs',
                 field: 'logs',
                 headerName: 'Logs',
                 width: 70,
