@@ -46,10 +46,14 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const upstream = new URL(apiBase);
   
-  // Preserve full /api path so backend routes like /api/ebay/browse/search work
-  // without being stripped to /ebay/browse/search (which causes 404).
-  const preservedPath = url.pathname || '/';
-  upstream.pathname = preservedPath;
+  // Build path carefully to avoid double /api when API_PUBLIC_BASE_URL already ends with /api.
+  const incomingPath = url.pathname || '/';
+  const basePath = upstream.pathname.endsWith('/')
+    ? upstream.pathname.slice(0, -1)
+    : upstream.pathname;
+  const safeIncoming = incomingPath.startsWith('/') ? incomingPath : `/${incomingPath}`;
+  const combinedPath = `${basePath}${safeIncoming}`.replace(/\/{2,}/g, '/');
+  upstream.pathname = combinedPath;
   upstream.search = url.search;
   
   const headers = new Headers(request.headers);
