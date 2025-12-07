@@ -79,9 +79,8 @@ export default function BuyingPage() {
   const [filterItemId, setFilterItemId] = useState('');
   const [filterId, setFilterId] = useState('');
 
-  // Resizable panel state (will be used for resizable divider)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [gridHeight, setGridHeight] = useState(60); // Grid takes 60% by default
+  // Resizable panel state (will be fully used when resizable divider is implemented)
+  const [gridHeight, _setGridHeight] = useState(60); // Grid takes 60% by default
 
   useEffect(() => {
     const loadStatuses = async () => {
