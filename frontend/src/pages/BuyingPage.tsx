@@ -482,12 +482,12 @@ export default function BuyingPage() {
                   </div>
                 </div>
 
-                {/* Far Right: Status & Comment */}
-                <div className="w-64 flex flex-col gap-2 border-l pl-2">
+                {/* Far Right: Status & LARGE Comment Section - 50% WIDTH */}
+                <div className="flex-1 flex flex-col gap-3 border-l-2 border-gray-200 pl-4">
                   <div>
-                    <label className="font-bold block text-xs mb-1">Status:</label>
+                    <label className="font-bold block text-base mb-2">Status:</label>
                     <select
-                      className="border rounded px-2 py-1 text-xs w-full font-medium"
+                      className="border-2 rounded px-3 py-2 text-base w-full font-medium"
                       value={pendingStatusId ?? ''}
                       onChange={(e) => {
                         const v = e.target.value;
@@ -503,21 +503,26 @@ export default function BuyingPage() {
                       ))}
                     </select>
                   </div>
+
+                  {/* MUCH LARGER Comment Section */}
                   <div className="flex-1 flex flex-col">
-                    <label className="font-bold block text-xs mb-1">Comment:</label>
+                    <label className="font-bold block text-lg mb-2">📝 Comments:</label>
                     <textarea
-                      className="border rounded px-2 py-1 text-xs w-full flex-1 resize-none bg-yellow-50"
+                      className="border-2 rounded px-3 py-2 text-base w-full flex-1 resize-none bg-yellow-50 min-h-[200px] font-mono"
                       value={pendingComment}
                       onChange={(e) => setPendingComment(e.target.value)}
+                      placeholder="Enter your comments here..."
                     />
                   </div>
+
                   <div>
                     <button
-                      className="w-full px-3 py-1 rounded bg-gray-200 border border-gray-400 text-gray-800 text-xs hover:bg-gray-300 flex items-center justify-center gap-1 font-bold"
+                      className="w-full px-4 py-3 rounded-lg bg-blue-600 text-white text-base hover:bg-blue-700 flex items-center justify-center gap-2 font-bold disabled:opacity-50 transition-colors"
                       onClick={handleSave}
                       disabled={saving || !selectedId}
                     >
-                      <span>💾</span> {saving ? 'Saving…' : 'Save'}
+                      <span className="text-xl">💾</span>
+                      <span>{saving ? 'Saving…' : 'Save Changes'}</span>
                     </button>
                   </div>
                 </div>
