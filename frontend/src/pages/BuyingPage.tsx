@@ -247,240 +247,281 @@ export default function BuyingPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 text-xs">
+    <div className="h-screen flex flex-col bg-gray-50">
       <FixedHeader />
-      <div className="pt-14 flex-1 flex flex-col overflow-hidden">
+      <div className="pt-16 flex-1 px-4 py-4 overflow-hidden flex flex-col gap-4">
 
-        {/* Filters Section */}
-        <div className="p-2 bg-white border-b shadow-sm space-y-2">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
-            <div className="flex items-center gap-2">
-              <label className="w-16 text-right font-medium">BuyerID:</label>
-              <input className="border rounded px-2 py-1 flex-1" placeholder="< Select ALL >" value={filterBuyerId} onChange={e => setFilterBuyerId(e.target.value)} />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="w-16 text-right font-medium">Status:</label>
-              <select className="border rounded px-2 py-1 flex-1" value={filterStatusId} onChange={e => setFilterStatusId(e.target.value)}>
-                <option value="">&lt; Select ALL &gt;</option>
+        {/* Header Section - Like SKU Page */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Buying</h1>
+            <p className="text-xs text-gray-500">
+              Track and manage buying transactions
+            </p>
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 flex flex-col gap-3">
+          {/* Compact Filter Bar - Like SKU Page */}
+          <div className="flex items-center gap-2 p-2 bg-white border rounded-lg shadow-sm">
+            <button
+              onClick={handleClearFilters}
+              className="text-red-600 h-8 text-xs hover:bg-red-50 px-3 py-1 rounded flex items-center gap-1"
+            >
+              <span>✖</span> Clear Filters
+            </button>
+
+            <div className="flex items-center gap-2 flex-1">
+              <input
+                className="border rounded px-2 py-1 h-8 text-xs w-24"
+                placeholder="BuyerID"
+                value={filterBuyerId}
+                onChange={e => setFilterBuyerId(e.target.value)}
+              />
+              <select
+                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                value={filterStatusId}
+                onChange={e => setFilterStatusId(e.target.value)}
+              >
+                <option value="">Status</option>
                 {statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
+              <input
+                type="date"
+                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                value={filterPaidFrom}
+                onChange={e => setFilterPaidFrom(e.target.value)}
+                title="Paid From"
+              />
+              <span className="text-gray-400">-</span>
+              <input
+                type="date"
+                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                value={filterPaidTo}
+                onChange={e => setFilterPaidTo(e.target.value)}
+                title="Paid To"
+              />
+              <input
+                type="date"
+                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                value={filterCreatedFrom}
+                onChange={e => setFilterCreatedFrom(e.target.value)}
+                title="Created From"
+              />
+              <span className="text-gray-400">-</span>
+              <input
+                type="date"
+                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                value={filterCreatedTo}
+                onChange={e => setFilterCreatedTo(e.target.value)}
+                title="Created To"
+              />
+              <input
+                className="border rounded px-2 py-1 h-8 text-xs w-24"
+                placeholder="SellerID"
+                value={filterSellerId}
+                onChange={e => setFilterSellerId(e.target.value)}
+              />
+
+              {/* Storage filters */}
+              <div className="flex items-center gap-1 border rounded px-2 py-1 h-8 bg-gray-50">
+                <label className="flex items-center gap-1 text-xs cursor-pointer">
+                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'any'} onChange={() => setFilterStorageMode('any')} className="w-3 h-3" />
+                  <span>Any</span>
+                </label>
+                <label className="flex items-center gap-1 text-xs cursor-pointer">
+                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'exact'} onChange={() => setFilterStorageMode('exact')} className="w-3 h-3" />
+                  <span>Exact</span>
+                </label>
+                <label className="flex items-center gap-1 text-xs cursor-pointer">
+                  <input type="radio" name="storage_mode" checked={filterStorageMode === 'section'} onChange={() => setFilterStorageMode('section')} className="w-3 h-3" />
+                  <span>Sect</span>
+                </label>
+              </div>
+              <input
+                className="border rounded px-2 py-1 h-8 text-xs w-28"
+                placeholder="Storage"
+                value={filterStorageValue}
+                onChange={e => setFilterStorageValue(e.target.value)}
+              />
+              <input
+                className="border rounded px-2 py-1 h-8 text-xs flex-1"
+                placeholder="Title"
+                value={filterTitle}
+                onChange={e => setFilterTitle(e.target.value)}
+              />
+              <input
+                className="border rounded px-2 py-1 h-8 text-xs w-32"
+                placeholder="Tracking"
+                value={filterTracking}
+                onChange={e => setFilterTracking(e.target.value)}
+              />
+              <input
+                className="border rounded px-2 py-1 h-8 text-xs w-28"
+                placeholder="ItemID"
+                value={filterItemId}
+                onChange={e => setFilterItemId(e.target.value)}
+              />
+              <input
+                className="border rounded px-2 py-1 h-8 text-xs w-20"
+                placeholder="ID"
+                value={filterId}
+                onChange={e => setFilterId(e.target.value)}
+              />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
-            <div className="flex items-center gap-2">
-              <label className="w-16 text-right font-medium">Paid Date:</label>
-              <input type="date" className="border rounded px-1 py-1 w-28" value={filterPaidFrom} onChange={e => setFilterPaidFrom(e.target.value)} />
-              <span>-</span>
-              <input type="date" className="border rounded px-1 py-1 w-28" value={filterPaidTo} onChange={e => setFilterPaidTo(e.target.value)} />
+          {/* Grid Section */}
+          <div className="flex-[2] min-h-0 border rounded-lg bg-white flex flex-col">
+            <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 text-xs">
+              <div className="font-semibold">Buying grid</div>
+              <div className="text-gray-500">Click a row to see details below.</div>
             </div>
-            <div className="flex items-center gap-2">
-              <label className="w-16 text-right font-medium">RecCreated:</label>
-              <input type="date" className="border rounded px-1 py-1 w-28" value={filterCreatedFrom} onChange={e => setFilterCreatedFrom(e.target.value)} />
-              <span>-</span>
-              <input type="date" className="border rounded px-1 py-1 w-28" value={filterCreatedTo} onChange={e => setFilterCreatedTo(e.target.value)} />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="w-16 text-right font-medium">SellerID:</label>
-              <input className="border rounded px-2 py-1 flex-1" placeholder="SellerID..." value={filterSellerId} onChange={e => setFilterSellerId(e.target.value)} />
+            <div className="flex-1 min-h-0">
+              <DataGridPage
+                gridKey="buying"
+                hideTitle
+                extraColumns={extraColumns}
+                extraParams={extraParams}
+                // Simple row click: rows are plain objects with an "id" field from the grid backend
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                onRowClick={(row: any) => {
+                  if (row && typeof row.id === 'number') {
+                    setSelectedId(row.id);
+                  }
+                }}
+              />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
-            <div className="col-span-1 md:col-span-2 flex items-center gap-2 border rounded p-1">
-              <span className="font-medium px-2">Storage</span>
-              <div className="flex flex-col gap-1 flex-1">
-                <div className="flex items-center gap-2">
-                  <input type="radio" name="storage_mode" id="st_any" checked={filterStorageMode === 'any'} onChange={() => setFilterStorageMode('any')} />
-                  <label htmlFor="st_any">Any Matches:</label>
+          {/* Detail Panel - Like SKU Page */}
+          {detail ? (
+            <div className="flex-[1] min-h-[200px] border rounded-lg bg-white flex flex-col overflow-hidden">
+              <div className="bg-blue-100 px-3 py-1 border-b border-blue-200 flex justify-between items-center">
+                <span className="text-xs font-bold text-blue-800 uppercase">Detailed Information for Buying</span>
+              </div>
+
+              <div className="flex-1 p-3 flex gap-4 text-xs overflow-auto">
+                {/* Left: Image */}
+                <div className="w-48 h-32 bg-gray-100 border flex items-center justify-center text-gray-400 shrink-0">
+                  {detail.gallery_url || detail.picture_url ? (
+                    <img src={detail.gallery_url || detail.picture_url || ''} alt="Item" className="max-w-full max-h-full object-contain" />
+                  ) : (
+                    <div className="text-center p-2">
+                      <span className="block text-xs">Click to enlarge</span>
+                      <span className="text-[10px]">(No Image)</span>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="radio" name="storage_mode" id="st_exact" checked={filterStorageMode === 'exact'} onChange={() => setFilterStorageMode('exact')} />
-                  <label htmlFor="st_exact">Exact Matching:</label>
+
+                {/* Middle: Details Column 1 */}
+                <div className="flex-1 space-y-1 min-w-[200px]">
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24">Seller:</span>
+                    <span className="text-purple-700 truncate">{detail.seller_id}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24">Tracking:</span>
+                    <span className="text-blue-600 truncate">{detail.tracking_number}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24">Title:</span>
+                    <span className="font-bold text-blue-900 truncate" title={detail.title || ''}>{detail.title}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24 text-red-600">ItemID:</span>
+                    <span className="text-red-600">{detail.item_id}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24">Transaction:</span>
+                    <span>{detail.transaction_id || '0'}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24 text-green-700">Storage:</span>
+                    <span className="font-bold text-green-700">{detail.storage}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24">Quantity:</span>
+                    <span className="font-bold">{detail.quantity_purchased}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-24">BuyerID:</span>
+                    <span>{detail.buyer_id}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="radio" name="storage_mode" id="st_section" checked={filterStorageMode === 'section'} onChange={() => setFilterStorageMode('section')} />
-                  <label htmlFor="st_section">Use Section:</label>
+
+                {/* Right Column: More Details */}
+                <div className="flex-1 space-y-1 min-w-[200px]">
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-28">Location:</span>
+                    <span>{detail.seller_location}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-28">Condition:</span>
+                    <span>{detail.condition_display_name}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-28">Carrier:</span>
+                    <span>{detail.shipping_carrier}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-28">Paid:</span>
+                    <span>{detail.amount_paid ? `$${detail.amount_paid.toFixed(2)}` : ''}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-gray-700 w-28">Paid Date:</span>
+                    <span>{detail.paid_time ? new Date(detail.paid_time).toLocaleDateString() : ''}</span>
+                  </div>
+                </div>
+
+                {/* Far Right: Status & Comment */}
+                <div className="w-64 flex flex-col gap-2 border-l pl-2">
+                  <div>
+                    <label className="font-bold block text-xs mb-1">Status:</label>
+                    <select
+                      className="border rounded px-2 py-1 text-xs w-full font-medium"
+                      value={pendingStatusId ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setPendingStatusId(v === '' ? null : Number(v));
+                      }}
+                      style={currentStatusColor(pendingStatusId)}
+                    >
+                      <option value="">(no status)</option>
+                      {statuses.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1 flex flex-col">
+                    <label className="font-bold block text-xs mb-1">Comment:</label>
+                    <textarea
+                      className="border rounded px-2 py-1 text-xs w-full flex-1 resize-none bg-yellow-50"
+                      value={pendingComment}
+                      onChange={(e) => setPendingComment(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <button
+                      className="w-full px-3 py-1 rounded bg-gray-200 border border-gray-400 text-gray-800 text-xs hover:bg-gray-300 flex items-center justify-center gap-1 font-bold"
+                      onClick={handleSave}
+                      disabled={saving || !selectedId}
+                    >
+                      <span>💾</span> {saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div className="flex flex-col gap-1 w-1/2">
-                <input className="border rounded px-2 py-1" placeholder="Storage..." value={filterStorageValue} onChange={e => setFilterStorageValue(e.target.value)} />
-              </div>
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
-            <div className="flex flex-col">
-              <label className="font-medium">Title:</label>
-              <input className="border rounded px-2 py-1" placeholder="Title... (enter for search)" value={filterTitle} onChange={e => setFilterTitle(e.target.value)} />
+          ) : (
+            <div className="flex-[1] min-h-[160px] border rounded-lg bg-white flex items-center justify-center text-xs text-gray-500">
+              Select a row in the Buying grid to see details.
             </div>
-            <div className="flex flex-col">
-              <label className="font-medium">Tracking Number:</label>
-              <input className="border rounded px-2 py-1" placeholder="TrackingNumber... (enter for search)" value={filterTracking} onChange={e => setFilterTracking(e.target.value)} />
-            </div>
-            <div className="flex flex-col">
-              <label className="font-medium">ItemID:</label>
-              <input className="border rounded px-2 py-1" placeholder="ItemID... (enter for search)" value={filterItemId} onChange={e => setFilterItemId(e.target.value)} />
-            </div>
-            <div className="flex flex-col">
-              <label className="font-medium">ID:</label>
-              <input className="border rounded px-2 py-1" placeholder="ID... (enter for search)" value={filterId} onChange={e => setFilterId(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="flex gap-2 justify-start mt-2">
-            <button onClick={handleClearFilters} className="px-4 py-1 bg-red-100 border border-red-300 text-red-700 rounded hover:bg-red-200 flex items-center gap-1 font-bold">
-              <span>✖</span> Clear
-            </button>
-            <button className="px-4 py-1 bg-gray-100 border border-gray-300 text-gray-700 rounded hover:bg-gray-200 flex items-center gap-1 font-bold">
-              <span>💾</span> Save
-            </button>
-          </div>
+          )}
         </div>
-
-
-        {/* Grid Section */}
-        <div className="flex-1 min-h-0">
-          <DataGridPage
-            gridKey="buying"
-            hideTitle
-            extraColumns={extraColumns}
-            extraParams={extraParams}
-            // Simple row click: rows are plain objects with an "id" field from the grid backend
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            onRowClick={(row: any) => {
-              if (row && typeof row.id === 'number') {
-                setSelectedId(row.id);
-              }
-            }}
-          />
-        </div>
-
-        {/* Detail Bottom Panel */}
-        {detail && (
-          <div className="h-64 border-t-4 border-red-500 bg-white p-2 flex gap-4 shadow-inner text-sm overflow-hidden">
-
-            {/* Left: Image */}
-            <div className="w-56 h-full flex-shrink-0 bg-gray-100 border flex items-center justify-center relative group cursor-pointer">
-              {detail.gallery_url || detail.picture_url ? (
-                <img src={detail.gallery_url || detail.picture_url || ''} alt="Item" className="max-w-full max-h-full object-contain" />
-              ) : (
-                <div className="text-gray-400">No Image</div>
-              )}
-              <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 flex items-center justify-center transition-all">
-                <span className="text-white opacity-0 group-hover:opacity-100 font-bold drop-shadow-md">Click to enlarge</span>
-              </div>
-            </div>
-
-            {/* Middle: Details */}
-            <div className="flex-1 grid grid-cols-2 gap-x-8 gap-y-1 overflow-auto">
-              <div className="text-center col-span-2 font-bold text-blue-700 mb-2 border-b uppercase">Detailed Information for Buying</div>
-
-              {/* Column 1 */}
-              <div className="space-y-1">
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24">Seller:</span>
-                  <span className="text-purple-700 truncate">{detail.seller_id}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24">TrackingNumber:</span>
-                  <span className="text-blue-600 truncate">{detail.tracking_number}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24">Title:</span>
-                  <span className="font-bold text-blue-900 truncate" title={detail.title || ''}>{detail.title}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24 text-red-600">ItemID:</span>
-                  <span className="text-red-600">{detail.item_id}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24">TransactionID:</span>
-                  <span>{detail.transaction_id || '0'}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24 text-green-700">Storage:</span>
-                  <span className="font-bold text-green-700">{detail.storage}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24">Quantity:</span>
-                  <span className="font-bold">{detail.quantity_purchased}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-24">BuyerID:</span>
-                  <span>{detail.buyer_id}</span>
-                </div>
-              </div>
-
-              {/* Column 2 */}
-              <div className="space-y-1">
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-32">Seller location:</span>
-                  <span>{detail.seller_location}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-32">ItemCondition:</span>
-                  <span>{detail.condition_display_name}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-32">ShippingCarrier:</span>
-                  <span>{detail.shipping_carrier}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-32">AmountPaid:</span>
-                  <span>{detail.amount_paid ? `$${detail.amount_paid.toFixed(2)}` : ''}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-bold text-right w-32">PaidOnDate:</span>
-                  <span>{detail.paid_time ? new Date(detail.paid_time).toLocaleDateString() : ''}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Right: Status & Comment */}
-            <div className="w-64 flex flex-col gap-2 border-l pl-2">
-              <div>
-                <label className="font-bold block text-xs mb-1">Status:</label>
-                <select
-                  className="border rounded px-2 py-1 text-xs w-full font-medium"
-                  value={pendingStatusId ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setPendingStatusId(v === '' ? null : Number(v));
-                  }}
-                  style={currentStatusColor(pendingStatusId)}
-                >
-                  <option value="">(no status)</option>
-                  {statuses.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex-1 flex flex-col">
-                <label className="font-bold block text-xs mb-1">Comment:</label>
-                <textarea
-                  className="border rounded px-2 py-1 text-xs w-full flex-1 resize-none bg-yellow-50"
-                  value={pendingComment}
-                  onChange={(e) => setPendingComment(e.target.value)}
-                />
-              </div>
-              <div>
-                <button
-                  className="w-full px-3 py-1 rounded bg-gray-200 border border-gray-400 text-gray-800 text-xs hover:bg-gray-300 flex items-center justify-center gap-1 font-bold"
-                  onClick={handleSave}
-                  disabled={saving || !selectedId}
-                >
-                  <span>💾</span> {saving ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-
-            </div>
-          </div>
-        )}
       </div>
-
       <DraggableResizableDialog
         open={logsOpen}
         onOpenChange={(open) => setLogsOpen(open)}
