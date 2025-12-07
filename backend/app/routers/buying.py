@@ -67,7 +67,7 @@ async def get_purchase_detail(
             b."BuyerID" AS buyer_id,
             b."SellerID" AS seller_id,
             b."SellerLocation" AS seller_location,
-            b."Condition DisplayName" AS condition_display_name,
+            b."ConditionDisplayName" AS condition_display_name,
             b."ShippingCarrier" AS shipping_carrier,
             COALESCE(b."TotalTransactionPrice", b."CurrentPrice") AS amount_paid,
             b."PaidTime" AS paid_time,
