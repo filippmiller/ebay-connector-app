@@ -428,7 +428,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
           No columns configured
         </div>
       ) : (
-        <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
+        <div style={{ width: '100%', height: '500px', minHeight: '500px' }}>
           <AgGridReact
             theme="legacy"
             rowModelType="clientSide"
