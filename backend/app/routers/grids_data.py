@@ -2416,8 +2416,6 @@ def _get_active_inventory_data(
         for col in selected_cols:
             try:
                 value = getattr(ai, col, None)
-                if value is None:
-                    continue
                 if isinstance(value, dt_type):
                     row[col] = value.isoformat()
                 elif isinstance(value, Decimal):
@@ -2425,7 +2423,7 @@ def _get_active_inventory_data(
                 else:
                     row[col] = value
             except Exception:
-                continue
+                row[col] = None
         return row
 
     rows = [_serialize(ai) for ai in rows_db]
@@ -2486,8 +2484,6 @@ def _get_accounting_bank_statements_data(
             
             try:
                 value = getattr(stmt, col, None)
-                if value is None:
-                    continue
                 if isinstance(value, dt_type):
                     row[col] = value.isoformat()
                 elif isinstance(value, Decimal):
@@ -2495,7 +2491,7 @@ def _get_accounting_bank_statements_data(
                 else:
                     row[col] = value
             except Exception:
-                continue
+                row[col] = None
         return row
 
     rows = [_serialize(r) for r in rows_db]
@@ -2554,8 +2550,6 @@ def _get_accounting_cash_expenses_data(
         for col in selected_cols:
             try:
                 value = getattr(cash, col, None)
-                if value is None:
-                    continue
                 if isinstance(value, dt_type):
                     row[col] = value.isoformat()
                 elif isinstance(value, Decimal):
@@ -2563,7 +2557,7 @@ def _get_accounting_cash_expenses_data(
                 else:
                     row[col] = value
             except Exception:
-                continue
+                row[col] = None
         return row
 
     rows = [_serialize(r) for r in rows_db]
