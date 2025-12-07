@@ -56,3 +56,4 @@
 2025-12-07T13:10:00Z - Investigating eBrowser search 404 (“detail”:“Not Found”) and API wiring
 2025-12-07T15:10:00Z - Adjusted AppDataGrid to flex 100% height and updated inventory/financials/transactions/orders pages to let grids fill available vertical space
 2025-12-07T15:25:00Z - Fixed CF proxy to preserve /api path and switched eBrowser search to auth-enabled api client
+2025-12-07T15:35:00Z - Adjusted eBrowser search API call to use relative path so /api baseURL is kept

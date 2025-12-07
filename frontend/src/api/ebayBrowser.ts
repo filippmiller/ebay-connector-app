@@ -65,6 +65,7 @@ export interface BrowseSearchResponse {
 import api from '@/lib/apiClient';
 
 export async function searchBrowse(payload: BrowseSearchRequest): Promise<BrowseSearchResponse> {
-  const resp = await api.post<BrowseSearchResponse>('/ebay/browse/search', payload);
+  // Use relative path so baseURL (/api) is preserved
+  const resp = await api.post<BrowseSearchResponse>('ebay/browse/search', payload);
   return resp.data;
 }
