@@ -51,3 +51,4 @@
 2025-12-06T23:15:07.0849855+03:00 - Fixed BUYING SQL column casing to snake_case, default sort now id desc to show newest rows on top
 2025-12-06T21:18:00Z - Added bank statement multi-select delete flow with confirmation prompt (type DELETE)
 2025-12-06T21:27:00Z - DataGridPage auto-recovers hidden columns by restoring all available columns when prefs are empty
+2025-12-07T08:45:00Z - Fixed Ledger grid not displaying rows: changed AppDataGrid wrapper to use flex layout (flex flex-col, flex-1 min-h-0) to ensure AG Grid receives proper height instead of relying on broken height:100% chain

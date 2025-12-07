@@ -418,7 +418,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
 
       {topContent && <div className="mb-2">{topContent}</div>}
 
-      <div className="flex-1 min-h-0 border rounded-lg bg-white" style={gridBackgroundColor ? { backgroundColor: gridBackgroundColor } : undefined}>
+      <div className="flex-1 min-h-0 flex flex-col border rounded-lg bg-white" style={gridBackgroundColor ? { backgroundColor: gridBackgroundColor } : undefined}>
         {gridPrefs.loading ? (
           <div className="p-4 text-sm text-gray-500">Loading layout…</div>
         ) : columns.length === 0 && gridPrefs.availableColumns.length === 0 ? (
