@@ -262,13 +262,13 @@ export default function BuyingPage() {
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       <FixedHeader />
-      <div className="pt-16 flex-1 px-4 py-4 overflow-hidden flex flex-col gap-4">
+      <div className="pt-16 flex-1 overflow-hidden flex flex-col">
 
-        <div className="flex-1 min-h-0 flex flex-col gap-3">
+        <div className="flex-1 min-h-0 flex flex-col gap-1">
           {/* Container 2: Ultra-Dense Filter Bar (2 lines max) */}
           <div className="p-1 bg-white border rounded shadow-sm">
             {/* Single Ultra-Compact Filter Row */}
-            <div className="flex items-center gap-1 flex-wrap">
+            <div className="flex items-center gap-1">
               <button
                 onClick={handleClearFilters}
                 className="text-red-600 text-[9px] hover:bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap"
