@@ -374,8 +374,8 @@ export default function BuyingPage() {
             </div>
           </div>
 
-          {/* Grid Section */}
-          <div className="flex-[2] min-h-0 border rounded-lg bg-white flex flex-col">
+          {/* Grid Section - with dynamic height */}
+          <div className="min-h-0 border rounded-lg bg-white flex flex-col" style={{ height: `${gridHeight}%` }}>
             <div className="flex-1 min-h-0">
               <DataGridPage
                 gridKey="buying"
@@ -391,6 +391,37 @@ export default function BuyingPage() {
                 }}
               />
             </div>
+          </div>
+
+          {/* RESIZABLE DIVIDER */}
+          <div
+            className="h-1.5 bg-gray-300 hover:bg-blue-500 cursor-row-resize transition-colors flex items-center justify-center group relative"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startY = e.clientY;
+              const startHeight = gridHeight;
+
+              const handleMouseMove = (moveE: MouseEvent) => {
+                const container = (e.target as HTMLElement).closest('.flex-1.min-h-0.flex.flex-col.gap-3');
+                if (!container) return;
+
+                const containerHeight = container.clientHeight;
+                const deltaY = moveE.clientY - startY;
+                const deltaPercent = (deltaY / containerHeight) * 100;
+                const newHeight = Math.min(Math.max(startHeight + deltaPercent, 30), 70);
+                _setGridHeight(newHeight);
+              };
+
+              const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+              };
+
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
+            }}
+          >
+            <div className="w-20 h-1 bg-gray-400 rounded-full group-hover:bg-blue-600 group-hover:h-1.5 transition-all" />
           </div>
 
           {/* Detail Panel - Like SKU Page */}
