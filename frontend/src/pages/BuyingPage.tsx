@@ -79,6 +79,9 @@ export default function BuyingPage() {
   const [filterItemId, setFilterItemId] = useState('');
   const [filterId, setFilterId] = useState('');
 
+  // Resizable panel state
+  const [gridHeight, setGridHeight] = useState(60); // Grid takes 60% by default
+
   useEffect(() => {
     const loadStatuses = async () => {
       try {
@@ -113,13 +116,21 @@ export default function BuyingPage() {
     if (!selectedId) return;
     setSaving(true);
     try {
+      // Format comment with [timestamp] username: text
+      const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const username = user?.username || 'Unknown';
+      const formattedComment = `[${timestamp}] ${username}: ${pendingComment}`;
+
       await api.patch(`/buying/${selectedId}/status`, {
         status_id: pendingStatusId,
-        comment: pendingComment,
+        comment: formattedComment,
       });
-      // Refresh detail so the panel stays in sync with DB/logs.
+
+      // Refresh and keep formatted comment visible
       const resp = await api.get<BuyingDetail>(`/buying/${selectedId}`);
       setDetail(resp.data);
+      setPendingComment(resp.data.comment || ''); // Keep formatted comment showing
+
       alert('Saved successfully!');
     } catch (e) {
       console.error('Failed to update BUYING status/comment', e);
