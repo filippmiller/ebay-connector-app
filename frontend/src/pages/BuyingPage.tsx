@@ -79,7 +79,8 @@ export default function BuyingPage() {
   const [filterItemId, setFilterItemId] = useState('');
   const [filterId, setFilterId] = useState('');
 
-  // Resizable panel state
+  // Resizable panel state (will be used for resizable divider)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [gridHeight, setGridHeight] = useState(60); // Grid takes 60% by default
 
   useEffect(() => {
@@ -529,8 +530,12 @@ export default function BuyingPage() {
               </div>
             </div>
           ) : (
-            <div className="flex-[1] min-h-[160px] border rounded-lg bg-white flex items-center justify-center text-xs text-gray-500">
-              Select a row in the Buying grid to see details.
+            <div className="border rounded-lg bg-gradient-to-br from-blue-50 to-gray-50 flex items-center justify-center" style={{ minHeight: `${100 - gridHeight}%` }}>
+              <div className="text-center p-8">
+                <div className="text-5xl mb-4">👆</div>
+                <div className="text-3xl font-bold text-gray-700 mb-3">Select a Buying Record</div>
+                <div className="text-xl text-gray-500">Click on any row in the grid above to view transaction details</div>
+              </div>
             </div>
           )}
         </div>
