@@ -92,18 +92,22 @@ export default function BuyingPage() {
     }, []);
 
     useEffect(() => {
+        console.log('[BuyingPage] selectedId changed to:', selectedId);
         const loadDetail = async () => {
             if (!selectedId) {
+                console.log('[BuyingPage] No selectedId, clearing detail');
                 setDetail(null);
                 return;
             }
+            console.log('[BuyingPage] Loading detail for ID:', selectedId);
             try {
                 const resp = await api.get<BuyingDetail>(`/api/buying/${selectedId}`);
+                console.log('[BuyingPage] Detail loaded successfully:', resp.data);
                 setDetail(resp.data);
                 setPendingStatusId(resp.data.item_status_id);
                 setPendingComment(resp.data.comment || '');
             } catch (e) {
-                console.error('Failed to load BUYING detail', e);
+                console.error('[BuyingPage] Failed to load BUYING detail', e);
             }
         };
         loadDetail();
@@ -385,8 +389,12 @@ export default function BuyingPage() {
                                 extraColumns={extraColumns}
                                 extraParams={extraParams}
                                 onRowClick={(row: any) => {
+                                    console.log('[BuyingPage] Row clicked:', row);
                                     if (row && typeof row.id === 'number') {
+                                        console.log('[BuyingPage] Setting selectedId to:', row.id);
                                         setSelectedId(row.id);
+                                    } else {
+                                        console.log('[BuyingPage] Row click - no valid ID found in row');
                                     }
                                 }}
                             />
