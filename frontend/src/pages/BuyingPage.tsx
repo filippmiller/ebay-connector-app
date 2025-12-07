@@ -264,16 +264,6 @@ export default function BuyingPage() {
       <FixedHeader />
       <div className="pt-16 flex-1 px-4 py-4 overflow-hidden flex flex-col gap-4">
 
-        {/* Header Section - Like SKU Page */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Buying</h1>
-            <p className="text-xs text-gray-500">
-              Track and manage buying transactions
-            </p>
-          </div>
-        </div>
-
         <div className="flex-1 min-h-0 flex flex-col gap-3">
           {/* Container 2: Ultra-Dense Filter Bar (2 lines max) */}
           <div className="p-1.5 bg-white border rounded shadow-sm">
@@ -406,19 +396,28 @@ export default function BuyingPage() {
           {/* Detail Panel - Like SKU Page */}
           {detail ? (
             <div className="flex-[1] min-h-[200px] border rounded-lg bg-white flex flex-col overflow-hidden">
-              <div className="bg-blue-100 px-3 py-1 border-b border-blue-200 flex justify-between items-center">
-                <span className="text-xs font-bold text-blue-800 uppercase">Detailed Information for Buying</span>
+              {/* Header - LARGER */}
+              <div className="bg-blue-100 px-4 py-3 border-b border-blue-200">
+                <span className="text-xl font-bold text-blue-900">📦 Transaction #{detail.id}</span>
               </div>
 
-              <div className="flex-1 p-3 flex gap-4 text-xs overflow-auto">
-                {/* Left: Image */}
-                <div className="w-48 h-32 bg-gray-100 border flex items-center justify-center text-gray-400 shrink-0">
+              <div className="flex-1 p-4 flex gap-4 overflow-auto text-base">
+                {/* Left: LARGER CLICKABLE Image */}
+                <div className="w-64 h-48 bg-gray-50 border-2 border-gray-300 rounded-lg flex items-center justify-center shrink-0 overflow-hidden hover:border-blue-500 transition-colors">
                   {detail.gallery_url || detail.picture_url ? (
-                    <img src={detail.gallery_url || detail.picture_url || ''} alt="Item" className="max-w-full max-h-full object-contain" />
+                    <img
+                      src={detail.gallery_url || detail.picture_url || ''}
+                      alt="Item"
+                      className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform"
+                      onClick={() => {
+                        const url = detail.gallery_url || detail.picture_url;
+                        if (url) window.open(url, '_blank');
+                      }}
+                    />
                   ) : (
-                    <div className="text-center p-2">
-                      <span className="block text-xs">Click to enlarge</span>
-                      <span className="text-[10px]">(No Image)</span>
+                    <div className="text-center p-4 text-gray-400">
+                      <div className="text-5xl mb-2">📷</div>
+                      <span className="text-sm">No Image</span>
                     </div>
                   )}
                 </div>
