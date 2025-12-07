@@ -98,7 +98,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
     setError(null);
     try {
       // Primary: new unified grid preferences endpoint
-      const resp = await api.get<GridPreferencesResponse>('/api/grid/preferences', {
+      const resp = await api.get<GridPreferencesResponse>('/grid/preferences', {
         params: { grid_key: gridKey },
       });
       const availableCols = resp.data.available_columns || [];
@@ -123,9 +123,9 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       // Continue to fallbacks
     }
 
-    // Fallback: try legacy /api/grids/{gridKey}/layout to keep existing grids working
+    // Fallback: try legacy /grids/{gridKey}/layout to keep existing grids working
     try {
-      const legacyResp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
+      const legacyResp = await api.get<GridLayoutResponse>(`/grids/${gridKey}/layout`);
       const layout = legacyResp.data;
       const colsMeta = layout.available_columns || [];
 
@@ -153,7 +153,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
 
       // Last-resort fallback: try to infer columns from a sample of grid data.
       try {
-        const dataResp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data`, {
+        const dataResp = await api.get<GridDataResponse>(`/grids/${gridKey}/data`, {
           params: { limit: 1, offset: 0 },
         });
         const data = dataResp.data;
@@ -260,7 +260,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
         });
       }
       try {
-        const response = await api.post<GridPreferencesResponse>('/api/grid/preferences', payload);
+        const response = await api.post<GridPreferencesResponse>('/grid/preferences', payload);
         if (gridKey === 'finances_fees') {
           // eslint-disable-next-line no-console
           console.log('[useGridPreferences] finances_fees save() response.columns.widths:', response.data.columns.widths);
@@ -278,7 +278,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
 
   const clearServerPreferences = useCallback(async (): Promise<void> => {
     try {
-      await api.delete('/api/grid/preferences', { params: { grid_key: gridKey } });
+      await api.delete('/grid/preferences', { params: { grid_key: gridKey } });
     } catch (e) {
       console.error('Failed to clear grid preferences', e);
     }
