@@ -99,9 +99,10 @@
 
   /* Top header navigation tabs */
   .ui-nav-tab {
-    font-size: calc(0.875rem * var(--ui-nav-scale));
-    padding: calc(0.55rem * var(--ui-nav-scale)) calc(1.1rem * var(--ui-nav-scale));
-    min-height: calc(2.5rem * var(--ui-nav-scale));
+    font-size: calc(0.7rem * var(--ui-nav-scale));
+    padding: calc(0.4rem * var(--ui-nav-scale)) calc(0.5rem * var(--ui-nav-scale));
+    min-height: calc(2rem * var(--ui-nav-scale));
+    white-space: nowrap;
   }
 
   .ui-nav-tab--active {
