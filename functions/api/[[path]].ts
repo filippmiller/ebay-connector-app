@@ -46,7 +46,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const upstream = new URL(apiBase);
   
-  // Build path carefully to avoid double /api when API_PUBLIC_BASE_URL already ends with /api.
+  // Build path carefully: keep incoming /api prefix (proxy must not strip it) and avoid double slashes when API_PUBLIC_BASE_URL already ends with /api.
   const incomingPath = url.pathname || '/';
   const basePath = upstream.pathname.endsWith('/')
     ? upstream.pathname.slice(0, -1)

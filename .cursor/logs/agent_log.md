@@ -58,3 +58,4 @@
 2025-12-07T15:25:00Z - Fixed CF proxy to preserve /api path and switched eBrowser search to auth-enabled api client
 2025-12-07T15:35:00Z - Adjusted eBrowser search API call to use relative path so /api baseURL is kept
 2025-12-07T15:55:00Z - Updated CF proxy to avoid double /api when API_PUBLIC_BASE_URL already includes path; added combined path build
+2025-12-07T16:05:00Z - Added proxy path comment to document preserving /api prefix to prevent 404
