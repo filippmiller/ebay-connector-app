@@ -435,8 +435,14 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
             defaultColDef={defaultColDef}
             rowData={rows}
             getRowId={(params) => {
-              // Use 'id' field if available, otherwise use row index
-              return params.data?.id != null ? String(params.data.id) : `row-${params.node.rowIndex}`;
+              // Use 'id' field if available, otherwise generate a stable ID from data
+              if (params.data?.id != null) {
+                return String(params.data.id);
+              }
+              // Fallback: use a hash of the first few fields to create a stable ID
+              const keys = Object.keys(params.data || {}).slice(0, 3);
+              const values = keys.map(k => params.data?.[k]).join('-');
+              return `row-${values}` || `row-${Math.random()}`;
             }}
             rowSelection={{
               mode: selectionMode,
