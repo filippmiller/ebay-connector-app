@@ -1,5 +1,6 @@
 interface Env {
   API_PUBLIC_BASE_URL: string;
+  API_PUBLIC_EBROWSER_BASE_URL?: string;
 }
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
@@ -24,7 +25,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     });
   }
   
-  const apiBase = env.API_PUBLIC_BASE_URL;
+  // Allow a dedicated base URL for eBrowser to avoid clashes with other consumers.
+  const apiBase = env.API_PUBLIC_EBROWSER_BASE_URL || env.API_PUBLIC_BASE_URL;
   
   if (!apiBase) {
     console.error('[CF Proxy] API_PUBLIC_BASE_URL not configured!');
@@ -52,7 +54,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     ? upstream.pathname.slice(0, -1)
     : upstream.pathname;
   const safeIncoming = incomingPath.startsWith('/') ? incomingPath : `/${incomingPath}`;
-  const combinedPath = `${basePath}${safeIncoming}`.replace(/\/{2,}/g, '/');
+  // If incoming path was stripped of /api (seen in prod logs), enforce /api prefix.
+  const normalizedIncoming = safeIncoming.startsWith('/api/')
+    ? safeIncoming
+    : `/api${safeIncoming}`;
+  const combinedPath = `${basePath}${normalizedIncoming}`.replace(/\/{2,}/g, '/');
   upstream.pathname = combinedPath;
   upstream.search = url.search;
   
