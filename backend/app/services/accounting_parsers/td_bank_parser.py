@@ -251,7 +251,8 @@ class TDBankPDFParser:
             "INTEREST EARNED": "interest_earned_total",
         }
 
-        amount_line_re = re.compile(r"^(.*?)\s+([$\d,]+\.\d{2})\s*$")
+        # Allow optional leading minus and optional leading '$'
+        amount_line_re = re.compile(r"^(.*?)\s+(-?[$\d,]+\.\d{2})\s*$")
 
         for raw_line in block.split("\n"):
             line = raw_line.strip()
@@ -316,7 +317,19 @@ class TDBankPDFParser:
 
         current_section = BankSectionCode.UNKNOWN
 
-        lines = self.full_text.split('\n')
+        # Restrict transaction scanning to the block between DAILY ACCOUNT ACTIVITY
+        # and DAILY BALANCE SUMMARY (to avoid picking up daily balance lines like
+        # "-1, 816.36 09/18").
+        text_upper = self.full_text.upper()
+        start_idx = text_upper.find("DAILY ACCOUNT ACTIVITY")
+        end_idx = text_upper.find("DAILY BALANCE SUMMARY")
+        tx_block = self.full_text
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            tx_block = self.full_text[start_idx:end_idx]
+        elif start_idx != -1:
+            tx_block = self.full_text[start_idx:]
+
+        lines = tx_block.split('\n')
 
         buffer: Optional[Dict[str, Any]] = None  # {date: 'MM/DD', desc_parts: [..]}
         amount_only_re = re.compile(r'^-?[\d,]+\.\d{2}$')
