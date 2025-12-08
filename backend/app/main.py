@@ -55,8 +55,8 @@ from app.routers import (
     ebay_browse,
     ebay_search_watches,
     inventory_offers,
-    # cv_camera,  # Disabled: requires numpy
-    # cv_brain,   # Disabled: requires numpy
+    cv_camera,  # Computer Vision camera module
+    cv_brain,   # Computer Vision brain module
     db_compare,
 )
 from app.utils.logger import logger
@@ -162,8 +162,8 @@ app.include_router(ai_speech.router)
 app.include_router(ebay_browse.router)
 app.include_router(ebay_search_watches.router)
 app.include_router(inventory_offers.router)
-# app.include_router(cv_camera.router)  # Disabled: requires numpy
-# app.include_router(cv_brain.router)   # Disabled: requires numpy
+app.include_router(cv_camera.router)  # Computer Vision camera module
+app.include_router(cv_brain.router)   # Computer Vision brain module
 app.include_router(db_compare.router)
 
 @app.on_event("startup")
