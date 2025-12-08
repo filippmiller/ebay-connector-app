@@ -133,6 +133,7 @@ async def get_grid_preferences(
     always see a complete, server-computed configuration even if the user has never
     customised the grid before.
     """
+    logger.info("🔍 [GRID_PREFS] GET /grid/preferences grid_key=%s user_id=%s", grid_key, current_user.id)
 
     allowed_cols = _allowed_columns_for_grid(grid_key)
     if not allowed_cols:
@@ -145,9 +146,13 @@ async def get_grid_preferences(
     )
 
     available_columns = _columns_meta_for_grid(grid_key)
+    logger.info("🔍 [GRID_PREFS] grid_key=%s available_columns_count=%d", grid_key, len(available_columns))
+    
     columns_cfg = _build_columns_from_layout(grid_key, layout)
     theme_cfg = _build_theme_from_layout(layout)
 
+    logger.info("🔍 [GRID_PREFS] grid_key=%s visible_columns=%s", grid_key, columns_cfg.visible[:5])
+    
     return GridPreferencesResponse(
         grid_key=grid_key,
         available_columns=available_columns,

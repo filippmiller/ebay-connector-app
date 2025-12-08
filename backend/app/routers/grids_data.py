@@ -2495,6 +2495,13 @@ def _get_accounting_bank_statements_data(
         return row
 
     rows = [_serialize(r) for r in rows_db]
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("🔍 [BANK_STATEMENTS] total=%d rows_returned=%d", total, len(rows))
+    if rows:
+        logger.info("🔍 [BANK_STATEMENTS] first_row_keys=%s", list(rows[0].keys()))
+        logger.info("🔍 [BANK_STATEMENTS] first_row=%s", rows[0])
 
     return {
         "rows": rows,
