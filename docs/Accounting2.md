@@ -2,10 +2,10 @@
 
 ## 1. Existing Accounting UI & API Inventory (v1)
 
-### 1.1 Frontend entrypoints
+### 1.1 Frontend entrypoints (before Accounting 2 migration)
 
-- `frontend/src/pages/AccountingPage.tsx`
-  - Exposes `/accounting/*` routes and tabs:
+- `frontend/src/pages/AccountingPage.tsx` **[REMOVED]**
+  - Previously exposed `/accounting/*` routes and tabs:
     - **Statements**: `/accounting/bank-statements` → `BankStatementsList`
     - **Statement Detail**: `/accounting/bank-statements/:id` → `BankStatementDetail`
     - **Cash Expenses**: `/accounting/cash` → `CashExpensesTab`
@@ -198,16 +198,43 @@ _All code will be new (no direct reuse), but behaviour will be based on existing
   - `POST /api/accounting2/bank-statements/{id}/approve` — move from `transaction_spending` to final tables.
   - `POST /api/accounting2/bank-statements/{id}/reject` — delete draft statement + staging rows + PDF.
 
-## 5. Migration / Deletion Plan for Old Accounting
+## 5. Migration / Deletion Plan for Old Accounting (COMPLETED)
 
-1. Build and stabilize `Accounting 2` UI and endpoints alongside existing `/accounting`.
-2. Once feature parity and business rules are verified:
-   - Point users to `/accounting2` instead of `/accounting`.
-3. After acceptance:
-   - Remove old frontend page `frontend/src/pages/AccountingPage.tsx` and related v1-only components.
-   - Remove `gridKey` configs specific to old accounting grids.
-   - Optionally deprecate / remove legacy endpoints that are no longer used.
+1. `Accounting 2` UI and endpoints are built and stable. All accounting work happens under `/accounting2/*`.
+2. Users are pointed to `/accounting2` instead of `/accounting`.
+3. Legacy Accounting v1 frontend and unused backend pieces have been removed:
+   - **Frontend**:
+     - `frontend/src/pages/AccountingPage.tsx` — deleted.
+     - `/accounting/*` route in `frontend/src/App.tsx` — removed.
+     - Legacy `ACCT` tab in `frontend/src/components/FixedHeader.tsx` — removed; only `ACCT2` remains.
+   - **Grids / layouts**:
+     - `gridKey="accounting_bank_statements"` removed from `backend/app/routers/grid_layouts.py` and `backend/app/routers/grids_data.py`.
+     - `ACCOUNTING_BANK_STATEMENTS_COLUMNS_META` removed (Accounting 2 uses custom Statements grid instead of DataGridPage).
+   - **Backend endpoints** (still under `/api/accounting`):
+     - **Kept and used by Accounting 2**:
+       - `GET /api/accounting/bank-statements` — list statements for Statements 2.
+       - `GET /api/accounting/bank-statements/{id}` — statement summary (used by Ledger 2 modal, legacy data still visible).
+       - `GET /api/accounting/bank-statements/{id}/rows` — raw bank rows (used by Ledger 2 modal).
+       - `POST /api/accounting/bank-statements/{id}/commit-rows` — commit bank rows to `accounting_transaction` (ledger commit step after Accounting 2 staging approve).
+       - `DELETE /api/accounting/bank-statements/{id}` — delete statement + rows + committed transactions (used from Statements 2).
+       - `GET /api/accounting/transactions` and `PUT /api/accounting/transactions/{id}` — ledger totals and row updates (used by Ledger 2).
+       - `GET /api/accounting/categories` — used by Ledger 2, Cash Expenses 2, Rules 2.
+       - `GET/POST/DELETE /api/accounting/rules` — used by Rules 2.
+       - `GET/POST/PUT/DELETE /api/accounting/classification-*` — used by Classification Codes manager (Rules 2 sub‑tab).
+       - `GET/POST /api/accounting/cash-expenses` — used by Cash Expenses 2.
+     - **Removed (legacy v1 only, not used by Accounting 2)**:
+       - `POST /api/accounting/bank-statements` (CSV/XLSX/PDF + OpenAI background parser).
+       - `POST /api/accounting/bank-statements/import-json`.
+       - `POST /api/accounting/bank-statements/import-json-body`.
+       - `POST /api/accounting/bank-statements/upload-pdf-td`.
+       - `POST /api/accounting/bank-statements/validate-json`.
+   - **Supabase / parsing services**:
+     - Legacy parsing services (`csv_parser`, `xlsx_parser`, `pdf_parser`, `import_service`, `bank_statement_schema`) remain in `app/services/accounting_parsers/` for historical data and potential admin tooling, but are no longer wired to any UI.
+4. All new uploads and statement review flows use:
+   - `/api/accounting2/bank-statements/upload` for upload + staging into `transaction_spending`.
+   - `/api/accounting2/bank-statements/{id}/approve` / `reject` for staging decisions.
+   - `/api/accounting2/bank-statements/{id}/pdf-url` for PDF viewing (supports both new and legacy statements).
 
 ---
 
-This document will be updated as we implement each piece of Accounting 2 (frontend, backend endpoints, Supabase migrations) and as we identify additional files that should be deleted from the old Accounting implementation.
+This document now describes the final state after Accounting 2 migration: `/accounting2` fully replaces `/accounting`, legacy UI and unused endpoints are removed, and only the backend pieces required by Accounting 2 remain in place.

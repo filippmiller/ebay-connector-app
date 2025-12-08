@@ -30,7 +30,6 @@ const TABS: HeaderTab[] = [
   { name: 'OFFERS', path: '/offers' },
   { name: 'TASKS', path: '/tasks' },
   { name: 'eBROWSER', path: '/ebay-browser' },
-  { name: 'ACCT', path: '/accounting', adminOnly: true },
   { name: 'ACCT2', path: '/accounting2', adminOnly: true },
   { name: 'ADMIN', path: '/admin', adminOnly: true }
 ];

@@ -147,17 +147,6 @@ ACTIVE_INVENTORY_COLUMNS_META: List[ColumnMeta] = [
 # via TblPartsInventory so that column metadata always matches the real DB.
 INVENTORY_COLUMNS_META: List[ColumnMeta] = []  # Populated lazily from reflection.
 
-ACCOUNTING_BANK_STATEMENTS_COLUMNS_META: List[ColumnMeta] = [
-  ColumnMeta(name="id", label="ID", type="number", width_default=80),
-  ColumnMeta(name="statement_period_start", label="Period start", type="string", width_default=140),
-  ColumnMeta(name="statement_period_end", label="Period end", type="string", width_default=140),
-  ColumnMeta(name="bank_name", label="Bank", type="string", width_default=160),
-  ColumnMeta(name="account_last4", label="Last4", type="string", width_default=80),
-  ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
-  ColumnMeta(name="rows_count", label="Rows", type="number", width_default=80),
-  ColumnMeta(name="status", label="Status", type="string", width_default=120),
-  ColumnMeta(name="created_at", label="Created at", type="datetime", width_default=180),
-]
 
 ACCOUNTING_CASH_EXPENSES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=80),
@@ -475,19 +464,6 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
         ],
         "sort": {"column": "paid_time", "direction": "desc"},
     },
-    "accounting_bank_statements": {
-        "visible_columns": [
-            "statement_period_start",
-            "statement_period_end",
-            "bank_name",
-            "account_last4",
-            "currency",
-            "rows_count",
-            "status",
-            "created_at",
-        ],
-        "sort": {"column": "statement_period_start", "direction": "desc"},
-    },
     "accounting_cash_expenses": {
         "visible_columns": [
             "date",
@@ -624,8 +600,6 @@ def _columns_meta_for_grid(grid_key: str) -> List[ColumnMeta]:
         return SNIPER_SNIPES_COLUMNS_META
     if grid_key == "buying":
         return BUYING_COLUMNS_META
-    if grid_key == "accounting_bank_statements":
-        return ACCOUNTING_BANK_STATEMENTS_COLUMNS_META
     if grid_key == "accounting_cash_expenses":
         return ACCOUNTING_CASH_EXPENSES_COLUMNS_META
     if grid_key == "accounting_transactions":

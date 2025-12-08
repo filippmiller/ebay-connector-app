@@ -33,7 +33,6 @@ import AdminDataMigrationPage from './pages/AdminDataMigrationPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
 import TasksPage from './pages/TasksPage';
-import AccountingPage from './pages/AccountingPage';
 import Accounting2Page from './pages/Accounting2Page';
 import AdminUITweakPage from './pages/AdminUITweakPage';
 import SecurityCenterPage from './pages/SecurityCenterPage';
@@ -329,14 +328,6 @@ function App() {
             element={
               <ProtectedRoute>
                 <AdminJobsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/accounting/*"
-            element={
-              <ProtectedRoute>
-                <AccountingPage />
               </ProtectedRoute>
             }
           />

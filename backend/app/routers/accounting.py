@@ -10,7 +10,8 @@ import hashlib
 import asyncio
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status, BackgroundTasks, Body
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status, Query, Form, Body
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
@@ -33,44 +34,31 @@ from app.models_sqlalchemy.models import (
 from app.services.admin_auth import require_admin_user
 from app.utils.logger import logger
 
-from app.services.accounting_parsers.csv_parser import parse_csv_bytes
-from app.services.accounting_parsers.xlsx_parser import parse_xlsx_bytes
-from app.services.accounting_parsers.pdf_parser import parse_pdf_bytes, parse_pdf_with_metadata
-from app.services.accounting_rules_engine import apply_rules_to_bank_rows
-from app.services.supabase_storage import upload_file_to_storage, delete_files
-
-# Bank Statement v1.0 imports
-from app.services.accounting_parsers.import_service import (
-    import_bank_statement_json,
-    import_td_pdf_bytes,
-    get_supported_banks,
-    validate_json_format,
-    ImportResult,
-)
-from app.services.accounting_parsers.bank_statement_schema import (
-    BankStatementV1,
-    validate_bank_statement_json,
-)
+from app.services.supabase_storage import delete_files
 
 
 
 def _log_process(db: Session, stmt_id: int, message: str, level: str = "INFO", details: Optional[Dict[str, Any]] = None):
+    """Legacy logging helper used only by old bank-statement background parser.
+
+    Kept as a harmless no-op shim so that any historical background tasks that
+    might still reference it do not crash. New Accounting 2 flows do not use it.
+    """
     try:
         log_entry = AccountingProcessLog(
             bank_statement_id=stmt_id,
             message=message,
             level=level,
-            details=details
+            details=details,
         )
         db.add(log_entry)
-        # We don't commit here to avoid breaking the main transaction flow, 
-        # but in a production system we might want a separate db session for logs 
-        # to persist them even on rollback.
     except Exception as e:
         logger.error(f"Failed to write process log: {e}")
 
 
-async def process_bank_statement_background(statement_id: int, file_bytes: bytes, file_name: str, content_type: str, user_id: str):
+# NOTE: The entire legacy OpenAI / CSV / XLSX background parser has been
+# removed as part of Accounting v1 decommissioning. All new uploads go
+# through /api/accounting2/bank-statements/upload.
     """Background task to parse the file and update the statement."""
     logger.info(f"Starting background processing for statement {statement_id}...")
     
@@ -380,6 +368,14 @@ async def update_category(
 # --- Bank Rules ---
 
 
+class AccountingRuleCreate(BaseModel):
+    pattern_type: str
+    pattern_value: str
+    expense_category_id: int
+    priority: int = 10
+    is_active: bool = True
+
+
 @router.get("/rules")
 async def list_rules(
     is_active: Optional[bool] = Query(None),
@@ -407,20 +403,16 @@ async def list_rules(
 
 @router.post("/rules", status_code=status.HTTP_201_CREATED)
 async def create_rule(
-    pattern_type: str,
-    pattern_value: str,
-    expense_category_id: int,
-    priority: int = 10,
-    is_active: bool = True,
+    payload: AccountingRuleCreate,
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ):
     rule = AccountingBankRule(
-        pattern_type=pattern_type,
-        pattern_value=pattern_value,
-        expense_category_id=expense_category_id,
-        priority=priority,
-        is_active=is_active,
+        pattern_type=payload.pattern_type,
+        pattern_value=payload.pattern_value,
+        expense_category_id=payload.expense_category_id,
+        priority=payload.priority,
+        is_active=payload.is_active,
         created_by_user_id=current_user.id,
     )
     db.add(rule)
@@ -452,11 +444,8 @@ async def delete_rule(
 
 
 
-# --- Bank statements upload & rows ---
+# --- Bank statements list/detail for legacy data (still used by Accounting 2) ---
 
-
-@router.post("/bank-statements", status_code=status.HTTP_202_ACCEPTED)
-async def upload_bank_statement(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     bank_name: Optional[str] = Form(None),
@@ -926,8 +915,6 @@ async def list_supported_banks(
     }
 
 
-@router.post("/bank-statements/import-json")
-async def import_json_bank_statement(
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
     file: UploadFile = File(None),
@@ -1038,8 +1025,6 @@ async def import_json_bank_statement(
     return result.to_dict()
 
 
-@router.post("/bank-statements/import-json-body")
-async def import_json_bank_statement_body(
     statement_data: Dict[str, Any],
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
@@ -1066,8 +1051,6 @@ async def import_json_bank_statement_body(
     return result.to_dict()
 
 
-@router.post("/bank-statements/upload-pdf-td")
-async def upload_td_pdf_statement(
     file: UploadFile = File(...),
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
@@ -1153,8 +1136,6 @@ async def upload_td_pdf_statement(
     return result.to_dict()
 
 
-@router.post("/bank-statements/validate-json")
-async def validate_json_schema(
     statement_data: Dict[str, Any],
     current_user: User = Depends(require_admin_user),
 ):

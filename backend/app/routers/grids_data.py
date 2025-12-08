@@ -642,20 +642,6 @@ async def get_grid_data(
             )
         finally:
             db_sqla.close()
-    elif grid_key == "accounting_bank_statements":
-        db_sqla = next(get_db_sqla())
-        try:
-            return _get_accounting_bank_statements_data(
-                db_sqla,
-                current_user,
-                requested_cols,
-                limit,
-                offset,
-                sort_column,
-                sort_dir,
-            )
-        finally:
-            db_sqla.close()
     elif grid_key == "accounting_cash_expenses":
         db_sqla = next(get_db_sqla())
         try:
