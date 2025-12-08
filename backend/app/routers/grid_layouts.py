@@ -540,8 +540,7 @@ def _inventory_columns_meta_from_reflection() -> List[ColumnMeta]:
     if INVENTORY_COLUMNS_META:
         return INVENTORY_COLUMNS_META
 
-    # Try to use VIEW with counts, fallback to base table
-    from app.models_sqlalchemy.models import InventoryWithCounts, TblPartsInventory
+    from app.models_sqlalchemy.models import TblPartsInventory
     from sqlalchemy.sql.sqltypes import (
         String,
         Text,
@@ -558,12 +557,7 @@ def _inventory_columns_meta_from_reflection() -> List[ColumnMeta]:
         Float as SA_Float,
     )
 
-    # Use VIEW if available, otherwise use base table
-    if not InventoryWithCounts.__abstract__:
-        table = InventoryWithCounts.__table__
-    else:
-        table = TblPartsInventory.__table__
-        
+    table = TblPartsInventory.__table__
     if table is None or not list(table.columns):
         INVENTORY_COLUMNS_META = []
         return INVENTORY_COLUMNS_META
@@ -590,6 +584,26 @@ def _inventory_columns_meta_from_reflection() -> List[ColumnMeta]:
                 sortable=True,
             )
         )
+
+    # Add virtual columns for SKU/ItemID with counts
+    cols.append(
+        ColumnMeta(
+            name="SKU_with_counts",
+            label="SKU (Active/Sold)",
+            type="string",
+            width_default=200,
+            sortable=False,
+        )
+    )
+    cols.append(
+        ColumnMeta(
+            name="ItemID_with_counts",
+            label="ItemID (Active/Sold)",
+            type="string",
+            width_default=220,
+            sortable=False,
+        )
+    )
 
     INVENTORY_COLUMNS_META = cols
     return INVENTORY_COLUMNS_META
