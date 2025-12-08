@@ -1364,6 +1364,85 @@ def _get_inventory_data(
     except Exception:
         status_label_by_id = {}
 
+    # SKU and ItemID count aggregation for (active/sold) display
+    sku_col = cols_by_lower.get('sku') or cols_by_lower.get('skucode')
+    itemid_col = cols_by_lower.get('itemid') or cols_by_lower.get('item_id')
+    statussku_col = cols_by_lower.get('statussku') or cols_by_lower.get('status_sku')
+    
+    sku_counts = {}
+    itemid_counts = {}
+    
+    if sku_col and statussku_col and rows_db:
+        active_ids = []
+        sold_ids = []
+        try:
+            status_query = sa_text("""
+                SELECT "InventoryStatus_ID" AS id, "InventoryStatus_Name" AS name,
+                "InventoryShortStatus_Name" AS short_name
+                FROM "tbl_parts_inventorystatus"
+            """)
+            result = db.execute(status_query)
+            for row in result:
+                name_lower = str(row.name or '').strip().lower()
+                short_lower = str(row.short_name or '').strip().lower()
+                if any(kw in name_lower or kw in short_lower for kw in ['active', 'актив']):
+                    active_ids.append(int(row.id))
+                elif any(kw in name_lower or kw in short_lower for kw in ['sold', 'продан']):
+                    sold_ids.append(int(row.id))
+        except Exception:
+            active_ids = []
+            sold_ids = []
+        
+        unique_skus = set()
+        for row in rows_db:
+            mapping = getattr(row, "_mapping", row)
+            sku_value = mapping.get(sku_col.key)
+            if sku_value is not None:
+                unique_skus.add(sku_value)
+        
+        if unique_skus and (active_ids or sold_ids):
+            try:
+                sku_list = list(unique_skus)
+                count_query = sa_text(f'''
+                    SELECT "{sku_col.name}" AS sku,
+                    COUNT(*) FILTER (WHERE "{statussku_col.name}" = ANY(:active_ids)) AS active_count,
+                    COUNT(*) FILTER (WHERE "{statussku_col.name}" = ANY(:sold_ids)) AS sold_count
+                    FROM "{table.name}"
+                    WHERE "{sku_col.name}" = ANY(:sku_list)
+                    GROUP BY "{sku_col.name}"
+                ''')
+                result = db.execute(count_query, {'active_ids': active_ids or [0], 'sold_ids': sold_ids or [0], 'sku_list': sku_list})
+                for row in result:
+                    sku_counts[row.sku] = (int(row.active_count or 0), int(row.sold_count or 0))
+            except Exception:
+                pass
+    
+    if itemid_col and statussku_col and rows_db:
+        unique_itemids = set()
+        for row in rows_db:
+            mapping = getattr(row, "_mapping", row)
+            itemid_value = mapping.get(itemid_col.key)
+            if itemid_value is not None and str(itemid_value).strip():
+                unique_itemids.add(itemid_value)
+        
+        if unique_itemids and (active_ids or sold_ids):
+            try:
+                itemid_list = list(unique_itemids)
+                count_query = sa_text(f'''
+                    SELECT "{itemid_col.name}" AS itemid,
+                    COUNT(*) FILTER (WHERE "{statussku_col.name}" = ANY(:active_ids)) AS active_count,
+                    COUNT(*) FILTER (WHERE "{statussku_col.name}" = ANY(:sold_ids)) AS sold_count
+                    FROM "{table.name}"
+                    WHERE "{itemid_col.name}" = ANY(:itemid_list)
+                    GROUP BY "{itemid_col.name}"
+                ''')
+                result = db.execute(count_query, {'active_ids': active_ids or [0], 'sold_ids': sold_ids or [0], 'itemid_list': itemid_list})
+                for row in result:
+                    itemid_counts[row.itemid] = (int(row.active_count or 0), int(row.sold_count or 0))
+            except Exception:
+                pass
+
+
     def _serialize(row_) -> Dict[str, Any]:
         mapping = getattr(row_, "_mapping", row_)
         row: Dict[str, Any] = {}
@@ -1402,6 +1481,21 @@ def _get_inventory_data(
             except Exception:
                 # Skip columns that cause errors
                 continue
+        
+        # Add formatted SKU with counts if requested
+        if 'SKU_with_counts' in selected_cols and sku_col:
+            sku_value = mapping.get(sku_col.key)
+            if sku_value is not None:
+                counts = sku_counts.get(sku_value, (0, 0))
+                row['SKU_with_counts'] = f"{sku_value} ({counts[0]}/{counts[1]})"
+        
+        # Add formatted ItemID with counts if requested
+        if 'ItemID_with_counts' in selected_cols and itemid_col:
+            itemid_value = mapping.get(itemid_col.key)
+            if itemid_value is not None:
+                counts = itemid_counts.get(itemid_value, (0, 0))
+                row['ItemID_with_counts'] = f"{itemid_value} ({counts[0]}/{counts[1]})"
+        
         return row
 
     rows = [_serialize(item) for item in rows_db]
