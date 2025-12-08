@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any
 from datetime import date
 from decimal import Decimal
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Body
 from sqlalchemy.orm import Session
@@ -147,7 +148,7 @@ async def upload_bank_statement_v2(
                 "amount": amount,
                 "balance_after": balance_after,
                 "currency": currency,
-                "raw_transaction_json": txn.model_dump(mode="json"),
+                "raw_transaction_json": json.dumps(txn.model_dump(mode="json")),
             },
         )
         total_rows += 1
