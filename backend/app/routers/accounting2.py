@@ -82,16 +82,16 @@ async def upload_bank_statement_v2(
     db.add(stmt)
     db.flush()  # get stmt.id
 
-    # 3) Upload original PDF to new bucket
+    # 3) Upload original PDF to bank-statements bucket used for all bank files
     storage_filename = f"{stmt.id}/{file.filename}"
     try:
         storage_path = upload_file_to_storage(
-            "accounting_bank_statements",
+            "bank-statements",
             storage_filename,
             file_bytes,
             file.content_type or "application/pdf",
         )
-        stmt.supabase_bucket = "accounting_bank_statements"
+        stmt.supabase_bucket = "bank-statements"
         stmt.supabase_path = storage_path
     except Exception as e:
         logger.error(f"Accounting2: failed to upload PDF to Supabase: {e}")
@@ -371,9 +371,8 @@ async def get_bank_statement_pdf_url(
         bucket = bucket or "bank-statements"
         path = file_row.storage_path
 
-    # Default buckets if still not set
+    # Default bucket if still not set
     if not bucket:
-        # Legacy default bucket name where existing PDFs live
         bucket = "bank-statements"
 
     url = get_signed_url(bucket, path, expiry_seconds=3600)

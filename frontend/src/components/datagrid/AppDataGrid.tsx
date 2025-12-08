@@ -19,6 +19,7 @@ import 'ag-grid-community/styles/ag-theme-quartz.css';
 // Register AG Grid modules
 ModuleRegistry.registerModules([AllCommunityModule]);
 import type { GridColumnMeta } from '@/components/DataGridPage';
+import api from '@/lib/apiClient';
 
 import type { GridThemeConfig, ColumnStyle } from '@/hooks/useGridPreferences';
 
@@ -90,6 +91,50 @@ function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): st
   }
 
   return String(raw);
+}
+
+type LedgerTag = {
+  code: string;
+  label: string;
+};
+
+function ledgerTagColor(code: string): string {
+  // Deterministic soft color based on code hash; used for tiny dot indicator.
+  if (!code) return '#d1d5db'; // gray-300 fallback
+  let hash = 0;
+  for (let i = 0; i < code.length; i += 1) {
+    // simple 32-bit hash
+    hash = (hash * 31 + code.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 55%)`;
+}
+
+const ledgerTagsCache: {
+  loaded: boolean;
+  loading: boolean;
+  items: LedgerTag[];
+} = {
+  loaded: false,
+  loading: false,
+  items: [],
+};
+
+async function ensureLedgerTagsLoaded(apiInstance: any, refresh: () => void) {
+  if (ledgerTagsCache.loaded || ledgerTagsCache.loading) return;
+  ledgerTagsCache.loading = true;
+  try {
+    const { data } = await api.get<{ id: number; code: string; label: string }[]>('/accounting/tags', {
+      params: { include_inactive: false },
+    });
+    ledgerTagsCache.items = (data || []).map((t) => ({ code: t.code, label: t.label }));
+    ledgerTagsCache.loaded = true;
+    refresh();
+  } catch {
+    // ignore; just leave cache empty
+  } finally {
+    ledgerTagsCache.loading = false;
+  }
 }
 
 function coerceNumeric(value: unknown): number | null {
@@ -311,6 +356,114 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
             >
               {value}
             </a>
+          );
+        };
+      }
+
+      // Special case: ledger_transactions.subcategory used as flag/tag code with dropdown editor.
+      if (gridKey === 'ledger_transactions' && col.name === 'subcategory') {
+        colDef.valueFormatter = undefined;
+        colDef.cellRenderer = (params: ICellRendererParams) => {
+          const row = params.data as any;
+          const rowId = row?.id;
+          const current = (params.value as string) || '';
+
+          // Kick off tag load on first render; refresh grid when done.
+          if (!ledgerTagsCache.loaded && !ledgerTagsCache.loading && params.api) {
+            void ensureLedgerTagsLoaded(params.api, () => {
+              try {
+                params.api!.refreshCells({ force: true, columns: [col.name] });
+              } catch {
+                // ignore
+              }
+            });
+          }
+
+          if (!rowId) {
+            return formatCellValue(current, type);
+          }
+
+          const options = ledgerTagsCache.items;
+
+          const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+            const value = e.target.value || null;
+            try {
+              await api.put(`/accounting/transactions/${rowId}`, {
+                flag_code: value,
+              });
+              // Update cell value so UI matches backend without full reload.
+              params.node.setDataValue(col.name, value);
+            } catch (err: any) {
+              // eslint-disable-next-line no-alert
+              alert(err?.response?.data?.detail || err?.message || 'Failed to update flag');
+            }
+          };
+
+          const handleQuickAdd = async (e: React.MouseEvent<HTMLButtonElement>) => {
+            e.stopPropagation();
+            const code = window.prompt('New flag code (short):');
+            if (!code) return;
+            const trimmedCode = code.trim();
+            if (!trimmedCode) return;
+            const labelInput = window.prompt('New flag label (optional, for display):', trimmedCode);
+            if (labelInput === null) return;
+            const trimmedLabel = labelInput.trim() || trimmedCode;
+            try {
+              const payload = { code: trimmedCode, label: trimmedLabel };
+              const { data } = await api.post('/accounting/tags', payload);
+              const createdCode: string = data?.code ?? trimmedCode;
+              const createdLabel: string = data?.label ?? trimmedLabel;
+              ledgerTagsCache.items = [
+                ...ledgerTagsCache.items,
+                { code: createdCode, label: createdLabel },
+              ];
+              ledgerTagsCache.loaded = true;
+              // Select the newly created flag for this row.
+              await api.put(`/accounting/transactions/${rowId}`, {
+                flag_code: createdCode,
+              });
+              params.node.setDataValue(col.name, createdCode);
+              try {
+                params.api!.refreshCells({ force: true, columns: [col.name] });
+              } catch {
+                // ignore
+              }
+            } catch (err: any) {
+              // eslint-disable-next-line no-alert
+              alert(err?.response?.data?.detail || err?.message || 'Failed to create flag');
+            }
+          };
+
+          const selectedTag = options.find((t) => t.code === current);
+          const dotColor = selectedTag ? ledgerTagColor(selectedTag.code) : ledgerTagColor('');
+
+          return (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <span
+                className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                style={{ backgroundColor: dotColor }}
+              />
+              <select
+                value={current}
+                onChange={handleChange}
+                className="border rounded px-1 py-0.5 text-[11px] bg-white max-w-[160px]"
+              >
+                <option value="">—</option>
+                {options.map((t) => (
+                  <option key={t.code} value={t.code}>
+                    {t.code} — {t.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="border border-gray-300 rounded px-1 text-[10px] leading-none bg-white hover:bg-gray-50"
+                title="Add new flag"
+                onClick={handleQuickAdd}
+              >
+                +
+              </button>
+            </div>
           );
         };
       }

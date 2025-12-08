@@ -2138,6 +2138,20 @@ class PayoutItem(Base):
     )
 
 
+class AccountingTransactionTag(Base):
+    __tablename__ = "accounting_transaction_tag"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(Text, unique=True, nullable=False, index=True)
+    label = Column(Text, nullable=False)
+    color = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey('users.id'), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class AccountingBankStatementImportRun(Base):
     """Audit log of each bank statement import attempt."""
     __tablename__ = "bank_statement_import_run"

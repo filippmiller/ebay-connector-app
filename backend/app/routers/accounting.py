@@ -28,6 +28,7 @@ from app.models_sqlalchemy.models import (
     AccountingProcessLog,
     AccountingGroup,
     AccountingClassificationCode,
+    AccountingTransactionTag,
     User,
 )
 
@@ -665,6 +666,66 @@ async def apply_rule_to_transactions(
     db.commit()
 
     return {"rule_id": rule_id, "updated": updated, "category_id": category_id}
+
+
+# --- Transaction tags (flags) ---
+
+
+class AccountingTagCreate(BaseModel):
+    code: str
+    label: str
+    color: Optional[str] = None
+
+
+@router.get("/tags")
+async def list_tags(
+    include_inactive: bool = Query(False),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    q = db.query(AccountingTransactionTag)
+    if not include_inactive:
+        q = q.filter(AccountingTransactionTag.is_active == True)
+    tags = q.order_by(AccountingTransactionTag.code.asc()).all()
+    return [
+        {
+            "id": t.id,
+            "code": t.code,
+            "label": t.label,
+            "color": t.color,
+            "is_active": t.is_active,
+        }
+        for t in tags
+    ]
+
+
+@router.post("/tags", status_code=status.HTTP_201_CREATED)
+async def create_tag(
+    payload: AccountingTagCreate,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    code = payload.code.upper().replace(" ", "_")
+    existing = db.query(AccountingTransactionTag).filter(AccountingTransactionTag.code == code).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Tag with this code already exists")
+
+    tag = AccountingTransactionTag(
+        code=code,
+        label=payload.label,
+        color=payload.color,
+        created_by_user_id=current_user.id,
+    )
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    return {
+        "id": tag.id,
+        "code": tag.code,
+        "label": tag.label,
+        "color": tag.color,
+        "is_active": tag.is_active,
+    }
 
 @router.post("/test-openai")
 async def test_openai_connection(

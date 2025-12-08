@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import api from '@/lib/apiClient';
+import { DataGridPage } from '@/components/DataGridPage';
 
 interface Accounting2StatementSummary {
   id: number;
@@ -666,6 +667,15 @@ interface Accounting2LedgerRow {
   storage_id: string | null;
   is_personal: boolean | null;
   is_internal_transfer: boolean | null;
+  subcategory?: string | null; // used as a simple flag / tag code
+}
+
+interface AccountingTag {
+  id: number;
+  code: string;
+  label: string;
+  color?: string | null;
+  is_active: boolean;
 }
 
 interface Accounting2LedgerTotals {
@@ -688,20 +698,39 @@ function LedgerTab2() {
   const [isPersonal, setIsPersonal] = React.useState<string>(''); // '', 'true', 'false'
   const [isInternal, setIsInternal] = React.useState<string>('');
 
-  const [rows, setRows] = React.useState<Accounting2LedgerRow[]>([]);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [page, setPage] = React.useState(1);
-  const [pageSize] = React.useState(100);
-  const [total, setTotal] = React.useState(0);
-
   const [totals, setTotals] = React.useState<Accounting2LedgerTotals | null>(null);
 
+  const [categories, setCategories] = React.useState<Accounting2Category[]>([]);
+  const [tags, setTags] = React.useState<AccountingTag[]>([]);
+  const [selectedIds, setSelectedIds] = React.useState<number[]>([]);
+  const [savingSelection, setSavingSelection] = React.useState(false);
+  const [newTagOpen, setNewTagOpen] = React.useState(false);
   const [stmtModalOpen, setStmtModalOpen] = React.useState(false);
   const [stmtModalLoading, setStmtModalLoading] = React.useState(false);
   const [stmtModalError, setStmtModalError] = React.useState<string | null>(null);
   const [stmtMeta, setStmtMeta] = React.useState<any | null>(null);
   const [stmtSampleRows, setStmtSampleRows] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const { data } = await api.get<Accounting2Category[]>('/accounting/categories', { params: { is_active: true } });
+        setCategories(data || []);
+      } catch {
+        // ignore
+      }
+    };
+    const loadTags = async () => {
+      try {
+        const { data } = await api.get<AccountingTag[]>('/accounting/tags', { params: { include_inactive: false } });
+        setTags(data || []);
+      } catch {
+        // ignore
+      }
+    };
+    void loadCategories();
+    void loadTags();
+  }, []);
 
   const buildFilterParams = React.useCallback(() => {
     const params: Record<string, any> = {};
@@ -722,31 +751,19 @@ function LedgerTab2() {
     return params;
   }, [dateFrom, dateTo, sourceType, storageId, direction, accountName, categoryId, minAmount, maxAmount, searchText, isPersonal, isInternal]);
 
+  // Note: rows and layout now come from DataGridPage; we only need totals and selection.
   const loadRows = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
     try {
       const params: Record<string, any> = {
-        limit: pageSize,
-        offset: (page - 1) * pageSize,
-        sort_by: 'date',
-        sort_dir: 'desc',
+        limit: 1,
+        offset: 0,
         ...buildFilterParams(),
       };
-      const { data } = await api.get<{ rows: Accounting2LedgerRow[]; total: number }>(
-        '/grids/ledger_transactions/data',
-        { params },
-      );
-      const payload: any = data as any;
-      const rowsData = Array.isArray(payload.rows) ? payload.rows : Array.isArray(payload.items) ? payload.items : [];
-      setRows(rowsData);
-      setTotal(typeof payload.total === 'number' ? payload.total : rowsData.length);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load ledger');
-    } finally {
-      setLoading(false);
+      await api.get('/grids/ledger_transactions/data', { params });
+    } catch {
+      // ignore; DataGridPage will surface any errors
     }
-  }, [page, pageSize, buildFilterParams]);
+  }, [buildFilterParams]);
 
   const loadTotals = React.useCallback(async () => {
     try {
@@ -779,7 +796,33 @@ function LedgerTab2() {
     setPage(1);
   };
 
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const resolveCategoryName = (id: number | null) => {
+    if (!id) return '';
+    const c = categories.find((x) => x.id === id);
+    return c ? `${c.code} — ${c.name}` : String(id);
+  };
+
+  const handleApplyCategoryToSelection = async () => {
+    if (!selectedIds.length || !categoryId) return;
+    setSavingSelection(true);
+    try {
+      // We don't need rule_id semantics here; call the generic transaction update per-row.
+      const targetCategoryId = Number(categoryId);
+      await Promise.all(
+        selectedIds.map((id) =>
+          api.put(`/accounting/transactions/${id}`, {
+            expense_category_id: targetCategoryId,
+          }),
+        ),
+      );
+      await loadRows();
+      await loadTotals();
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || err?.message || 'Failed to apply category to selected');
+    } finally {
+      setSavingSelection(false);
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col gap-4">
@@ -821,10 +864,11 @@ function LedgerTab2() {
             />
           </div>
           <div>
-            <Label className="block text-xs mb-1">Storage ID</Label>
+            <Label className="block text-xs mb-1">Search in text</Label>
             <Input
-              value={storageId}
-              onChange={(e) => { setStorageId(e.target.value); setPage(1); }}
+              value={searchText}
+              onChange={(e) => { setSearchText(e.target.value); setPage(1); }}
+              placeholder="Search in description / account / counterparty"
             />
           </div>
           <div>
@@ -847,12 +891,19 @@ function LedgerTab2() {
             />
           </div>
           <div>
-            <Label className="block text-xs mb-1">Category ID</Label>
-            <Input
+            <Label className="block text-xs mb-1">Category</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
               value={categoryId}
               onChange={(e) => { setCategoryId(e.target.value); setPage(1); }}
-              placeholder="e.g. 101"
-            />
+            >
+              <option value="">All</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <Label className="block text-xs mb-1">Amount from</Label>
@@ -870,14 +921,7 @@ function LedgerTab2() {
               onChange={(e) => { setMaxAmount(e.target.value); setPage(1); }}
             />
           </div>
-          <div>
-            <Label className="block text-xs mb-1">Search text</Label>
-            <Input
-              value={searchText}
-              onChange={(e) => { setSearchText(e.target.value); setPage(1); }}
-              placeholder="Search in description / account / counterparty"
-            />
-          </div>
+          <div />
           <div>
             <Label className="block text-xs mb-1">Personal</Label>
             <select
@@ -904,117 +948,39 @@ function LedgerTab2() {
           </div>
         </div>
         <div className="flex justify-between items-center mt-2 text-xs">
-          <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
-            Reset filters
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
+              Reset filters
+            </Button>
+            {selectedIds.length > 0 && (
+              <>
+                <span className="text-gray-500">Selected: {selectedIds.length}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={savingSelection || !categoryId}
+                  onClick={handleApplyCategoryToSelection}
+                >
+                  {savingSelection ? 'Applying…' : 'Apply category to selected'}
+                </Button>
+              </>
+            )}
+          </div>
           <span className="text-gray-500">
-            {total > 0 ? `Showing ${(page - 1) * pageSize + 1}-${Math.min(total, page * pageSize)} of ${total}` : 'No rows'}
+            {totals ? `Total in: ${totals.total_in.toFixed(2)} · Total out: ${totals.total_out.toFixed(2)} · Net: ${totals.net.toFixed(2)}` : 'Totals unavailable'}
           </span>
         </div>
       </Card>
 
-      <div className="flex-1 min-h-0 overflow-auto border rounded bg-white">
-        {error && (
-          <div className="p-3 text-sm text-red-600 border-b">{error}</div>
-        )}
-        <table className="min-w-full text-xs">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-2 py-2 text-left">Date</th>
-              <th className="px-2 py-2 text-left">Account</th>
-              <th className="px-2 py-2 text-left">Description</th>
-              <th className="px-2 py-2 text-left">Source</th>
-              <th className="px-2 py-2 text-left">Stmt</th>
-              <th className="px-2 py-2 text-right">In</th>
-              <th className="px-2 py-2 text-right">Out</th>
-              <th className="px-2 py-2 text-left">Storage</th>
-              <th className="px-2 py-2 text-left">Flags</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={9} className="px-3 py-3 text-sm text-gray-600">Loading ledger…</td>
-              </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={9} className="px-3 py-3 text-sm text-gray-600">No transactions found.</td>
-              </tr>
-            ) : (
-              rows.map((r) => {
-                const isIn = r.direction === 'in';
-                const amount = typeof r.amount === 'number' ? r.amount : Number(r.amount || 0);
-                const inVal = isIn ? amount : 0;
-                const outVal = !isIn ? amount : 0;
-                const canOpenStatement = r.source_type === 'bank_statement' && r.source_id;
-                return (
-                  <tr key={r.id} className="border-t hover:bg-gray-50">
-                    <td className="px-2 py-1 whitespace-nowrap">{r.date}</td>
-                    <td className="px-2 py-1 whitespace-nowrap">{r.account_name || '—'}</td>
-                    <td className="px-2 py-1">
-                      <div className="truncate max-w-xs" title={r.description || undefined}>
-                        {r.description || '—'}
-                      </div>
-                    </td>
-                    <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-600">
-                      {r.source_type}
-                    </td>
-                    <td className="px-2 py-1 whitespace-nowrap">
-                      {canOpenStatement ? (
-                        <Button
-                          type="button"
-                          variant="link"
-                          size="sm"
-                          className="h-auto p-0 text-xs"
-                          onClick={async () => {
-                            setStmtModalOpen(true);
-                            setStmtModalLoading(true);
-                            setStmtModalError(null);
-                            setStmtMeta(null);
-                            setStmtSampleRows([]);
-                            try {
-                              const [metaResp, rowsResp] = await Promise.all([
-                                api.get(`/accounting/bank-statements/${r.source_id}`),
-                                api.get(`/accounting/bank-statements/${r.source_id}/rows`, {
-                                  params: { limit: 10 },
-                                }),
-                              ]);
-                              setStmtMeta(metaResp.data);
-                              const payload: any = rowsResp.data as any;
-                              const rows = Array.isArray(payload.rows) ? payload.rows : Array.isArray(payload.items) ? payload.items : [];
-                              setStmtSampleRows(rows.slice(0, 10));
-                            } catch (err: any) {
-                              setStmtModalError(err?.response?.data?.detail || err?.message || 'Failed to load statement');
-                            } finally {
-                              setStmtModalLoading(false);
-                            }
-                          }}
-                        >
-                          #{r.source_id}
-                        </Button>
-                      ) : (
-                        <span className="text-[11px] text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1 text-right text-emerald-700">
-                      {inVal ? inVal.toFixed(2) : ''}
-                    </td>
-                    <td className="px-2 py-1 text-right text-red-700">
-                      {outVal ? outVal.toFixed(2) : ''}
-                    </td>
-                    <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-600">
-                      {r.storage_id || ''}
-                    </td>
-                    <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-600">
-                      {r.is_personal ? 'PERSONAL ' : ''}
-                      {r.is_internal_transfer ? 'INTERNAL' : ''}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+      <div className="flex-1 min-h-0 overflow-hidden border rounded bg-white">
+        <DataGridPage
+          gridKey="ledger_transactions"
+          title="Ledger 2"
+          extraParams={buildFilterParams()}
+          selectionMode="multiRow"
+          onSelectionChange={(rows) => setSelectedIds(rows.map((r: any) => r.id))}
+        />
+      </div>
         {total > pageSize && (
           <div className="flex items-center justify-between px-3 py-2 text-xs text-gray-600 border-t bg-gray-50">
             <div>
@@ -1493,6 +1459,7 @@ interface Accounting2RulePreviewRow {
   direction: 'in' | 'out';
   account_name: string | null;
   description: string | null;
+  expense_category_id: number | null;
 }
 
 function RulesTab2() {
@@ -1511,6 +1478,8 @@ function RulesTab2() {
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [previewRows, setPreviewRows] = React.useState<Accounting2RulePreviewRow[]>([]);
+  const [previewSelectedIds, setPreviewSelectedIds] = React.useState<number[]>([]);
+  const [previewApplying, setPreviewApplying] = React.useState(false);
 
   React.useEffect(() => {
     const load = async () => {
@@ -1564,6 +1533,7 @@ function RulesTab2() {
     setPreviewLoading(true);
     setPreviewError(null);
     setPreviewRows([]);
+    setPreviewSelectedIds([]);
     try {
       const params: Record<string, any> = {
         limit: 20,
@@ -1587,6 +1557,28 @@ function RulesTab2() {
   const resolveCategoryName = (id: number) => {
     const c = categories.find((x) => x.id === id);
     return c ? `${c.code} — ${c.name}` : id;
+  };
+
+  const togglePreviewSelected = (id: number) => {
+    setPreviewSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  const handleApplyRuleToPreviewSelection = async (rule: Accounting2Rule) => {
+    if (!previewSelectedIds.length) return;
+    setPreviewApplying(true);
+    try {
+      await api.post(`/accounting/rules/${rule.id}/apply`, {
+        transaction_ids: previewSelectedIds,
+      });
+      // Reload preview rows to reflect updated categories
+      await openPreview(rule);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || err?.message || 'Failed to apply rule to selected transactions');
+    } finally {
+      setPreviewApplying(false);
+    }
   };
 
   return (
@@ -1714,12 +1706,33 @@ function RulesTab2() {
       {previewOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 p-4 text-sm flex flex-col max-h-[80vh]">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-base font-semibold">Rule preview</h3>
-              <Button type="button" variant="outline" size="sm" onClick={() => setPreviewOpen(false)}>
-                Close
-              </Button>
-            </div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-semibold">Rule preview</h3>
+          <div className="flex items-center gap-2 text-xs">
+            {previewRows.length > 0 && (
+              <>
+                <span className="text-gray-500">Selected: {previewSelectedIds.length}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={previewApplying || previewSelectedIds.length === 0}
+                  onClick={() => {
+                    const rule = rules.find((r) => r.pattern_value === patternValue && r.expense_category_id === Number(categoryId));
+                    // Fallback: just pick any rule with same pattern if direct match not found
+                    const effectiveRule = rule || rules[0];
+                    if (!effectiveRule) return;
+                    void handleApplyRuleToPreviewSelection(effectiveRule);
+                  }}
+                >
+                  {previewApplying ? 'Applying…' : 'Apply rule to selected'}
+                </Button>
+              </>
+            )}
+            <Button type="button" variant="outline" size="sm" onClick={() => setPreviewOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </div>
             {previewLoading ? (
               <div className="text-gray-600">Loading matching transactions…</div>
             ) : previewError ? (
@@ -1731,9 +1744,19 @@ function RulesTab2() {
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="px-2 py-2 w-8 text-center">
+                        <Checkbox
+                          checked={previewRows.length > 0 && previewSelectedIds.length === previewRows.length}
+                          onCheckedChange={(v) => {
+                            if (v) setPreviewSelectedIds(previewRows.map((r) => r.id));
+                            else setPreviewSelectedIds([]);
+                          }}
+                        />
+                      </th>
                       <th className="px-2 py-2 text-left">Date</th>
                       <th className="px-2 py-2 text-left">Account</th>
                       <th className="px-2 py-2 text-left">Description</th>
+                      <th className="px-2 py-2 text-left">Category</th>
                       <th className="px-2 py-2 text-right">Amount</th>
                     </tr>
                   </thead>
@@ -1742,12 +1765,21 @@ function RulesTab2() {
                       const signed = typeof r.amount === 'number' ? r.amount * (r.direction === 'out' ? -1 : 1) : r.amount;
                       return (
                         <tr key={r.id} className="border-t">
+                          <td className="px-2 py-1 text-center">
+                            <Checkbox
+                              checked={previewSelectedIds.includes(r.id)}
+                              onCheckedChange={() => togglePreviewSelected(r.id)}
+                            />
+                          </td>
                           <td className="px-2 py-1 whitespace-nowrap">{r.date}</td>
                           <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-700">{r.account_name || '—'}</td>
                           <td className="px-2 py-1">
                             <div className="truncate max-w-xs" title={r.description || undefined}>
                               {r.description || '—'}
                             </div>
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-700">
+                            {resolveCategoryName(r.expense_category_id)}
                           </td>
                           <td className="px-2 py-1 text-right">
                             {typeof signed === 'number' ? signed.toFixed(2) : signed}
