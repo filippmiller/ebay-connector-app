@@ -1464,17 +1464,19 @@ def _get_inventory_data(
                 continue
         
         # Add formatted SKU/ItemID columns with counts
-        if 'SKU_with_counts' in selected_cols and sku_col:
-            sku_value = mapping.get(sku_col.key)
-            if sku_value is not None:
-                counts = sku_counts.get(sku_value, (0, 0))
-                row['SKU_with_counts'] = f"{sku_value} ({counts[0]}/{counts[1]})"
+        if 'SKU_with_counts' in selected_cols:
+            if sku_col and sku_col.key in mapping:
+                sku_value = mapping.get(sku_col.key)
+                if sku_value is not None:
+                    counts = sku_counts.get(sku_value, (0, 0))
+                    row['SKU_with_counts'] = f"{sku_value} ({counts[0]}/{counts[1]})"
         
-        if 'ItemID_with_counts' in selected_cols and itemid_col:
-            itemid_value = mapping.get(itemid_col.key)
-            if itemid_value is not None:
-                counts = itemid_counts.get(itemid_value, (0, 0))
-                row['ItemID_with_counts'] = f"{itemid_value} ({counts[0]}/{counts[1]})"
+        if 'ItemID_with_counts' in selected_cols:
+            if itemid_col and itemid_col.key in mapping:
+                itemid_value = mapping.get(itemid_col.key)
+                if itemid_value is not None:
+                    counts = itemid_counts.get(itemid_value, (0, 0))
+                    row['ItemID_with_counts'] = f"{itemid_value} ({counts[0]}/{counts[1]})"
         
         return row
 
