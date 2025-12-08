@@ -291,6 +291,8 @@ async def list_bank_statements(
                 "currency": r.currency,
                 "statement_period_start": r.statement_period_start.isoformat() if r.statement_period_start else None,
                 "statement_period_end": r.statement_period_end.isoformat() if r.statement_period_end else None,
+                "opening_balance": str(r.opening_balance) if r.opening_balance is not None else None,
+                "closing_balance": str(r.closing_balance) if r.closing_balance is not None else None,
                 "status": r.status,
                 "rows_count": int(count_map.get(r.id, 0)),
                 "created_at": r.created_at.isoformat() if r.created_at else None,

@@ -11,6 +11,22 @@ import { Checkbox } from '@/components/ui/checkbox';
 import api from '@/lib/apiClient';
 import { DataGridPage } from '@/components/DataGridPage';
 
+const TD_SUMMARY_FIELD_CONFIG: { key: string; label: string }[] = [
+  { key: 'beginning_balance', label: 'Beginning balance (Начальный баланс)' },
+  { key: 'electronic_deposits', label: 'Electronic deposits (Электронные зачисления)' },
+  { key: 'other_credits', label: 'Other credits (Прочие кредиты)' },
+  { key: 'checks_paid', label: 'Checks paid (Чеки оплачены)' },
+  { key: 'electronic_payments', label: 'Electronic payments (Электронные списания)' },
+  { key: 'other_withdrawals', label: 'Other withdrawals (Прочие списания)' },
+  { key: 'service_charges', label: 'Service charges (Комиссии банка)' },
+  { key: 'ending_balance', label: 'Ending balance (Конечный баланс)' },
+  { key: 'average_collected_balance', label: 'Average collected balance (Средний остаток)' },
+  { key: 'interest_earned_this_period', label: 'Interest earned this period (Проценты за период)' },
+  { key: 'interest_paid_ytd', label: 'Interest paid year-to-date (Проценты с начала года)' },
+  { key: 'annual_percentage_yield_earned', label: 'APY earned (Годовая доходность)' },
+  { key: 'days_in_period', label: 'Days in period (Дней в периоде)' },
+];
+
 interface Accounting2StatementSummary {
   id: number;
   bank_name: string | null;
@@ -18,6 +34,9 @@ interface Accounting2StatementSummary {
   currency: string | null;
   statement_period_start: string | null;
   statement_period_end: string | null;
+  opening_balance?: number | string | null;
+  closing_balance?: number | string | null;
+  account_summary?: Record<string, any> | null;
   status: string;
   rows_count: number | null;
   created_at?: string;
@@ -131,33 +150,26 @@ function StatementsTab2() {
     if (!previewStatement) return;
     setPreviewCommitting(true);
     try {
-      // Accounting 2: сначала переносим строки из transaction_spending в accounting_bank_row
+      // 1) Accounting 2: перенести строки из transaction_spending в accounting_bank_row
       await api.post(`/accounting2/bank-statements/${previewStatement.id}/approve`);
+
+      // 2) Сразу же закоммитить все неигнорированные строки в Ledger (accounting_transaction)
+      await api.post(`/accounting/bank-statements/${previewStatement.id}/commit-rows`, {
+        commit_all_non_ignored: true,
+      });
+
       setPreviewOpen(false);
       await loadStatements();
-      // Коммит в Ledger будет выполняться отдельно (через Ledger 2 / существующий commit-эндпоинт).
     } catch (err: any) {
-      alert(err?.message || 'Failed to approve transactions');
+      alert(err?.response?.data?.detail || err?.message || 'Failed to approve and commit transactions');
     } finally {
       setPreviewCommitting(false);
     }
   };
 
-  const handlePreviewCancel = async () => {
-    if (!previewStatement) {
-      setPreviewOpen(false);
-      return;
-    }
-    // Accounting 2: при отмене удаляем staged-строки, PDF и сам стейтмент
-    try {
-      await api.post(`/accounting2/bank-statements/${previewStatement.id}/reject`);
-    } catch (err: any) {
-      // Даже если reject не удался, просто покажем ошибку и закроем окно
-      alert(err?.message || 'Failed to reject statement');
-    } finally {
-      setPreviewOpen(false);
-      await loadStatements();
-    }
+  const handlePreviewCancel = () => {
+    // Просто закрываем окно; никакого удаления или reject.
+    setPreviewOpen(false);
   };
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -389,6 +401,8 @@ function StatementsTab2() {
                 <th className="px-2 py-2 text-left">Bank / Account</th>
                 <th className="px-2 py-2 text-left">Period</th>
                 <th className="px-2 py-2 text-left">Currency</th>
+                <th className="px-2 py-2 text-right">Opening</th>
+                <th className="px-2 py-2 text-right">Closing</th>
                 <th className="px-2 py-2 text-right">Rows</th>
                 <th className="px-2 py-2 text-left">Status</th>
                 <th className="px-2 py-2 text-left">Created</th>
@@ -445,6 +459,12 @@ function StatementsTab2() {
                       </td>
                       <td className="px-2 py-1 whitespace-nowrap">{period}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{s.currency || '—'}</td>
+                      <td className="px-2 py-1 text-right">
+                        {s.opening_balance != null ? Number(s.opening_balance).toFixed(2) : '—'}
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        {s.closing_balance != null ? Number(s.closing_balance).toFixed(2) : '—'}
+                      </td>
                       <td className="px-2 py-1 text-right">{s.rows_count ?? '—'}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{s.status}</td>
                       <td className="px-2 py-1 whitespace-nowrap text-gray-500">{created}</td>
@@ -572,7 +592,7 @@ function StatementsTab2() {
                   size="sm"
                   onClick={handlePreviewCancel}
                 >
-                  Cancel
+                  Close
                 </Button>
                 <Button
                   type="button"
@@ -609,6 +629,55 @@ function StatementsTab2() {
                 View PDF
               </Button>
             </div>
+
+            {previewStatement?.account_summary && (
+              <div className="px-5 py-2 border-b text-xs text-gray-700 bg-gray-50/60">
+                {(() => {
+                  const summary = previewStatement.account_summary as Record<string, any>;
+                  const fmt = (v: any) =>
+                    typeof v === 'number' ? v.toFixed(2) : v ?? '—';
+
+                  const knownItems = TD_SUMMARY_FIELD_CONFIG.filter((f) => summary[f.key] !== undefined);
+                  const knownKeys = new Set(knownItems.map((f) => f.key));
+
+                  return (
+                    <>
+                      {knownItems.length > 0 && (
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-1 mb-2">
+                          {knownItems.map((f) => (
+                            <div key={f.key}>
+                              <span className="font-semibold">{f.label}:</span>{' '}
+                              {String(fmt(summary[f.key]))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {/* Показываем любые дополнительные поля, которые парсер вернул, но мы не знаем заранее */}
+                      {Object.entries(summary)
+                        .filter(([key]) => !knownKeys.has(key))
+                        .length > 0 && (
+                        <div className="mt-1 grid grid-cols-2 gap-x-8 gap-y-1 border-t border-gray-200 pt-2">
+                          {Object.entries(summary)
+                            .filter(([key]) => !knownKeys.has(key))
+                            .map(([key, value]) => {
+                              const prettyKey = key
+                                .replace(/_/g, ' ')
+                                .replace(/\b\w/g, (ch) => ch.toUpperCase());
+                              return (
+                                <div key={key}>
+                                  <span className="font-semibold">{prettyKey}:</span>{' '}
+                                  {String(fmt(value))}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
             <div className="flex-1 min-h-0 overflow-auto">
               {previewLoading ? (
                 <div className="p-4 text-gray-600">Loading transactions…</div>

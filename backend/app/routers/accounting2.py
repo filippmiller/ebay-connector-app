@@ -174,15 +174,25 @@ async def get_bank_statement_preview_summary(
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ) -> Dict[str, Any]:
-    """Return summary for Accounting 2 statement (using staged rows)."""
+    """Return summary for Accounting 2 statement (using staged rows).
+
+    Includes header fields from the parsed BankStatement JSON so the UI can
+    render the TD-style ACCOUNT SUMMARY block.
+    """
     stmt = _ensure_statement_owner(db, statement_id)
 
-    # Count staged rows
+    # Count staged rows (transaction_spending) for this statement
     res = db.execute(
         text("select count(*) from public.transaction_spending where bank_statement_id = :sid"),
         {"sid": statement_id},
     )
     rows_count = int(res.scalar() or 0)
+
+    account_summary: Dict[str, Any] | None = None
+    if isinstance(stmt.raw_json, dict):
+        raw_summary = stmt.raw_json.get("statement_summary")
+        if isinstance(raw_summary, dict):
+            account_summary = raw_summary
 
     return {
         "id": stmt.id,
@@ -196,6 +206,7 @@ async def get_bank_statement_preview_summary(
         "status": stmt.status,
         "created_at": stmt.created_at,
         "rows_count": rows_count,
+        "account_summary": account_summary,
     }
 
 
