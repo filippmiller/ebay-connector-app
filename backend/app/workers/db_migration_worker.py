@@ -94,7 +94,8 @@ async def run_db_migration_workers_once(max_workers: int = 20) -> Dict[str, Any]
                   owner_user_id,
                   notify_on_success,
                   notify_on_error,
-                  last_run_started_at
+                  last_run_started_at,
+                  last_run_finished_at
                 FROM db_migration_workers
                 WHERE worker_enabled = TRUE
                 ORDER BY id
@@ -108,14 +109,41 @@ async def run_db_migration_workers_once(max_workers: int = 20) -> Dict[str, Any]
         logger.info("[db-migration-worker] No enabled workers found; skipping cycle")
         return {"status": "ok", "workers_processed": 0, "summaries": []}
 
+    def _mark_worker_error(worker_id: int, message: str) -> None:
+        """Best-effort update of worker error state used by the background loop."""
+
+        try:
+            with pg_engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE db_migration_workers
+                        SET
+                          last_run_finished_at = NOW(),
+                          last_run_status = 'error',
+                          last_error = :error,
+                          updated_at = NOW()
+                        WHERE id = :id
+                        """
+                    ),
+                    {"id": worker_id, "error": message[:1000]},
+                )
+        except Exception:  # pragma: no cover - defensive logging-only path
+            logger.exception(
+                "[db-migration-worker] Failed to persist error state for worker id=%s",
+                worker_id,
+            )
+
     for row in rows:
         wid = row["id"]
         last_started = row["last_run_started_at"]
+        last_finished = row.get("last_run_finished_at")
         interval = int(row["interval_seconds"] or 300)
 
-        if last_started is not None:
-            # last_started is a datetime from SQLAlchemy mapping.
-            elapsed = (now - last_started).total_seconds()
+        anchor = last_finished or last_started
+        if anchor is not None:
+            # Anchor is a datetime from SQLAlchemy mapping.
+            elapsed = (now - anchor).total_seconds()
             if elapsed < interval:
                 continue
 
@@ -169,6 +197,7 @@ async def run_db_migration_workers_once(max_workers: int = 20) -> Dict[str, Any]
             logger.error(
                 "[db-migration-worker] Worker id=%s failed: %s", wid, exc, exc_info=True
             )
+            _mark_worker_error(wid, str(exc))
             summaries.append(
                 {
                     "worker_id": wid,

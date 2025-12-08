@@ -678,6 +678,7 @@ def run_worker_incremental_sync(
     start_time = time.monotonic()
 
     mssql_engine: Engine = create_engine_for_session(mssql_cfg)
+    started_at = datetime.now()  # naive UTC; FastAPI/SQLAlchemy will store as timestamptz
     try:
         with mssql_engine.connect() as mssql_conn:
             offset = 0
@@ -754,7 +755,7 @@ def run_worker_incremental_sync(
                 """
                 UPDATE db_migration_workers
                 SET
-                  last_run_started_at = COALESCE(last_run_started_at, NOW()),
+                  last_run_started_at = :started_at,
                   last_run_finished_at = NOW(),
                   last_run_status = :status,
                   last_error = :error,
@@ -770,6 +771,7 @@ def run_worker_incremental_sync(
             pg_conn.execute(
                 update_sql,
                 {
+                    "started_at": started_at,
                     "status": "ok",
                     "error": None,
                     "source_count": source_count,
@@ -807,6 +809,16 @@ class MigrationWorkerPreview(BaseModel):
     rows_to_copy: int
     source_max_pk: Optional[int]
     target_max_pk: Optional[int]
+
+
+class MigrationWorkerLiveStats(MigrationWorkerPreview):
+    """Live stats for a worker, keyed by worker id.
+
+    This reuses the preview shape but adds the worker id so the frontend can
+    merge stats into existing state.
+    """
+
+    id: int
 
 
 @router.get("/worker/state", response_model=List[MigrationWorkerState])
@@ -1118,12 +1130,115 @@ async def preview_migration_worker_run(
     )
 
 
+@router.get("/worker/live-stats", response_model=List[MigrationWorkerLiveStats])
+async def list_migration_worker_live_stats(
+    current_user: User = Depends(get_current_admin_user),
+) -> List[MigrationWorkerLiveStats]:
+    """Return live counts and PK stats for all configured workers.
+
+    This endpoint is heavier than `/worker/state` because it queries both MSSQL
+    and Supabase for each worker. It is intended for occasional refreshes in the
+    admin UI, not for tight polling loops.
+    """
+
+    with pg_engine.connect() as conn:
+        sql = text("SELECT * FROM db_migration_workers ORDER BY id")
+        rows = conn.execute(sql).mappings().all()
+
+    stats: List[MigrationWorkerLiveStats] = []
+
+    for row in rows:
+        worker = dict(row)
+        pk_column = worker["pk_column"]
+        source_schema = worker["source_schema"] or "dbo"
+        target_schema = worker["target_schema"] or "public"
+
+        # Resolve PK column case on the Postgres side.
+        pk_column_pg = _resolve_pg_column_name_case(
+            target_schema, worker["target_table"], pk_column
+        )
+
+        # Target stats (Supabase).
+        with pg_engine.connect() as pg_conn:
+            max_pk_sql = text(
+                f'SELECT COALESCE(MAX("{pk_column_pg}"), 0) FROM "{target_schema}"."{worker["target_table"]}"'
+            )
+            target_max_pk = int(pg_conn.execute(max_pk_sql).scalar() or 0)
+
+            target_count_sql = text(
+                f'SELECT COUNT(*) FROM "{target_schema}"."{worker["target_table"]}"'
+            )
+            target_row_count = int(pg_conn.execute(target_count_sql).scalar() or 0)
+
+        # Source stats (MSSQL).
+        mssql_cfg = MssqlConnectionConfig(
+            host=None,
+            port=1433,
+            database=worker["source_database"],
+            username=None,
+            password=None,
+            encrypt=True,
+        )
+        mssql_engine: Engine = create_engine_for_session(mssql_cfg)
+        try:
+            with mssql_engine.connect() as mssql_conn:
+                source_count_sql = text(
+                    f"SELECT COUNT(*) FROM [{source_schema}].[{worker['source_table']}]"
+                )
+                source_row_count = int(
+                    mssql_conn.execute(source_count_sql).scalar() or 0
+                )
+
+                source_max_pk_sql = text(
+                    f"SELECT COALESCE(MAX([{pk_column}]), 0) FROM [{source_schema}].[{worker['source_table']}]"
+                )
+                source_max_pk = int(
+                    mssql_conn.execute(source_max_pk_sql).scalar() or 0
+                )
+
+                rows_to_copy_sql = text(
+                    f"SELECT COUNT(*) FROM [{source_schema}].[{worker['source_table']}] "
+                    f"WHERE [{pk_column}] > :min_pk"
+                )
+                rows_to_copy = int(
+                    mssql_conn.execute(
+                        rows_to_copy_sql, {"min_pk": target_max_pk}
+                    ).scalar()
+                    or 0
+                )
+        finally:
+            mssql_engine.dispose()
+
+        stats.append(
+            MigrationWorkerLiveStats(
+                id=worker["id"],
+                source_database=worker["source_database"],
+                source_schema=source_schema,
+                source_table=worker["source_table"],
+                target_schema=target_schema,
+                target_table=worker["target_table"],
+                pk_column=pk_column,
+                source_row_count=source_row_count,
+                target_row_count=target_row_count,
+                rows_to_copy=rows_to_copy,
+                source_max_pk=source_max_pk,
+                target_max_pk=target_max_pk,
+            )
+        )
+
+    return stats
+
+
 @router.post("/worker/run-once")
 async def run_migration_worker_once(
     req: MigrationWorkerRunOnceRequest,
     current_user: User = Depends(get_current_admin_user),
 ) -> Dict[str, Any]:
-    """Run a single incremental pass for one configured worker."""
+    """Run a single incremental pass for one configured worker.
+
+    On failure we also persist `last_run_status='error'` and `last_error` so that
+    the admin UI can display the last failure reason.
+    """
 
     # Load the worker row.
     with pg_engine.connect() as conn:
@@ -1172,16 +1287,61 @@ async def run_migration_worker_once(
 
     worker = dict(row)
 
-    summary = run_worker_incremental_sync(
-        source_database=worker["source_database"],
-        source_schema=worker["source_schema"],
-        source_table=worker["source_table"],
-        target_schema=worker["target_schema"],
-        target_table=worker["target_table"],
-        pk_column=worker["pk_column"],
-        batch_size=req.batch_size,
-        worker_id=worker["id"],
-        max_seconds=req.max_seconds,
-    )
+    try:
+        summary = run_worker_incremental_sync(
+            source_database=worker["source_database"],
+            source_schema=worker["source_schema"],
+            source_table=worker["source_table"],
+            target_schema=worker["target_schema"],
+            target_table=worker["target_table"],
+            pk_column=worker["pk_column"],
+            batch_size=req.batch_size,
+            worker_id=worker["id"],
+            max_seconds=req.max_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort persistence of the error state; the background loop uses
+        # a similar mechanism so the UI always reflects the last attempt.
+        with pg_engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE db_migration_workers
+                    SET
+                      last_run_finished_at = NOW(),
+                      last_run_status = 'error',
+                      last_error = :error,
+                      updated_at = NOW()
+                    WHERE id = :id
+                    """
+                ),
+                {"id": worker["id"], "error": str(exc)[:1000]},
+            )
+        raise
 
     return summary
+
+
+@router.delete("/worker/{worker_id}")
+async def delete_migration_worker(
+    worker_id: int,
+    current_user: User = Depends(get_current_admin_user),
+) -> Dict[str, str]:
+    """Delete a db_migration_workers row.
+
+    This only removes the configuration; it does not touch any MSSQL or
+    Supabase data.
+    """
+
+    with pg_engine.begin() as conn:
+        result = conn.execute(
+            text("DELETE FROM db_migration_workers WHERE id = :id"),
+            {"id": worker_id},
+        )
+        if result.rowcount == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Migration worker not found",
+            )
+
+    return {"status": "ok"}

@@ -191,6 +191,8 @@ async def get_bank_statement_preview_summary(
         "currency": stmt.currency,
         "statement_period_start": stmt.statement_period_start,
         "statement_period_end": stmt.statement_period_end,
+        "opening_balance": stmt.opening_balance,
+        "closing_balance": stmt.closing_balance,
         "status": stmt.status,
         "created_at": stmt.created_at,
         "rows_count": rows_count,

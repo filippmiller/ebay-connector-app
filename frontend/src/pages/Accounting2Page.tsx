@@ -991,6 +991,18 @@ function LedgerTab2() {
                         : '—'}
                     </div>
                     <div>
+                      <span className="font-semibold">Opening balance:</span>{' '}
+                      {typeof stmtMeta.opening_balance === 'number'
+                        ? stmtMeta.opening_balance.toFixed(2)
+                        : stmtMeta.opening_balance ?? '—'}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Closing balance:</span>{' '}
+                      {typeof stmtMeta.closing_balance === 'number'
+                        ? stmtMeta.closing_balance.toFixed(2)
+                        : stmtMeta.closing_balance ?? '—'}
+                    </div>
+                    <div>
                       <span className="font-semibold">Rows:</span> {stmtMeta.rows_count ?? '—'}
                     </div>
                     <div>

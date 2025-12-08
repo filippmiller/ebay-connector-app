@@ -1653,6 +1653,10 @@ interface MigrationWorkerPreview {
   target_max_pk: number | null;
 }
 
+interface MigrationWorkerLiveStats extends MigrationWorkerPreview {
+  id: number;
+}
+
 const MigrationWorkerTab: React.FC = () => {
   const [workers, setWorkers] = React.useState<MigrationWorkerState[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -1663,6 +1667,9 @@ const MigrationWorkerTab: React.FC = () => {
   // Simple in-page "terminal" log of worker runs (since page load)
   const [logLines, setLogLines] = React.useState<string[]>([]);
   const lastRunSnapshotRef = React.useRef<Map<number, string>>(new Map());
+
+  // Live stats (current source/target counts) fetched periodically.
+  const [liveStats, setLiveStats] = React.useState<Record<number, MigrationWorkerLiveStats>>({});
 
   // Run-once confirmation modal
   const [previewOpen, setPreviewOpen] = React.useState(false);
@@ -1697,6 +1704,9 @@ const MigrationWorkerTab: React.FC = () => {
   const [createSupabaseError, setCreateSupabaseError] = React.useState<string | null>(null);
   const [createSupabaseSearch, setCreateSupabaseSearch] = React.useState('');
 
+  // When not null, the create/edit dialog is in "edit" mode for this worker.
+  const [editingWorker, setEditingWorker] = React.useState<MigrationWorkerState | null>(null);
+
   const buildCreateMssqlConfig = (): MssqlConnectionConfig => ({
     host: '',
     port: 1433,
@@ -1707,6 +1717,7 @@ const MigrationWorkerTab: React.FC = () => {
   });
 
   const resetCreateForm = () => {
+    setEditingWorker(null);
     setCreateSourceDatabase('DB_A28F26_parts');
     setCreateSourceTable('');
     setCreateTargetSchema('public');
@@ -1840,6 +1851,30 @@ const MigrationWorkerTab: React.FC = () => {
     return () => window.clearInterval(id);
   }, []);
 
+  const loadLiveStats = async () => {
+    try {
+      const resp = await api.get<MigrationWorkerLiveStats[]>('/api/admin/db-migration/worker/live-stats');
+      const map: Record<number, MigrationWorkerLiveStats> = {};
+      resp.data.forEach((item) => {
+        map[item.id] = item;
+      });
+      setLiveStats(map);
+    } catch (e: any) {
+      // Live stats are best-effort; we do not surface errors in the main error banner.
+      // eslint-disable-next-line no-console
+      console.error('Failed to load migration worker live stats', e);
+    }
+  };
+
+  // Load live stats on mount and then periodically (slower cadence than state refresh).
+  React.useEffect(() => {
+    void loadLiveStats();
+    const id = window.setInterval(() => {
+      void loadLiveStats();
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, []);
+
   // Derive log lines whenever worker state changes (per-page history).
   React.useEffect(() => {
     const snapshots = lastRunSnapshotRef.current;
@@ -1896,6 +1931,21 @@ const MigrationWorkerTab: React.FC = () => {
     void loadCreateSupabaseTables();
   };
 
+  const handleOpenEdit = (worker: MigrationWorkerState) => {
+    setEditingWorker(worker);
+    setCreateSourceDatabase(worker.source_database);
+    setCreateSourceSchema(worker.source_schema || 'dbo');
+    setCreateSourceTable(worker.source_table);
+    setCreateTargetSchema(worker.target_schema || 'public');
+    setCreateTargetTable(worker.target_table);
+    setCreatePkColumn(worker.pk_column || '');
+    setCreateIntervalSeconds(worker.interval_seconds || 300);
+    setCreateRunImmediately(false);
+    setError(null);
+    setCreateOpen(true);
+    void loadCreateSupabaseTables();
+  };
+
   const handleSubmitCreate = async () => {
     if (!createSourceDatabase.trim()) {
       setError('MSSQL database is required.');
@@ -1913,7 +1963,7 @@ const MigrationWorkerTab: React.FC = () => {
     setError(null);
     try {
       // Upsert worker (will auto-detect PK if createPkColumn is empty)
-      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', {
+      const payload: any = {
         source_database: createSourceDatabase.trim(),
         source_schema: createSourceSchema.trim() || 'dbo',
         source_table: createSourceTable.trim(),
@@ -1925,10 +1975,19 @@ const MigrationWorkerTab: React.FC = () => {
         owner_user_id: undefined,
         notify_on_success: true,
         notify_on_error: true,
-      });
+      };
+      if (editingWorker) {
+        payload.id = editingWorker.id;
+        payload.worker_enabled = editingWorker.worker_enabled;
+        payload.owner_user_id = editingWorker.owner_user_id ?? undefined;
+        payload.notify_on_success = editingWorker.notify_on_success;
+        payload.notify_on_error = editingWorker.notify_on_error;
+      }
+
+      const resp = await api.post<MigrationWorkerState>('/api/admin/db-migration/worker/upsert', payload);
       const worker = resp.data;
-      // Optionally run an initial catch-up immediately
-      if (createRunImmediately) {
+      // Optionally run an initial catch-up immediately (only on create).
+      if (!editingWorker && createRunImmediately) {
         try {
           await api.post('/api/admin/db-migration/worker/run-once', { id: worker.id, batch_size: 5000 });
         } catch (e: any) {
@@ -1942,6 +2001,7 @@ const MigrationWorkerTab: React.FC = () => {
       }
       await loadWorkers();
       setCreateOpen(false);
+      setEditingWorker(null);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e.message || 'Failed to create worker');
     } finally {
@@ -2058,7 +2118,9 @@ const MigrationWorkerTab: React.FC = () => {
           <h2 className="text-sm font-semibold">Migration Workers</h2>
           <p className="text-xs text-gray-600">
             MSSQL→Supabase incremental workers for append-only tables. Each worker periodically pulls new rows based on a
-            numeric primary key and appends them into the target table.
+            numeric primary key and appends them into the target table. Automatic runs depend on the background
+            <span className="font-mono"> db_migration_worker </span>
+            loop being active; this page configures workers and triggers manual runs.
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={handleOpenCreate}>
@@ -2085,7 +2147,7 @@ const MigrationWorkerTab: React.FC = () => {
                 <th className="px-2 py-1 border text-left">Notify errors</th>
                 <th className="px-2 py-1 border text-left">Last status</th>
                 <th className="px-2 py-1 border text-left">Last run</th>
-                <th className="px-2 py-1 border text-left">Last counts</th>
+                <th className="px-2 py-1 border text-left">Last run snapshot</th>
                 <th className="px-2 py-1 border text-left">Actions</th>
               </tr>
             </thead>
@@ -2167,14 +2229,29 @@ const MigrationWorkerTab: React.FC = () => {
                     )}
                   </td>
                   <td className="px-2 py-1 border text-[10px] text-gray-600">
-                    {w.last_run_started_at && (
-                      <div>start: {formatDateTime(w.last_run_started_at)}</div>
-                    )}
                     {w.last_run_finished_at && (
                       <div>finish: {formatDateTime(w.last_run_finished_at)}</div>
                     )}
+                    {w.last_run_started_at && w.last_run_finished_at && (
+                      <div>
+                        duration:
+                        {' '}
+                        {(() => {
+                          const start = new Date(w.last_run_started_at as string);
+                          const finish = new Date(w.last_run_finished_at as string);
+                          const ms = finish.getTime() - start.getTime();
+                          const seconds = Math.max(0, Math.round(ms / 1000));
+                          return `${seconds}s`;
+                        })()}
+                      </div>
+                    )}
                   </td>
                   <td className="px-2 py-1 border text-[10px] text-gray-700">
+                    {(w.last_source_row_count != null ||
+                      w.last_target_row_count != null ||
+                      w.last_inserted_count != null) && (
+                      <div className="text-[10px] text-gray-500">as of last run:</div>
+                    )}
                     {w.last_source_row_count != null && (
                       <div>src: {w.last_source_row_count}</div>
                     )}
@@ -2184,19 +2261,65 @@ const MigrationWorkerTab: React.FC = () => {
                     {w.last_inserted_count != null && (
                       <div>+{w.last_inserted_count} rows</div>
                     )}
+                    {liveStats[w.id] && (
+                      <div className="mt-1 text-[10px] text-gray-700">
+                        <div>
+                          now src: {liveStats[w.id].source_row_count}, tgt: {liveStats[w.id].target_row_count}
+                        </div>
+                        <div>
+                          {(() => {
+                            const delta =
+                              liveStats[w.id].source_row_count - liveStats[w.id].target_row_count;
+                            if (delta === 0) return 'Δ: 0 (up to date)';
+                            if (delta < 0) return `Δ: ${delta} (target ahead)`;
+                            return `Δ: ${delta} rows behind`;
+                          })()}
+                        </div>
+                      </div>
+                    )}
                   </td>
                   <td className="px-2 py-1 border">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-[11px]"
-                      disabled={runningId === w.id}
-                      onClick={() => {
-                        void handleRunOnce(w);
-                      }}
-                    >
-                      {runningId === w.id ? 'Running…' : 'Run once now'}
-                    </Button>
+                    <div className="flex flex-col gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={runningId === w.id}
+                        onClick={() => {
+                          void handleRunOnce(w);
+                        }}
+                      >
+                        {runningId === w.id ? 'Running…' : 'Run once now'}
+                      </Button>
+                      <div className="flex gap-2 text-[11px]">
+                        <button
+                          type="button"
+                          className="text-blue-700 hover:underline disabled:text-gray-400"
+                          onClick={() => handleOpenEdit(w)}
+                          disabled={savingId === w.id}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="text-red-700 hover:underline disabled:text-gray-400"
+                          onClick={async () => {
+                            if (!window.confirm(`Delete worker #${w.id}? This only removes the configuration.`)) return;
+                            try {
+                              await api.delete(`/api/admin/db-migration/worker/${w.id}`);
+                              await loadWorkers();
+                            } catch (e: any) {
+                              setError(
+                                e?.response?.data?.detail || e?.message || 'Failed to delete worker',
+                              );
+                            }
+                          }}
+                          disabled={savingId === w.id}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -2302,7 +2425,7 @@ const MigrationWorkerTab: React.FC = () => {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Create migration worker</DialogTitle>
+            <DialogTitle>{editingWorker ? 'Edit migration worker' : 'Create migration worker'}</DialogTitle>
             <DialogDescription>
               Set up an incremental MSSQL→Supabase worker for an append-only table. The worker will periodically pull
               new rows based on a numeric primary key.
@@ -2480,9 +2603,9 @@ const MigrationWorkerTab: React.FC = () => {
                   checked={createRunImmediately}
                   onChange={(e) => setCreateRunImmediately(e.target.checked)}
                 />
-                <label htmlFor="create-worker-run-immediately" className="text-[11px] text-gray-700">
-                  Run initial catch-up immediately after creating the worker
-                </label>
+                        <label htmlFor="create-worker-run-immediately" className="text-[11px] text-gray-700">
+                          Run initial catch-up immediately after creating the worker
+                        </label>
               </div>
             </div>
             <p className="text-[11px] text-gray-500">
