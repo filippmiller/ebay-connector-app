@@ -74,6 +74,7 @@ async def get_purchase_detail(
             b."ItemStatus" AS item_status_id,
             b."Comment" AS comment,
             b."GalleryURL" AS gallery_url,
+            b."PictureURL0" AS picture_url0,
             sb."label" AS item_status_label,
             sb."color_hex" AS status_color_hex,
             sb."text_color_hex" AS status_text_color_hex
@@ -107,7 +108,7 @@ async def get_purchase_detail(
         "item_status_label": result.item_status_label,
         "comment": result.comment,
         "gallery_url": result.gallery_url,
-        "picture_url": result.gallery_url,  # Use gallery_url for picture_url as well
+        "picture_url0": result.picture_url0,
     }
 
 

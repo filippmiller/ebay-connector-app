@@ -35,7 +35,7 @@ interface BuyingDetail {
   item_status_label?: string | null;
   comment?: string | null;
   gallery_url?: string | null;
-  picture_url?: string | null;
+  picture_url0?: string | null;
 }
 
 interface BuyingLogEntry {
@@ -417,13 +417,13 @@ export default function BuyingPage() {
               <div className="flex-1 p-4 flex gap-4 overflow-auto text-base">
                 {/* Left: LARGER CLICKABLE Image */}
                 <div className="w-64 h-48 bg-gray-50 border-2 border-gray-300 rounded-lg flex items-center justify-center shrink-0 overflow-hidden hover:border-blue-500 transition-colors">
-                  {detail.gallery_url || detail.picture_url ? (
+                  {detail.gallery_url || detail.picture_url0 ? (
                     <img
-                      src={detail.gallery_url || detail.picture_url || ''}
+                      src={detail.gallery_url || detail.picture_url0 || ''}
                       alt="Item"
                       className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform"
                       onClick={() => {
-                        const url = detail.gallery_url || detail.picture_url;
+                        const url = detail.gallery_url || detail.picture_url0;
                         if (url) window.open(url, '_blank');
                       }}
                     />
