@@ -6,6 +6,7 @@ from decimal import Decimal
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Body
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 

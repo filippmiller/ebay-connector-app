@@ -366,7 +366,8 @@ class TDBankPDFParser:
             if not (posting_date and amount is not None):
                 continue
 
-            description = ' '.join(desc_parts).replace('\s+', ' ').strip()
+            # Normalize whitespace in description; keep original content
+            description = re.sub(r"\s+", " ", " ".join(desc_parts)).strip()
 
             txn_id += 1
 
