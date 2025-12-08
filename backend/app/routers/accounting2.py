@@ -14,6 +14,7 @@ from app.models_sqlalchemy.models import (
     AccountingBankStatement,
     AccountingBankRow,
     AccountingBankStatementFile,
+    AccountingTransaction,
     User,
 )
 from app.services.admin_auth import require_admin_user
@@ -26,11 +27,100 @@ from app.utils.logger import logger
 router = APIRouter(prefix="/api/accounting2", tags=["accounting2"])
 
 
+class ManualPastedTransaction(BaseModel):
+    date: date
+    description: str
+    direction: str  # 'debit' or 'credit'
+    amount: Decimal
+
+
+class ManualPastedStatement(BaseModel):
+    bank_name: str
+    bank_code: Optional[str] = None
+    account_last4: Optional[str] = None
+    currency: str = "USD"
+    period_start: date
+    period_end: date
+    opening_balance: Optional[Decimal] = None
+    closing_balance: Optional[Decimal] = None
+    transactions: List[ManualPastedTransaction]
+
+
 def _ensure_statement_owner(db: Session, statement_id: int) -> AccountingBankStatement:
     stmt = db.query(AccountingBankStatement).get(statement_id)
     if not stmt:
         raise HTTPException(status_code=404, detail="Bank statement not found")
     return stmt
+
+
+@router.post("/bank-statements/manual-from-text")
+async def create_manual_bank_statement_from_text(
+    payload: ManualPastedStatement,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+) -> Dict[str, Any]:
+    """Create a bank statement and rows from manually pasted text.
+
+    This bypasses PDF parsing and lets the user define rows explicitly.
+    """
+    if not payload.transactions:
+        raise HTTPException(status_code=400, detail="At least one transaction is required")
+
+    stmt = AccountingBankStatement(
+        bank_name=payload.bank_name,
+        bank_code=payload.bank_code or "MANUAL",
+        account_last4=payload.account_last4,
+        currency=payload.currency,
+        statement_period_start=payload.period_start,
+        statement_period_end=payload.period_end,
+        opening_balance=payload.opening_balance,
+        closing_balance=payload.closing_balance,
+        status="parsed",
+        source_type="MANUAL_PASTE",
+        created_by_user_id=current_user.id,
+    )
+    db.add(stmt)
+    db.flush()
+
+    total_rows = 0
+    for t in payload.transactions:
+        direction = (t.direction or "credit").lower()
+        signed_amount = Decimal(t.amount)
+        if direction == "debit":
+            signed_amount = -abs(signed_amount)
+        else:
+            signed_amount = abs(signed_amount)
+
+        bank_row = AccountingBankRow(
+            bank_statement_id=stmt.id,
+            row_index=None,
+            operation_date=t.date,
+            posting_date=t.date,
+            description_raw=t.description,
+            description_clean=t.description,
+            amount=signed_amount,
+            balance_after=None,
+            currency=payload.currency,
+            parsed_status="manual_parsed",
+            match_status="unmatched",
+            created_by_user_id=current_user.id,
+        )
+        db.add(bank_row)
+        total_rows += 1
+
+    db.commit()
+
+    return {
+        "id": stmt.id,
+        "status": stmt.status,
+        "bank_name": stmt.bank_name,
+        "account_last4": stmt.account_last4,
+        "currency": stmt.currency,
+        "period_start": payload.period_start.isoformat(),
+        "period_end": payload.period_end.isoformat(),
+        "rows_count": total_rows,
+        "message": "Manual statement created successfully.",
+    }
 
 
 @router.post("/bank-statements/upload")

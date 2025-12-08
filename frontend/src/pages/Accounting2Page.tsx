@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import api from '@/lib/apiClient';
 import { DataGridPage } from '@/components/DataGridPage';
+import { parseManualRawText, saveManualStatementImpl } from './Accounting2ManualHelpers';
 
 const TD_SUMMARY_FIELD_CONFIG: { key: string; label: string }[] = [
   { key: 'beginning_balance', label: 'Beginning balance (Начальный баланс)' },
@@ -61,6 +62,15 @@ interface Accounting2StatementUploadResult {
   message?: string;
 }
 
+export interface ManualParsedRow {
+  id: number;
+  date: string; // YYYY-MM-DD
+  description: string;
+  amount: string; // as typed, will be converted
+  direction: 'debit' | 'credit';
+  duplicate?: boolean;
+}
+
 function StatementsTab2() {
   const navigate = useNavigate();
   const [bankName, setBankName] = React.useState('');
@@ -74,6 +84,49 @@ function StatementsTab2() {
   const [uploading, setUploading] = React.useState(false);
   const [uploadResult, setUploadResult] = React.useState<Accounting2StatementUploadResult | null>(null);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
+
+  // Manual pasted statement state
+  const [manualOpen, setManualOpen] = React.useState(false);
+  const [manualBankName, setManualBankName] = React.useState('TD Bank');
+  const [manualBankCode, setManualBankCode] = React.useState('TD');
+  const [manualAccountLast4, setManualAccountLast4] = React.useState('');
+  const [manualCurrency, setManualCurrency] = React.useState('USD');
+  const [manualPeriodStart, setManualPeriodStart] = React.useState('');
+  const [manualPeriodEnd, setManualPeriodEnd] = React.useState('');
+  const [manualOpening, setManualOpening] = React.useState('');
+  const [manualClosing, setManualClosing] = React.useState('');
+  const [manualRawText, setManualRawText] = React.useState('');
+  const [manualRows, setManualRows] = React.useState<ManualParsedRow[]>([]);
+  const [manualParsingError, setManualParsingError] = React.useState<string | null>(null);
+  const [manualSaving, setManualSaving] = React.useState(false);
+
+  const saveManualStatement = async (commit: boolean) => {
+    try {
+      setManualSaving(true);
+      const id = await saveManualStatementImpl(manualRows, {
+        bankName: manualBankName,
+        bankCode: manualBankCode,
+        accountLast4: manualAccountLast4,
+        currency: manualCurrency,
+        periodStart: manualPeriodStart,
+        periodEnd: manualPeriodEnd,
+        opening: manualOpening,
+        closing: manualClosing,
+        commit,
+      });
+      setManualOpen(false);
+      setManualRows([]);
+      setManualRawText('');
+      await loadStatements();
+      if (id && !commit) {
+        // optionally open preview in future
+      }
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || err?.message || 'Failed to save manual statement');
+    } finally {
+      setManualSaving(false);
+    }
+  };
 
   const [statements, setStatements] = React.useState<Accounting2StatementSummary[]>([]);
   const [loadingList, setLoadingList] = React.useState(false);
@@ -292,10 +345,21 @@ function StatementsTab2() {
               </div>
             )}
             {uploadError && (
-              <div className="max-w-xl p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <div className="max-w-xl p-4 bg-red-50 border-red-200 rounded-lg text-sm text-red-700">
                 {uploadError}
               </div>
             )}
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => setManualOpen(true)}
+              >
+                New manual statement (paste from PDF)
+              </Button>
+            </div>
           </div>
         </form>
       </Card>
@@ -736,6 +800,194 @@ function StatementsTab2() {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual pasted statement modal */}
+      {manualOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] mx-4 p-4 text-sm flex flex-col gap-3">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-base font-semibold">New manual statement</h3>
+              <Button variant="outline" size="sm" onClick={() => setManualOpen(false)}>
+                Close
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div>
+                <Label className="block text-xs mb-1">Bank name</Label>
+                <Input value={manualBankName} onChange={(e) => setManualBankName(e.target.value)} />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Bank code</Label>
+                <Input value={manualBankCode} onChange={(e) => setManualBankCode(e.target.value)} />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Account last 4</Label>
+                <Input value={manualAccountLast4} onChange={(e) => setManualAccountLast4(e.target.value)} />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Currency</Label>
+                <Input value={manualCurrency} onChange={(e) => setManualCurrency(e.target.value)} />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Period start</Label>
+                <Input type="date" value={manualPeriodStart} onChange={(e) => setManualPeriodStart(e.target.value)} />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Period end</Label>
+                <Input type="date" value={manualPeriodEnd} onChange={(e) => setManualPeriodEnd(e.target.value)} />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Opening balance</Label>
+                <Input
+                  type="number"
+                  value={manualOpening}
+                  onChange={(e) => setManualOpening(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="block text-xs mb-1">Closing balance</Label>
+                <Input
+                  type="number"
+                  value={manualClosing}
+                  onChange={(e) => setManualClosing(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 flex-1 min-h-0">
+              <Label className="block text-xs">Paste raw lines from PDF</Label>
+              <textarea
+                className="border rounded p-2 text-xs font-mono flex-1 min-h-[120px]"
+                value={manualRawText}
+                onChange={(e) => {
+                  setManualRawText(e.target.value);
+                  setManualParsingError(null);
+                }}
+                placeholder="Paste lines like:\n01/15 CCD DEPOSIT, EBAY ... 415.91"
+              />
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <div>
+                  {manualParsingError && <span className="text-red-600">{manualParsingError}</span>}
+                  {!manualParsingError && manualRows.length > 0 && (
+                    <span>{manualRows.length} parsed rows{manualRows.some((r) => r.duplicate) ? ' (duplicates skipped)' : ''}</span>
+                  )}
+                </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => parseManualRawText(manualRawText, setManualRows, setManualParsingError)}
+              >
+                Parse text
+              </Button>
+              </div>
+              {manualRows.length > 0 && (
+                <div className="border rounded max-h-64 overflow-auto bg-white mt-1">
+                  <table className="min-w-full text-[11px]">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-2 py-1 text-left">Date</th>
+                        <th className="px-2 py-1 text-left">Description</th>
+                        <th className="px-2 py-1 text-right">Amount</th>
+                        <th className="px-2 py-1 text-left">Direction</th>
+                        <th className="px-2 py-1 text-left">Duplicate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {manualRows.map((row, idx) => (
+                        <tr key={row.id} className="border-t">
+                          <td className="px-2 py-1">
+                            <Input
+                              type="date"
+                              className="h-6 px-1 text-[11px]"
+                              value={row.date}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setManualRows((prev) => {
+                                  const copy = [...prev];
+                                  copy[idx] = { ...copy[idx], date: v };
+                                  return copy;
+                                });
+                              }}
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            <Input
+                              className="h-6 px-1 text-[11px]"
+                              value={row.description}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setManualRows((prev) => {
+                                  const copy = [...prev];
+                                  copy[idx] = { ...copy[idx], description: v };
+                                  return copy;
+                                });
+                              }}
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            <Input
+                              className="h-6 px-1 text-[11px] text-right"
+                              type="number"
+                              value={row.amount}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setManualRows((prev) => {
+                                  const copy = [...prev];
+                                  copy[idx] = { ...copy[idx], amount: v };
+                                  return copy;
+                                });
+                              }}
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            <select
+                              className="border rounded px-1 py-0.5 text-[11px]"
+                              value={row.direction}
+                              onChange={(e) => {
+                                const v = e.target.value as 'debit' | 'credit';
+                                setManualRows((prev) => {
+                                  const copy = [...prev];
+                                  copy[idx] = { ...copy[idx], direction: v };
+                                  return copy;
+                                });
+                              }}
+                            >
+                              <option value="credit">Credit</option>
+                              <option value="debit">Debit</option>
+                            </select>
+                          </td>
+                          <td className="px-2 py-1 text-xs text-red-600">
+                            {row.duplicate ? 'DUPLICATE' : ''}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-gray-200 text-xs">
+              <Button variant="outline" size="sm" onClick={() => setManualOpen(false)} disabled={manualSaving}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={manualSaving || manualRows.length === 0}
+                onClick={() => saveManualStatement(false)}
+              >
+                {manualSaving ? 'Saving…' : 'Save statement'}
+              </Button>
+              <Button
+                size="sm"
+                disabled={manualSaving || manualRows.length === 0}
+                onClick={() => saveManualStatement(true)}
+              >
+                {manualSaving ? 'Saving…' : 'Save & Commit to Ledger'}
+              </Button>
             </div>
           </div>
         </div>
