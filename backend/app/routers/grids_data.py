@@ -1228,8 +1228,14 @@ def _get_inventory_data(
     from decimal import Decimal
     from sqlalchemy.sql import text as sa_text
     from sqlalchemy.sql.sqltypes import String, Text, CHAR, VARCHAR, Unicode, UnicodeText
-
-    table = TblPartsInventory.__table__
+    
+    # Try to use the VIEW with counts first, fallback to base table
+    from app.models_sqlalchemy.models import InventoryWithCounts
+    if not InventoryWithCounts.__abstract__:
+        table = InventoryWithCounts.__table__
+    else:
+        table = TblPartsInventory.__table__
+    
     if table is None or not list(table.columns):
         # Table missing in this environment – return empty result set but do not crash.
         return {
