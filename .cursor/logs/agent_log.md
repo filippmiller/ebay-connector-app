@@ -64,3 +64,5 @@
 2025-12-07T17:40:00Z - Reported BUYING fonts (filters, headers, grid cells)
 2025-12-07T17:55:00Z - Tightened grid typography to legacy-like compact black text
 2025-12-07T18:05:00Z - Updated DataGridPage fetch to fall back to items array so bank statements grid renders rows
+2025-12-08T00:00:00Z - Started bank statements grid investigation; reviewed AccountingPage/DataGridPage and backend grid serialization.
+2025-12-08T00:20:00Z - Adjusted Cloudflare proxy routing to not force /api prefix for /grid/preferences (bank statements grid prefs).

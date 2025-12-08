@@ -56,12 +56,13 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const pathWithoutApi = url.pathname.replace(/^\/api/, '') || '/';
 
   // Check if this is a route that expects /api prefix (newer routes)
-  const apiPrefixRoutes = ['/api/grid', '/api/grids', '/api/admin', '/api/orders', '/api/transactions',
+  // Note: /grid/preferences lives at /grid (no /api). Do NOT force /api prefix for it.
+  const apiPrefixRoutes = ['/api/grids', '/api/admin', '/api/orders', '/api/transactions',
     '/api/financials', '/api/inventory', '/api/offers', '/api/buying',
     '/api/listing', '/api/sq', '/api/shipping', '/api/timesheets', '/api/tasks',
     '/api/ai', '/api/accounting', '/api/ui-tweak'];
-
-  const needsApiPrefix = apiPrefixRoutes.some(route => url.pathname.startsWith(route));
+  const isGridPreferences = url.pathname.startsWith('/api/grid/preferences');
+  const needsApiPrefix = !isGridPreferences && apiPrefixRoutes.some(route => url.pathname.startsWith(route));
 
   upstream.pathname = needsApiPrefix ? url.pathname : pathWithoutApi;
   upstream.search = url.search;
