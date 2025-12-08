@@ -344,6 +344,8 @@ async def get_bank_statement_detail(
         "total_debit": total_debit,
         "error_message": stmt.error_message,
         "raw_response": stmt.raw_openai_response,
+        "raw_json": stmt.raw_json,
+        "raw_header_json": stmt.raw_header_json,
         "logs": [
             {"timestamp": log.timestamp, "level": log.level, "message": log.message, "details": log.details}
             for log in db.query(AccountingProcessLog).filter(AccountingProcessLog.bank_statement_id == stmt.id).order_by(AccountingProcessLog.timestamp).all()

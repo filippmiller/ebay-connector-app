@@ -13,18 +13,17 @@ import { DataGridPage } from '@/components/DataGridPage';
 
 const TD_SUMMARY_FIELD_CONFIG: { key: string; label: string }[] = [
   { key: 'beginning_balance', label: 'Beginning balance (Начальный баланс)' },
-  { key: 'electronic_deposits', label: 'Electronic deposits (Электронные зачисления)' },
-  { key: 'other_credits', label: 'Other credits (Прочие кредиты)' },
-  { key: 'checks_paid', label: 'Checks paid (Чеки оплачены)' },
-  { key: 'electronic_payments', label: 'Electronic payments (Электронные списания)' },
-  { key: 'other_withdrawals', label: 'Other withdrawals (Прочие списания)' },
-  { key: 'service_charges', label: 'Service charges (Комиссии банка)' },
   { key: 'ending_balance', label: 'Ending balance (Конечный баланс)' },
-  { key: 'average_collected_balance', label: 'Average collected balance (Средний остаток)' },
-  { key: 'interest_earned_this_period', label: 'Interest earned this period (Проценты за период)' },
-  { key: 'interest_paid_ytd', label: 'Interest paid year-to-date (Проценты с начала года)' },
-  { key: 'annual_percentage_yield_earned', label: 'APY earned (Годовая доходность)' },
-  { key: 'days_in_period', label: 'Days in period (Дней в периоде)' },
+  { key: 'electronic_deposits_total', label: 'Electronic deposits total (Электронные зачисления всего)' },
+  { key: 'other_credits_total', label: 'Other credits total (Прочие кредиты всего)' },
+  { key: 'checks_paid_total', label: 'Checks paid total (Чеки оплачены всего)' },
+  { key: 'electronic_payments_total', label: 'Electronic payments total (Электронные списания всего)' },
+  { key: 'other_withdrawals_total', label: 'Other withdrawals total (Прочие списания всего)' },
+  { key: 'service_charges_fees_total', label: 'Service charges fees total (Комиссии банка всего)' },
+  { key: 'interest_earned_total', label: 'Interest earned total (Проценты за период)' },
+  { key: 'grace_period_balance', label: 'Grace period balance (Грейс-баланс)' },
+  { key: 'grace_period_start', label: 'Grace period start (Начало грейс‑периода)' },
+  { key: 'grace_period_end', label: 'Grace period end (Конец грейс‑периода)' },
 ];
 
 interface Accounting2StatementSummary {
@@ -608,26 +607,48 @@ function StatementsTab2() {
               <span>
                 В этом окне вы видите все распарсенные транзакции до того, как они попадут в Ledger.
               </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  if (!previewStatement) return;
-                  try {
-                    const { data } = await api.get<{ url: string }>(`/accounting2/bank-statements/${previewStatement.id}/pdf-url`);
-                    if (data.url) {
-                      window.open(data.url, '_blank');
-                    } else {
-                      alert('PDF URL is empty');
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    if (!previewStatement) return;
+                    try {
+                      const { data } = await api.get<{ url: string }>(`/accounting2/bank-statements/${previewStatement.id}/pdf-url`);
+                      if (data.url) {
+                        window.open(data.url, '_blank');
+                      } else {
+                        alert('PDF URL is empty');
+                      }
+                    } catch (err: any) {
+                      alert(err?.response?.data?.detail || err?.message || 'Failed to open PDF');
                     }
-                  } catch (err: any) {
-                    alert(err?.response?.data?.detail || err?.message || 'Failed to open PDF');
-                  }
-                }}
-              >
-                View PDF
-              </Button>
+                  }}
+                >
+                  View PDF
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    if (!previewStatement) return;
+                    try {
+                      const { data } = await api.get<any>(`/accounting/bank-statements/${previewStatement.id}`);
+                      const payload = data?.raw_json ?? data;
+                      const jsonStr = JSON.stringify(payload, null, 2);
+                      const blob = new Blob([jsonStr], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      window.open(url, '_blank');
+                    } catch (err: any) {
+                      alert(err?.response?.data?.detail || err?.message || 'Failed to open JSON');
+                    }
+                  }}
+                >
+                  View JSON
+                </Button>
+              </div>
             </div>
 
             {previewStatement?.account_summary && (
