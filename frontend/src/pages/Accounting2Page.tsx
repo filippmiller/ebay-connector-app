@@ -654,30 +654,6 @@ function StatementsTab2() {
   );
 }
 
-interface Accounting2LedgerRow {
-  id: number;
-  date: string;
-  amount: number;
-  direction: 'in' | 'out';
-  source_type: string;
-  source_id: number | null;
-  account_name: string | null;
-  description: string | null;
-  expense_category_id: number | null;
-  storage_id: string | null;
-  is_personal: boolean | null;
-  is_internal_transfer: boolean | null;
-  subcategory?: string | null; // used as a simple flag / tag code
-}
-
-interface AccountingTag {
-  id: number;
-  code: string;
-  label: string;
-  color?: string | null;
-  is_active: boolean;
-}
-
 interface Accounting2LedgerTotals {
   total_in: number;
   total_out: number;
@@ -701,15 +677,13 @@ function LedgerTab2() {
   const [totals, setTotals] = React.useState<Accounting2LedgerTotals | null>(null);
 
   const [categories, setCategories] = React.useState<Accounting2Category[]>([]);
-  const [tags, setTags] = React.useState<AccountingTag[]>([]);
   const [selectedIds, setSelectedIds] = React.useState<number[]>([]);
   const [savingSelection, setSavingSelection] = React.useState(false);
-  const [newTagOpen, setNewTagOpen] = React.useState(false);
-  const [stmtModalOpen, setStmtModalOpen] = React.useState(false);
-  const [stmtModalLoading, setStmtModalLoading] = React.useState(false);
-  const [stmtModalError, setStmtModalError] = React.useState<string | null>(null);
-  const [stmtMeta, setStmtMeta] = React.useState<any | null>(null);
-  const [stmtSampleRows, setStmtSampleRows] = React.useState<any[]>([]);
+  const [stmtModalOpen] = React.useState(false);
+  const [stmtModalLoading] = React.useState(false);
+  const [stmtModalError] = React.useState<string | null>(null);
+  const [stmtMeta] = React.useState<any | null>(null);
+  const [stmtSampleRows] = React.useState<any[]>([]);
 
   React.useEffect(() => {
     const loadCategories = async () => {
@@ -720,16 +694,7 @@ function LedgerTab2() {
         // ignore
       }
     };
-    const loadTags = async () => {
-      try {
-        const { data } = await api.get<AccountingTag[]>('/accounting/tags', { params: { include_inactive: false } });
-        setTags(data || []);
-      } catch {
-        // ignore
-      }
-    };
     void loadCategories();
-    void loadTags();
   }, []);
 
   const buildFilterParams = React.useCallback(() => {
@@ -793,14 +758,8 @@ function LedgerTab2() {
     setSearchText('');
     setIsPersonal('');
     setIsInternal('');
-    setPage(1);
   };
 
-  const resolveCategoryName = (id: number | null) => {
-    if (!id) return '';
-    const c = categories.find((x) => x.id === id);
-    return c ? `${c.code} — ${c.name}` : String(id);
-  };
 
   const handleApplyCategoryToSelection = async () => {
     if (!selectedIds.length || !categoryId) return;
@@ -849,17 +808,17 @@ function LedgerTab2() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
           <div>
             <Label className="block text-xs mb-1">From</Label>
-            <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </div>
           <div>
             <Label className="block text-xs mb-1">To</Label>
-            <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
           <div>
             <Label className="block text-xs mb-1">Source type</Label>
             <Input
               value={sourceType}
-              onChange={(e) => { setSourceType(e.target.value); setPage(1); }}
+              onChange={(e) => setSourceType(e.target.value)}
               placeholder="bank_statement / cash_manual"
             />
           </div>
@@ -867,7 +826,7 @@ function LedgerTab2() {
             <Label className="block text-xs mb-1">Search in text</Label>
             <Input
               value={searchText}
-              onChange={(e) => { setSearchText(e.target.value); setPage(1); }}
+              onChange={(e) => setSearchText(e.target.value)}
               placeholder="Search in description / account / counterparty"
             />
           </div>
@@ -876,7 +835,7 @@ function LedgerTab2() {
             <select
               className="border rounded px-2 py-1 text-sm w-full"
               value={direction}
-              onChange={(e) => { setDirection(e.target.value); setPage(1); }}
+              onChange={(e) => setDirection(e.target.value)}
             >
               <option value="">All</option>
               <option value="in">In</option>
@@ -887,7 +846,7 @@ function LedgerTab2() {
             <Label className="block text-xs mb-1">Account name contains</Label>
             <Input
               value={accountName}
-              onChange={(e) => { setAccountName(e.target.value); setPage(1); }}
+              onChange={(e) => setAccountName(e.target.value)}
             />
           </div>
           <div>
@@ -895,7 +854,7 @@ function LedgerTab2() {
             <select
               className="border rounded px-2 py-1 text-sm w-full"
               value={categoryId}
-              onChange={(e) => { setCategoryId(e.target.value); setPage(1); }}
+              onChange={(e) => setCategoryId(e.target.value)}
             >
               <option value="">All</option>
               {categories.map((c) => (
@@ -910,7 +869,7 @@ function LedgerTab2() {
             <Input
               type="number"
               value={minAmount}
-              onChange={(e) => { setMinAmount(e.target.value); setPage(1); }}
+              onChange={(e) => setMinAmount(e.target.value)}
             />
           </div>
           <div>
@@ -918,7 +877,7 @@ function LedgerTab2() {
             <Input
               type="number"
               value={maxAmount}
-              onChange={(e) => { setMaxAmount(e.target.value); setPage(1); }}
+              onChange={(e) => setMaxAmount(e.target.value)}
             />
           </div>
           <div />
@@ -927,7 +886,7 @@ function LedgerTab2() {
             <select
               className="border rounded px-2 py-1 text-sm w-full"
               value={isPersonal}
-              onChange={(e) => { setIsPersonal(e.target.value); setPage(1); }}
+              onChange={(e) => setIsPersonal(e.target.value)}
             >
               <option value="">All</option>
               <option value="true">Personal only</option>
@@ -939,7 +898,7 @@ function LedgerTab2() {
             <select
               className="border rounded px-2 py-1 text-sm w-full"
               value={isInternal}
-              onChange={(e) => { setIsInternal(e.target.value); setPage(1); }}
+              onChange={(e) => setIsInternal(e.target.value)}
             >
               <option value="">All</option>
               <option value="true">Internal only</option>
@@ -1001,14 +960,6 @@ function LedgerTab2() {
                       Open in Accounting
                     </Button>
                   )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setStmtModalOpen(false)}
-                  >
-                    Close
-                  </Button>
                 </div>
               </div>
               {stmtModalLoading ? (
@@ -1084,7 +1035,6 @@ function LedgerTab2() {
           </div>
         )}
       </div>
-    </div>
   );
 }
 
@@ -1743,7 +1693,7 @@ function RulesTab2() {
                             </div>
                           </td>
                           <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-700">
-                            {resolveCategoryName(r.expense_category_id)}
+                            {r.expense_category_id != null ? String(r.expense_category_id) : ''}
                           </td>
                           <td className="px-2 py-1 text-right">
                             {typeof signed === 'number' ? signed.toFixed(2) : signed}

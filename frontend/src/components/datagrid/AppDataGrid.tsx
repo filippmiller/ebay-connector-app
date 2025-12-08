@@ -120,7 +120,7 @@ const ledgerTagsCache: {
   items: [],
 };
 
-async function ensureLedgerTagsLoaded(apiInstance: any, refresh: () => void) {
+async function ensureLedgerTagsLoaded(refresh: () => void) {
   if (ledgerTagsCache.loaded || ledgerTagsCache.loading) return;
   ledgerTagsCache.loading = true;
   try {
@@ -370,7 +370,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
 
           // Kick off tag load on first render; refresh grid when done.
           if (!ledgerTagsCache.loaded && !ledgerTagsCache.loading && params.api) {
-            void ensureLedgerTagsLoaded(params.api, () => {
+            void ensureLedgerTagsLoaded(() => {
               try {
                 params.api!.refreshCells({ force: true, columns: [col.name] });
               } catch {
