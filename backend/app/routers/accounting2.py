@@ -12,6 +12,7 @@ from app.models_sqlalchemy import get_db as get_db_sqla
 from app.models_sqlalchemy.models import (
     AccountingBankStatement,
     AccountingBankRow,
+    AccountingBankStatementFile,
     User,
 )
 from app.services.admin_auth import require_admin_user
@@ -346,14 +347,36 @@ async def get_bank_statement_pdf_url(
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ) -> Dict[str, Any]:
-    """Return a signed URL for the original PDF in Supabase Storage."""
+    """Return a signed URL for the original PDF in Supabase Storage.
+
+    Backwards compatible:
+    - New Accounting 2 statements store bucket/path on AccountingBankStatement.
+    - Legacy statements use accounting_bank_statement_file rows in bucket "bank-statements".
+    """
     stmt = _ensure_statement_owner(db, statement_id)
 
-    if not stmt.supabase_path:
-        raise HTTPException(status_code=404, detail="No PDF stored for this statement")
+    bucket = stmt.supabase_bucket
+    path = stmt.supabase_path
 
-    bucket = stmt.supabase_bucket or "accounting_bank_statements"
-    url = get_signed_url(bucket, stmt.supabase_path, expiry_seconds=3600)
+    if not path:
+        # Fallback to legacy accounting_bank_statement_file table
+        file_row: AccountingBankStatementFile | None = (
+            db.query(AccountingBankStatementFile)
+            .filter(AccountingBankStatementFile.bank_statement_id == statement_id)
+            .order_by(AccountingBankStatementFile.id.asc())
+            .first()
+        )
+        if not file_row:
+            raise HTTPException(status_code=404, detail="No PDF stored for this statement")
+        bucket = bucket or "bank-statements"
+        path = file_row.storage_path
+
+    # Default buckets if still not set
+    if not bucket:
+        # Legacy default bucket name where existing PDFs live
+        bucket = "bank-statements"
+
+    url = get_signed_url(bucket, path, expiry_seconds=3600)
     if not url:
         raise HTTPException(status_code=500, detail="Failed to generate signed URL")
 

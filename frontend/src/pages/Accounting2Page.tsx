@@ -1158,19 +1158,611 @@ function LedgerTab2() {
   );
 }
 
+interface Accounting2Category {
+  id: number;
+  code: string;
+  name: string;
+}
+
+interface Accounting2CashExpenseRow {
+  id: number;
+  date: string;
+  amount: number;
+  currency: string | null;
+  expense_category_id: number;
+  counterparty: string | null;
+  description: string | null;
+  storage_id: string | null;
+  paid_by_user_id: string;
+  created_at?: string;
+}
+
 function CashExpensesTab2() {
+  const [dateValue, setDateValue] = React.useState('');
+  const [amount, setAmount] = React.useState('');
+  const [currency, setCurrency] = React.useState('USD');
+  const [counterparty, setCounterparty] = React.useState('');
+  const [description, setDescription] = React.useState('');
+  const [storageId, setStorageId] = React.useState('');
+  const [categoryId, setCategoryId] = React.useState('');
+  const [categories, setCategories] = React.useState<Accounting2Category[]>([]);
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const [rows, setRows] = React.useState<Accounting2CashExpenseRow[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [page, setPage] = React.useState(1);
+  const [pageSize] = React.useState(50);
+  const [total, setTotal] = React.useState(0);
+
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
+  const [filterCategoryId, setFilterCategoryId] = React.useState('');
+  const [filterStorage, setFilterStorage] = React.useState('');
+
+  React.useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const { data } = await api.get<Accounting2Category[]>('/accounting/categories', { params: { is_active: true } });
+        setCategories(data || []);
+      } catch {
+        // ignore
+      }
+    };
+    void loadCategories();
+  }, []);
+
+  const loadRows = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params: Record<string, any> = {
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      };
+      if (dateFrom) params.from = dateFrom;
+      if (dateTo) params.to = dateTo;
+      if (filterCategoryId) params.category_id = Number(filterCategoryId);
+      if (filterStorage) params.storageID = filterStorage;
+
+      const { data } = await api.get<{ rows: Accounting2CashExpenseRow[]; total: number }>(
+        '/grids/accounting_cash_expenses/data',
+        { params },
+      );
+      const payload: any = data as any;
+      const rowsData = Array.isArray(payload.rows) ? payload.rows : Array.isArray(payload.items) ? payload.items : [];
+      setRows(rowsData);
+      setTotal(typeof payload.total === 'number' ? payload.total : rowsData.length);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load cash expenses');
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, dateFrom, dateTo, filterCategoryId, filterStorage]);
+
+  React.useEffect(() => {
+    void loadRows();
+  }, [loadRows]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dateValue || !amount || !categoryId) return;
+    setSubmitting(true);
+    try {
+      await api.post('/accounting/cash-expenses', {
+        date_value: dateValue,
+        amount: Number(amount),
+        currency,
+        counterparty,
+        description,
+        expense_category_id: Number(categoryId),
+        storage_id: storageId || undefined,
+      });
+      setAmount('');
+      setCounterparty('');
+      setDescription('');
+      setStorageId('');
+      await loadRows();
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || err?.message || 'Failed to create cash expense');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const resetFilters = () => {
+    setDateFrom('');
+    setDateTo('');
+    setFilterCategoryId('');
+    setFilterStorage('');
+    setPage(1);
+  };
+
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
   return (
-    <Card className="p-4">
-      <div className="text-sm text-gray-600">Cash Expenses 2 — будет реализован на следующем шаге.</div>
-    </Card>
+    <div className="flex-1 flex flex-col gap-4">
+      <Card className="p-4">
+        <h2 className="text-lg font-semibold mb-2">New Cash Expense (Accounting 2)</h2>
+        <form className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end" onSubmit={handleSubmit}>
+          <div>
+            <Label className="block text-xs mb-1">Date</Label>
+            <Input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} required />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Amount</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Currency</Label>
+            <Input value={currency} onChange={(e) => setCurrency(e.target.value)} />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Category</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              required
+            >
+              <option value="">Select category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Counterparty</Label>
+            <Input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />
+          </div>
+          <div className="md:col-span-2">
+            <Label className="block text-xs mb-1">Description</Label>
+            <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Storage ID</Label>
+            <Input value={storageId} onChange={(e) => setStorageId(e.target.value)} />
+          </div>
+          <div className="md:col-span-4 flex justify-end mt-2">
+            <Button type="submit" disabled={submitting || !dateValue || !amount || !categoryId}>
+              {submitting ? 'Saving…' : 'Add Expense'}
+            </Button>
+          </div>
+        </form>
+      </Card>
+
+      <Card className="p-4 flex flex-col gap-3 flex-1 min-h-0">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+          <div>
+            <Label className="block text-xs mb-1">From</Label>
+            <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">To</Label>
+            <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Category</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={filterCategoryId}
+              onChange={(e) => { setFilterCategoryId(e.target.value); setPage(1); }}
+            >
+              <option value="">All</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Storage ID</Label>
+            <Input
+              value={filterStorage}
+              onChange={(e) => { setFilterStorage(e.target.value); setPage(1); }}
+            />
+          </div>
+        </div>
+        <div className="flex justify-between items-center mt-2 text-xs">
+          <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
+            Reset filters
+          </Button>
+          <span className="text-gray-500">
+            {total > 0 ? `Showing ${(page - 1) * pageSize + 1}-${Math.min(total, page * pageSize)} of ${total}` : 'No rows'}
+          </span>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-auto border rounded bg-white mt-2">
+          {error && (
+            <div className="p-3 text-sm text-red-600 border-b">{error}</div>
+          )}
+          <table className="min-w-full text-xs">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-2 py-2 text-left">Date</th>
+                <th className="px-2 py-2 text-right">Amount</th>
+                <th className="px-2 py-2 text-left">Currency</th>
+                <th className="px-2 py-2 text-left">Category</th>
+                <th className="px-2 py-2 text-left">Counterparty</th>
+                <th className="px-2 py-2 text-left">Description</th>
+                <th className="px-2 py-2 text-left">Storage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-3 text-sm text-gray-600">Loading cash expenses…</td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-3 text-sm text-gray-600">No cash expenses found.</td>
+                </tr>
+              ) : (
+                rows.map((r) => (
+                  <tr key={r.id} className="border-t hover:bg-gray-50">
+                    <td className="px-2 py-1 whitespace-nowrap">{r.date}</td>
+                    <td className="px-2 py-1 text-right">
+                      {typeof r.amount === 'number' ? r.amount.toFixed(2) : r.amount}
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.currency || '—'}</td>
+                    <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-600">
+                      {r.expense_category_id ?? '—'}
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap">
+                      <div className="truncate max-w-[160px]" title={r.counterparty || undefined}>
+                        {r.counterparty || '—'}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1">
+                      <div className="truncate max-w-xs" title={r.description || undefined}>
+                        {r.description || '—'}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-600">
+                      {r.storage_id || ''}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          {total > pageSize && (
+            <div className="flex items-center justify-between px-3 py-2 text-xs text-gray-600 border-t bg-gray-50">
+              <div>
+                Page {page} of {pageCount}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage(1)}
+                >
+                  « First
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  ‹ Prev
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= pageCount}
+                  onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                >
+                  Next ›
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
   );
 }
 
+interface Accounting2Rule {
+  id: number;
+  pattern_type: string;
+  pattern_value: string;
+  expense_category_id: number;
+  priority: number;
+  is_active: boolean;
+}
+
+interface Accounting2RulePreviewRow {
+  id: number;
+  date: string;
+  amount: number;
+  direction: 'in' | 'out';
+  account_name: string | null;
+  description: string | null;
+}
+
 function RulesTab2() {
+  const [rules, setRules] = React.useState<Accounting2Rule[]>([]);
+  const [categories, setCategories] = React.useState<Accounting2Category[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+
+  const [patternType, setPatternType] = React.useState('contains');
+  const [patternValue, setPatternValue] = React.useState('');
+  const [categoryId, setCategoryId] = React.useState('');
+  const [priority, setPriority] = React.useState('10');
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewRows, setPreviewRows] = React.useState<Accounting2RulePreviewRow[]>([]);
+
+  React.useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [rulesResp, catsResp] = await Promise.all([
+          api.get<Accounting2Rule[]>('/accounting/rules', { params: { is_active: true } }),
+          api.get<Accounting2Category[]>('/accounting/categories', { params: { is_active: true } }),
+        ]);
+        setRules(rulesResp.data || []);
+        setCategories(catsResp.data || []);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
+  }, [refreshKey]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!patternValue || !categoryId) return;
+    setSubmitting(true);
+    try {
+      await api.post('/accounting/rules', {
+        pattern_type: patternType,
+        pattern_value: patternValue,
+        expense_category_id: Number(categoryId),
+        priority: Number(priority) || 10,
+        is_active: true,
+      });
+      setPatternValue('');
+      setCategoryId('');
+      setPriority('10');
+      setRefreshKey((v) => v + 1);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || err?.message || 'Failed to create rule');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this rule?')) return;
+    await api.delete(`/accounting/rules/${id}`);
+    setRefreshKey((v) => v + 1);
+  };
+
+  const openPreview = async (rule: Accounting2Rule) => {
+    if (!rule.pattern_value) return;
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewRows([]);
+    try {
+      const params: Record<string, any> = {
+        limit: 20,
+        offset: 0,
+        search: rule.pattern_value,
+      };
+      const { data } = await api.get<{ rows: Accounting2RulePreviewRow[]; total: number }>(
+        '/grids/ledger_transactions/data',
+        { params },
+      );
+      const payload: any = data as any;
+      const rows = Array.isArray(payload.rows) ? payload.rows : Array.isArray(payload.items) ? payload.items : [];
+      setPreviewRows(rows);
+    } catch (err: any) {
+      setPreviewError(err?.message || 'Failed to load preview');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const resolveCategoryName = (id: number) => {
+    const c = categories.find((x) => x.id === id);
+    return c ? `${c.code} — ${c.name}` : id;
+  };
+
   return (
-    <Card className="p-4">
-      <div className="text-sm text-gray-600">Rules 2 — будет реализован на следующем шаге.</div>
-    </Card>
+    <div className="flex-1 flex flex-col gap-4">
+      <Card className="p-4">
+        <h2 className="text-lg font-semibold mb-2">New Auto-Categorization Rule (Accounting 2)</h2>
+        <form className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end" onSubmit={handleCreate}>
+          <div>
+            <Label className="block text-xs mb-1">Pattern Type</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={patternType}
+              onChange={(e) => setPatternType(e.target.value)}
+            >
+              <option value="contains">Contains text</option>
+              <option value="regex">Regex</option>
+              <option value="counterparty">Counterparty</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <Label className="block text-xs mb-1">Pattern Value</Label>
+            <Input
+              value={patternValue}
+              onChange={(e) => setPatternValue(e.target.value)}
+              placeholder="Text fragment or regex pattern"
+              required
+            />
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Category</Label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              required
+            >
+              <option value="">Select category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="block text-xs mb-1">Priority</Label>
+            <Input
+              type="number"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              placeholder="10"
+            />
+          </div>
+          <div className="md:col-span-5 flex justify-end mt-2">
+            <Button type="submit" disabled={submitting || !patternValue || !categoryId}>
+              {submitting ? 'Saving…' : 'Create Rule'}
+            </Button>
+          </div>
+        </form>
+      </Card>
+
+      <Card className="p-4 flex-1 min-h-0 flex flex-col">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-gray-800">Active Rules</h2>
+        </div>
+        <div className="flex-1 min-h-0 overflow-auto border rounded bg-white">
+          {loading ? (
+            <div className="p-4 text-sm text-gray-600">Loading rules…</div>
+          ) : rules.length === 0 ? (
+            <div className="p-4 text-sm text-gray-600">No rules yet.</div>
+          ) : (
+            <table className="min-w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-2 py-2 text-left">Pattern</th>
+                  <th className="px-2 py-2 text-left">Category</th>
+                  <th className="px-2 py-2 text-left">Priority</th>
+                  <th className="px-2 py-2 text-left">Type</th>
+                  <th className="px-2 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rules.map((r) => (
+                  <tr key={r.id} className="border-t hover:bg-gray-50">
+                    <td className="px-2 py-1">
+                      <div className="truncate max-w-xs" title={r.pattern_value}>
+                        {r.pattern_value}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-700">
+                      {resolveCategoryName(r.expense_category_id)}
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.priority}</td>
+                    <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-600">{r.pattern_type}</td>
+                    <td className="px-2 py-1 whitespace-nowrap text-[11px]">
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-auto px-2 py-0 text-[11px]"
+                          onClick={() => void openPreview(r)}
+                        >
+                          Preview
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-auto px-2 py-0 text-[11px] text-red-700 border-red-200"
+                          onClick={() => void handleDelete(r.id)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </Card>
+
+      {previewOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 p-4 text-sm flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-semibold">Rule preview</h3>
+              <Button type="button" variant="outline" size="sm" onClick={() => setPreviewOpen(false)}>
+                Close
+              </Button>
+            </div>
+            {previewLoading ? (
+              <div className="text-gray-600">Loading matching transactions…</div>
+            ) : previewError ? (
+              <div className="text-red-600">{previewError}</div>
+            ) : previewRows.length === 0 ? (
+              <div className="text-gray-600">No matching transactions found for current ledger.</div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-auto border rounded bg-white">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-2 py-2 text-left">Date</th>
+                      <th className="px-2 py-2 text-left">Account</th>
+                      <th className="px-2 py-2 text-left">Description</th>
+                      <th className="px-2 py-2 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((r) => {
+                      const signed = typeof r.amount === 'number' ? r.amount * (r.direction === 'out' ? -1 : 1) : r.amount;
+                      return (
+                        <tr key={r.id} className="border-t">
+                          <td className="px-2 py-1 whitespace-nowrap">{r.date}</td>
+                          <td className="px-2 py-1 whitespace-nowrap text-[11px] text-gray-700">{r.account_name || '—'}</td>
+                          <td className="px-2 py-1">
+                            <div className="truncate max-w-xs" title={r.description || undefined}>
+                              {r.description || '—'}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            {typeof signed === 'number' ? signed.toFixed(2) : signed}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
