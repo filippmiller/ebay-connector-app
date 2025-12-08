@@ -35,6 +35,7 @@ from .bank_statement_schema import (
 
 # ============================================================================
 # TD Bank PDF Structure Constants
+# NOTE: local deterministic parser, no OpenAI/LLM involved.
 # ============================================================================
 
 # Section headers in TD Bank statements (DAILY ACCOUNT ACTIVITY)
