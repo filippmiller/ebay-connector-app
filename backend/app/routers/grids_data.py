@@ -1403,6 +1403,13 @@ def _get_inventory_data(
         
         if unique_skus and (active_ids or sold_ids):
             try:
+                # Only run query if we have status IDs to filter on
+                # PostgreSQL ANY() fails with empty arrays
+                if not active_ids:
+                    active_ids = [-1]  # Use impossible ID instead of empty list
+                if not sold_ids:
+                    sold_ids = [-1]  # Use impossible ID instead of empty list
+                    
                 sku_list = list(unique_skus)
                 count_query = sa_text(f'''
                     SELECT "{sku_col.name}" AS sku,
@@ -1412,7 +1419,7 @@ def _get_inventory_data(
                     WHERE "{sku_col.name}" = ANY(:sku_list)
                     GROUP BY "{sku_col.name}"
                 ''')
-                result = db.execute(count_query, {'active_ids': active_ids or [0], 'sold_ids': sold_ids or [0], 'sku_list': sku_list})
+                result = db.execute(count_query, {'active_ids': active_ids, 'sold_ids': sold_ids, 'sku_list': sku_list})
                 for row in result:
                     sku_counts[row.sku] = (int(row.active_count or 0), int(row.sold_count or 0))
             except Exception:
@@ -1428,6 +1435,10 @@ def _get_inventory_data(
         
         if unique_itemids and (active_ids or sold_ids):
             try:
+                # Same fix for ItemID - avoid empty arrays in ANY()
+                active_ids_copy = active_ids if active_ids else [-1]
+                sold_ids_copy = sold_ids if sold_ids else [-1]
+                
                 itemid_list = list(unique_itemids)
                 count_query = sa_text(f'''
                     SELECT "{itemid_col.name}" AS itemid,
@@ -1437,7 +1448,7 @@ def _get_inventory_data(
                     WHERE "{itemid_col.name}" = ANY(:itemid_list)
                     GROUP BY "{itemid_col.name}"
                 ''')
-                result = db.execute(count_query, {'active_ids': active_ids or [0], 'sold_ids': sold_ids or [0], 'itemid_list': itemid_list})
+                result = db.execute(count_query, {'active_ids': active_ids_copy, 'sold_ids': sold_ids_copy, 'itemid_list': itemid_list})
                 for row in result:
                     itemid_counts[row.itemid] = (int(row.active_count or 0), int(row.sold_count or 0))
             except Exception:
