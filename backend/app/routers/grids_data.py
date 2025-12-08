@@ -1401,14 +1401,13 @@ def _get_inventory_data(
             if sku_value is not None:
                 unique_skus.add(sku_value)
         
+        
         if unique_skus and (active_ids or sold_ids):
             try:
-                # Only run query if we have status IDs to filter on
+                # Use copies to avoid modifying original lists
                 # PostgreSQL ANY() fails with empty arrays
-                if not active_ids:
-                    active_ids = [-1]  # Use impossible ID instead of empty list
-                if not sold_ids:
-                    sold_ids = [-1]  # Use impossible ID instead of empty list
+                active_ids_copy = active_ids if active_ids else [-1]
+                sold_ids_copy = sold_ids if sold_ids else [-1]
                     
                 sku_list = list(unique_skus)
                 count_query = sa_text(f'''
@@ -1419,7 +1418,7 @@ def _get_inventory_data(
                     WHERE "{sku_col.name}" = ANY(:sku_list)
                     GROUP BY "{sku_col.name}"
                 ''')
-                result = db.execute(count_query, {'active_ids': active_ids, 'sold_ids': sold_ids, 'sku_list': sku_list})
+                result = db.execute(count_query, {'active_ids': active_ids_copy, 'sold_ids': sold_ids_copy, 'sku_list': sku_list})
                 for row in result:
                     sku_counts[row.sku] = (int(row.active_count or 0), int(row.sold_count or 0))
             except Exception:
