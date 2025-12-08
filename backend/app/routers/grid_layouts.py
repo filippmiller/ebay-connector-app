@@ -183,6 +183,7 @@ ACCOUNTING_TRANSACTIONS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="expense_category_id", label="Category", type="string", width_default=140),
   ColumnMeta(name="storage_id", label="Storage", type="string", width_default=140),
   ColumnMeta(name="source_type", label="Source type", type="string", width_default=140),
+  ColumnMeta(name="source_id", label="Source ID", type="number", width_default=110),
   ColumnMeta(name="is_personal", label="Personal", type="boolean", width_default=100),
   ColumnMeta(name="is_internal_transfer", label="Internal transfer", type="boolean", width_default=150),
   ColumnMeta(name="description", label="Description", type="string", width_default=260),

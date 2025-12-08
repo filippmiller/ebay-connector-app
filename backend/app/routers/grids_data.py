@@ -376,6 +376,12 @@ async def get_grid_data(
     # Accounting / generic filters
     source_type: Optional[str] = Query(None),
     storage_id: Optional[str] = Query(None, alias="storageID"),
+    category_id: Optional[int] = Query(None),
+    min_amount: Optional[float] = Query(None),
+    max_amount: Optional[float] = Query(None),
+    account_name: Optional[str] = Query(None),
+    is_personal: Optional[bool] = Query(None),
+    is_internal_transfer: Optional[bool] = Query(None),
     # Inventory-specific filters
     ebay_status: Optional[str] = Query(None),
     # SKU Catalog specific filters
@@ -681,6 +687,14 @@ async def get_grid_data(
                 date_to=to_date,
                 source_type=source_type,
                 storage_id=storage_id,
+                category_id=category_id,
+                min_amount=min_amount,
+                max_amount=max_amount,
+                account_name=account_name,
+                direction=direction,
+                is_personal=is_personal,
+                is_internal_transfer=is_internal_transfer,
+                search=search,
             )
         finally:
             db_sqla.close()
@@ -702,6 +716,14 @@ async def get_grid_data(
                 date_to=to_date,
                 source_type=source_type,
                 storage_id=storage_id,
+                category_id=category_id,
+                min_amount=min_amount,
+                max_amount=max_amount,
+                account_name=account_name,
+                direction=direction,
+                is_personal=is_personal,
+                is_internal_transfer=is_internal_transfer,
+                search=search,
             )
         finally:
             db_sqla.close()
@@ -2308,6 +2330,14 @@ def _get_accounting_transactions_grid_data(
     date_to: Optional[str],
     source_type: Optional[str],
     storage_id: Optional[str],
+    category_id: Optional[int] = None,
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
+    account_name: Optional[str] = None,
+    direction: Optional[str] = None,
+    is_personal: Optional[bool] = None,
+    is_internal_transfer: Optional[bool] = None,
+    search: Optional[str] = None,
 ) -> Dict[str, Any]:
     from datetime import datetime as dt_type
     from decimal import Decimal
@@ -2330,6 +2360,29 @@ def _get_accounting_transactions_grid_data(
         query = query.filter(AccountingTxn.source_type == source_type)
     if storage_id:
         query = query.filter(AccountingTxn.storage_id == storage_id)
+    if category_id is not None:
+        query = query.filter(AccountingTxn.expense_category_id == category_id)
+    if direction:
+        query = query.filter(AccountingTxn.direction == direction)
+    if min_amount is not None:
+        query = query.filter(AccountingTxn.amount >= min_amount)
+    if max_amount is not None:
+        query = query.filter(AccountingTxn.amount <= max_amount)
+    if account_name:
+        query = query.filter(AccountingTxn.account_name.ilike(f"%{account_name}%"))
+    if is_personal is not None:
+        query = query.filter(AccountingTxn.is_personal == is_personal)
+    if is_internal_transfer is not None:
+        query = query.filter(AccountingTxn.is_internal_transfer == is_internal_transfer)
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                AccountingTxn.description.ilike(like),
+                AccountingTxn.account_name.ilike(like),
+                AccountingTxn.counterparty.ilike(like),
+            )
+        )
 
     total = query.count()
 

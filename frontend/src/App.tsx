@@ -34,6 +34,7 @@ import MyTimesheetPage from './pages/MyTimesheetPage';
 import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
 import TasksPage from './pages/TasksPage';
 import AccountingPage from './pages/AccountingPage';
+import Accounting2Page from './pages/Accounting2Page';
 import AdminUITweakPage from './pages/AdminUITweakPage';
 import SecurityCenterPage from './pages/SecurityCenterPage';
 import AdminUsersPage from './pages/AdminUsersPage';
@@ -336,6 +337,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <AccountingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/accounting2/*"
+            element={
+              <ProtectedRoute>
+                <Accounting2Page />
               </ProtectedRoute>
             }
           />

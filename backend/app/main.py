@@ -43,6 +43,7 @@ from app.routers import (
     ebay_listing_debug,
     admin,
     accounting,
+    accounting2,
     admin_ai,
     admin_ai_rules_ext,
     admin_monitoring,
@@ -149,6 +150,7 @@ app.include_router(security_center.router)
 app.include_router(admin_users.router)
 app.include_router(sniper.router)
 app.include_router(accounting.router)
+app.include_router(accounting2.router)
 app.include_router(admin_ai.router)
 app.include_router(admin_ai_rules_ext.router)
 app.include_router(admin_monitoring.router)
