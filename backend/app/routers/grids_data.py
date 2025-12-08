@@ -1345,8 +1345,13 @@ def _get_inventory_data(
 
     # Efficient SKU/ItemID counting for displayed rows only
     sku_col = cols_by_lower.get('sku')
-    itemid_col = cols_by_lower.get('itemid') or cols_by_lower.get('item_id')
-    statussku_col = cols_by_lower.get('statussku') or cols_by_lower.get('status_sku')
+    # Can't use 'or' with SQLAlchemy columns - check None explicitly
+    itemid_col = cols_by_lower.get('itemid')
+    if itemid_col is None:
+        itemid_col = cols_by_lower.get('item_id')
+    statussku_col = cols_by_lower.get('statussku')
+    if statussku_col is None:
+        statussku_col = cols_by_lower.get('status_sku')
     
     sku_counts = {}
     itemid_counts = {}
