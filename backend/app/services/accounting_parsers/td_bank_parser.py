@@ -40,6 +40,8 @@ from .bank_statement_schema import (
 
 # Section headers in TD Bank statements (DAILY ACCOUNT ACTIVITY)
 TD_SECTION_HEADERS = {
+    # Some statements use generic "Deposits" before the detailed Electronic Deposits
+    "Deposits": BankSectionCode.ELECTRONIC_DEPOSIT,
     "Electronic Deposits": BankSectionCode.ELECTRONIC_DEPOSIT,
     "Other Credits": BankSectionCode.OTHER_CREDIT,
     "Checks Paid": BankSectionCode.CHECKS_PAID,
@@ -374,9 +376,16 @@ class TDBankPDFParser:
             # If section headers were not detected correctly, try to infer
             # bank_section and direction from the description itself.
             inferred_section = current_section
-            desc_upper = description.upper()
+            desc_upper = description.upper().replace(' ', '')
             if inferred_section == BankSectionCode.UNKNOWN:
-                if any(key in desc_upper for key in ["CCD DEPOSIT", "ACH DEPOSIT", "ACH CREDIT", "DEBIT CARD CREDIT"]):
+                # CCDDEPOSIT / CCD DEPOSIT / ACHDEPOSIT / ACH DEPOSIT / plain DEPOSIT
+                if (
+                    "CCDDEPOSIT" in desc_upper
+                    or "CCD DEPOSIT".replace(' ', '') in desc_upper
+                    or "ACHDEPOSIT" in desc_upper
+                    or "ACHCREDIT" in desc_upper
+                    or desc_upper.startswith("DEPOSIT")
+                ):
                     inferred_section = BankSectionCode.ELECTRONIC_DEPOSIT
                 elif any(key in desc_upper for key in ["SERVICE CHARGE", "MAINTENANCE FEE", "OVERDRAFT"]):
                     inferred_section = BankSectionCode.SERVICE_CHARGE
