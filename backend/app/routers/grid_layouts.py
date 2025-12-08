@@ -585,26 +585,6 @@ def _inventory_columns_meta_from_reflection() -> List[ColumnMeta]:
             )
         )
 
-    # Add virtual columns for SKU/ItemID with counts
-    cols.append(
-        ColumnMeta(
-            name="SKU_with_counts",
-            label="SKU (Active/Sold)",
-            type="string",
-            width_default=180,
-            sortable=False,
-        )
-    )
-    cols.append(
-        ColumnMeta(
-            name="ItemID_with_counts",
-            label="ItemID (Active/Sold)",
-            type="string",
-            width_default=200,
-            sortable=False,
-        )
-    )
-    
     INVENTORY_COLUMNS_META = cols
     return INVENTORY_COLUMNS_META
 
