@@ -981,44 +981,8 @@ function LedgerTab2() {
           onSelectionChange={(rows) => setSelectedIds(rows.map((r: any) => r.id))}
         />
       </div>
-        {total > pageSize && (
-          <div className="flex items-center justify-between px-3 py-2 text-xs text-gray-600 border-t bg-gray-50">
-            <div>
-              Page {page} of {pageCount}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage(1)}
-              >
-                « First
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                ‹ Prev
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page >= pageCount}
-                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-              >
-                Next ›
-              </Button>
-            </div>
-          </div>
-        )}
 
-        {stmtModalOpen && (
+      {stmtModalOpen && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 p-4 text-sm">
               <div className="flex items-center justify-between mb-3">

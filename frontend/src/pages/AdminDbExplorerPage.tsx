@@ -170,9 +170,11 @@ const AdminDbExplorerPage: React.FC = () => {
   const [migrationSource, setMigrationSource] = useState<MigrationEndpoint | null>(null);
   const [migrationTarget, setMigrationTarget] = useState<MigrationEndpoint | null>(null);
 
-  // Compare & Migrate state - stores tables from both databases
-  const [supabaseTables, _setSupabaseTables] = useState<TableInfo[]>([]);
-  const [mssqlTables, _setMssqlTables] = useState<TableInfo[]>([]);
+  // Compare & Migrate state - stores tables from both databases.
+  // These are used to populate the dropdowns in the Compare & Migrate tab and
+  // should be loaded independently of the currently active DB in the Explorer.
+  const [supabaseTables, setSupabaseTables] = useState<TableInfo[]>([]);
+  const [mssqlTables, setMssqlTables] = useState<TableInfo[]>([]);
 
   const buildMssqlConfig = (): MssqlConnectionConfig => ({
     host: '',
@@ -187,6 +189,48 @@ const AdminDbExplorerPage: React.FC = () => {
     setMigrationLog((prev) => [...prev, line]);
   };
 
+  /**
+   * Load Supabase tables for both the Explorer grid and the Compare & Migrate tab.
+   */
+  const loadSupabaseTables = async () => {
+    const resp = await api.get<TableInfo[]>('/api/admin/db/tables');
+    setSupabaseTables(resp.data);
+    // If Explorer is currently viewing Supabase, keep it in sync.
+    if (activeDb === 'supabase') {
+      setTables(resp.data);
+      setFilteredTables(resp.data);
+    }
+  };
+
+  /**
+   * Load MSSQL tables for both the Explorer grid and the Compare & Migrate tab.
+   */
+  const loadMssqlTables = async () => {
+    if (!mssqlDatabase.trim()) {
+      setMssqlTables([]);
+      if (activeDb === 'mssql') {
+        setTables([]);
+        setFilteredTables([]);
+      }
+      return;
+    }
+
+    const resp = await api.post<MssqlSchemaTreeResponse>('/api/admin/mssql/schema-tree', buildMssqlConfig());
+    const tree: MssqlSchemaTreeResponse = resp.data;
+    const list: TableInfo[] = [];
+    tree.schemas.forEach((s) => {
+      s.tables.forEach((t) => {
+        list.push({ schema: s.name, name: t.name, row_estimate: t.row_estimate });
+      });
+    });
+
+    setMssqlTables(list);
+    if (activeDb === 'mssql') {
+      setTables(list);
+      setFilteredTables(list);
+    }
+  };
+
   const fetchTables = async () => {
     setLoadingTables(true);
     setError(null);
@@ -196,25 +240,9 @@ const AdminDbExplorerPage: React.FC = () => {
     setDuplicates(null);
     try {
       if (activeDb === 'supabase') {
-        const resp = await api.get<TableInfo[]>('/api/admin/db/tables');
-        setTables(resp.data);
-        setFilteredTables(resp.data);
+        await loadSupabaseTables();
       } else {
-        if (!mssqlDatabase.trim()) {
-          setTables([]);
-          setFilteredTables([]);
-          return;
-        }
-        const resp = await api.post<MssqlSchemaTreeResponse>('/api/admin/mssql/schema-tree', buildMssqlConfig());
-        const tree: MssqlSchemaTreeResponse = resp.data;
-        const list: TableInfo[] = [];
-        tree.schemas.forEach((s) => {
-          s.tables.forEach((t) => {
-            list.push({ schema: s.name, name: t.name, row_estimate: t.row_estimate });
-          });
-        });
-        setTables(list);
-        setFilteredTables(list);
+        await loadMssqlTables();
       }
     } catch (e: any) {
       console.error('Failed to load tables', e);
@@ -228,12 +256,36 @@ const AdminDbExplorerPage: React.FC = () => {
 
   useEffect(() => {
     if (activeDb === 'supabase' || (activeDb === 'mssql' && mssqlDatabase.trim())) {
-      // Auto-load tables when switching DBs or when MSSQL database name becomes available.
+      // Auto-load tables into the Explorer when switching DBs or when MSSQL
+      // database name becomes available.
       // eslint-disable-next-line @typescript-eslint/no-floating-promises
       fetchTables();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeDb, mssqlDatabase]);
+
+  // When the user switches into the Compare & Migrate mode, proactively load
+  // tables from BOTH databases so dropdowns are immediately populated even if
+  // the Explorer has not been pointed at that DB yet.
+  useEffect(() => {
+    if (pageMode !== 'compare') return;
+
+    const preloadForCompare = async () => {
+      try {
+        await Promise.all([
+          loadSupabaseTables(),
+          loadMssqlTables(),
+        ]);
+      } catch (e: any) {
+        console.error('Failed to preload tables for Compare & Migrate', e);
+        setError(e?.response?.data?.detail || e.message || 'Failed to load tables for Compare & Migrate');
+      }
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    preloadForCompare();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageMode, mssqlDatabase]);
 
   useEffect(() => {
     const q = search.trim().toLowerCase();
