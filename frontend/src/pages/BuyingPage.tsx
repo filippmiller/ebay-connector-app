@@ -69,8 +69,6 @@ export default function BuyingPage() {
   const [filterStatusId, setFilterStatusId] = useState<string>('');
   const [filterPaidFrom, setFilterPaidFrom] = useState('');
   const [filterPaidTo, setFilterPaidTo] = useState('');
-  const [filterCreatedFrom, setFilterCreatedFrom] = useState('');
-  const [filterCreatedTo, setFilterCreatedTo] = useState('');
   const [filterSellerId, setFilterSellerId] = useState('');
   const [filterStorageMode, setFilterStorageMode] = useState('any'); // any, exact, section
   const [filterStorageValue, setFilterStorageValue] = useState('');
@@ -225,8 +223,6 @@ export default function BuyingPage() {
     if (filterStatusId) p.status_id = filterStatusId;
     if (filterPaidFrom) p.paid_from = filterPaidFrom;
     if (filterPaidTo) p.paid_to = filterPaidTo;
-    if (filterCreatedFrom) p.created_from = filterCreatedFrom;
-    if (filterCreatedTo) p.created_to = filterCreatedTo;
     if (filterSellerId) p.seller_id = filterSellerId;
     if (filterStorageValue) {
       p.storage_mode = filterStorageMode;
@@ -239,8 +235,8 @@ export default function BuyingPage() {
     return p;
   }, [
     filterBuyerId, filterStatusId, filterPaidFrom, filterPaidTo,
-    filterCreatedFrom, filterCreatedTo, filterSellerId, filterStorageMode,
-    filterStorageValue, filterTitle, filterTracking, filterItemId, filterId
+    filterSellerId, filterStorageMode, filterStorageValue, filterTitle,
+    filterTracking, filterItemId, filterId
   ]);
 
   const handleClearFilters = () => {
@@ -248,8 +244,6 @@ export default function BuyingPage() {
     setFilterStatusId('');
     setFilterPaidFrom('');
     setFilterPaidTo('');
-    setFilterCreatedFrom('');
-    setFilterCreatedTo('');
     setFilterSellerId('');
     setFilterStorageMode('any');
     setFilterStorageValue('');
@@ -289,12 +283,14 @@ export default function BuyingPage() {
                 <option value="">Status</option>
                 {statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
+              <span className="text-[10px] text-gray-500 font-semibold">Paid:</span>
               <input
                 type="date"
                 className="border rounded px-1 py-0.5 h-7 text-[10px] w-28"
                 value={filterPaidFrom}
                 onChange={e => setFilterPaidFrom(e.target.value)}
                 title="Paid From"
+                placeholder="From"
               />
               <span className="text-[10px] text-gray-400">-</span>
               <input
@@ -303,21 +299,7 @@ export default function BuyingPage() {
                 value={filterPaidTo}
                 onChange={e => setFilterPaidTo(e.target.value)}
                 title="Paid To"
-              />
-              <input
-                type="date"
-                className="border rounded px-1 py-0.5 h-7 text-[10px] w-28"
-                value={filterCreatedFrom}
-                onChange={e => setFilterCreatedFrom(e.target.value)}
-                title="Created From"
-              />
-              <span className="text-[10px] text-gray-400">-</span>
-              <input
-                type="date"
-                className="border rounded px-1 py-0.5 h-7 text-[10px] w-28"
-                value={filterCreatedTo}
-                onChange={e => setFilterCreatedTo(e.target.value)}
-                title="Created To"
+                placeholder="To"
               />
               <input
                 className="border rounded px-1.5 py-0.5 h-7 text-[10px] w-20"

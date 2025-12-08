@@ -463,7 +463,7 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "title",
             "comment",
         ],
-        "sort": {"column": "paid_time", "direction": "desc"},
+        "sort": {"column": "id", "direction": "desc"},
     },
     "accounting_cash_expenses": {
         "visible_columns": [
