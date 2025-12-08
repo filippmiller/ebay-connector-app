@@ -91,6 +91,7 @@ class CVSettings(BaseSettings):
     class Config:
         env_prefix = "CV_"
         env_file = ".env"
+        extra = "ignore"
 
 
 # Global settings instance

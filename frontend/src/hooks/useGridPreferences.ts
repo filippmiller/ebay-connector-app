@@ -123,9 +123,9 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
       // Continue to fallbacks
     }
 
-    // Fallback: try legacy /grids/{gridKey}/layout to keep existing grids working
+    // Fallback: try legacy /api/grids/{gridKey}/layout to keep existing grids working
     try {
-      const legacyResp = await api.get<GridLayoutResponse>(`/grids/${gridKey}/layout`);
+      const legacyResp = await api.get<GridLayoutResponse>(`/api/grids/${gridKey}/layout`);
       const layout = legacyResp.data;
       const colsMeta = layout.available_columns || [];
 
@@ -153,7 +153,7 @@ export function useGridPreferences(gridKey: string): UseGridPreferencesResult {
 
       // Last-resort fallback: try to infer columns from a sample of grid data.
       try {
-        const dataResp = await api.get<GridDataResponse>(`/grids/${gridKey}/data`, {
+        const dataResp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data`, {
           params: { limit: 1, offset: 0 },
         });
         const data = dataResp.data;

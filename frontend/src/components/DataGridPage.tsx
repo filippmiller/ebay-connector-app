@@ -187,7 +187,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
         if (extraParams) {
           Object.entries(extraParams).forEach(([k, v]) => params.append(k, String(v)));
         }
-        const resp = await api.get<GridDataResponse>(`/grids/${gridKey}/data?${params.toString()}`);
+        const resp = await api.get<GridDataResponse>(`/api/grids/${gridKey}/data?${params.toString()}`);
 
         // Some endpoints may return `items` instead of `rows`; fall back safely.
         const payload: any = resp.data as any;
