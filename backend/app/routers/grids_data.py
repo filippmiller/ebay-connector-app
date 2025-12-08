@@ -1372,9 +1372,10 @@ def _get_inventory_data(
     sku_counts = {}
     itemid_counts = {}
     
-    if sku_col and statussku_col and rows_db:
-        active_ids = []
-        sold_ids = []
+    # Determine ACTIVE and SOLD status IDs (needed for both SKU and ItemID)
+    active_ids = []
+    sold_ids = []
+    if statussku_col:
         try:
             status_query = sa_text("""
                 SELECT "InventoryStatus_ID" AS id, "InventoryStatus_Name" AS name,
@@ -1390,9 +1391,9 @@ def _get_inventory_data(
                 elif any(kw in name_lower or kw in short_lower for kw in ['sold', 'продан']):
                     sold_ids.append(int(row.id))
         except Exception:
-            active_ids = []
-            sold_ids = []
-        
+            pass
+    
+    if sku_col and statussku_col and rows_db:
         unique_skus = set()
         for row in rows_db:
             mapping = getattr(row, "_mapping", row)
