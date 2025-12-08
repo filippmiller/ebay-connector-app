@@ -1356,7 +1356,7 @@ def _get_inventory_data(
     sku_counts = {}
     itemid_counts = {}
     
-    if sku_col and statussku_col and rows_db:
+    if sku_col is not None and statussku_col is not None and rows_db:
         # Extract unique SKUs from displayed rows
         unique_skus = []
         for row in rows_db:
@@ -1382,7 +1382,7 @@ def _get_inventory_data(
             except Exception:
                 pass
     
-    if itemid_col and statussku_col and rows_db:
+    if itemid_col is not None and statussku_col is not None and rows_db:
         # Extract unique ItemIDs from displayed rows
         unique_itemids = []
         for row in rows_db:
