@@ -202,105 +202,202 @@ class TDBankPDFParser:
         )
     
     def _extract_summary(self) -> BankStatementSummaryV1:
-        """Extract ACCOUNT SUMMARY section totals."""
-        def get_amount(pattern_key: str) -> Optional[Decimal]:
-            match = PATTERNS[pattern_key].search(self.full_text)
-            if match:
-                return self._parse_amount(match.group(1))
-            return None
-        
-        beginning = get_amount("beginning_balance") or Decimal("0.00")
-        ending = get_amount("ending_balance") or Decimal("0.00")
-        
+        """Extract ACCOUNT SUMMARY section totals.
+
+        Instead of relying on many independent regexes scattered across the
+        whole text, we take the block between 'ACCOUNT SUMMARY' and
+        'DAILY ACCOUNT ACTIVITY' and parse each line as
+
+            <label> .... <amount>
+
+        This is more robust against layout changes and matches exactly what is
+        shown in the PDF header.
+        """
+        text_upper = self.full_text.upper()
+        start_idx = text_upper.find("ACCOUNT SUMMARY")
+        end_idx = text_upper.find("DAILY ACCOUNT ACTIVITY")
+        block = ""
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            block = self.full_text[start_idx:end_idx]
+        elif start_idx != -1:
+            block = self.full_text[start_idx: start_idx + 2000]
+        else:
+            block = self.full_text
+
+        # Default values
+        beginning = Decimal("0.00")
+        ending = Decimal("0.00")
+        electronic_deposits_total: Optional[Decimal] = None
+        other_credits_total: Optional[Decimal] = None
+        checks_paid_total: Optional[Decimal] = None
+        electronic_payments_total: Optional[Decimal] = None
+        other_withdrawals_total: Optional[Decimal] = None
+        service_charges_fees_total: Optional[Decimal] = None
+        interest_earned_total: Optional[Decimal] = None
+
+        NAME_MAP = {
+            "BEGINNING BALANCE": "beginning",
+            "ENDING BALANCE": "ending",
+            "ELECTRONIC DEPOSITS": "electronic_deposits_total",
+            "OTHER CREDITS": "other_credits_total",
+            "CHECKS PAID": "checks_paid_total",
+            "ELECTRONIC PAYMENTS": "electronic_payments_total",
+            "OTHER WITHDRAWALS": "other_withdrawals_total",
+            "SERVICE CHARGES": "service_charges_fees_total",
+            "SERVICE CHARGES/FEES": "service_charges_fees_total",
+            "INTEREST EARNED": "interest_earned_total",
+        }
+
+        amount_line_re = re.compile(r"^(.*?)\s+([$\d,]+\.\d{2})\s*$")
+
+        for raw_line in block.split("\n"):
+            line = raw_line.strip()
+            if not line:
+                continue
+            m = amount_line_re.match(line)
+            if not m:
+                continue
+            label_raw, amount_str = m.group(1), m.group(2)
+            label = label_raw.upper().strip().rstrip(":")
+            key = None
+            for name, mapped in NAME_MAP.items():
+                if label.startswith(name):
+                    key = mapped
+                    break
+            if not key:
+                continue
+
+            amt = self._parse_amount(amount_str) or Decimal("0.00")
+
+            if key == "beginning":
+                beginning = amt
+            elif key == "ending":
+                ending = amt
+            elif key == "electronic_deposits_total":
+                electronic_deposits_total = amt
+            elif key == "other_credits_total":
+                other_credits_total = amt
+            elif key == "checks_paid_total":
+                checks_paid_total = amt
+            elif key == "electronic_payments_total":
+                electronic_payments_total = amt
+            elif key == "other_withdrawals_total":
+                other_withdrawals_total = amt
+            elif key == "service_charges_fees_total":
+                service_charges_fees_total = amt
+            elif key == "interest_earned_total":
+                interest_earned_total = amt
+
         return BankStatementSummaryV1(
             beginning_balance=beginning,
             ending_balance=ending,
-            electronic_deposits_total=get_amount("electronic_deposits"),
-            other_credits_total=get_amount("other_credits"),
-            checks_paid_total=get_amount("checks_paid"),
-            electronic_payments_total=get_amount("electronic_payments"),
-            other_withdrawals_total=get_amount("other_withdrawals"),
-            service_charges_fees_total=get_amount("service_charges"),
-            interest_earned_total=get_amount("interest_earned"),
+            electronic_deposits_total=electronic_deposits_total,
+            other_credits_total=other_credits_total,
+            checks_paid_total=checks_paid_total,
+            electronic_payments_total=electronic_payments_total,
+            other_withdrawals_total=other_withdrawals_total,
+            service_charges_fees_total=service_charges_fees_total,
+            interest_earned_total=interest_earned_total,
         )
     
     def _extract_transactions(self, metadata: BankStatementMetadataV1) -> List[BankStatementTransactionV1]:
-        """Extract all transactions from DAILY ACCOUNT ACTIVITY sections."""
+        """Extract all transactions from DAILY ACCOUNT ACTIVITY sections.
+
+        Supports both single-line and multi-line TD layouts where description
+        spans multiple lines and the amount is on the last line.
+        """
         transactions: List[BankStatementTransactionV1] = []
         txn_id = 0
-        
-        # Infer year from statement period
+
         year = metadata.statement_period_start.year
-        
-        # Process text by sections
+
         current_section = BankSectionCode.UNKNOWN
-        
-        # Split into lines and process
+
         lines = self.full_text.split('\n')
-        
-        for line in lines:
-            line = line.strip()
+
+        buffer: Optional[Dict[str, Any]] = None  # {date: 'MM/DD', desc_parts: [..]}
+        amount_only_re = re.compile(r'^-?[\d,]+\.\d{2}$')
+
+        for raw_line in lines:
+            line = raw_line.strip()
             if not line:
                 continue
-            
-            # Check for section headers
+
+            # Section headers (do not treat as transactions)
             for header, section_code in TD_SECTION_HEADERS.items():
-                if header.lower() in line.lower() and not re.search(r'\d+\.\d{2}', line):
+                if header.upper() in line.upper() and not re.search(r'\d+\.\d{2}', line):
                     current_section = section_code
+                    # Do not continue here; header lines might also contain dates in rare cases
                     break
-            
-            # Try to parse as transaction line
-            # Format: 01/05    CCD DEPOSIT EBAY COM        1,500.00
+
+            # 1) Full transaction in one line: MM/DD ... amount
             txn_match = re.match(r'^(\d{1,2}/\d{1,2})\s+(.+?)\s{2,}([\d,]+\.\d{2})$', line)
             if not txn_match:
-                # Try alternate format with just single space before amount
                 txn_match = re.match(r'^(\d{1,2}/\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})$', line)
-            
+
             if txn_match:
                 date_str = txn_match.group(1)
-                description = txn_match.group(2).strip()
+                desc = txn_match.group(2).strip()
                 amount_str = txn_match.group(3)
-                
-                posting_date = self._parse_date(date_str, year)
-                amount = self._parse_amount(amount_str)
-                
-                if posting_date and amount:
-                    txn_id += 1
-                    
-                    # Determine direction from section
-                    direction = SECTION_DIRECTION.get(current_section, TransactionDirection.DEBIT)
-                    
-                    # Extract bank subtype (first part of description)
-                    bank_subtype = self._extract_subtype(description)
-                    
-                    # Apply sign based on direction
-                    if direction == TransactionDirection.DEBIT:
-                        amount = -abs(amount)
-                    else:
-                        amount = abs(amount)
-                    
-                    # Check for check number
-                    check_number = None
-                    check_match = re.match(r'(?:CHECK|CHK)\s+(\d+)', description, re.IGNORECASE)
-                    if check_match:
-                        check_number = check_match.group(1)
-                    
-                    txn = BankStatementTransactionV1(
-                        id=txn_id,
-                        posting_date=posting_date,
-                        description=description,
-                        amount=amount,
-                        bank_section=current_section,
-                        bank_subtype=bank_subtype,
-                        direction=direction,
-                        accounting_group=AccountingGroup.OTHER,  # Will be set by classifier
-                        classification=ClassificationCode.UNKNOWN,  # Will be set by classifier
-                        status=TransactionStatus.OK,
-                        check_number=check_number,
-                        description_raw=description,
-                    )
-                    transactions.append(txn)
-        
+                buffer = {"date": date_str, "desc_parts": [desc]}
+                # fall through and handle as buffered + amount-only line below
+
+            # 2) Amount-only line finishing a buffered description
+            if amount_only_re.match(line) and buffer is not None and not re.match(r'^\d{1,2}/\d{1,2}', line):
+                date_str = buffer["date"]
+                desc_parts = buffer["desc_parts"]
+                amount_str = line
+                buffer = None
+            elif txn_match:
+                # We already have amount on the same line
+                date_str = txn_match.group(1)
+                desc_parts = [txn_match.group(2).strip()]
+                amount_str = txn_match.group(3)
+                buffer = None
+            else:
+                # 3) Continuation of multi-line description
+                if buffer is not None:
+                    buffer["desc_parts"].append(line)
+                continue
+
+            posting_date = self._parse_date(date_str, year)
+            amount = self._parse_amount(amount_str)
+            if not (posting_date and amount is not None):
+                continue
+
+            description = ' '.join(desc_parts).replace('\s+', ' ').strip()
+
+            txn_id += 1
+
+            direction = SECTION_DIRECTION.get(current_section, TransactionDirection.DEBIT)
+            bank_subtype = self._extract_subtype(description)
+
+            if direction == TransactionDirection.DEBIT:
+                amount = -abs(amount)
+            else:
+                amount = abs(amount)
+
+            check_number = None
+            check_match = re.match(r'(?:CHECK|CHK)\s+(\d+)', description, re.IGNORECASE)
+            if check_match:
+                check_number = check_match.group(1)
+
+            txn = BankStatementTransactionV1(
+                id=txn_id,
+                posting_date=posting_date,
+                description=description,
+                amount=amount,
+                bank_section=current_section,
+                bank_subtype=bank_subtype,
+                direction=direction,
+                accounting_group=AccountingGroup.OTHER,
+                classification=ClassificationCode.UNKNOWN,
+                status=TransactionStatus.OK,
+                check_number=check_number,
+                description_raw=description,
+            )
+            transactions.append(txn)
+
         logger.info(f"TD PDF Parser: Extracted {len(transactions)} transactions")
         return transactions
     
