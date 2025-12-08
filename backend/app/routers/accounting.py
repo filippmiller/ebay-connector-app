@@ -553,6 +553,119 @@ async def get_transactions_totals(
         "net": float(net)
     }
 
+
+class AccountingTransactionUpdate(BaseModel):
+    expense_category_id: Optional[int] = None
+    storage_id: Optional[str] = None
+    is_personal: Optional[bool] = None
+    is_internal_transfer: Optional[bool] = None
+    flag_code: Optional[str] = None  # stored in AccountingTransaction.subcategory
+
+
+@router.put("/transactions/{transaction_id}")
+async def update_transaction(
+    transaction_id: int,
+    payload: AccountingTransactionUpdate,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    txn = db.query(AccountingTransaction).get(transaction_id)
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Track old values for logging
+    changes: Dict[str, Any] = {}
+
+    def _set_attr(field: str, value: Any):
+        old = getattr(txn, field)
+        if value is not None and old != value:
+            setattr(txn, field, value)
+            changes[field] = {"old": str(old), "new": str(value)}
+
+    if payload.expense_category_id is not None:
+        _set_attr("expense_category_id", payload.expense_category_id)
+    if payload.storage_id is not None:
+        _set_attr("storage_id", payload.storage_id)
+    if payload.is_personal is not None:
+        _set_attr("is_personal", payload.is_personal)
+    if payload.is_internal_transfer is not None:
+        _set_attr("is_internal_transfer", payload.is_internal_transfer)
+    if payload.flag_code is not None:
+        # Use subcategory field as a simple string flag/tag code
+        _set_attr("subcategory", payload.flag_code)
+
+    if not changes:
+        return {"id": txn.id, "updated": False}
+
+    txn.updated_by_user_id = current_user.id
+
+    # Write logs for each changed field
+    for field, meta in changes.items():
+        log = AccountingTransactionLog(
+            transaction_id=txn.id,
+            changed_by_user_id=current_user.id,
+            field_name=field,
+            old_value=meta["old"],
+            new_value=meta["new"],
+        )
+        db.add(log)
+
+    db.commit()
+    db.refresh(txn)
+
+    return {"id": txn.id, "updated": True}
+
+
+class RuleApplyRequest(BaseModel):
+    transaction_ids: List[int]
+    expense_category_id: Optional[int] = None
+
+
+@router.post("/rules/{rule_id}/apply")
+async def apply_rule_to_transactions(
+    rule_id: int,
+    payload: RuleApplyRequest,
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+):
+    if not payload.transaction_ids:
+        raise HTTPException(status_code=400, detail="transaction_ids cannot be empty")
+
+    rule = db.query(AccountingBankRule).get(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    category_id = payload.expense_category_id or rule.expense_category_id
+    if not category_id:
+        raise HTTPException(status_code=400, detail="No expense_category_id provided on rule or request")
+
+    txns = (
+        db.query(AccountingTransaction)
+        .filter(AccountingTransaction.id.in_(payload.transaction_ids))
+        .all()
+    )
+
+    updated = 0
+    for txn in txns:
+        old_cat = txn.expense_category_id
+        if old_cat == category_id:
+            continue
+        txn.expense_category_id = category_id
+        txn.updated_by_user_id = current_user.id
+        log = AccountingTransactionLog(
+            transaction_id=txn.id,
+            changed_by_user_id=current_user.id,
+            field_name="expense_category_id",
+            old_value=str(old_cat),
+            new_value=str(category_id),
+        )
+        db.add(log)
+        updated += 1
+
+    db.commit()
+
+    return {"rule_id": rule_id, "updated": updated, "category_id": category_id}
+
 @router.post("/test-openai")
 async def test_openai_connection(
     current_user: User = Depends(require_admin_user),
