@@ -371,7 +371,18 @@ class TDBankPDFParser:
 
             txn_id += 1
 
-            direction = SECTION_DIRECTION.get(current_section, TransactionDirection.DEBIT)
+            # If section headers were not detected correctly, try to infer
+            # bank_section and direction from the description itself.
+            inferred_section = current_section
+            desc_upper = description.upper()
+            if inferred_section == BankSectionCode.UNKNOWN:
+                if any(key in desc_upper for key in ["CCD DEPOSIT", "ACH DEPOSIT", "ACH CREDIT", "DEBIT CARD CREDIT"]):
+                    inferred_section = BankSectionCode.ELECTRONIC_DEPOSIT
+                elif any(key in desc_upper for key in ["SERVICE CHARGE", "MAINTENANCE FEE", "OVERDRAFT"]):
+                    inferred_section = BankSectionCode.SERVICE_CHARGE
+                # Другие эвристики можно добавлять по мере необходимости
+
+            direction = SECTION_DIRECTION.get(inferred_section, TransactionDirection.DEBIT)
             bank_subtype = self._extract_subtype(description)
 
             if direction == TransactionDirection.DEBIT:
