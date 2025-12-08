@@ -25,7 +25,7 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/grid", tags=["grid_preferences"])
+router = APIRouter(prefix="/grid", tags=["grid_preferences"])
 
 
 class GridTheme(BaseModel):

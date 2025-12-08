@@ -149,8 +149,8 @@ INVENTORY_COLUMNS_META: List[ColumnMeta] = []  # Populated lazily from reflectio
 
 ACCOUNTING_BANK_STATEMENTS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=80),
-  ColumnMeta(name="statement_period_start", label="Period start", type="date", width_default=140),
-  ColumnMeta(name="statement_period_end", label="Period end", type="date", width_default=140),
+  ColumnMeta(name="statement_period_start", label="Period start", type="string", width_default=140),
+  ColumnMeta(name="statement_period_end", label="Period end", type="string", width_default=140),
   ColumnMeta(name="bank_name", label="Bank", type="string", width_default=160),
   ColumnMeta(name="account_last4", label="Last4", type="string", width_default=80),
   ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
@@ -161,7 +161,7 @@ ACCOUNTING_BANK_STATEMENTS_COLUMNS_META: List[ColumnMeta] = [
 
 ACCOUNTING_CASH_EXPENSES_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=80),
-  ColumnMeta(name="date", label="Date", type="date", width_default=140),
+  ColumnMeta(name="date", label="Date", type="string", width_default=140),
   ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
   ColumnMeta(name="currency", label="Currency", type="string", width_default=80),
   ColumnMeta(name="expense_category_id", label="Category", type="string", width_default=140),
@@ -174,7 +174,7 @@ ACCOUNTING_CASH_EXPENSES_COLUMNS_META: List[ColumnMeta] = [
 
 ACCOUNTING_TRANSACTIONS_COLUMNS_META: List[ColumnMeta] = [
   ColumnMeta(name="id", label="ID", type="number", width_default=80),
-  ColumnMeta(name="date", label="Date", type="date", width_default=140),
+  ColumnMeta(name="date", label="Date", type="string", width_default=140),
   ColumnMeta(name="direction", label="Direction", type="string", width_default=100),
   ColumnMeta(name="amount", label="Amount", type="money", width_default=120),
   ColumnMeta(name="signed_amount", label="Amount (±)", type="money", width_default=120),
