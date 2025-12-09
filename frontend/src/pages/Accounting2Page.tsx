@@ -793,7 +793,7 @@ function StatementsTab2() {
                           {typeof r.amount === 'number' ? r.amount.toFixed(2) : r.amount}
                         </td>
                         <td className="px-2 py-1 text-right">
-                          {r.balance_after != null ? r.balance_after.toFixed(2) : '—'}
+                          {r.balance_after != null ? (typeof r.balance_after === 'number' ? r.balance_after.toFixed(2) : String(r.balance_after)) : '—'}
                         </td>
                       </tr>
                     ))}

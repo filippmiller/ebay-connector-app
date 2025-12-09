@@ -1253,12 +1253,18 @@ def _get_inventory_data(
     cols_by_lower = {c.key.lower(): c for c in table.columns}
 
     # Best-effort detection of SKU / ItemID columns for counts enrichment.
-    sku_col = (
-        cols_by_lower.get("sku")
-        or cols_by_lower.get("sku_code")
-        or cols_by_lower.get("sku1")
-    )
-    itemid_col = cols_by_lower.get("itemid") or cols_by_lower.get("item_id")
+    # IMPORTANT: avoid using Python's ``or`` between SQLAlchemy columns because
+    # that would evaluate their boolean value and raise
+    # "Boolean value of this clause is not defined".
+    def _first_existing_column(candidates: List[str]):
+        for name in candidates:
+            col = cols_by_lower.get(name)
+            if col is not None:
+                return col
+        return None
+
+    sku_col = _first_existing_column(["sku", "sku_code", "sku1"])
+    itemid_col = _first_existing_column(["itemid", "item_id"])
 
     # Query rows as plain row mappings using the reflected table columns.
     columns = list(table.columns)
