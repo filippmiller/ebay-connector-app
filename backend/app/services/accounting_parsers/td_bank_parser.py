@@ -501,12 +501,11 @@ class TDBankPDFParser:
         date_re = re.compile(r'^(\d{1,2}/\d{1,2})\b')
         amount_re = re.compile(r'([\d,]+\.\d{2})')
         
-        # Check line pattern - multiple formats:
+        # Check line pattern - multiple formats, may contain several checks on one line:
         # - #331 03/31 $4,000.00
-        # - #1234 03/31 | $4,000.00
-        # - CHECK #331 03/31 4000.00
-        # Format: #CHECK_NUM MM/DD [anything] AMOUNT
-        check_re = re.compile(r'^#(\d+)\s+(\d{1,2}/\d{1,2}).*?[\$\s]([\d,]+\.\d{2})')
+        # - #1234 03/31   $4,000.00   #1235 03/31   $2,000.00
+        # We capture ALL occurrences (#num date amount) in a single line.
+        check_re = re.compile(r'#\s*(\d+)\s+(\d{1,2}/\d{1,2})\s+[\$\s]*([\d,]+\.\d{2})')
         
         # Pattern for daily balance lines: amount followed by date
         daily_balance_re = re.compile(r'^\d[\d,]*\.\d{2}\s+\d{1,2}/\d{1,2}')
@@ -733,42 +732,44 @@ class TDBankPDFParser:
                     "section": current_section,
                 }
             else:
-                # Check for check line format: #331 03/31 $4,000.00
-                check_match = check_re.match(line)
-                if check_match:
+                # Check for check line(s): can include multiple checks in one line
+                check_matches = list(check_re.finditer(line))
+                if check_matches:
                     # Flush previous transaction
                     flush_transaction()
-                    
-                    check_num = check_match.group(1)
-                    check_date = check_match.group(2)
-                    check_amount = check_match.group(3)
-                    
-                    # Create check transaction directly (single-line)
-                    logger.info(f"TD PDF Parser: Found check #{check_num} on {check_date} for ${check_amount}")
-                    
-                    posting_date = self._parse_date(check_date, year)
-                    if posting_date:
+
+                    for cm in check_matches:
+                        check_num = cm.group(1)
+                        check_date = cm.group(2)
+                        check_amount = cm.group(3)
+
+                        posting_date = self._parse_date(check_date, year)
+                        if not posting_date:
+                            continue
+
                         amount = self._parse_amount(check_amount)
-                        if amount is not None:
-                            # Checks are debits (negative)
-                            amount = -abs(amount)
-                            txn_id += 1
-                            
-                            txn = BankStatementTransactionV1(
-                                id=txn_id,
-                                posting_date=posting_date,
-                                description=f"CHECK #{check_num}",
-                                amount=amount,
-                                bank_section=BankSectionCode.CHECKS_PAID,
-                                bank_subtype="CHECK",
-                                direction=TransactionDirection.DEBIT,
-                                accounting_group=AccountingGroup.OTHER,
-                                classification=ClassificationCode.UNKNOWN,
-                                status=TransactionStatus.OK,
-                                check_number=check_num,
-                                description_raw=line,
-                            )
-                            transactions.append(txn)
+                        if amount is None:
+                            continue
+
+                        # Checks are debits
+                        amount = -abs(amount)
+                        txn_id += 1
+
+                        txn = BankStatementTransactionV1(
+                            id=txn_id,
+                            posting_date=posting_date,
+                            description=f"CHECK #{check_num}",
+                            amount=amount,
+                            bank_section=BankSectionCode.CHECKS_PAID,
+                            bank_subtype="CHECK",
+                            direction=TransactionDirection.DEBIT,
+                            accounting_group=AccountingGroup.OTHER,
+                            classification=ClassificationCode.UNKNOWN,
+                            status=TransactionStatus.OK,
+                            check_number=check_num,
+                            description_raw=line,
+                        )
+                        transactions.append(txn)
                 elif current_txn is not None:
                     # Continuation line
                     current_txn["lines"].append(line)

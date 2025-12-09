@@ -77,6 +77,188 @@ async def debug_environment(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/test-computer-analytics")
+async def get_test_computer_analytics(
+    storage_id: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),
+):
+    """Experimental analytics endpoint for a single computer by Storage ID.
+
+    Given a Storage ID from buying.storage (e.g. A127 / A331), this endpoint
+    returns a compact JSON tree with:
+    - buying rows
+    - legacy parts inventory (tbl_parts_inventory)
+    - modern inventory + parts_detail
+    - sales transactions (transactions table)
+    - finances transactions (ebay_finances_transactions)
+    - finances fees (ebay_finances_fees)
+
+    NOTE: this is an internal admin/debug endpoint and may evolve.
+    """
+    from sqlalchemy import text as sa_text
+    from datetime import datetime as dt_type
+    from decimal import Decimal
+
+    norm_storage = storage_id.strip()
+
+    def _normalize_row(row: dict) -> dict:
+        out: dict = {}
+        for k, v in row.items():
+            if isinstance(v, dt_type):
+                out[k] = v.isoformat()
+            elif isinstance(v, Decimal):
+                out[k] = float(v)
+            else:
+                out[k] = v
+        return out
+
+    result: dict = {"storage_id": norm_storage}
+
+    # 1) Buying rows for this storage
+    sql_buying = sa_text(
+        """
+        SELECT *
+        FROM buying
+        WHERE lower(trim(storage)) = lower(:storage_id)
+        """
+    )
+    buying_rows = db.execute(sql_buying, {"storage_id": norm_storage}).mappings().all()
+    result["buying"] = [_normalize_row(dict(r)) for r in buying_rows]
+
+    # 2) Legacy parts inventory (tbl_parts_inventory)
+    try:
+        sql_legacy_inv = sa_text(
+            """
+            SELECT *
+            FROM "tbl_parts_inventory"
+            WHERE lower(trim("Storage")) = lower(:storage_id)
+               OR lower(trim("AlternativeStorage")) = lower(:storage_id)
+               OR lower(trim("StorageAlias")) = lower(:storage_id)
+            """
+        )
+        legacy_inv_rows = db.execute(sql_legacy_inv, {"storage_id": norm_storage}).mappings().all()
+        result["legacy_inventory"] = [_normalize_row(dict(r)) for r in legacy_inv_rows]
+    except Exception:
+        # Legacy MSSQL/Supabase mirror may be absent in some environments
+        result["legacy_inventory"] = []
+
+    # 3) Modern inventory + parts_detail for this storage
+    sql_inv_pd = sa_text(
+        """
+        SELECT
+          i.id                AS inventory_id,
+          i.storage_id,
+          i.storage,
+          i.status,
+          i.category,
+          i.quantity,
+          i.price_value,
+          i.price_currency,
+          i.ebay_listing_id,
+          i.parts_detail_id,
+          pd.sku,
+          pd.item_id         AS parts_item_id,
+          pd.storage         AS parts_storage
+        FROM inventory i
+        LEFT JOIN parts_detail pd
+          ON pd.id = i.parts_detail_id
+        WHERE lower(trim(i.storage_id)) = lower(:storage_id)
+           OR lower(trim(i.storage))    = lower(:storage_id)
+        """
+    )
+    inv_pd_rows = db.execute(sql_inv_pd, {"storage_id": norm_storage}).mappings().all()
+    result["inventory"] = [_normalize_row(dict(r)) for r in inv_pd_rows]
+
+    # 4) Transactions for SKUs originating from this storage
+    sql_tx = sa_text(
+        """
+        WITH inv AS (
+          SELECT DISTINCT pd.sku
+          FROM inventory i
+          JOIN parts_detail pd ON pd.id = i.parts_detail_id
+          WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
+                 OR lower(trim(i.storage)) = lower(:storage_id))
+            AND pd.sku IS NOT NULL
+        )
+        SELECT t.*
+        FROM transactions t
+        WHERE t.sku IN (SELECT sku FROM inv)
+        """
+    )
+    tx_rows = db.execute(sql_tx, {"storage_id": norm_storage}).mappings().all()
+    result["transactions"] = [_normalize_row(dict(r)) for r in tx_rows]
+
+    # 5) Finances transactions (Sell Finances API) linked via order_id/line_item_id
+    sql_fin_tx = sa_text(
+        """
+        WITH tx AS (
+          SELECT DISTINCT
+            t.order_id,
+            t.line_item_id
+          FROM transactions t
+          JOIN (
+            SELECT DISTINCT pd.sku
+            FROM inventory i
+            JOIN parts_detail pd ON pd.id = i.parts_detail_id
+            WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
+                   OR lower(trim(i.storage)) = lower(:storage_id))
+              AND pd.sku IS NOT NULL
+          ) inv ON inv.sku = t.sku
+        )
+        SELECT eft.*
+        FROM ebay_finances_transactions eft
+        WHERE (eft.order_id IS NOT NULL AND eft.order_id IN (SELECT order_id FROM tx))
+           OR (eft.order_line_item_id IS NOT NULL AND eft.order_line_item_id IN (SELECT line_item_id FROM tx))
+        """
+    )
+    fin_tx_rows = db.execute(sql_fin_tx, {"storage_id": norm_storage}).mappings().all()
+    result["finances_transactions"] = [_normalize_row(dict(r)) for r in fin_tx_rows]
+
+    # 6) Finances fees for those transactions
+    sql_fin_fees = sa_text(
+        """
+        WITH fin AS (
+          SELECT DISTINCT transaction_id
+          FROM ebay_finances_transactions eft
+          WHERE (eft.order_id IS NOT NULL AND eft.order_id IN (
+                    SELECT DISTINCT t.order_id
+                    FROM transactions t
+                    JOIN (
+                      SELECT DISTINCT pd.sku
+                      FROM inventory i
+                      JOIN parts_detail pd ON pd.id = i.parts_detail_id
+                      WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
+                             OR lower(trim(i.storage)) = lower(:storage_id))
+                        AND pd.sku IS NOT NULL
+                    ) inv ON inv.sku = t.sku
+                ))
+             OR (eft.order_line_item_id IS NOT NULL AND eft.order_line_item_id IN (
+                    SELECT DISTINCT t.line_item_id
+                    FROM transactions t
+                    JOIN (
+                      SELECT DISTINCT pd.sku
+                      FROM inventory i
+                      JOIN parts_detail pd ON pd.id = i.parts_detail_id
+                      WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
+                             OR lower(trim(i.storage)) = lower(:storage_id))
+                        AND pd.sku IS NOT NULL
+                    ) inv ON inv.sku = t.sku
+                ))
+        )
+        SELECT eff.*
+        FROM ebay_finances_fees eff
+        WHERE eff.transaction_id IN (SELECT transaction_id FROM fin)
+        """
+    )
+    fin_fee_rows = db.execute(sql_fin_fees, {"storage_id": norm_storage}).mappings().all()
+    result["finances_fees"] = [_normalize_row(dict(r)) for r in fin_fee_rows]
+
+    # TODO: add legacy ebay_fees, ebay_returns, ebay_inquiries, ebay_cases, etc.
+
+    return result
+
+
 class TokenRefreshDebugRequest(BaseModel):
     """Request body for /ebay/token/refresh-debug.
 
