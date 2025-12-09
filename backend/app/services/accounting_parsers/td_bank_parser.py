@@ -65,17 +65,12 @@ SECTION_DIRECTION = {
 
 # Regex patterns for TD Bank statement parsing
 PATTERNS = {
-    # Account number: Primary Acct#: 123456789 or ****1234
-    "account_number": re.compile(r'Primary Acct[#:]\s*[*]*([\d*-]+)', re.IGNORECASE),
-    # Statement period: "Jan 01 2025-Jan 312025" or "January 1, 2025 through January 31, 2025"
-    # Note: TD Bank PDFs often have no space between day and year in end date (e.g., "312025")
-    "period": re.compile(
-        r'Statement\s*Period[:\s]+(\w+\s+\d{1,2},?\s*\d{4})\s*[-–]\s*(\w+\s+\d{1,2}\s*,?\s*\d{4})',
-        re.IGNORECASE
-    ),
-    # Alternative period format without "Statement Period" label
-    "period_alt": re.compile(
-        r'(\w{3,9}\s+\d{1,2},?\s*\d{4})\s+(?:through|to|[-–])\s*(\w{3,9}\s+\d{1,2}\s*,?\s*\d{4})',
+    # Account number: Primary Acct#: 123456789 or ****1234 or 625-2192140
+    "account_number": re.compile(r'Primary\s*Account\s*[#:]?\s*[*]*([\d*-]+)', re.IGNORECASE),
+    # Statement period: Find the date range pattern anywhere (e.g., "Aug 01 2025-Aug 312025")
+    # This is very flexible to handle TD Bank quirks
+    "period_dates": re.compile(
+        r'(\w{3,9})\s+(\d{1,2})\s*,?\s*(\d{4})\s*[-–]\s*(\w{3,9})\s+(\d{1,2})\s*,?\s*(\d{4})',
         re.IGNORECASE
     ),
     # Account owner name (usually all caps after address)
@@ -226,43 +221,60 @@ class TDBankPDFParser:
     
     def _extract_metadata(self) -> BankStatementMetadataV1:
         """Extract statement metadata from header text."""
-        # Account number
-        account_match = PATTERNS["account_number"].search(self.full_text)
+        # Month name mapping
+        month_map = {
+            'jan': 1, 'january': 1, 'feb': 2, 'february': 2, 'mar': 3, 'march': 3,
+            'apr': 4, 'april': 4, 'may': 5, 'jun': 6, 'june': 6,
+            'jul': 7, 'july': 7, 'aug': 8, 'august': 8, 'sep': 9, 'september': 9,
+            'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
+        }
+        
+        # Account number - search in first 3000 chars (header area)
+        header_text = self.full_text[:3000]
+        account_match = PATTERNS["account_number"].search(header_text)
         account_number = account_match.group(1) if account_match else "UNKNOWN"
         
         # Mask account number if not already masked
         if len(account_number) > 4 and not account_number.startswith('*'):
             account_number = "****" + account_number[-4:]
         
-        # Statement period - try primary pattern first, then alternative
+        # Statement period - find date range pattern
         period_start = None
         period_end = None
         
-        period_match = PATTERNS["period"].search(self.full_text)
-        if not period_match:
-            period_match = PATTERNS["period_alt"].search(self.full_text)
-        
+        period_match = PATTERNS["period_dates"].search(header_text)
         if period_match:
-            start_str = period_match.group(1)
-            end_str = period_match.group(2)
-            logger.debug(f"TD PDF Parser: Found period strings: '{start_str}' to '{end_str}'")
-            period_start = self._parse_date_flexible(start_str)
-            period_end = self._parse_date_flexible(end_str)
+            # Groups: (start_month, start_day, start_year, end_month, end_day, end_year)
+            start_month_str = period_match.group(1).lower()
+            start_day = int(period_match.group(2))
+            start_year = int(period_match.group(3))
+            end_month_str = period_match.group(4).lower()
+            end_day = int(period_match.group(5))
+            end_year = int(period_match.group(6))
+            
+            start_month = month_map.get(start_month_str)
+            end_month = month_map.get(end_month_str)
+            
+            if start_month and end_month:
+                try:
+                    period_start = date(start_year, start_month, start_day)
+                    period_end = date(end_year, end_month, end_day)
+                    logger.info(f"TD PDF Parser: Found period {period_start} to {period_end}")
+                except ValueError as e:
+                    logger.warning(f"TD PDF Parser: Invalid date values: {e}")
         
         if not period_start or not period_end:
-            # Fallback: try to extract from transaction dates
             self.parsing_notes.append("WARNING: Could not extract statement period from header")
-            logger.warning("TD PDF Parser: Could not extract statement period, will infer from transactions")
-            # Will be updated later from transaction dates if available
+            logger.warning("TD PDF Parser: Could not extract statement period")
             today = date.today()
             period_start = period_start or date(today.year, today.month, 1)
             period_end = period_end or today
         
         # Account owner (first capital name block found)
-        owner_match = PATTERNS["owner"].search(self.full_text[:2000])  # Search in header
+        owner_match = PATTERNS["owner"].search(header_text)
         owner = owner_match.group(1).strip() if owner_match else "Unknown"
         
-        logger.info(f"TD PDF Parser: Metadata - period {period_start} to {period_end}, account {account_number}")
+        logger.info(f"TD PDF Parser: Metadata - period {period_start} to {period_end}, account {account_number}, owner {owner}")
         
         return BankStatementMetadataV1(
             bank_name="TD Bank",
@@ -275,66 +287,79 @@ class TDBankPDFParser:
         )
     
     def _extract_summary(self) -> BankStatementSummaryV1:
-        """Extract ACCOUNT SUMMARY section totals using direct regex patterns.
+        """Extract ACCOUNT SUMMARY section totals.
 
-        TD Bank format (two-column layout):
-        Beginning Balance          4,569.84    Average Collected Balance    3,932.76
-        Electronic Deposits       56,052.29    Interest Earned This Period      0.00
-        ...
+        TD Bank format: Beginning/Ending Balance are inline in ACCOUNT SUMMARY.
+        Category totals appear as "Subtotal:" at end of each transaction section.
+        
+        Example:
+            Beginning Balance -1,258.02
+            ...
+            Ending Balance    -966.22
+            
+            Electronic Deposits
+            POSTING DATE DESCRIPTION        AMOUNT
+            08/01 RTP RCVD...              2,948.26
+            ...
+                                 Subtotal: 15,138.33
         """
-        # Use direct regex patterns - more reliable than line parsing
-        results: Dict[str, Optional[Decimal]] = {
-            "beginning": None,
-            "ending": None,
-            "electronic_deposits_total": None,
-            "other_credits_total": None,
-            "checks_paid_total": None,
-            "electronic_payments_total": None,
-            "other_withdrawals_total": None,
-            "service_charges_fees_total": None,
-            "interest_earned_total": None,
+        results: Dict[str, Optional[Decimal]] = {}
+        
+        # ---- 1. Beginning & Ending Balance (from ACCOUNT SUMMARY header) ----
+        # These are usually inline: "Beginning Balance -1,258.02"
+        beg_match = re.search(r'Beginning\s+Balance\s+(-?[\d,]+\.\d{2})', self.full_text, re.IGNORECASE)
+        if beg_match:
+            results["beginning"] = self._parse_amount(beg_match.group(1))
+            logger.info(f"TD PDF Parser: Beginning Balance = {results['beginning']}")
+        
+        end_match = re.search(r'Ending\s+Balance\s+(-?[\d,]+\.\d{2})', self.full_text, re.IGNORECASE)
+        if end_match:
+            results["ending"] = self._parse_amount(end_match.group(1))
+            logger.info(f"TD PDF Parser: Ending Balance = {results['ending']}")
+        
+        # ---- 2. Section Subtotals (from transaction sections) ----
+        # Pattern: Section header, then transactions, then "Subtotal: X,XXX.XX"
+        section_subtotals = {
+            "electronic_deposits": r'Electronic\s+Deposits.*?Subtotal:\s*([\d,]+\.\d{2})',
+            "deposits": r'(?<![a-zA-Z])Deposits\s+POSTING.*?Subtotal:\s*([\d,]+\.\d{2})',
+            "other_credits": r'Other\s+Credits.*?Subtotal:\s*([\d,]+\.\d{2})',
+            "checks_paid": r'Checks\s+Paid.*?Subtotal:\s*([\d,]+\.\d{2})',
+            "electronic_payments": r'Electronic\s+Payments.*?Subtotal:\s*([\d,]+\.\d{2})',
+            "other_withdrawals": r'Other\s+Withdrawals.*?Subtotal:\s*([\d,]+\.\d{2})',
+            "service_charges": r'Service\s+Charges.*?Subtotal:\s*([\d,]+\.\d{2})',
+            "interest_earned": r'Interest\s+Earned.*?Subtotal:\s*([\d,]+\.\d{2})',
         }
-
-        # Direct patterns for each field - look for label followed by amount
-        patterns = [
-            (r'Beginning\s+Balance\s+(-?[\d,]+\.\d{2})', "beginning"),
-            (r'Ending\s+Balance\s+(-?[\d,]+\.\d{2})', "ending"),
-            (r'Electronic\s+Deposits\s+(-?[\d,]+\.\d{2})', "electronic_deposits_total"),
-            (r'Other\s+Credits\s+(-?[\d,]+\.\d{2})', "other_credits_total"),
-            (r'Checks\s+Paid\s+(-?[\d,]+\.\d{2})', "checks_paid_total"),
-            (r'Electronic\s+Payments\s+(-?[\d,]+\.\d{2})', "electronic_payments_total"),
-            (r'Other\s+Withdrawals\s+(-?[\d,]+\.\d{2})', "other_withdrawals_total"),
-            (r'Service\s+Charges(?:/Fees)?\s+(-?[\d,]+\.\d{2})', "service_charges_fees_total"),
-            (r'Interest\s+Earned\s+(-?[\d,]+\.\d{2})', "interest_earned_total"),
-        ]
-
-        for pattern, key in patterns:
-            match = re.search(pattern, self.full_text, re.IGNORECASE)
+        
+        for key, pattern in section_subtotals.items():
+            match = re.search(pattern, self.full_text, re.IGNORECASE | re.DOTALL)
             if match:
                 amt = self._parse_amount(match.group(1))
                 if amt is not None:
                     results[key] = amt
-                    logger.debug(f"TD PDF Parser: Found {key} = {amt}")
-
-        # Log what we found
-        found_count = sum(1 for v in results.values() if v is not None)
-        logger.info(f"TD PDF Parser: Extracted {found_count}/9 summary fields")
+                    logger.info(f"TD PDF Parser: {key} Subtotal = {amt}")
         
-        if results["beginning"] is None:
-            self.parsing_notes.append("WARNING: Could not extract Beginning Balance from summary")
-        if results["ending"] is None:
-            self.parsing_notes.append("WARNING: Could not extract Ending Balance from summary")
+        # Combine deposits if we have both generic Deposits and Electronic Deposits
+        e_deposits = results.get("electronic_deposits") or results.get("deposits")
+        
+        # ---- 3. Log findings ----
+        found_count = sum(1 for k, v in results.items() if v is not None and k not in ("deposits",))
+        logger.info(f"TD PDF Parser: Extracted {found_count} summary fields")
+        
+        if results.get("beginning") is None:
+            self.parsing_notes.append("WARNING: Could not extract Beginning Balance")
+        if results.get("ending") is None:
+            self.parsing_notes.append("WARNING: Could not extract Ending Balance")
 
         return BankStatementSummaryV1(
-            beginning_balance=results["beginning"] or Decimal("0.00"),
-            ending_balance=results["ending"] or Decimal("0.00"),
-            electronic_deposits_total=results["electronic_deposits_total"],
-            other_credits_total=results["other_credits_total"],
-            checks_paid_total=results["checks_paid_total"],
-            electronic_payments_total=results["electronic_payments_total"],
-            other_withdrawals_total=results["other_withdrawals_total"],
-            service_charges_fees_total=results["service_charges_fees_total"],
-            interest_earned_total=results["interest_earned_total"],
+            beginning_balance=results.get("beginning") or Decimal("0.00"),
+            ending_balance=results.get("ending") or Decimal("0.00"),
+            electronic_deposits_total=e_deposits,
+            other_credits_total=results.get("other_credits"),
+            checks_paid_total=results.get("checks_paid"),
+            electronic_payments_total=results.get("electronic_payments"),
+            other_withdrawals_total=results.get("other_withdrawals"),
+            service_charges_fees_total=results.get("service_charges"),
+            interest_earned_total=results.get("interest_earned"),
         )
     
     def _extract_transactions(self, metadata: BankStatementMetadataV1) -> List[BankStatementTransactionV1]:
@@ -570,26 +595,35 @@ class TDBankPDFParser:
                 continue
 
             # Check for section headers - look for key phrases anywhere in line
+            # IMPORTANT: Order matters - check longer keywords first to avoid partial matches
             section_changed = False
             
-            # Section header keywords (not anchored to start - PDF extraction may vary)
+            # Section header keywords - LONGEST FIRST to avoid "Deposits" matching "Electronic Deposits"
             section_keywords = [
-                ("Electronic Deposits", BankSectionCode.ELECTRONIC_DEPOSIT),
-                ("Other Credits", BankSectionCode.OTHER_CREDIT),
-                ("Checks Paid", BankSectionCode.CHECKS_PAID),
-                ("Electronic Payments", BankSectionCode.ELECTRONIC_PAYMENT),
-                ("Other Withdrawals", BankSectionCode.OTHER_WITHDRAWAL),
-                ("Service Charges", BankSectionCode.SERVICE_CHARGE),
-                ("Interest Earned", BankSectionCode.INTEREST_EARNED),
+                ("ELECTRONIC DEPOSITS", BankSectionCode.ELECTRONIC_DEPOSIT),
+                ("ELECTRONIC PAYMENTS", BankSectionCode.ELECTRONIC_PAYMENT),
+                ("OTHER WITHDRAWALS", BankSectionCode.OTHER_WITHDRAWAL),
+                ("SERVICE CHARGES", BankSectionCode.SERVICE_CHARGE),
+                ("INTEREST EARNED", BankSectionCode.INTEREST_EARNED),
+                ("OTHER CREDITS", BankSectionCode.OTHER_CREDIT),
+                ("CHECKS PAID", BankSectionCode.CHECKS_PAID),
+                # Plain "DEPOSITS" last (after Electronic Deposits checked)
+                ("DEPOSITS", BankSectionCode.ELECTRONIC_DEPOSIT),
             ]
             
+            # Normalize line for matching (remove spaces between words)
+            line_upper_nospace = line_upper.replace(' ', '')
+            
             for keyword, section_code in section_keywords:
-                if keyword.upper() in line_upper:
-                    # Make sure it's a header, not a transaction (no leading date, no amount at end)
-                    if not date_re.match(line) and not re.search(r'\d+\.\d{2}\s*$', line):
+                keyword_nospace = keyword.replace(' ', '')
+                # Check both with and without spaces
+                if keyword in line_upper or keyword_nospace in line_upper_nospace:
+                    # Make sure it's a header, not a transaction (no leading date)
+                    # Allow headers that might have "POSTING DATE" or "AMOUNT" merged
+                    if not date_re.match(line):
                         current_section = section_code
                         section_changed = True
-                        logger.debug(f"TD PDF Parser: Entering section {section_code.value}")
+                        logger.info(f"TD PDF Parser: --> Entering section {section_code.value} (matched: {keyword})")
                         break
             
             if section_changed:
