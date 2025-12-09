@@ -69,11 +69,10 @@ PATTERNS = {
     "account_number": re.compile(r'Primary\s*Account\s*[#:]?\s*[*]*([\d*-]+)', re.IGNORECASE),
     
     # Statement period: Flexible pattern for TD Bank quirks
-    # Handles: "Aug 01 2025 - Aug 31 2025", "Aug 012025–Aug 312025", "Aug 01 2025 through Aug 31 2025"
-    # Groups: (start_month, start_day, start_year_opt, end_month, end_day, end_year_opt)
-    # Year is optional in first date (can be inferred from second date)
+    # Handles: "Aug 01 2025", "Aug 012025" (no space), "Jan 31,2025", "Aug 01 2025 through Aug 31 2025"
+    # Key fix: (?:\s*,?\s*|\s*) allows NO space between day and year (e.g., "Jan 012025")
     "period_dates": re.compile(
-        r'(\w{3,9})\s+(\d{1,2}),?\s*(\d{4})?\s*(?:[-–]|to|through)\s*(\w{3,9})\s+(\d{1,2}),?\s*(\d{4})?',
+        r'(\w{3,9})\s+(\d{1,2})(?:\s*,?\s*|\s*)(\d{4})?\s*(?:[-–]|to|through)\s*(\w{3,9})\s+(\d{1,2})(?:\s*,?\s*|\s*)(\d{4})?',
         re.IGNORECASE
     ),
     
@@ -83,29 +82,28 @@ PATTERNS = {
     # Account owner name (usually all caps after address)
     "owner": re.compile(r'^([A-Z][A-Z\s&.,-]+(?:LLC|INC|CORP|CO)?)\s*$', re.MULTILINE),
     
-    # Beginning/Ending balance - flexible spacing
+    # Beginning/Ending balance - flexible spacing, handles $ sign and various formats
     "beginning_balance": re.compile(r'Beginning\s+Balance\s*[\$]?\s*(-?[\d,]+\.\d{2})', re.IGNORECASE),
     "ending_balance": re.compile(r'Ending\s+Balance\s*[\$]?\s*(-?[\d,]+\.\d{2})', re.IGNORECASE),
     
     # Transaction line: date + description + amount
-    # Format: 01/05    CCD DEPOSIT EBAY COM        1,500.00
     "transaction_line": re.compile(
         r'^(\d{1,2}/\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})$',
         re.MULTILINE
     ),
-    # Check number pattern: CHECK          1234        500.00
+    # Check number pattern: CHECK 1234, Check No. 1234, Check 1234
     "check_line": re.compile(
-        r'^(\d{1,2}/\d{1,2})\s+(?:CHECK|CHK)\s+(\d+)\s+([\d,]+\.\d{2})$',
+        r'^(\d{1,2}/\d{1,2})\s+(?:CHECK|CHK)(?:\s+(?:NO\.?|#)?)?\s*(\d+)\s+([\d,]+\.\d{2})$',
         re.IGNORECASE | re.MULTILINE
     ),
-    # Summary section totals
-    "electronic_deposits": re.compile(r'Electronic Deposits\s+([\d,]+\.\d{2})', re.IGNORECASE),
-    "other_credits": re.compile(r'Other Credits\s+([\d,]+\.\d{2})', re.IGNORECASE),
-    "checks_paid": re.compile(r'Checks Paid\s+([\d,]+\.\d{2})', re.IGNORECASE),
-    "electronic_payments": re.compile(r'Electronic Payments\s+([\d,]+\.\d{2})', re.IGNORECASE),
-    "other_withdrawals": re.compile(r'Other Withdrawals\s+([\d,]+\.\d{2})', re.IGNORECASE),
-    "service_charges": re.compile(r'Service Charges/Fees\s+([\d,]+\.\d{2})', re.IGNORECASE),
-    "interest_earned": re.compile(r'Interest Earned\s+([\d,]+\.\d{2})', re.IGNORECASE),
+    # Summary section totals - handle plural/singular forms
+    "electronic_deposits": re.compile(r'Electronic\s+Deposits?\s+([\d,]+\.\d{2})', re.IGNORECASE),
+    "other_credits": re.compile(r'Other\s+Credits?\s+([\d,]+\.\d{2})', re.IGNORECASE),
+    "checks_paid": re.compile(r'Checks?\s+Paid\s+([\d,]+\.\d{2})', re.IGNORECASE),
+    "electronic_payments": re.compile(r'Electronic\s+Payments?\s+([\d,]+\.\d{2})', re.IGNORECASE),
+    "other_withdrawals": re.compile(r'Other\s+Withdrawals?\s+([\d,]+\.\d{2})', re.IGNORECASE),
+    "service_charges": re.compile(r'Service\s+Charges?(?:/Fees?)?\s+([\d,]+\.\d{2})', re.IGNORECASE),
+    "interest_earned": re.compile(r'Interest\s+Earned\s+([\d,]+\.\d{2})', re.IGNORECASE),
 }
 
 
@@ -349,58 +347,60 @@ class TDBankPDFParser:
         """
         results: Dict[str, Optional[Decimal]] = {}
         
-        # DEBUG: Look for ACCOUNT SUMMARY section using regex (handles "Account Summary for Account Number: xxx")
+        # Find ACCOUNT SUMMARY section
         summary_match = re.search(r'ACCOUNT\s+SUMMARY', self.full_text, re.IGNORECASE)
+        summary_text = ""
         if summary_match:
             summary_start = summary_match.start()
-            # Find DAILY ACCOUNT ACTIVITY to determine where summary ends
             activity_match = re.search(r'DAILY\s+ACCOUNT\s+ACTIVITY', self.full_text, re.IGNORECASE)
             summary_end = activity_match.start() if activity_match else summary_start + 2000
             summary_text = self.full_text[summary_start:summary_end]
-            logger.info(f"TD PDF Parser: Found ACCOUNT SUMMARY at position {summary_start}. Preview:\n{summary_text[:1500]}")
+            logger.info(f"TD PDF Parser: Found ACCOUNT SUMMARY section ({len(summary_text)} chars)")
         else:
-            logger.warning(f"TD PDF Parser: ACCOUNT SUMMARY section not found in text!")
-            logger.info(f"TD PDF Parser: Full text preview (first 2000):\n{self.full_text[:2000]}")
+            logger.warning(f"TD PDF Parser: ACCOUNT SUMMARY section not found!")
+            summary_text = self.full_text[:3000]  # Use first part as fallback
         
-        # ---- 1. Beginning & Ending Balance (from ACCOUNT SUMMARY header) ----
-        # These are usually inline: "Beginning Balance -1,258.02"
-        beg_match = re.search(r'Beginning\s+Balance\s+(-?[\d,]+\.\d{2})', self.full_text, re.IGNORECASE)
-        if beg_match:
-            results["beginning"] = self._parse_amount(beg_match.group(1))
-            logger.info(f"TD PDF Parser: Beginning Balance = {results['beginning']}")
+        # ---- 1. Beginning & Ending Balance ----
+        # Format in ACCOUNT SUMMARY: "Beginning Balance    4,569.84"
+        # Try summary section first, then full text as fallback
+        for search_text in [summary_text, self.full_text]:
+            if results.get("beginning") is None:
+                beg_match = re.search(r'Beginning\s+Balance\s+(-?[\d,]+\.\d{2})', search_text, re.IGNORECASE)
+                if beg_match:
+                    results["beginning"] = self._parse_amount(beg_match.group(1))
+                    logger.info(f"TD PDF Parser: Beginning Balance = {results['beginning']}")
+            
+            if results.get("ending") is None:
+                end_match = re.search(r'Ending\s+Balance\s+(-?[\d,]+\.\d{2})', search_text, re.IGNORECASE)
+                if end_match:
+                    results["ending"] = self._parse_amount(end_match.group(1))
+                    logger.info(f"TD PDF Parser: Ending Balance = {results['ending']}")
         
-        end_match = re.search(r'Ending\s+Balance\s+(-?[\d,]+\.\d{2})', self.full_text, re.IGNORECASE)
-        if end_match:
-            results["ending"] = self._parse_amount(end_match.group(1))
-            logger.info(f"TD PDF Parser: Ending Balance = {results['ending']}")
-        
-        # ---- 2. Section Subtotals (from transaction sections) ----
-        # Pattern: Section header, then transactions, then "Subtotal: X,XXX.XX"
-        section_subtotals = {
-            "electronic_deposits": r'Electronic\s+Deposits.*?Subtotal:\s*([\d,]+\.\d{2})',
-            "deposits": r'(?<![a-zA-Z])Deposits\s+POSTING.*?Subtotal:\s*([\d,]+\.\d{2})',
-            "other_credits": r'Other\s+Credits.*?Subtotal:\s*([\d,]+\.\d{2})',
-            "checks_paid": r'Checks\s+Paid.*?Subtotal:\s*([\d,]+\.\d{2})',
-            "electronic_payments": r'Electronic\s+Payments.*?Subtotal:\s*([\d,]+\.\d{2})',
-            "other_withdrawals": r'Other\s+Withdrawals.*?Subtotal:\s*([\d,]+\.\d{2})',
-            "service_charges": r'Service\s+Charges.*?Subtotal:\s*([\d,]+\.\d{2})',
-            "interest_earned": r'Interest\s+Earned.*?Subtotal:\s*([\d,]+\.\d{2})',
+        # ---- 2. Section Totals from ACCOUNT SUMMARY header ----
+        # TD Bank format: "Electronic Deposits    56,052.29" (direct value after label)
+        # These appear in the ACCOUNT SUMMARY block, NOT as "Subtotal:" lines
+        summary_patterns = {
+            "electronic_deposits": r'Electronic\s+Deposits?\s+([\d,]+\.\d{2})',
+            "other_credits": r'Other\s+Credits?\s+([\d,]+\.\d{2})',
+            "checks_paid": r'Checks?\s+Paid\s+([\d,]+\.\d{2})',
+            "electronic_payments": r'Electronic\s+Payments?\s+([\d,]+\.\d{2})',
+            "other_withdrawals": r'Other\s+Withdrawals?\s+([\d,]+\.\d{2})',
+            "service_charges": r'Service\s+Charges?\s+([\d,]+\.\d{2})',
+            "interest_earned": r'Interest\s+Earned\s+([\d,]+\.\d{2})',
         }
         
-        for key, pattern in section_subtotals.items():
-            match = re.search(pattern, self.full_text, re.IGNORECASE | re.DOTALL)
+        # Search ONLY in the ACCOUNT SUMMARY section (NOT with DOTALL across whole document!)
+        for key, pattern in summary_patterns.items():
+            match = re.search(pattern, summary_text, re.IGNORECASE)
             if match:
                 amt = self._parse_amount(match.group(1))
                 if amt is not None:
                     results[key] = amt
-                    logger.info(f"TD PDF Parser: {key} Subtotal = {amt}")
-        
-        # Combine deposits if we have both generic Deposits and Electronic Deposits
-        e_deposits = results.get("electronic_deposits") or results.get("deposits")
+                    logger.info(f"TD PDF Parser: {key} = {amt}")
         
         # ---- 3. Log findings ----
-        found_count = sum(1 for k, v in results.items() if v is not None and k not in ("deposits",))
-        logger.info(f"TD PDF Parser: Extracted {found_count} summary fields")
+        found_count = sum(1 for v in results.values() if v is not None)
+        logger.info(f"TD PDF Parser: Extracted {found_count} summary fields from ACCOUNT SUMMARY")
         
         if results.get("beginning") is None:
             self.parsing_notes.append("WARNING: Could not extract Beginning Balance")
@@ -410,7 +410,7 @@ class TDBankPDFParser:
         return BankStatementSummaryV1(
             beginning_balance=results.get("beginning") or Decimal("0.00"),
             ending_balance=results.get("ending") or Decimal("0.00"),
-            electronic_deposits_total=e_deposits,
+            electronic_deposits_total=results.get("electronic_deposits"),
             other_credits_total=results.get("other_credits"),
             checks_paid_total=results.get("checks_paid"),
             electronic_payments_total=results.get("electronic_payments"),
@@ -553,7 +553,8 @@ class TDBankPDFParser:
                 return
             
             # Skip if text is too long (likely garbage from page merging)
-            if len(full_text) > 500:
+            # Increased from 500 to 800 to handle long vendor names
+            if len(full_text) > 800:
                 logger.debug(f"TD PDF Parser: Skipping overly long line ({len(full_text)} chars)")
                 current_txn = None
                 return
