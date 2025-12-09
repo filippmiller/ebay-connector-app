@@ -245,6 +245,23 @@ export interface WorkersLoopStatusResponse {
   loops: WorkersLoopStatusItem[];
 }
 
+// Generic admin worker DTOs (starting with inventory MV refresh worker)
+export interface AdminWorkerDto {
+  worker_key: string;
+  display_name: string;
+  description?: string | null;
+  enabled: boolean;
+  interval_seconds: number;
+  last_run_at?: string | null;
+  last_run_status?: string | null;
+  last_run_error?: string | null;
+}
+
+export interface AdminWorkerRunOnceResponse {
+  status: 'success' | 'error';
+  message?: string | null;
+}
+
 export interface EbayReturnRow {
   return_id: string;
   account_id: string | null;
@@ -599,6 +616,32 @@ export const ebayApi = {
       cutoff_date: string;
       message: string;
     }>(`/ebay/workers/logs/cleanup?days_to_keep=${daysToKeep}`);
+    return response.data;
+  },
+
+  // Admin → Workers: generic background workers (starting with inventory MV refresh)
+  async getInventoryMvWorker(): Promise<AdminWorkerDto> {
+    const response = await apiClient.get<AdminWorkerDto>(
+      '/api/admin/workers/inventory-mv-refresh',
+    );
+    return response.data;
+  },
+
+  async updateInventoryMvWorker(
+    payload: Partial<Pick<AdminWorkerDto, 'enabled' | 'interval_seconds'>>,
+  ): Promise<AdminWorkerDto> {
+    const response = await apiClient.put<AdminWorkerDto>(
+      '/api/admin/workers/inventory-mv-refresh',
+      payload,
+    );
+    return response.data;
+  },
+
+  async runInventoryMvWorkerOnce(): Promise<AdminWorkerRunOnceResponse> {
+    const response = await apiClient.post<AdminWorkerRunOnceResponse>(
+      '/api/admin/workers/inventory-mv-refresh/run-once',
+      {},
+    );
     return response.data;
   },
 };

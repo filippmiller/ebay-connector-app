@@ -112,19 +112,38 @@ class BackgroundWorker(Base):
 
     This is intentionally generic so we can track not only the eBay token
     refresh worker, but also other loops (health checks, Gmail ingest, etc.).
+
+    It also doubles as a minimal worker configuration store for global
+    background workers (e.g. inventory materialized view refresh). New
+    workers should use ``worker_name`` as a stable key and, when relevant,
+    populate ``display_name``/``description`` for the Admin → Workers UI.
     """
 
     __tablename__ = "background_workers"
 
     id = Column(String(36), primary_key=True)
 
+    # Stable identifier used by both backend workers and admin APIs
+    # (e.g. "token_refresh_worker", "ebay_workers_loop", "inventory_mv_refresh").
     worker_name = Column(String(128), nullable=False, unique=True, index=True)
+
+    # Human-friendly fields for the Admin → Workers UI. Existing rows may have
+    # these as NULL; new workers should populate them.
+    display_name = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Optional configured interval in seconds for the worker's main loop.
     interval_seconds = Column(Integer, nullable=True)
 
+    # High-level runtime status fields updated by each worker loop/cycle.
     last_started_at = Column(DateTime(timezone=True), nullable=True)
     last_finished_at = Column(DateTime(timezone=True), nullable=True)
     last_status = Column(String(32), nullable=True)
     last_error_message = Column(Text, nullable=True)
+
+    # Whether the worker's automatic loop is enabled. Admin APIs may still
+    # trigger ad-hoc "run once" executions even when disabled.
+    enabled = Column(Boolean, nullable=False, server_default="true")
 
     runs_ok_in_row = Column(Integer, nullable=False, server_default="0")
     runs_error_in_row = Column(Integer, nullable=False, server_default="0")

@@ -58,6 +58,7 @@ from app.routers import (
     cv_camera,  # Computer Vision camera module
     cv_brain,   # Computer Vision brain module
     db_compare,
+    admin_workers,
 )
 from app.utils.logger import logger
 import os
@@ -159,6 +160,7 @@ app.include_router(admin_ai_overview.router)
 app.include_router(integrations.router)
 app.include_router(admin_ai_integrations.router)
 app.include_router(ai_speech.router)
+app.include_router(admin_workers.router)
 app.include_router(ebay_browse.router)
 app.include_router(ebay_search_watches.router)
 app.include_router(inventory_offers.router)

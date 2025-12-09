@@ -1,3 +1,4 @@
 web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
 worker_ebay: python -m app.workers.ebay_workers_loop
 worker_token_refresh: python -m app.workers.token_refresh_worker
+worker_inventory_mv_refresh: python -m app.workers.inventory_mv_refresh_worker

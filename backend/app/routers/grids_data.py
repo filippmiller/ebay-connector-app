@@ -1358,12 +1358,10 @@ def _get_inventory_data(
 
     rows_db = query.offset(offset).limit(limit).all()
 
-     # Optional mapping of StatusSKU numeric codes to human-readable names from
+    # Optional mapping of StatusSKU numeric codes to human-readable names from
     # tbl_parts_inventorystatus. If the lookup table is missing in this
     # environment, we silently fall back to showing the raw numeric code.
     status_label_by_id: Dict[int, Dict[str, Any]] = {}
-    active_status_ids: set[int] = set()
-    sold_status_ids: set[int] = set()
     try:
         status_sql = sa_text(
             'SELECT "InventoryStatus_ID" AS id, "InventoryShortStatus_Name" AS label, "Color" AS color '
@@ -1381,18 +1379,8 @@ def _get_inventory_data(
                 "label": label or None,
                 "color": color,
             }
-            # Heuristic grouping of legacy numeric StatusSKU codes into
-            # "active" vs "sold" buckets based on the short status label.
-            ln = label.strip().lower()
-            if ln:
-                if "active" in ln or "актив" in ln:
-                    active_status_ids.add(sid)
-                if "sold" in ln or "продан" in ln:
-                    sold_status_ids.add(sid)
     except Exception:
         status_label_by_id = {}
-        active_status_ids = set()
-        sold_status_ids = set()
 
     # ------------------------------------------------------------------
     # Optional per-page SKU / ItemID aggregates when include_counts=True
@@ -1422,42 +1410,41 @@ def _get_inventory_data(
                 if v is not None:
                     page_itemids.add(v)
 
-        # Only run aggregation when we have both a status column and at least
-        # one of the active/sold groups defined.
-        if statussku_col is not None and (active_status_ids or sold_status_ids):
+        try:
             if sku_col is not None and page_skus:
-                q = (
-                    db.query(
-                        sku_col.label("sku_key"),
-                        func.count().filter(statussku_col.in_(list(active_status_ids))).label("active_count"),
-                        func.count().filter(statussku_col.in_(list(sold_status_ids))).label("sold_count"),
-                    )
-                    .select_from(table)
-                    .filter(sku_col.in_(list(page_skus)))
-                    .group_by(sku_col)
+                q = db.execute(
+                    sa_text(
+                        'SELECT "SKU" AS sku_key, sku_active_count, sku_sold_count '
+                        'FROM public.mv_tbl_parts_inventory_sku_counts '
+                        'WHERE "SKU" = ANY(:sku_list)'
+                    ),
+                    {"sku_list": list(page_skus)},
                 )
-                for r in q.all():
+                for r in q:
                     sku_counts[r.sku_key] = {
-                        "active": int(r.active_count or 0),
-                        "sold": int(r.sold_count or 0),
+                        "active": int(getattr(r, "sku_active_count", 0) or 0),
+                        "sold": int(getattr(r, "sku_sold_count", 0) or 0),
                     }
 
             if itemid_col is not None and page_itemids:
-                q = (
-                    db.query(
-                        itemid_col.label("itemid_key"),
-                        func.count().filter(statussku_col.in_(list(active_status_ids))).label("active_count"),
-                        func.count().filter(statussku_col.in_(list(sold_status_ids))).label("sold_count"),
-                    )
-                    .select_from(table)
-                    .filter(itemid_col.in_(list(page_itemids)))
-                    .group_by(itemid_col)
+                q = db.execute(
+                    sa_text(
+                        'SELECT "ItemID" AS itemid_key, item_active_count, item_sold_count '
+                        'FROM public.mv_tbl_parts_inventory_itemid_counts '
+                        'WHERE "ItemID" = ANY(:itemid_list)'
+                    ),
+                    {"itemid_list": list(page_itemids)},
                 )
-                for r in q.all():
+                for r in q:
                     itemid_counts[r.itemid_key] = {
-                        "active": int(r.active_count or 0),
-                        "sold": int(r.sold_count or 0),
+                        "active": int(getattr(r, "item_active_count", 0) or 0),
+                        "sold": int(getattr(r, "item_sold_count", 0) or 0),
                     }
+        except Exception:
+            # If materialized views are missing or query fails, we silently
+            # fall back to no counts rather than breaking the grid.
+            sku_counts = {}
+            itemid_counts = {}
 
     def _serialize(row_) -> Dict[str, Any]:
         mapping = getattr(row_, "_mapping", row_)
@@ -1524,8 +1511,6 @@ def _get_inventory_data(
                         base = row.get(itemid_col.key, item_val)
                         row[itemid_col.key] = f"{base} ({meta['active']}/{meta['sold']})"
 
-        return row
-        
         return row
 
     rows = [_serialize(item) for item in rows_db]
