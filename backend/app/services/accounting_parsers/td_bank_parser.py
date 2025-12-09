@@ -66,10 +66,16 @@ SECTION_DIRECTION = {
 # Regex patterns for TD Bank statement parsing
 PATTERNS = {
     # Account number: Primary Acct#: 123456789 or ****1234
-    "account_number": re.compile(r'Primary Acct[#:]\s*[*]*([\d*]+)', re.IGNORECASE),
-    # Statement period: January 1, 2025 through January 31, 2025
+    "account_number": re.compile(r'Primary Acct[#:]\s*[*]*([\d*-]+)', re.IGNORECASE),
+    # Statement period: "Jan 01 2025-Jan 312025" or "January 1, 2025 through January 31, 2025"
+    # Note: TD Bank PDFs often have no space between day and year in end date (e.g., "312025")
     "period": re.compile(
-        r'(\w+ \d{1,2},?\s*\d{4})\s+(?:through|to|-)\s*(\w+ \d{1,2},?\s*\d{4})',
+        r'Statement\s*Period[:\s]+(\w+\s+\d{1,2},?\s*\d{4})\s*[-–]\s*(\w+\s+\d{1,2}\s*,?\s*\d{4})',
+        re.IGNORECASE
+    ),
+    # Alternative period format without "Statement Period" label
+    "period_alt": re.compile(
+        r'(\w{3,9}\s+\d{1,2},?\s*\d{4})\s+(?:through|to|[-–])\s*(\w{3,9}\s+\d{1,2}\s*,?\s*\d{4})',
         re.IGNORECASE
     ),
     # Account owner name (usually all caps after address)
@@ -158,6 +164,58 @@ class TDBankPDFParser:
         
         return None
     
+    def _parse_date_flexible(self, date_str: str) -> Optional[date]:
+        """Parse date string flexibly, handling TD Bank quirks like 'Apr 302025' (no space)."""
+        if not date_str:
+            return None
+            
+        date_str = date_str.strip()
+        
+        # Month name mapping
+        month_map = {
+            'jan': 1, 'january': 1, 'feb': 2, 'february': 2, 'mar': 3, 'march': 3,
+            'apr': 4, 'april': 4, 'may': 5, 'jun': 6, 'june': 6,
+            'jul': 7, 'july': 7, 'aug': 8, 'august': 8, 'sep': 9, 'september': 9,
+            'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
+        }
+        
+        # Try standard formats first
+        for fmt in ['%B %d, %Y', '%B %d %Y', '%b %d, %Y', '%b %d %Y', '%m/%d/%Y']:
+            try:
+                return datetime.strptime(date_str, fmt).date()
+            except ValueError:
+                continue
+        
+        # Handle TD Bank format: "Apr 302025" (month day_merged_with_year)
+        # Pattern: Month DayYear where day is 1-2 digits and year is 4 digits
+        match = re.match(r'(\w+)\s+(\d{1,2})(\d{4})', date_str, re.IGNORECASE)
+        if match:
+            month_str = match.group(1).lower()
+            day = int(match.group(2))
+            year = int(match.group(3))
+            month = month_map.get(month_str)
+            if month and 1 <= day <= 31 and 2000 <= year <= 2100:
+                try:
+                    return date(year, month, day)
+                except ValueError:
+                    pass
+        
+        # Handle format with space: "Apr 30 2025"
+        match = re.match(r'(\w+)\s+(\d{1,2})\s*,?\s*(\d{4})', date_str, re.IGNORECASE)
+        if match:
+            month_str = match.group(1).lower()
+            day = int(match.group(2))
+            year = int(match.group(3))
+            month = month_map.get(month_str)
+            if month and 1 <= day <= 31 and 2000 <= year <= 2100:
+                try:
+                    return date(year, month, day)
+                except ValueError:
+                    pass
+        
+        logger.warning(f"TD PDF Parser: Could not parse date: '{date_str}'")
+        return None
+    
     def _parse_amount(self, amount_str: str) -> Optional[Decimal]:
         """Parse an amount string like '1,500.00' to Decimal."""
         try:
@@ -176,23 +234,35 @@ class TDBankPDFParser:
         if len(account_number) > 4 and not account_number.startswith('*'):
             account_number = "****" + account_number[-4:]
         
-        # Statement period
+        # Statement period - try primary pattern first, then alternative
+        period_start = None
+        period_end = None
+        
         period_match = PATTERNS["period"].search(self.full_text)
+        if not period_match:
+            period_match = PATTERNS["period_alt"].search(self.full_text)
+        
         if period_match:
             start_str = period_match.group(1)
             end_str = period_match.group(2)
-            period_start = self._parse_date(start_str, datetime.now().year)
-            period_end = self._parse_date(end_str, datetime.now().year)
-        else:
-            # Fallback to current month
+            logger.debug(f"TD PDF Parser: Found period strings: '{start_str}' to '{end_str}'")
+            period_start = self._parse_date_flexible(start_str)
+            period_end = self._parse_date_flexible(end_str)
+        
+        if not period_start or not period_end:
+            # Fallback: try to extract from transaction dates
+            self.parsing_notes.append("WARNING: Could not extract statement period from header")
+            logger.warning("TD PDF Parser: Could not extract statement period, will infer from transactions")
+            # Will be updated later from transaction dates if available
             today = date.today()
-            period_start = date(today.year, today.month, 1)
-            period_end = today
-            self.parsing_notes.append("Could not extract statement period; using current month")
+            period_start = period_start or date(today.year, today.month, 1)
+            period_end = period_end or today
         
         # Account owner (first capital name block found)
         owner_match = PATTERNS["owner"].search(self.full_text[:2000])  # Search in header
         owner = owner_match.group(1).strip() if owner_match else "Unknown"
+        
+        logger.info(f"TD PDF Parser: Metadata - period {period_start} to {period_end}, account {account_number}")
         
         return BankStatementMetadataV1(
             bank_name="TD Bank",
