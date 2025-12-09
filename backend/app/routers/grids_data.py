@@ -1343,70 +1343,6 @@ def _get_inventory_data(
 
     rows_db = query.offset(offset).limit(limit).all()
 
-    # Efficient SKU/ItemID counting for displayed rows only
-    sku_col = cols_by_lower.get('sku')
-    # Can't use 'or' with SQLAlchemy columns - check None explicitly
-    itemid_col = cols_by_lower.get('itemid')
-    if itemid_col is None:
-        itemid_col = cols_by_lower.get('item_id')
-    statussku_col = cols_by_lower.get('statussku')
-    if statussku_col is None:
-        statussku_col = cols_by_lower.get('status_sku')
-    
-    sku_counts = {}
-    itemid_counts = {}
-    
-    if sku_col is not None and statussku_col is not None and rows_db:
-        # Extract unique SKUs from displayed rows
-        unique_skus = []
-        for row in rows_db:
-            mapping = getattr(row, "_mapping", row)
-            sku_value = mapping.get(sku_col.key)
-            if sku_value is not None:
-                unique_skus.append(sku_value)
-        
-        if unique_skus:
-            try:
-                # Count active/sold for these SKUs only
-                count_sql = sa_text(f"""
-                    SELECT "{sku_col.name}" AS sku,
-                           COUNT(*) FILTER (WHERE "{statussku_col.name}" = 3) AS active_count,
-                           COUNT(*) FILTER (WHERE "{statussku_col.name}" = 5) AS sold_count
-                    FROM "{table.name}"
-                    WHERE "{sku_col.name}" = ANY(:sku_list)
-                    GROUP BY "{sku_col.name}"
-                """)
-                result = db.execute(count_sql, {'sku_list': unique_skus})
-                for row in result:
-                    sku_counts[row.sku] = (int(row.active_count or 0), int(row.sold_count or 0))
-            except Exception:
-                pass
-    
-    if itemid_col is not None and statussku_col is not None and rows_db:
-        # Extract unique ItemIDs from displayed rows
-        unique_itemids = []
-        for row in rows_db:
-            mapping = getattr(row, "_mapping", row)
-            itemid_value = mapping.get(itemid_col.key)
-            if itemid_value is not None and str(itemid_value).strip():
-                unique_itemids.append(itemid_value)
-        
-        if unique_itemids:
-            try:
-                # Count active/sold for these ItemIDs only
-                count_sql = sa_text(f"""
-                    SELECT "{itemid_col.name}" AS itemid,
-                           COUNT(*) FILTER (WHERE "{statussku_col.name}" = 3) AS active_count,
-                           COUNT(*) FILTER (WHERE "{statussku_col.name}" = 5) AS sold_count
-                    FROM "{table.name}"
-                    WHERE "{itemid_col.name}" = ANY(:itemid_list)
-                    GROUP BY "{itemid_col.name}"
-                """)
-                result = db.execute(count_sql, {'itemid_list': unique_itemids})
-                for row in result:
-                    itemid_counts[row.itemid] = (int(row.active_count or 0), int(row.sold_count or 0))
-            except Exception:
-                pass
 
     # Optional mapping of StatusSKU numeric codes to human-readable names from
     # tbl_parts_inventorystatus. If the lookup table is missing in this
@@ -1468,20 +1404,6 @@ def _get_inventory_data(
                  # Skip columns that cause errors
                 continue
         
-        # Add formatted SKU/ItemID columns with counts
-        if 'SKU_with_counts' in selected_cols:
-            if sku_col and sku_col.key in mapping:
-                sku_value = mapping.get(sku_col.key)
-                if sku_value is not None:
-                    counts = sku_counts.get(sku_value, (0, 0))
-                    row['SKU_with_counts'] = f"{sku_value} ({counts[0]}/{counts[1]})"
-        
-        if 'ItemID_with_counts' in selected_cols:
-            if itemid_col and itemid_col.key in mapping:
-                itemid_value = mapping.get(itemid_col.key)
-                if itemid_value is not None:
-                    counts = itemid_counts.get(itemid_value, (0, 0))
-                    row['ItemID_with_counts'] = f"{itemid_value} ({counts[0]}/{counts[1]})"
         
         return row
 

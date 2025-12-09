@@ -734,43 +734,6 @@ else:
         __abstract__ = True
 
 
-# Optional reflection of the inventory VIEW with SKU/ItemID counts.
-# This VIEW adds pre-calculated count columns for displaying active/sold counts.
-try:
-    inventory_view_table = Table(
-        "inventory_with_sku_itemid_counts",
-        Base.metadata,
-        autoload_with=engine,
-    )
-    # Use same PK strategy as base table
-    inspector = inspect(engine)
-    pk_info = inspector.get_pk_constraint(
-        "tbl_parts_inventory",  # Get PK from base table
-        schema=None,
-    )
-    pk_cols_view = list(pk_info.get("constrained_columns") or [])
-    if not pk_cols_view and "ID" in inventory_view_table.c:
-        pk_cols_view = ["ID"]
-except (NoSuchTableError, OperationalError) as exc:
-    logger.warning(
-        "inventory_with_sku_itemid_counts VIEW reflection failed (%s); falling back to base inventory table",
-        type(exc).__name__,
-    )
-    inventory_view_table = None
-    pk_cols_view = []
-
-
-if inventory_view_table is not None and pk_cols_view:
-    class InventoryWithCounts(Base):
-        """VIEW with SKU/ItemID counts formatted as 'VALUE (X/Y)'."""
-        __table__ = inventory_view_table
-        __mapper_args__ = {
-            "primary_key": tuple(inventory_view_table.c[col] for col in pk_cols_view),
-        }
-else:
-    class InventoryWithCounts(Base):
-        """Abstract placeholder when VIEW doesn't exist."""
-        __abstract__ = True
 
 
 # Optional reflection of the legacy models dictionary table used for the
