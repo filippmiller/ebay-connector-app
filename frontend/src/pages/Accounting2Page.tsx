@@ -214,7 +214,10 @@ function StatementsTab2() {
       setPreviewOpen(false);
       await loadStatements();
     } catch (err: any) {
-      alert(err?.response?.data?.detail || err?.message || 'Failed to approve and commit transactions');
+      const detail = err?.response?.data?.detail;
+      const message = typeof detail === 'string' ? detail : JSON.stringify(detail) || err?.message || 'Failed to approve and commit transactions';
+      alert(message);
+      console.error('Accept transactions error:', err?.response?.data || err);
     } finally {
       setPreviewCommitting(false);
     }

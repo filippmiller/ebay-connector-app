@@ -190,6 +190,7 @@ async def upload_bank_statement_v2(
         raise HTTPException(status_code=500, detail="Failed to upload file to storage")
 
     # 4) Stage transactions into transaction_spending
+    logger.info(f"Accounting2: staging {len(statement.transactions)} transactions for statement_id={stmt.id}")
     total_rows = 0
     for txn in statement.transactions:
         # Apply classification rules so preview shows meaningful info
@@ -248,6 +249,15 @@ async def upload_bank_statement_v2(
         total_rows += 1
 
     db.commit()
+    logger.info(f"Accounting2: committed {total_rows} transactions for statement_id={stmt.id}")
+    
+    # Verify rows were actually saved
+    verify_res = db.execute(
+        text("SELECT COUNT(*) FROM public.transaction_spending WHERE bank_statement_id = :sid"),
+        {"sid": stmt.id}
+    )
+    actual_count = verify_res.scalar()
+    logger.info(f"Accounting2: verification count = {actual_count} for statement_id={stmt.id}")
 
     return {
         "id": stmt.id,
@@ -350,6 +360,7 @@ async def approve_bank_statement(
     reuse existing ledger commit logic.
     """
     stmt = _ensure_statement_owner(db, statement_id)
+    logger.info(f"Accounting2: approve called for statement_id={statement_id}, status={stmt.status}")
 
     res = db.execute(
         text(
@@ -372,8 +383,19 @@ async def approve_bank_statement(
         {"sid": statement_id},
     )
     staged_rows = list(res.mappings())
+    logger.info(f"Accounting2: found {len(staged_rows)} staged rows for statement_id={statement_id}")
+    
     if not staged_rows:
-        raise HTTPException(status_code=400, detail="No staged transactions to approve")
+        # Debug: check if statement has raw_json with transactions
+        tx_count = 0
+        if isinstance(stmt.raw_json, dict):
+            txns = stmt.raw_json.get("transactions", [])
+            tx_count = len(txns) if isinstance(txns, list) else 0
+        logger.warning(f"Accounting2: No staged rows but raw_json has {tx_count} transactions")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"No staged transactions to approve (statement has {tx_count} in raw_json but 0 in transaction_spending)"
+        )
 
     inserted = 0
     new_bank_rows: List[AccountingBankRow] = []
