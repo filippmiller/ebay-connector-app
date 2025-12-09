@@ -137,6 +137,11 @@ class TDBankPDFParser:
         
         self.full_text = "\n\n".join(self.pages_text)
         logger.info(f"TD PDF Parser: Total text length: {len(self.full_text)} chars from {len(self.pages_text)} pages")
+        
+        # Log first page text for debugging header parsing issues
+        if self.pages_text:
+            first_page = self.pages_text[0][:2000]  # First 2000 chars
+            logger.info(f"TD PDF Parser: First page preview (2000 chars):\n{first_page}")
     
     def _parse_date(self, date_str: str, year: int) -> Optional[date]:
         """Parse a date string like '01/05' with inferred year."""
@@ -242,7 +247,11 @@ class TDBankPDFParser:
         period_start = None
         period_end = None
         
+        # DEBUG: Log what we're searching for period
+        logger.info(f"TD PDF Parser: Searching for period in header (first 800 chars):\n{header_text[:800]}")
+        
         period_match = PATTERNS["period_dates"].search(header_text)
+        logger.info(f"TD PDF Parser: Period regex match result: {period_match}")
         if period_match:
             # Groups: (start_month, start_day, start_year, end_month, end_day, end_year)
             start_month_str = period_match.group(1).lower()
@@ -304,6 +313,18 @@ class TDBankPDFParser:
                                  Subtotal: 15,138.33
         """
         results: Dict[str, Optional[Decimal]] = {}
+        
+        # DEBUG: Look for ACCOUNT SUMMARY section
+        summary_start = self.full_text.find('ACCOUNT SUMMARY')
+        if summary_start == -1:
+            summary_start = self.full_text.find('Account Summary')
+        if summary_start >= 0:
+            summary_preview = self.full_text[summary_start:summary_start+1500]
+            logger.info(f"TD PDF Parser: Found ACCOUNT SUMMARY at position {summary_start}. Preview:\n{summary_preview[:1000]}")
+        else:
+            logger.warning(f"TD PDF Parser: ACCOUNT SUMMARY section not found in text!")
+            # Log first 2000 chars to see structure
+            logger.info(f"TD PDF Parser: Full text preview (first 2000):\n{self.full_text[:2000]}")
         
         # ---- 1. Beginning & Ending Balance (from ACCOUNT SUMMARY header) ----
         # These are usually inline: "Beginning Balance -1,258.02"

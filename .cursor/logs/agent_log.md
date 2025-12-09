@@ -1,5 +1,11 @@
+2025-12-09T18:00:00Z - Major TD parser rewrite focusing on header/summary: new period_dates regex (6 capture groups for month/day/year), _extract_summary now finds Subtotals from transaction sections, section detection uses LONGEST-FIRST keyword order (avoids "Deposits" matching "Electronic Deposits"), removed space sensitivity in section matching
 2025-12-09T15:00:00Z - Rewrote TD parser from scratch after rollback: improved _extract_summary for two-column layout, _extract_transactions for multi-line descriptions grouped by date, added field_serializers for Decimal→float JSON (fixes toFixed error)
 2025-12-09T15:30:00Z - Fixed Accounting2Page.tsx line 796: balance_after.toFixed() now checks typeof before calling to handle string/null values from old data
+2025-12-09T16:00:00Z - Rewrote TD parser again: _extract_summary uses direct regex patterns (Beginning Balance, Ending Balance, etc.); _extract_transactions properly detects section headers, filters daily balance lines, applies correct signs (+/- by section)
+2025-12-09T16:15:00Z - Fixed TD parser: simplified tx block extraction (single range instead of loop), changed date_re from \s to \b, relaxed section header detection (keyword anywhere in line), reduced skip patterns
+2025-12-09T16:45:00Z - Added bank_section support: migration for transaction_spending column, backend saves/retrieves bank_section, approve copies to accounting_bank_row, frontend shows colored section badges
+2025-12-09T17:15:00Z - Major TD parser cleanup: remove "How to Balance", "FOR CONSUMER ACCOUNTS", "INTEREST NOTICE" sections before parsing; skip page headers (STATEMENTOFACCOUNT, PAGE:, MILLER SELLS IT, etc.); limit description to 500 chars; skip too-short descriptions
+2025-12-09T17:30:00Z - Fixed statement period extraction: new regex for "Statement Period: Apr 01 2025-Apr 302025" format; added _parse_date_flexible to handle merged day+year (e.g., "302025" → day 30, year 2025)
 2025-12-06T17:20:00Z – Reviewed AccountingPage/DataGridPage and backend grids (ledger/statements) for missing data.
 2025-11-08T20:53:41.7734824+03:00 - Cloned repo from GitHub to C:\dev\ebay-connector-app
 2025-11-08T20:55:10.9328222+03:00 - Starting comparison with archived project
