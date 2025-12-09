@@ -133,13 +133,33 @@ def _load_computer_analytics_sources(db: Session) -> dict:
 
     The mapping is stored in ui_tweak_settings.settings["computerAnalyticsSources"],
     with safe defaults when no custom config is present.
+
+    IMPORTANT: in environments where the ui_tweak_settings table does not yet
+    exist (migration not applied), this helper MUST NOT raise an error. In that
+    case we simply return the built-in defaults so the analytics endpoint keeps
+    working everywhere.
     """
+    from sqlalchemy.exc import ProgrammingError
     from ..models_sqlalchemy.models import UiTweakSettings
 
     # Defaults can be overridden via UiTweakSettings.
     defaults: dict[str, dict[str, str]] = COMPUTER_ANALYTICS_DEFAULT_SOURCES
 
-    row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
+    try:
+        row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
+    except ProgrammingError as exc:  # e.g. relation "ui_tweak_settings" does not exist
+        msg = str(exc)
+        if "ui_tweak_settings" in msg and "UndefinedTable" in msg:
+            # Mirror behaviour of the dedicated /ui-tweak router: log and
+            # gracefully fall back to defaults without breaking admin APIs.
+            logger.error(
+                "ui_tweak_settings table is missing; Test Computer Analytics "
+                "will use built-in defaults only. Apply migration "
+                "ui_tweak_settings_20251121 to enable persistence.",
+            )
+            return defaults
+        raise
+
     if not row or not row.settings:
         return defaults
 
