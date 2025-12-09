@@ -76,83 +76,83 @@ async def debug_environment(db: Session = Depends(get_db)):
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
 
-+# Default logical containers and their physical table names for Test Computer Analytics.
-+COMPUTER_ANALYTICS_DEFAULT_SOURCES: dict[str, dict[str, str]] = {
-+    "root_purchase": {"table": "buying"},
-+    "inventory_legacy": {"table": "tbl_parts_inventory"},
-+    "inventory": {"table": "inventory"},
-+    "transactions": {"table": "transactions"},
-+    "finances_transactions": {"table": "ebay_finances_transactions"},
-+    "finances_fees": {"table": "ebay_finances_fees"},
-+    # Configurable containers for invoices and returns/refunds.
-+    "invoices": {"table": "cvfii"},
-+    "returns_refunds": {"table": "ebay_returns"},
-+}
-+
-+
-+# Human-friendly metadata for each logical analytics container. Used by the
-+# frontend settings UI and for documentation in the "i" modal.
-+COMPUTER_ANALYTICS_CONTAINER_META: dict[str, dict[str, str]] = {
-+    "root_purchase": {
-+        "label": "VB / BUYING",
-+        "description": "Original computer purchase row (VB / buying) identified by storage.",
-+    },
-+    "inventory_legacy": {
-+        "label": "Legacy Inventory (tbl_parts_inventory)",
-+        "description": "Legacy parts inventory rows from tbl_parts_inventory linked by Storage / AlternativeStorage / StorageAlias.",
-+    },
-+    "inventory": {
-+        "label": "Inventory (modern)",
-+        "description": "Modern inventory + parts_detail rows born from this computer (linked by storage_id / storage).",
-+    },
-+    "transactions": {
-+        "label": "Sales Transactions",
-+        "description": "Sales history (transactions) for SKUs originating from this computer.",
-+    },
-+    "finances_transactions": {
-+        "label": "Finances Transactions",
-+        "description": "Sell Finances API ledger entries (ebay_finances_transactions) for related orders/line items.",
-+    },
-+    "finances_fees": {
-+        "label": "Finances Fees",
-+        "description": "Detailed fee lines (ebay_finances_fees) for those finances transactions.",
-+    },
-+    "invoices": {
-+        "label": "Invoices (CVFII)",
-+        "description": "Accounting invoices table or view (CVFII-style) linked by storage or order_id.",
-+    },
-+    "returns_refunds": {
-+        "label": "Returns / Refunds",
-+        "description": "Post-order returns/refunds records (ebay_returns or compatible view) for the same orders/transactions.",
-+    },
-+}
-+
-+
-+def _load_computer_analytics_sources(db: Session) -> dict:
-+    """Load mapping of logical analytics containers to physical tables.
-+
-+    The mapping is stored in ui_tweak_settings.settings["computerAnalyticsSources"],
-+    with safe defaults when no custom config is present.
-+    """
-+    from ..models_sqlalchemy.models import UiTweakSettings
-+
-+    # Defaults can be overridden via UiTweakSettings.
-+    defaults: dict[str, dict[str, str]] = COMPUTER_ANALYTICS_DEFAULT_SOURCES
-+
-+    row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
-+    if not row or not row.settings:
-+        return defaults
-+
-+    cfg = row.settings.get("computerAnalyticsSources") or {}
-+
-+    merged: dict[str, dict[str, str]] = {k: v.copy() for k, v in defaults.items()}
-+    for key, val in cfg.items():
-+        if key in merged and isinstance(val, dict):
-+            table_name = val.get("table")
-+            if isinstance(table_name, str) and table_name:
-+                merged[key]["table"] = table_name
-+
-+    return merged
+# Default logical containers and their physical table names for Test Computer Analytics.
+COMPUTER_ANALYTICS_DEFAULT_SOURCES: dict[str, dict[str, str]] = {
+    "root_purchase": {"table": "buying"},
+    "inventory_legacy": {"table": "tbl_parts_inventory"},
+    "inventory": {"table": "inventory"},
+    "transactions": {"table": "transactions"},
+    "finances_transactions": {"table": "ebay_finances_transactions"},
+    "finances_fees": {"table": "ebay_finances_fees"},
+    # Configurable containers for invoices and returns/refunds.
+    "invoices": {"table": "cvfii"},
+    "returns_refunds": {"table": "ebay_returns"},
+}
+
+
+# Human-friendly metadata for each logical analytics container. Used by the
+# frontend settings UI and for documentation in the "i" modal.
+COMPUTER_ANALYTICS_CONTAINER_META: dict[str, dict[str, str]] = {
+    "root_purchase": {
+        "label": "VB / BUYING",
+        "description": "Original computer purchase row (VB / buying) identified by storage.",
+    },
+    "inventory_legacy": {
+        "label": "Legacy Inventory (tbl_parts_inventory)",
+        "description": "Legacy parts inventory rows from tbl_parts_inventory linked by Storage / AlternativeStorage / StorageAlias.",
+    },
+    "inventory": {
+        "label": "Inventory (modern)",
+        "description": "Modern inventory + parts_detail rows born from this computer (linked by storage_id / storage).",
+    },
+    "transactions": {
+        "label": "Sales Transactions",
+        "description": "Sales history (transactions) for SKUs originating from this computer.",
+    },
+    "finances_transactions": {
+        "label": "Finances Transactions",
+        "description": "Sell Finances API ledger entries (ebay_finances_transactions) for related orders/line items.",
+    },
+    "finances_fees": {
+        "label": "Finances Fees",
+        "description": "Detailed fee lines (ebay_finances_fees) for those finances transactions.",
+    },
+    "invoices": {
+        "label": "Invoices (CVFII)",
+        "description": "Accounting invoices table or view (CVFII-style) linked by storage or order_id.",
+    },
+    "returns_refunds": {
+        "label": "Returns / Refunds",
+        "description": "Post-order returns/refunds records (ebay_returns or compatible view) for the same orders/transactions.",
+    },
+}
+
+
+def _load_computer_analytics_sources(db: Session) -> dict:
+    """Load mapping of logical analytics containers to physical tables.
+
+    The mapping is stored in ui_tweak_settings.settings["computerAnalyticsSources"],
+    with safe defaults when no custom config is present.
+    """
+    from ..models_sqlalchemy.models import UiTweakSettings
+
+    # Defaults can be overridden via UiTweakSettings.
+    defaults: dict[str, dict[str, str]] = COMPUTER_ANALYTICS_DEFAULT_SOURCES
+
+    row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
+    if not row or not row.settings:
+        return defaults
+
+    cfg = row.settings.get("computerAnalyticsSources") or {}
+
+    merged: dict[str, dict[str, str]] = {k: v.copy() for k, v in defaults.items()}
+    for key, val in cfg.items():
+        if key in merged and isinstance(val, dict):
+            table_name = val.get("table")
+            if isinstance(table_name, str) and table_name:
+                merged[key]["table"] = table_name
+
+    return merged
 
 
 def _safe_table_name(name: str) -> str:
