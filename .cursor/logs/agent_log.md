@@ -1,3 +1,4 @@
+2025-12-09T15:00:00Z - Rewrote TD parser from scratch after rollback: improved _extract_summary for two-column layout, _extract_transactions for multi-line descriptions grouped by date, added field_serializers for Decimal→float JSON (fixes toFixed error)
 2025-12-06T17:20:00Z – Reviewed AccountingPage/DataGridPage and backend grids (ledger/statements) for missing data.
 2025-11-08T20:53:41.7734824+03:00 - Cloned repo from GitHub to C:\dev\ebay-connector-app
 2025-11-08T20:55:10.9328222+03:00 - Starting comparison with archived project

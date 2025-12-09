@@ -16,6 +16,7 @@ export default function InventoryPageV3() {
   const [filterInputs, setFilterInputs] = useState(initialFilterState);
   const [filters, setFilters] = useState(initialFilterState);
   const [statusOptions, setStatusOptions] = useState<{ id: number; label: string; color?: string | null }[]>([]);
+  const [showCounts, setShowCounts] = useState(false);
 
   const extraParams = useMemo(() => {
     const params: Record<string, string> = {};
@@ -26,8 +27,9 @@ export default function InventoryPageV3() {
     if (filters.statusSku) params.inv_statussku = filters.statusSku;
     if (filters.storage) params.inv_storage = filters.storage;
     if (filters.serial) params.inv_serial_number = filters.serial;
+    if (showCounts) params.includeCounts = '1';
     return params;
-  }, [filters]);
+  }, [filters, showCounts]);
 
   const handleFilterInputChange = (key: keyof typeof filterInputs, value: string) => {
     setFilterInputs((prev) => ({ ...prev, [key]: value }));
@@ -40,6 +42,7 @@ export default function InventoryPageV3() {
   const resetFilters = () => {
     setFilterInputs(initialFilterState);
     setFilters(initialFilterState);
+    setShowCounts(false);
   };
 
   useEffect(() => {
@@ -124,6 +127,16 @@ export default function InventoryPageV3() {
                 </div>
               }
             />
+          </div>
+          <div className="mt-2 flex items-center text-[11px]">
+            <label className="inline-flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={showCounts}
+                onChange={(e) => setShowCounts(e.target.checked)}
+              />
+              <span>Show SKU/ItemID counts</span>
+            </label>
           </div>
         </div>
       </div>

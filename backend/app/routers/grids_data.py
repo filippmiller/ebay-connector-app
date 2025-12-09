@@ -406,6 +406,7 @@ async def get_grid_data(
     storage_value: Optional[str] = Query(None),
     id_filter: Optional[str] = Query(None, alias="id"),
     search: Optional[str] = None,
+    include_counts: bool = Query(False, alias="includeCounts"),
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -536,6 +537,7 @@ async def get_grid_data(
                 inv_statussku=inv_statussku,
                 inv_storage=inv_storage,
                 inv_serial_number=inv_serial_number,
+                include_counts=include_counts,
             )
         finally:
             db_sqla.close()
@@ -1217,12 +1219,18 @@ def _get_inventory_data(
     inv_statussku: Optional[str],
     inv_storage: Optional[str],
     inv_serial_number: Optional[str],
+    include_counts: bool = False,
 ) -> Dict[str, Any]:
     """Inventory grid backed directly by the Supabase table tbl_parts_inventory.
 
     This uses the reflected TblPartsInventory.__table__ so that all real
     columns from the underlying table are available without hardcoding a
     schema in the code.
+
+    When ``include_counts`` is True, and the helper materialized views
+    ``mv_tbl_parts_inventory_sku_counts`` / ``mv_tbl_parts_inventory_itemid_counts``
+    are present, the SKU and ItemID columns are enriched with ``Active/Sold``
+    counters aggregated over the *entire* tbl_parts_inventory table.
     """
     from datetime import datetime as dt_type
     from decimal import Decimal
@@ -1243,6 +1251,14 @@ def _get_inventory_data(
     # Map columns by key and by lowercase key for flexible lookup.
     cols_by_key = {c.key: c for c in table.columns}
     cols_by_lower = {c.key.lower(): c for c in table.columns}
+
+    # Best-effort detection of SKU / ItemID columns for counts enrichment.
+    sku_col = (
+        cols_by_lower.get("sku")
+        or cols_by_lower.get("sku_code")
+        or cols_by_lower.get("sku1")
+    )
+    itemid_col = cols_by_lower.get("itemid") or cols_by_lower.get("item_id")
 
     # Query rows as plain row mappings using the reflected table columns.
     columns = list(table.columns)
@@ -1297,7 +1313,9 @@ def _get_inventory_data(
             or cols_by_lower.get("ebaystatus")
             or cols_by_lower.get("ebay_status_id")
         )
-        if ebay_status_col is not None and isinstance(ebay_status_col.type, (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)):
+        if ebay_status_col is not None and isinstance(
+            ebay_status_col.type, (String, Text, CHAR, VARCHAR, Unicode, UnicodeText)
+        ):
             like = f"%{ebay_status}%"
             query = query.filter(ebay_status_col.ilike(like))
 
@@ -1318,7 +1336,10 @@ def _get_inventory_data(
     _apply_ilike_filter(inv_item_id, ["itemid", "item_id"])
     _apply_ilike_filter(inv_title, ["overridetitle", "override_title", "title"])
     _apply_ilike_filter(inv_statussku, ["statussku", "status_sku"])
-    _apply_ilike_filter(inv_storage, ["storage", "storageid", "storage_id", "storagealias", "storage_alias"])
+    _apply_ilike_filter(
+        inv_storage,
+        ["storage", "storageid", "storage_id", "storagealias", "storage_alias"],
+    )
     _apply_ilike_filter(inv_serial_number, ["serialnumber", "serial_number"])
 
     total = query.count()
@@ -1364,6 +1385,73 @@ def _get_inventory_data(
     except Exception:
         status_label_by_id = {}
 
+    # Preload counts from materialized views for all SKUs / ItemIDs present on
+    # the current page. Any errors are swallowed so that the grid keeps
+    # working even if the views are missing or temporarily broken.
+    sku_counts: Dict[Any, Dict[str, int]] = {}
+    itemid_counts: Dict[Any, Dict[str, int]] = {}
+
+    if include_counts and rows_db and (sku_col is not None or itemid_col is not None):
+        try:
+            # Collect distinct SKUs / ItemIDs from the page.
+            page_skus: List[Any] = []
+            page_itemids: List[Any] = []
+
+            if sku_col is not None:
+                seen = set()
+                for r in rows_db:
+                    m = getattr(r, "_mapping", r)
+                    val = m.get(sku_col.key)
+                    if val is not None and val not in seen:
+                        seen.add(val)
+                        page_skus.append(val)
+
+            if itemid_col is not None:
+                seen = set()
+                for r in rows_db:
+                    m = getattr(r, "_mapping", r)
+                    val = m.get(itemid_col.key)
+                    if val is not None and val not in seen:
+                        seen.add(val)
+                        page_itemids.append(val)
+
+            if page_skus:
+                sku_sql = sa_text(
+                    'SELECT "SKU" AS sku_key, sku_active_count, sku_sold_count '
+                    'FROM public.mv_tbl_parts_inventory_sku_counts '
+                    'WHERE "SKU" = ANY(:sku_list)'
+                )
+                res = db.execute(sku_sql, {"sku_list": page_skus})
+                for row in res:
+                    m = getattr(row, "_mapping", row)
+                    key = m.get("sku_key")
+                    if key is None:
+                        continue
+                    sku_counts[key] = {
+                        "active": int(m.get("sku_active_count") or 0),
+                        "sold": int(m.get("sku_sold_count") or 0),
+                    }
+
+            if page_itemids:
+                item_sql = sa_text(
+                    'SELECT "ItemID" AS itemid_key, item_active_count, item_sold_count '
+                    'FROM public.mv_tbl_parts_inventory_itemid_counts '
+                    'WHERE "ItemID" = ANY(:itemid_list)'
+                )
+                res = db.execute(item_sql, {"itemid_list": page_itemids})
+                for row in res:
+                    m = getattr(row, "_mapping", row)
+                    key = m.get("itemid_key")
+                    if key is None:
+                        continue
+                    itemid_counts[key] = {
+                        "active": int(m.get("item_active_count") or 0),
+                        "sold": int(m.get("item_sold_count") or 0),
+                    }
+        except Exception:
+            sku_counts = {}
+            itemid_counts = {}
+
     def _serialize(row_) -> Dict[str, Any]:
         mapping = getattr(row_, "_mapping", row_)
         row: Dict[str, Any] = {}
@@ -1402,6 +1490,29 @@ def _get_inventory_data(
             except Exception:
                 # Skip columns that cause errors
                 continue
+
+        # Enrich SKU / ItemID with precomputed Active/Sold counts when available.
+        if include_counts:
+            try:
+                if sku_col is not None:
+                    sku_val = mapping.get(sku_col.key)
+                    if sku_val is not None:
+                        meta = sku_counts.get(sku_val)
+                        if meta:
+                            base = row.get(sku_col.key, sku_val)
+                            row[sku_col.key] = f"{base} ({meta['active']}/{meta['sold']})"
+
+                if itemid_col is not None:
+                    item_val = mapping.get(itemid_col.key)
+                    if item_val is not None:
+                        meta = itemid_counts.get(item_val)
+                        if meta:
+                            base = row.get(itemid_col.key, item_val)
+                            row[itemid_col.key] = f"{base} ({meta['active']}/{meta['sold']})"
+            except Exception:
+                # Never let counts rendering break the grid.
+                pass
+
         return row
 
     rows = [_serialize(item) for item in rows_db]

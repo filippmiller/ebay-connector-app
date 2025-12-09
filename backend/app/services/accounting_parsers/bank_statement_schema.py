@@ -14,7 +14,7 @@ from typing import List, Optional, Literal
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, field_serializer, ConfigDict
 
 
 # ============================================================================
@@ -167,6 +167,13 @@ class BankStatementSummaryV1(BaseModel):
     grace_period_start: Optional[date] = None
     grace_period_end: Optional[date] = None
 
+    @field_serializer('beginning_balance', 'ending_balance', 'electronic_deposits_total',
+                      'other_credits_total', 'checks_paid_total', 'electronic_payments_total',
+                      'other_withdrawals_total', 'service_charges_fees_total', 'interest_earned_total',
+                      'grace_period_balance', when_used='json')
+    def serialize_decimal(self, v: Optional[Decimal]) -> Optional[float]:
+        return float(v) if v is not None else None
+
 
 class BankStatementTransactionV1(BaseModel):
     """A single transaction line from the statement."""
@@ -207,6 +214,10 @@ class BankStatementTransactionV1(BaseModel):
             # Remove commas and convert
             return Decimal(v.replace(',', ''))
         return Decimal(str(v))
+
+    @field_serializer('amount', 'balance_after', when_used='json')
+    def serialize_decimal(self, v: Optional[Decimal]) -> Optional[float]:
+        return float(v) if v is not None else None
 
 
 class BankStatementV1(BaseModel):

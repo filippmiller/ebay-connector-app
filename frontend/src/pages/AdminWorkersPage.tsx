@@ -10,6 +10,7 @@ import {
   EbayTokenRefreshLogResponse,
   EbayTokenRefreshDebugResponse,
   WorkersLoopStatusItem,
+  AdminWorkerDto,
 } from "../api/ebay";
 import { EbayWorkersPanel } from "../components/workers/EbayWorkersPanel";
 import { AllWorkerLogsModal } from "../components/AllWorkerLogsModal";
@@ -68,6 +69,11 @@ const AdminWorkersPage: React.FC = () => {
   // All worker logs modal
   const [allLogsModalOpen, setAllLogsModalOpen] = useState(false);
 
+  // Global background workers (Inventory MV Refresh and future workers)
+  const [inventoryWorker, setInventoryWorker] = useState<AdminWorkerDto | null>(null);
+  const [inventoryWorkerLoading, setInventoryWorkerLoading] = useState(false);
+  const [inventoryWorkerError, setInventoryWorkerError] = useState<string | null>(null);
+
   const loadTokenStatusAndWorker = async () => {
     try {
       setTokenStatusLoading(true);
@@ -100,6 +106,22 @@ const AdminWorkersPage: React.FC = () => {
     }
   };
 
+  const loadInventoryWorker = async () => {
+    try {
+      setInventoryWorkerLoading(true);
+      setInventoryWorkerError(null);
+      const data = await ebayApi.getInventoryMvWorker();
+      setInventoryWorker(data);
+    } catch (e: any) {
+      console.error("Failed to load inventory MV worker status", e);
+      setInventoryWorkerError(
+        e?.response?.data?.detail || e.message || "Failed to load inventory MV worker status",
+      );
+    } finally {
+      setInventoryWorkerLoading(false);
+    }
+  };
+
   useEffect(() => {
     const loadAccountsAndTokens = async () => {
       try {
@@ -117,7 +139,11 @@ const AdminWorkersPage: React.FC = () => {
         setAccountsLoading(false);
       }
 
-      await Promise.all([loadTokenStatusAndWorker(), loadWorkersLoopStatus()]);
+      await Promise.all([
+        loadTokenStatusAndWorker(),
+        loadWorkersLoopStatus(),
+        loadInventoryWorker(),
+      ]);
     };
 
     void loadAccountsAndTokens();
@@ -478,6 +504,161 @@ const AdminWorkersPage: React.FC = () => {
               </Card>
             </div>
           </div>
+
+          {/* Global background workers (Inventory MV Refresh etc.) */}
+          <Card className="p-0">
+            <CardHeader className="py-1 px-3 pb-0 flex items-center justify-between">
+              <CardTitle className="text-[12px] font-semibold">Global Background Workers</CardTitle>
+            </CardHeader>
+            <CardContent className="py-2 px-3 space-y-2">
+              {inventoryWorkerLoading && (
+                <div className="text-xs text-gray-600">Loading workers...</div>
+              )}
+              {inventoryWorkerError && (
+                <div className="text-xs text-red-600">{inventoryWorkerError}</div>
+              )}
+              {inventoryWorker && (
+                <div className="border rounded p-2 flex flex-col gap-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-sm">
+                        {inventoryWorker.display_name || "Inventory MV Refresh"}
+                      </span>
+                      {inventoryWorker.description && (
+                        <span className="text-[11px] text-gray-600">
+                          {inventoryWorker.description}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-600">Disabled</span>
+                      <button
+                        type="button"
+                        className="relative inline-flex h-5 w-10 items-center rounded-full border border-gray-300 bg-white transition-colors"
+                        onClick={async () => {
+                          const nextEnabled = !inventoryWorker.enabled;
+                          try {
+                            const updated = await ebayApi.updateInventoryMvWorker({
+                              enabled: nextEnabled,
+                            });
+                            setInventoryWorker(updated);
+                            setInventoryWorkerError(null);
+                          } catch (e: any) {
+                            console.error("Failed to update inventory MV worker", e);
+                            setInventoryWorkerError(
+                              e?.response?.data?.detail ||
+                              e.message ||
+                              "Failed to update inventory MV worker",
+                            );
+                          }
+                        }}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-gray-400 shadow transition-transform ${
+                            inventoryWorker.enabled ? 'translate-x-5 bg-green-500' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                      <span className="text-[11px] text-gray-600">Enabled</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <Label className="text-[11px] text-gray-700">Interval (seconds)</Label>
+                      <input
+                        type="number"
+                        className="h-7 w-24 rounded border border-gray-300 px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={inventoryWorker.interval_seconds}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value || '0', 10);
+                          setInventoryWorker((prev) =>
+                            prev ? { ...prev, interval_seconds: v } : prev,
+                          );
+                        }}
+                        onBlur={async (e) => {
+                          const v = parseInt(e.target.value || '0', 10);
+                          if (!Number.isFinite(v) || v <= 0) return;
+                          try {
+                            const updated = await ebayApi.updateInventoryMvWorker({
+                              interval_seconds: v,
+                            });
+                            setInventoryWorker(updated);
+                            setInventoryWorkerError(null);
+                          } catch (err: any) {
+                            console.error("Failed to update inventory MV worker interval", err);
+                            setInventoryWorkerError(
+                              err?.response?.data?.detail ||
+                              err.message ||
+                              "Failed to update inventory MV worker interval",
+                            );
+                          }
+                        }}
+                      />
+                      <span className="text-[10px] text-gray-500">
+                        ≈ {Math.round(inventoryWorker.interval_seconds / 60)} min
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-700">Last run:</span>
+                      <span className="text-[11px] text-gray-800">
+                        {inventoryWorker.last_run_at
+                          ? formatDateTimeLocal(inventoryWorker.last_run_at)
+                          : 'never'}
+                      </span>
+                      {inventoryWorker.last_run_status && (
+                        <span className="text-[11px] text-gray-600">
+                          status: {inventoryWorker.last_run_status}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {inventoryWorker.last_run_error && (
+                    <div className="text-[11px] text-red-700 truncate">
+                      Last error: {inventoryWorker.last_run_error}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between mt-1">
+                    <div className="text-[11px] text-gray-600">
+                      Uses the same REFRESH MATERIALIZED VIEW logic as the dedicated
+                      worker process. The toggle only affects the automatic loop;
+                      you can still trigger "Run now" manually.
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-7 items-center rounded bg-blue-600 px-3 text-[11px] font-medium text-white hover:bg-blue-700"
+                      onClick={async () => {
+                        try {
+                          const resp = await ebayApi.runInventoryMvWorkerOnce();
+                          if (resp.status === 'error') {
+                            setInventoryWorkerError(
+                              resp.message || 'Inventory MV run failed',
+                            );
+                          } else {
+                            setInventoryWorkerError(null);
+                          }
+                        } catch (e: any) {
+                          console.error("Failed to run inventory MV worker once", e);
+                          setInventoryWorkerError(
+                            e?.response?.data?.detail ||
+                            e.message ||
+                            "Failed to run inventory MV worker once",
+                          );
+                        } finally {
+                          void loadInventoryWorker();
+                        }
+                      }}
+                    >
+                      Run now
+                    </button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Per-account token status – now kept compact and aligned with the header row */}
           <Card className="p-0">

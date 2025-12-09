@@ -47,4 +47,5 @@ from . import (
     db_compare,
     accounting,
     accounting2,
+    admin_workers,
 )
