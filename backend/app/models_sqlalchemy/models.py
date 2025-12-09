@@ -681,6 +681,59 @@ class PartsDetailLog(Base):
     )
 
 
+class EbayListingTestConfig(Base):
+    """Config for the eBay test-listing UI / worker.
+
+    Stores a single-row toggle for deep debug mode and the Inventory status
+    that should be treated as a test-listing candidate status.
+    """
+
+    __tablename__ = "ebay_listing_test_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    debug_enabled = Column(Boolean, nullable=False, default=False)
+    # Logical InventoryStatus value, e.g. "TEST_LISTING" or "PENDING_LISTING".
+    test_inventory_status = Column(String(50), nullable=True)
+    max_items_per_run = Column(Integer, nullable=False, default=50)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=True, onupdate=func.now())
+
+
+class EbayListingTestLog(Base):
+    """Persistent log of individual test-listing runs.
+
+    Each row represents a single invocation of the test-listing worker. The
+    full WorkerDebugTrace is stored in trace_json so the admin UI can render a
+    terminal-style view of the exact eBay HTTP requests/responses and DB
+    changes that occurred during the run.
+    """
+
+    __tablename__ = "ebay_listing_test_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+
+    inventory_id = Column(Integer, ForeignKey("inventory.id"), nullable=True, index=True)
+    parts_detail_id = Column(Integer, ForeignKey("parts_detail.id"), nullable=True, index=True)
+
+    sku = Column(String(100), nullable=True, index=True)
+    status = Column(String(20), nullable=False)  # e.g. SUCCESS / ERROR
+    mode = Column(String(16), nullable=False)  # "stub" or "live"
+    account_label = Column(String(200), nullable=True)
+
+    error_message = Column(Text, nullable=True)
+    summary_json = Column(JSONB, nullable=True)
+    trace_json = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("idx_ebay_listing_test_logs_created_at", "created_at"),
+        Index("idx_ebay_listing_test_logs_status", "status"),
+    )
+
+
 # Attempt reflection of the legacy Supabase inventory table at import time,
 # but never crash the app if it is missing in the current environment or the
 # database is temporarily unreachable.

@@ -49,6 +49,7 @@ interface Accounting2PreviewRow {
   description_clean: string | null;
   amount: number;
   balance_after: number | null;
+  bank_section: string | null;
 }
 
 interface Accounting2StatementUploadResult {
