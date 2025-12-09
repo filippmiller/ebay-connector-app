@@ -67,17 +67,26 @@ SECTION_DIRECTION = {
 PATTERNS = {
     # Account number: Primary Acct#: 123456789 or ****1234 or 625-2192140
     "account_number": re.compile(r'Primary\s*Account\s*[#:]?\s*[*]*([\d*-]+)', re.IGNORECASE),
-    # Statement period: Find the date range pattern anywhere (e.g., "Aug 01 2025-Aug 312025")
-    # This is very flexible to handle TD Bank quirks
+    
+    # Statement period: Flexible pattern for TD Bank quirks
+    # Handles: "Aug 01 2025 - Aug 31 2025", "Aug 012025–Aug 312025", "Aug 01 2025 through Aug 31 2025"
+    # Groups: (start_month, start_day, start_year_opt, end_month, end_day, end_year_opt)
+    # Year is optional in first date (can be inferred from second date)
     "period_dates": re.compile(
-        r'(\w{3,9})\s+(\d{1,2})\s*,?\s*(\d{4})\s*[-–]\s*(\w{3,9})\s+(\d{1,2})\s*,?\s*(\d{4})',
+        r'(\w{3,9})\s+(\d{1,2}),?\s*(\d{4})?\s*(?:[-–]|to|through)\s*(\w{3,9})\s+(\d{1,2}),?\s*(\d{4})?',
         re.IGNORECASE
     ),
+    
+    # Debug pattern: capture raw Statement Period line for diagnostics
+    "period_any": re.compile(r'Statement\s*Period[:\s]+(.{0,100})', re.IGNORECASE),
+    
     # Account owner name (usually all caps after address)
     "owner": re.compile(r'^([A-Z][A-Z\s&.,-]+(?:LLC|INC|CORP|CO)?)\s*$', re.MULTILINE),
-    # Beginning/Ending balance
-    "beginning_balance": re.compile(r'Beginning Balance\s*[\$]?\s*([\d,]+\.\d{2})', re.IGNORECASE),
-    "ending_balance": re.compile(r'Ending Balance\s*[\$]?\s*([\d,]+\.\d{2})', re.IGNORECASE),
+    
+    # Beginning/Ending balance - flexible spacing
+    "beginning_balance": re.compile(r'Beginning\s+Balance\s*[\$]?\s*(-?[\d,]+\.\d{2})', re.IGNORECASE),
+    "ending_balance": re.compile(r'Ending\s+Balance\s*[\$]?\s*(-?[\d,]+\.\d{2})', re.IGNORECASE),
+    
     # Transaction line: date + description + amount
     # Format: 01/05    CCD DEPOSIT EBAY COM        1,500.00
     "transaction_line": re.compile(
@@ -120,7 +129,11 @@ class TDBankPDFParser:
         self.parsing_notes: List[str] = []
         
     def _extract_text(self) -> None:
-        """Extract text from all PDF pages using pdfplumber."""
+        """Extract text from all PDF pages using pdfplumber.
+        
+        Uses layout=True and tolerance settings to preserve proper column order
+        (left-to-right, top-to-bottom) which is critical for TD Bank's two-column format.
+        """
         try:
             import pdfplumber
         except ImportError:
@@ -131,17 +144,19 @@ class TDBankPDFParser:
         
         with pdfplumber.open(BytesIO(self.pdf_bytes)) as pdf:
             for page_num, page in enumerate(pdf.pages, start=1):
-                text = page.extract_text() or ""
+                # Use layout=True to preserve proper reading order (left-to-right)
+                # x_tolerance and y_tolerance help group characters correctly
+                text = page.extract_text(x_tolerance=2, y_tolerance=3, layout=True) or ""
                 self.pages_text.append(text)
                 logger.debug(f"TD PDF Parser: Extracted {len(text)} chars from page {page_num}")
         
         self.full_text = "\n\n".join(self.pages_text)
         logger.info(f"TD PDF Parser: Total text length: {len(self.full_text)} chars from {len(self.pages_text)} pages")
         
-        # Log first page text for debugging header parsing issues
-        if self.pages_text:
-            first_page = self.pages_text[0][:2000]  # First 2000 chars
-            logger.info(f"TD PDF Parser: First page preview (2000 chars):\n{first_page}")
+        # Log first 3 pages text for debugging header parsing issues
+        for i, page_text in enumerate(self.pages_text[:3], start=1):
+            preview = page_text[:2000]
+            logger.info(f"TD PDF Parser: Page {i} preview (2000 chars):\n{preview}")
     
     def _parse_date(self, date_str: str, year: int) -> Optional[date]:
         """Parse a date string like '01/05' with inferred year."""
@@ -225,7 +240,10 @@ class TDBankPDFParser:
             return None
     
     def _extract_metadata(self) -> BankStatementMetadataV1:
-        """Extract statement metadata from header text."""
+        """Extract statement metadata from header text.
+        
+        Searches first 3 pages (not just 3000 chars) to handle varying PDF layouts.
+        """
         # Month name mapping
         month_map = {
             'jan': 1, 'january': 1, 'feb': 2, 'february': 2, 'mar': 3, 'march': 3,
@@ -234,10 +252,14 @@ class TDBankPDFParser:
             'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
         }
         
-        # Account number - search in first 3000 chars (header area)
-        header_text = self.full_text[:3000]
+        # Search in first 3 pages (handles pdfplumber extraction order issues)
+        header_text = "\n".join(self.pages_text[:3]) if self.pages_text else self.full_text[:10000]
+        logger.info(f"TD PDF Parser: Header search area: {len(header_text)} chars from first 3 pages")
+        
+        # Account number
         account_match = PATTERNS["account_number"].search(header_text)
         account_number = account_match.group(1) if account_match else "UNKNOWN"
+        logger.info(f"TD PDF Parser: Account number match: {account_number}")
         
         # Mask account number if not already masked
         if len(account_number) > 4 and not account_number.startswith('*'):
@@ -247,22 +269,27 @@ class TDBankPDFParser:
         period_start = None
         period_end = None
         
-        # DEBUG: Log what we're searching for period
-        logger.info(f"TD PDF Parser: Searching for period in header (first 800 chars):\n{header_text[:800]}")
-        
+        # Try main period_dates pattern first
         period_match = PATTERNS["period_dates"].search(header_text)
-        logger.info(f"TD PDF Parser: Period regex match result: {period_match}")
+        logger.info(f"TD PDF Parser: period_dates match: {period_match}")
+        
         if period_match:
-            # Groups: (start_month, start_day, start_year, end_month, end_day, end_year)
+            # Groups: (start_month, start_day, start_year_opt, end_month, end_day, end_year_opt)
             start_month_str = period_match.group(1).lower()
             start_day = int(period_match.group(2))
-            start_year = int(period_match.group(3))
+            start_year_str = period_match.group(3)  # May be None
             end_month_str = period_match.group(4).lower()
             end_day = int(period_match.group(5))
-            end_year = int(period_match.group(6))
+            end_year_str = period_match.group(6)  # May be None
+            
+            # Parse years - start year may be missing, infer from end year
+            end_year = int(end_year_str) if end_year_str else date.today().year
+            start_year = int(start_year_str) if start_year_str else end_year
             
             start_month = month_map.get(start_month_str)
             end_month = month_map.get(end_month_str)
+            
+            logger.info(f"TD PDF Parser: Parsed period components: {start_month_str}/{start_day}/{start_year} - {end_month_str}/{end_day}/{end_year}")
             
             if start_month and end_month:
                 try:
@@ -272,9 +299,17 @@ class TDBankPDFParser:
                 except ValueError as e:
                     logger.warning(f"TD PDF Parser: Invalid date values: {e}")
         
+        # Fallback: try period_any debug pattern to see raw period string
+        if not period_start or not period_end:
+            any_match = PATTERNS["period_any"].search(header_text)
+            if any_match:
+                raw_period = any_match.group(1).strip()
+                logger.warning(f"TD PDF Parser: period_dates failed, but found raw period string: '{raw_period}'")
+                self.parsing_notes.append(f"DEBUG: Raw period string found: '{raw_period}'")
+        
         if not period_start or not period_end:
             self.parsing_notes.append("WARNING: Could not extract statement period from header")
-            logger.warning("TD PDF Parser: Could not extract statement period")
+            logger.warning("TD PDF Parser: Could not extract statement period - using fallback dates")
             today = date.today()
             period_start = period_start or date(today.year, today.month, 1)
             period_end = period_end or today
@@ -314,16 +349,17 @@ class TDBankPDFParser:
         """
         results: Dict[str, Optional[Decimal]] = {}
         
-        # DEBUG: Look for ACCOUNT SUMMARY section
-        summary_start = self.full_text.find('ACCOUNT SUMMARY')
-        if summary_start == -1:
-            summary_start = self.full_text.find('Account Summary')
-        if summary_start >= 0:
-            summary_preview = self.full_text[summary_start:summary_start+1500]
-            logger.info(f"TD PDF Parser: Found ACCOUNT SUMMARY at position {summary_start}. Preview:\n{summary_preview[:1000]}")
+        # DEBUG: Look for ACCOUNT SUMMARY section using regex (handles "Account Summary for Account Number: xxx")
+        summary_match = re.search(r'ACCOUNT\s+SUMMARY', self.full_text, re.IGNORECASE)
+        if summary_match:
+            summary_start = summary_match.start()
+            # Find DAILY ACCOUNT ACTIVITY to determine where summary ends
+            activity_match = re.search(r'DAILY\s+ACCOUNT\s+ACTIVITY', self.full_text, re.IGNORECASE)
+            summary_end = activity_match.start() if activity_match else summary_start + 2000
+            summary_text = self.full_text[summary_start:summary_end]
+            logger.info(f"TD PDF Parser: Found ACCOUNT SUMMARY at position {summary_start}. Preview:\n{summary_text[:1500]}")
         else:
             logger.warning(f"TD PDF Parser: ACCOUNT SUMMARY section not found in text!")
-            # Log first 2000 chars to see structure
             logger.info(f"TD PDF Parser: Full text preview (first 2000):\n{self.full_text[:2000]}")
         
         # ---- 1. Beginning & Ending Balance (from ACCOUNT SUMMARY header) ----
@@ -418,22 +454,46 @@ class TDBankPDFParser:
         for pattern in cleanup_patterns:
             cleaned_text = re.sub(pattern, ' ', cleaned_text, flags=re.IGNORECASE | re.DOTALL)
         
-        text_upper = cleaned_text.upper()
+        # Find ALL DAILY ACCOUNT ACTIVITY sections (they repeat on each page)
+        # and merge all blocks between them and the next DAILY BALANCE SUMMARY
+        activity_pattern = re.compile(r'DAILY\s+ACCOUNT\s+ACTIVITY', re.IGNORECASE)
+        balance_pattern = re.compile(r'DAILY\s+BALANCE\s+SUMMARY', re.IGNORECASE)
         
-        start_idx = text_upper.find("DAILY ACCOUNT ACTIVITY")
-        if start_idx == -1:
-            logger.warning("TD PDF Parser: No DAILY ACCOUNT ACTIVITY section found")
-            start_idx = 0
+        activity_matches = list(activity_pattern.finditer(cleaned_text))
+        balance_matches = list(balance_pattern.finditer(cleaned_text))
         
-        # Find where to stop
-        end_idx = len(cleaned_text)
-        for end_marker in ["DAILY BALANCE SUMMARY", "HOW TO BALANCE"]:
-            pos = text_upper.find(end_marker, start_idx)
-            if pos != -1 and pos < end_idx:
-                end_idx = pos
+        logger.info(f"TD PDF Parser: Found {len(activity_matches)} DAILY ACCOUNT ACTIVITY sections and {len(balance_matches)} DAILY BALANCE SUMMARY sections")
         
-        tx_block = cleaned_text[start_idx:end_idx]
-        logger.info(f"TD PDF Parser: Transaction block is {len(tx_block)} chars")
+        tx_blocks = []
+        for i, activity_match in enumerate(activity_matches):
+            start_idx = activity_match.start()
+            
+            # Find the nearest DAILY BALANCE SUMMARY after this activity section
+            end_idx = len(cleaned_text)
+            for balance_match in balance_matches:
+                if balance_match.start() > start_idx:
+                    end_idx = balance_match.start()
+                    break
+            
+            # Also check if there's another DAILY ACCOUNT ACTIVITY before the balance summary
+            # (i.e., the balance summary is on a different page)
+            if i + 1 < len(activity_matches):
+                next_activity = activity_matches[i + 1].start()
+                if next_activity < end_idx:
+                    end_idx = next_activity
+            
+            block = cleaned_text[start_idx:end_idx]
+            tx_blocks.append(block)
+            logger.debug(f"TD PDF Parser: Activity block {i+1}: {len(block)} chars")
+        
+        # Combine all blocks
+        if tx_blocks:
+            tx_block = "\n".join(tx_blocks)
+        else:
+            logger.warning("TD PDF Parser: No DAILY ACCOUNT ACTIVITY section found, using full text")
+            tx_block = cleaned_text
+        
+        logger.info(f"TD PDF Parser: Combined transaction block is {len(tx_block)} chars from {len(tx_blocks)} sections")
 
         lines = tx_block.split('\n')
 
