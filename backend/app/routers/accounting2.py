@@ -218,6 +218,7 @@ async def upload_bank_statement_v2(
                     amount,
                     balance_after,
                     currency,
+                    bank_section,
                     raw_transaction_json
                 ) values (
                     :bank_statement_id,
@@ -227,6 +228,7 @@ async def upload_bank_statement_v2(
                     :amount,
                     :balance_after,
                     :currency,
+                    :bank_section,
                     :raw_transaction_json
                 )
                 """
@@ -239,6 +241,7 @@ async def upload_bank_statement_v2(
                 "amount": amount,
                 "balance_after": balance_after,
                 "currency": currency,
+                "bank_section": txn.bank_section.value if txn.bank_section else None,
                 "raw_transaction_json": json.dumps(txn.model_dump(mode="json")),
             },
         )
@@ -320,7 +323,8 @@ async def get_bank_statement_preview_rows(
                 description_clean,
                 amount,
                 balance_after,
-                currency
+                currency,
+                bank_section
             from public.transaction_spending
             where bank_statement_id = :sid
             order by operation_date nulls first, id
@@ -358,6 +362,7 @@ async def approve_bank_statement(
                 amount,
                 balance_after,
                 currency,
+                bank_section,
                 raw_transaction_json
             from public.transaction_spending
             where bank_statement_id = :sid
@@ -380,7 +385,20 @@ async def approve_bank_statement(
         amount = r["amount"]
         balance_after = r["balance_after"]
         currency = r["currency"]
+        bank_section = r["bank_section"]
         raw_txn = r["raw_transaction_json"]
+
+        # Extract additional fields from raw_transaction_json if available
+        direction = None
+        bank_subtype = None
+        accounting_group = None
+        classification = None
+        if raw_txn:
+            txn_data = raw_txn if isinstance(raw_txn, dict) else {}
+            direction = txn_data.get("direction")
+            bank_subtype = txn_data.get("bank_subtype")
+            accounting_group = txn_data.get("accounting_group")
+            classification = txn_data.get("classification")
 
         bank_row = AccountingBankRow(
             bank_statement_id=stmt.id,
@@ -394,6 +412,12 @@ async def approve_bank_statement(
             currency=currency or stmt.currency,
             parsed_status="auto_parsed",
             match_status="unmatched",
+            bank_code="TD",
+            bank_section=bank_section,
+            bank_subtype=bank_subtype,
+            direction=direction,
+            accounting_group=accounting_group,
+            classification=classification,
             raw_transaction_json=raw_txn,
             created_by_user_id=current_user.id,
         )

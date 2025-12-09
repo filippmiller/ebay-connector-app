@@ -775,6 +775,7 @@ function StatementsTab2() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-2 py-2 text-left">Date</th>
+                      <th className="px-2 py-2 text-left">Section</th>
                       <th className="px-2 py-2 text-left">Description</th>
                       <th className="px-2 py-2 text-right">Amount</th>
                       <th className="px-2 py-2 text-right">Balance after</th>
@@ -784,12 +785,30 @@ function StatementsTab2() {
                     {previewRows.map((r) => (
                       <tr key={r.id} className="border-t hover:bg-gray-50">
                         <td className="px-2 py-1 whitespace-nowrap">{r.operation_date || '—'}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            r.bank_section === 'ELECTRONIC_DEPOSIT' ? 'bg-green-100 text-green-800' :
+                            r.bank_section === 'OTHER_CREDIT' ? 'bg-emerald-100 text-emerald-800' :
+                            r.bank_section === 'CHECKS_PAID' ? 'bg-red-100 text-red-800' :
+                            r.bank_section === 'ELECTRONIC_PAYMENT' ? 'bg-orange-100 text-orange-800' :
+                            r.bank_section === 'OTHER_WITHDRAWAL' ? 'bg-amber-100 text-amber-800' :
+                            r.bank_section === 'SERVICE_CHARGE' ? 'bg-rose-100 text-rose-800' :
+                            r.bank_section === 'INTEREST_EARNED' ? 'bg-blue-100 text-blue-800' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>
+                            {r.bank_section?.replace(/_/g, ' ') || 'UNKNOWN'}
+                          </span>
+                        </td>
                         <td className="px-2 py-1">
-                          <div className="font-medium text-gray-900 truncate max-w-xs" title={r.description_raw || undefined}>
+                          <div className="font-medium text-gray-900" title={r.description_raw || undefined}>
                             {r.description_clean || r.description_raw || '—'}
                           </div>
                         </td>
-                        <td className="px-2 py-1 text-right">
+                        <td className={`px-2 py-1 text-right font-medium ${
+                          (typeof r.amount === 'number' ? r.amount : parseFloat(r.amount || '0')) >= 0 
+                            ? 'text-green-700' 
+                            : 'text-red-700'
+                        }`}>
                           {typeof r.amount === 'number' ? r.amount.toFixed(2) : r.amount}
                         </td>
                         <td className="px-2 py-1 text-right">
