@@ -143,6 +143,72 @@ function StatementsTab2() {
   const [previewStatement, setPreviewStatement] = React.useState<Accounting2StatementSummary | null>(null);
   const [previewRows, setPreviewRows] = React.useState<Accounting2PreviewRow[]>([]);
   const [previewCommitting, setPreviewCommitting] = React.useState(false);
+  
+  // Sorting state for preview grid
+  const [sortField, setSortField] = React.useState<keyof Accounting2PreviewRow>('operation_date');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc');
+  
+  // Sorted rows computed from previewRows
+  const sortedPreviewRows = React.useMemo(() => {
+    if (!previewRows.length) return [];
+    return [...previewRows].sort((a, b) => {
+      const aVal = a[sortField];
+      const bVal = b[sortField];
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return sortDir === 'asc' ? 1 : -1;
+      if (bVal == null) return sortDir === 'asc' ? -1 : 1;
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+      }
+      const aStr = String(aVal);
+      const bStr = String(bVal);
+      return sortDir === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+    });
+  }, [previewRows, sortField, sortDir]);
+  
+  // Balance reconciliation calculation
+  const reconciliation = React.useMemo(() => {
+    if (!previewStatement || !previewRows.length) return null;
+    
+    const beginningBalance = parseFloat(String(previewStatement.opening_balance || 0));
+    const endingBalance = parseFloat(String(previewStatement.closing_balance || 0));
+    
+    let totalCredits = 0;
+    let totalDebits = 0;
+    
+    for (const row of previewRows) {
+      const amt = typeof row.amount === 'number' ? row.amount : parseFloat(String(row.amount || 0));
+      if (amt >= 0) {
+        totalCredits += amt;
+      } else {
+        totalDebits += amt; // negative
+      }
+    }
+    
+    const calculatedEnding = beginningBalance + totalCredits + totalDebits;
+    const variance = Math.round((calculatedEnding - endingBalance) * 100) / 100;
+    
+    return {
+      beginningBalance,
+      endingBalance,
+      totalCredits,
+      totalDebits,
+      totalTransactions: totalCredits + totalDebits,
+      calculatedEnding,
+      variance,
+      isBalanced: Math.abs(variance) < 0.01, // within 1 cent tolerance
+    };
+  }, [previewStatement, previewRows]);
+  
+  // Handle column sort click
+  const handleSort = (field: keyof Accounting2PreviewRow) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
 
   const loadStatements = React.useCallback(async () => {
     setLoadingList(true);
@@ -664,10 +730,23 @@ function StatementsTab2() {
                 <Button
                   type="button"
                   size="sm"
-                  onClick={handlePreviewAcceptAll}
+                  onClick={() => {
+                    if (reconciliation && !reconciliation.isBalanced) {
+                      const proceed = window.confirm(
+                        `⚠️ Balance Mismatch Warning!\n\n` +
+                        `Calculated ending: $${reconciliation.calculatedEnding.toFixed(2)}\n` +
+                        `Expected ending: $${reconciliation.endingBalance.toFixed(2)}\n` +
+                        `Variance: $${reconciliation.variance.toFixed(2)}\n\n` +
+                        `Do you still want to accept these transactions?`
+                      );
+                      if (!proceed) return;
+                    }
+                    handlePreviewAcceptAll();
+                  }}
                   disabled={previewCommitting || previewRows.length === 0}
+                  className={reconciliation && !reconciliation.isBalanced ? 'bg-amber-600 hover:bg-amber-700' : ''}
                 >
-                  {previewCommitting ? 'Saving…' : 'Accept all transactions'}
+                  {previewCommitting ? 'Saving…' : reconciliation && !reconciliation.isBalanced ? '⚠ Accept (unbalanced)' : 'Accept all transactions'}
                 </Button>
               </div>
             </div>
@@ -767,6 +846,64 @@ function StatementsTab2() {
               </div>
             )}
 
+            {/* Balance Reconciliation Panel */}
+            {reconciliation && (
+              <div className={`mx-4 mb-3 p-3 rounded-lg border-2 ${
+                reconciliation.isBalanced 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-red-50 border-red-300'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold flex items-center gap-2">
+                    {reconciliation.isBalanced ? (
+                      <>
+                        <span className="text-green-700">✓ Balance Reconciled</span>
+                        <span className="text-green-600 text-xs font-normal">(variance: ${reconciliation.variance.toFixed(2)})</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-red-700">⚠ Balance Mismatch!</span>
+                        <span className="text-red-600 text-xs font-normal">(variance: ${reconciliation.variance.toFixed(2)})</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    {previewRows.length} transactions
+                  </div>
+                </div>
+                <div className="mt-2 grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                  <div className="bg-white rounded px-2 py-1">
+                    <div className="text-gray-500">Beginning</div>
+                    <div className="font-semibold">${reconciliation.beginningBalance.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-white rounded px-2 py-1">
+                    <div className="text-gray-500">+ Credits</div>
+                    <div className="font-semibold text-green-700">+${reconciliation.totalCredits.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-white rounded px-2 py-1">
+                    <div className="text-gray-500">− Debits</div>
+                    <div className="font-semibold text-red-700">${reconciliation.totalDebits.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-white rounded px-2 py-1">
+                    <div className="text-gray-500">= Calculated</div>
+                    <div className="font-semibold">${reconciliation.calculatedEnding.toFixed(2)}</div>
+                  </div>
+                  <div className={`rounded px-2 py-1 ${reconciliation.isBalanced ? 'bg-green-100' : 'bg-red-100'}`}>
+                    <div className="text-gray-500">Expected End</div>
+                    <div className="font-semibold">${reconciliation.endingBalance.toFixed(2)}</div>
+                  </div>
+                </div>
+                {!reconciliation.isBalanced && (
+                  <div className="mt-2 text-xs text-red-700">
+                    ⚠ Calculated ending balance (${reconciliation.calculatedEnding.toFixed(2)}) does not match 
+                    expected ending balance (${reconciliation.endingBalance.toFixed(2)}). 
+                    Difference: <strong>${reconciliation.variance.toFixed(2)}</strong>. 
+                    Please review transactions before accepting.
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex-1 min-h-0 overflow-auto">
               {previewLoading ? (
                 <div className="p-4 text-gray-600">Loading transactions…</div>
@@ -776,17 +913,42 @@ function StatementsTab2() {
                 <div className="p-4 text-gray-600">No transactions parsed for this statement.</div>
               ) : (
                 <table className="min-w-full text-xs">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-gray-50 sticky top-0">
                     <tr>
-                      <th className="px-2 py-2 text-left">Date</th>
-                      <th className="px-2 py-2 text-left">Section</th>
-                      <th className="px-2 py-2 text-left">Description</th>
-                      <th className="px-2 py-2 text-right">Amount</th>
-                      <th className="px-2 py-2 text-right">Balance after</th>
+                      <th 
+                        className="px-2 py-2 text-left cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('operation_date')}
+                      >
+                        Date {sortField === 'operation_date' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th 
+                        className="px-2 py-2 text-left cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('bank_section')}
+                      >
+                        Section {sortField === 'bank_section' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th 
+                        className="px-2 py-2 text-left cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('description_clean')}
+                      >
+                        Description {sortField === 'description_clean' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th 
+                        className="px-2 py-2 text-right cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('amount')}
+                      >
+                        Amount {sortField === 'amount' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th 
+                        className="px-2 py-2 text-right cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('balance_after')}
+                      >
+                        Balance after {sortField === 'balance_after' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {previewRows.map((r) => (
+                    {sortedPreviewRows.map((r) => (
                       <tr key={r.id} className="border-t hover:bg-gray-50">
                         <td className="px-2 py-1 whitespace-nowrap">{r.operation_date || '—'}</td>
                         <td className="px-2 py-1 whitespace-nowrap">
@@ -809,7 +971,7 @@ function StatementsTab2() {
                           </div>
                         </td>
                         <td className={`px-2 py-1 text-right font-medium ${
-                          (typeof r.amount === 'number' ? r.amount : parseFloat(r.amount || '0')) >= 0 
+                          (typeof r.amount === 'number' ? r.amount : parseFloat(String(r.amount) || '0')) >= 0 
                             ? 'text-green-700' 
                             : 'text-red-700'
                         }`}>
