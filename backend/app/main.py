@@ -59,6 +59,7 @@ from app.routers import (
     cv_brain,   # Computer Vision brain module
     db_compare,
     admin_workers,
+    admin_ebay_listing_test,
 )
 from app.utils.logger import logger
 import os
@@ -167,6 +168,7 @@ app.include_router(cv_camera.router)  # Computer Vision camera module
 app.include_router(cv_brain.router)   # Computer Vision brain module
 app.include_router(db_compare.router)
 app.include_router(admin_workers.router)
+app.include_router(admin_ebay_listing_test.router)
 
 @app.on_event("startup")
 async def startup_event():

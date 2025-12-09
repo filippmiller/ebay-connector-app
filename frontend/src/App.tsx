@@ -29,6 +29,7 @@ import ShippingPage from './pages/ShippingPage';
 import ReturnsPage from './pages/ReturnsPage';
 import CasesPage from './pages/CasesPage';
 import AdminPage from './pages/AdminPage';
+import AdminTestListingPage from './pages/AdminTestListingPage';
 import AdminDataMigrationPage from './pages/AdminDataMigrationPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
@@ -159,6 +160,7 @@ function App() {
           <Route path="/admin/data-migration" element={<ProtectedRoute><AdminDataMigrationPage /></ProtectedRoute>} />
           <Route path="/admin/notifications" element={<ProtectedRoute><EbayNotificationsPage /></ProtectedRoute>} />
           <Route path="/admin/workers" element={<ProtectedRoute><AdminWorkersPage /></ProtectedRoute>} />
+          <Route path="/admin/test-listing" element={<ProtectedRoute><AdminTestListingPage /></ProtectedRoute>} />
           <Route
             path="/orders"
             element={

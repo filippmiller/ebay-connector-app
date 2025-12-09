@@ -48,4 +48,5 @@ from . import (
     accounting,
     accounting2,
     admin_workers,
+    admin_ebay_listing_test,
 )

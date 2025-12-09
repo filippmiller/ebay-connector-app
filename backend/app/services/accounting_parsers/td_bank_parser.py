@@ -285,22 +285,38 @@ class TDBankPDFParser:
 
         current_section = BankSectionCode.UNKNOWN
 
-        # Get transaction block - simple approach: everything from first DAILY ACCOUNT ACTIVITY
-        # to DAILY BALANCE SUMMARY (or end of document)
+        # Get transaction block - everything from first DAILY ACCOUNT ACTIVITY
+        # Need to handle multi-page documents where this header repeats
         text_upper = self.full_text.upper()
+        
+        # Remove known non-transaction sections before parsing
+        # These sections appear on various pages and pollute transaction extraction
+        cleanup_patterns = [
+            r'HOW\s+TO\s+BALANCE\s+YOUR\s+ACCOUNT.*?(?=DAILY\s+ACCOUNT\s+ACTIVITY|DAILY\s+BALANCE\s+SUMMARY|$)',
+            r'FOR\s+CONSUMER\s+ACCOUNTS\s+ONLY.*?(?=DAILY\s+ACCOUNT\s+ACTIVITY|DAILY\s+BALANCE\s+SUMMARY|Page:|$)',
+            r'INTEREST\s+NOTICE.*?(?=DAILY\s+ACCOUNT\s+ACTIVITY|DAILY\s+BALANCE\s+SUMMARY|Page:|$)',
+            r'DAILY\s+BALANCE\s+SUMMARY.*?(?=Page:|DAILY\s+ACCOUNT\s+ACTIVITY|$)',
+        ]
+        
+        cleaned_text = self.full_text
+        for pattern in cleanup_patterns:
+            cleaned_text = re.sub(pattern, ' ', cleaned_text, flags=re.IGNORECASE | re.DOTALL)
+        
+        text_upper = cleaned_text.upper()
         
         start_idx = text_upper.find("DAILY ACCOUNT ACTIVITY")
         if start_idx == -1:
             logger.warning("TD PDF Parser: No DAILY ACCOUNT ACTIVITY section found")
-            # Fallback: try to parse from beginning
             start_idx = 0
         
-        # Find where to stop - DAILY BALANCE SUMMARY marks end of transactions
-        end_idx = text_upper.find("DAILY BALANCE SUMMARY", start_idx)
-        if end_idx == -1:
-            end_idx = len(self.full_text)
+        # Find where to stop
+        end_idx = len(cleaned_text)
+        for end_marker in ["DAILY BALANCE SUMMARY", "HOW TO BALANCE"]:
+            pos = text_upper.find(end_marker, start_idx)
+            if pos != -1 and pos < end_idx:
+                end_idx = pos
         
-        tx_block = self.full_text[start_idx:end_idx]
+        tx_block = cleaned_text[start_idx:end_idx]
         logger.info(f"TD PDF Parser: Transaction block is {len(tx_block)} chars")
 
         lines = tx_block.split('\n')
@@ -334,9 +350,35 @@ class TDBankPDFParser:
             full_text = " ".join(txn_lines)
             
             # Skip if this looks like a daily balance entry
-            # Pattern: amount followed by date, or multiple amount-date pairs
             if daily_balance_re.search(full_text):
                 logger.debug(f"TD PDF Parser: Skipping daily balance line: {full_text[:50]}")
+                current_txn = None
+                return
+            
+            # Skip page headers and other non-transaction content
+            skip_keywords = [
+                "STATEMENTOFACCOUNT", "STATEMENT OF ACCOUNT",
+                "PAGE:", "PAGE :", "OF 28", "OF 31", "OF 27",
+                "MILLER SELLS IT LLC",
+                "HOW TO BALANCE", "BALANCE YOUR ACCOUNT",
+                "FOR CONSUMER ACCOUNTS", "ELECTRONIC FUND TRANSFER",
+                "INTEREST NOTICE", "TOTAL INTEREST",
+                "PRIMARY ACCOUNT", "CUST REF",
+                "CALL 1-800", "BANK DEPOSITS FDIC",
+                "TD BANK", "AMERICA'S MOST CONVENIENT",
+                "DAILY BALANCE SUMMARY", "DATE BALANCE DATE",
+                "BEGINNING BALANCE", "ENDING BALANCE",
+                "SUBTOTAL:", "TOTAL FOR THIS CYCLE",
+            ]
+            full_text_upper = full_text.upper().replace(' ', '')
+            if any(kw.replace(' ', '') in full_text_upper for kw in skip_keywords):
+                logger.debug(f"TD PDF Parser: Skipping non-transaction line: {full_text[:80]}")
+                current_txn = None
+                return
+            
+            # Skip if text is too long (likely garbage from page merging)
+            if len(full_text) > 500:
+                logger.debug(f"TD PDF Parser: Skipping overly long line ({len(full_text)} chars)")
                 current_txn = None
                 return
             
@@ -369,7 +411,7 @@ class TDBankPDFParser:
                 current_txn = None
                 return
 
-            if not description:
+            if not description or len(description) < 5:
                 current_txn = None
                 return
 
@@ -437,10 +479,24 @@ class TDBankPDFParser:
             line_upper = line.upper()
             
             # Skip known non-transaction header/footer lines
-            if any(p in line_upper for p in ["POSTING DATE", "CALL 1-800", "BANK DEPOSITS FDIC"]):
+            skip_line_patterns = [
+                "POSTING DATE", "CALL 1-800", "BANK DEPOSITS FDIC",
+                "STATEMENT OF ACCOUNT", "STATEMENTOFACCOUNT",
+                "PRIMARY ACCOUNT", "CUST REF", "PAGE:",
+                "TD BANK", "AMERICA'S MOST",
+                "HOW TO BALANCE", "FOR CONSUMER",
+                "DAILY BALANCE SUMMARY", "DATE BALANCE",
+                "MILLER SELLS IT", "VERDUN NY",
+                "ACCOUNT SUMMARY", "TOTAL FOR THIS",
+                "GRACE PERIOD", "INTEREST NOTICE",
+            ]
+            if any(p in line_upper for p in skip_line_patterns):
                 continue
             # Skip subtotal lines
             if "SUBTOTAL:" in line_upper or line_upper.startswith("SUBTOTAL"):
+                continue
+            # Skip lines that are just page numbers or dates
+            if re.match(r'^(\d+\s+of\s+\d+|\d{1,2}/\d{1,2}/\d{2,4})$', line, re.IGNORECASE):
                 continue
 
             # Check for section headers - look for key phrases anywhere in line

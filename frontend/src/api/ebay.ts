@@ -262,6 +262,54 @@ export interface AdminWorkerRunOnceResponse {
   message?: string | null;
 }
 
+// Test-listing admin DTOs
+export interface TestListingConfigDto {
+  debug_enabled: boolean;
+  test_inventory_status: string | null;
+  max_items_per_run: number;
+}
+
+export interface TestListingLogSummaryDto {
+  id: number;
+  created_at: string;
+  inventory_id: number | null;
+  parts_detail_id: number | null;
+  sku: string | null;
+  status: string;
+  mode: string;
+  account_label: string | null;
+  error_message: string | null;
+}
+
+export interface TestListingLogListResponseDto {
+  items: TestListingLogSummaryDto[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface TestListingLogDetailDto {
+  id: number;
+  created_at: string;
+  inventory_id: number | null;
+  parts_detail_id: number | null;
+  sku: string | null;
+  status: string;
+  mode: string;
+  account_label: string | null;
+  error_message: string | null;
+  summary_json: any | null;
+  trace: any | null; // Shape matches WorkerDebugTrace from ebayListingWorker.ts
+}
+
+export interface TestListingRunResponseDto {
+  log_id: number | null;
+  items_selected: number;
+  items_processed: number;
+  items_success: number;
+  items_failed: number;
+}
+
 export interface EbayReturnRow {
   return_id: string;
   account_id: string | null;
@@ -641,6 +689,59 @@ export const ebayApi = {
     const response = await apiClient.post<AdminWorkerRunOnceResponse>(
       '/api/admin/workers/inventory-mv-refresh/run-once',
       {},
+    );
+    return response.data;
+  },
+
+  // Admin → eBay test-listing UI
+  async getTestListingConfig(): Promise<TestListingConfigDto> {
+    const response = await apiClient.get<TestListingConfigDto>(
+      '/api/admin/ebay/test-listing/config',
+    );
+    return response.data;
+  },
+
+  async updateTestListingConfig(
+    payload: Partial<TestListingConfigDto>,
+  ): Promise<TestListingConfigDto> {
+    const response = await apiClient.put<TestListingConfigDto>(
+      '/api/admin/ebay/test-listing/config',
+      payload,
+    );
+    return response.data;
+  },
+
+  async runTestListingOnce(limit?: number): Promise<TestListingRunResponseDto> {
+    const body: any = {};
+    if (typeof limit === 'number') {
+      body.limit = limit;
+    }
+    const response = await apiClient.post<TestListingRunResponseDto>(
+      '/api/admin/ebay/test-listing/run',
+      body,
+    );
+    return response.data;
+  },
+
+  async getTestListingLogs(params?: {
+    limit?: number;
+    offset?: number;
+    status_filter?: string;
+  }): Promise<TestListingLogListResponseDto> {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.set('limit', String(params.limit));
+    if (params?.offset) searchParams.set('offset', String(params.offset));
+    if (params?.status_filter) searchParams.set('status_filter', params.status_filter);
+    const qs = searchParams.toString();
+    const response = await apiClient.get<TestListingLogListResponseDto>(
+      `/api/admin/ebay/test-listing/logs${qs ? `?${qs}` : ''}`,
+    );
+    return response.data;
+  },
+
+  async getTestListingLogDetail(logId: number): Promise<TestListingLogDetailDto> {
+    const response = await apiClient.get<TestListingLogDetailDto>(
+      `/api/admin/ebay/test-listing/logs/${logId}`,
     );
     return response.data;
   },
