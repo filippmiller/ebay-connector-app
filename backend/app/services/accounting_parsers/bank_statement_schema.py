@@ -126,7 +126,12 @@ class TransactionStatus(str, Enum):
 # SCHEMA MODELS — Bank Statement v1.0
 # ============================================================================
 
-class BankStatementSourceV1(BaseModel):
+class DecimalModel(BaseModel):
+    class Config:
+        json_encoders = {Decimal: lambda v: float(v)}
+
+
+class BankStatementSourceV1(DecimalModel):
     """Metadata about the source of the bank statement."""
     statement_type: Literal["BANK_ACCOUNT"] = "BANK_ACCOUNT"
     bank_name: str = Field(..., description="Full bank name, e.g. 'TD Bank'")
@@ -136,7 +141,7 @@ class BankStatementSourceV1(BaseModel):
     parsing_timestamp: Optional[str] = Field(None, description="ISO timestamp of when parsing occurred")
 
 
-class BankStatementMetadataV1(BaseModel):
+class BankStatementMetadataV1(DecimalModel):
     """Core statement metadata extracted from header/summary."""
     bank_name: str
     product_name: Optional[str] = Field(None, description="Account product, e.g. 'TD Business Checking Account'")
@@ -148,7 +153,7 @@ class BankStatementMetadataV1(BaseModel):
     currency: str = Field("USD", description="Currency code")
 
 
-class BankStatementSummaryV1(BaseModel):
+class BankStatementSummaryV1(DecimalModel):
     """Summary totals from the ACCOUNT SUMMARY section."""
     beginning_balance: Decimal
     ending_balance: Decimal
@@ -168,7 +173,7 @@ class BankStatementSummaryV1(BaseModel):
     grace_period_end: Optional[date] = None
 
 
-class BankStatementTransactionV1(BaseModel):
+class BankStatementTransactionV1(DecimalModel):
     """A single transaction line from the statement."""
     id: int = Field(..., description="Line number in statement (1-indexed)")
     
@@ -209,7 +214,7 @@ class BankStatementTransactionV1(BaseModel):
         return Decimal(str(v))
 
 
-class BankStatementV1(BaseModel):
+class BankStatementV1(DecimalModel):
     """
     Root schema for Bank Statement v1.0.
     
