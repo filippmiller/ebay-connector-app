@@ -285,44 +285,32 @@ class TDBankPDFParser:
 
         current_section = BankSectionCode.UNKNOWN
 
-        # Get transaction block - exclude daily balance summary
+        # Get transaction block - simple approach: everything from first DAILY ACCOUNT ACTIVITY
+        # to DAILY BALANCE SUMMARY (or end of document)
         text_upper = self.full_text.upper()
         
-        # Find all DAILY ACCOUNT ACTIVITY sections and exclude DAILY BALANCE SUMMARY
-        tx_block_parts = []
-        remaining = self.full_text
-        while True:
-            upper = remaining.upper()
-            start_idx = upper.find("DAILY ACCOUNT ACTIVITY")
-            if start_idx == -1:
-                break
-            
-            # Find end - either next DAILY BALANCE SUMMARY or next DAILY ACCOUNT ACTIVITY
-            after_start = upper[start_idx + len("DAILY ACCOUNT ACTIVITY"):]
-            
-            end_markers = ["DAILY BALANCE SUMMARY", "HOW TO BALANCE", "INTEREST NOTICE"]
-            end_idx = len(remaining)
-            for marker in end_markers:
-                pos = upper.find(marker, start_idx + len("DAILY ACCOUNT ACTIVITY"))
-                if pos != -1 and pos < end_idx:
-                    end_idx = pos
-            
-            tx_block_parts.append(remaining[start_idx:end_idx])
-            remaining = remaining[end_idx:]
-        
-        tx_block = "\n".join(tx_block_parts)
-        
-        if not tx_block:
+        start_idx = text_upper.find("DAILY ACCOUNT ACTIVITY")
+        if start_idx == -1:
             logger.warning("TD PDF Parser: No DAILY ACCOUNT ACTIVITY section found")
-            return []
+            # Fallback: try to parse from beginning
+            start_idx = 0
+        
+        # Find where to stop - DAILY BALANCE SUMMARY marks end of transactions
+        end_idx = text_upper.find("DAILY BALANCE SUMMARY", start_idx)
+        if end_idx == -1:
+            end_idx = len(self.full_text)
+        
+        tx_block = self.full_text[start_idx:end_idx]
+        logger.info(f"TD PDF Parser: Transaction block is {len(tx_block)} chars")
 
         lines = tx_block.split('\n')
 
-        date_re = re.compile(r'^(\d{1,2}/\d{1,2})\s')
+        # Date pattern - more flexible, just needs digit/digit at start
+        date_re = re.compile(r'^(\d{1,2}/\d{1,2})\b')
         amount_re = re.compile(r'([\d,]+\.\d{2})')
         
-        # Pattern for daily balance lines: "DATE BALANCE DATE BALANCE" or just amounts with dates
-        daily_balance_re = re.compile(r'^[\d,]+\.\d{2}\s+\d{1,2}/\d{1,2}')
+        # Pattern for daily balance lines: amount followed by date
+        daily_balance_re = re.compile(r'^\d[\d,]*\.\d{2}\s+\d{1,2}/\d{1,2}')
 
         # Buffer for current transaction being built
         current_txn: Optional[Dict[str, Any]] = None
@@ -448,30 +436,31 @@ class TDBankPDFParser:
 
             line_upper = line.upper()
             
-            # Skip known non-transaction lines
-            skip_patterns = ["POSTING DATE", "DESCRIPTION", "AMOUNT", "SUBTOTAL", "CALL 1-800", 
-                           "BANK DEPOSITS FDIC", "PAGE:", "STATEMENT PERIOD"]
-            if any(p in line_upper for p in skip_patterns):
+            # Skip known non-transaction header/footer lines
+            if any(p in line_upper for p in ["POSTING DATE", "CALL 1-800", "BANK DEPOSITS FDIC"]):
+                continue
+            # Skip subtotal lines
+            if "SUBTOTAL:" in line_upper or line_upper.startswith("SUBTOTAL"):
                 continue
 
-            # Check for section headers - be more flexible with matching
+            # Check for section headers - look for key phrases anywhere in line
             section_changed = False
             
-            # Exact section header patterns
-            section_patterns = [
-                (r'^Electronic\s+Deposits', BankSectionCode.ELECTRONIC_DEPOSIT),
-                (r'^Other\s+Credits', BankSectionCode.OTHER_CREDIT),
-                (r'^Checks\s+Paid', BankSectionCode.CHECKS_PAID),
-                (r'^Electronic\s+Payments', BankSectionCode.ELECTRONIC_PAYMENT),
-                (r'^Other\s+Withdrawals', BankSectionCode.OTHER_WITHDRAWAL),
-                (r'^Service\s+Charges', BankSectionCode.SERVICE_CHARGE),
-                (r'^Interest\s+Earned', BankSectionCode.INTEREST_EARNED),
+            # Section header keywords (not anchored to start - PDF extraction may vary)
+            section_keywords = [
+                ("Electronic Deposits", BankSectionCode.ELECTRONIC_DEPOSIT),
+                ("Other Credits", BankSectionCode.OTHER_CREDIT),
+                ("Checks Paid", BankSectionCode.CHECKS_PAID),
+                ("Electronic Payments", BankSectionCode.ELECTRONIC_PAYMENT),
+                ("Other Withdrawals", BankSectionCode.OTHER_WITHDRAWAL),
+                ("Service Charges", BankSectionCode.SERVICE_CHARGE),
+                ("Interest Earned", BankSectionCode.INTEREST_EARNED),
             ]
             
-            for pattern, section_code in section_patterns:
-                if re.search(pattern, line, re.IGNORECASE):
-                    # Make sure it's a header, not a transaction (no leading date)
-                    if not date_re.match(line):
+            for keyword, section_code in section_keywords:
+                if keyword.upper() in line_upper:
+                    # Make sure it's a header, not a transaction (no leading date, no amount at end)
+                    if not date_re.match(line) and not re.search(r'\d+\.\d{2}\s*$', line):
                         current_section = section_code
                         section_changed = True
                         logger.debug(f"TD PDF Parser: Entering section {section_code.value}")
