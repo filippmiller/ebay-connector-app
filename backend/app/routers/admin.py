@@ -76,6 +76,214 @@ async def debug_environment(db: Session = Depends(get_db)):
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
 
++# Default logical containers and their physical table names for Test Computer Analytics.
++COMPUTER_ANALYTICS_DEFAULT_SOURCES: dict[str, dict[str, str]] = {
++    "root_purchase": {"table": "buying"},
++    "inventory_legacy": {"table": "tbl_parts_inventory"},
++    "inventory": {"table": "inventory"},
++    "transactions": {"table": "transactions"},
++    "finances_transactions": {"table": "ebay_finances_transactions"},
++    "finances_fees": {"table": "ebay_finances_fees"},
++    # Configurable containers for invoices and returns/refunds.
++    "invoices": {"table": "cvfii"},
++    "returns_refunds": {"table": "ebay_returns"},
++}
++
++
++# Human-friendly metadata for each logical analytics container. Used by the
++# frontend settings UI and for documentation in the "i" modal.
++COMPUTER_ANALYTICS_CONTAINER_META: dict[str, dict[str, str]] = {
++    "root_purchase": {
++        "label": "VB / BUYING",
++        "description": "Original computer purchase row (VB / buying) identified by storage.",
++    },
++    "inventory_legacy": {
++        "label": "Legacy Inventory (tbl_parts_inventory)",
++        "description": "Legacy parts inventory rows from tbl_parts_inventory linked by Storage / AlternativeStorage / StorageAlias.",
++    },
++    "inventory": {
++        "label": "Inventory (modern)",
++        "description": "Modern inventory + parts_detail rows born from this computer (linked by storage_id / storage).",
++    },
++    "transactions": {
++        "label": "Sales Transactions",
++        "description": "Sales history (transactions) for SKUs originating from this computer.",
++    },
++    "finances_transactions": {
++        "label": "Finances Transactions",
++        "description": "Sell Finances API ledger entries (ebay_finances_transactions) for related orders/line items.",
++    },
++    "finances_fees": {
++        "label": "Finances Fees",
++        "description": "Detailed fee lines (ebay_finances_fees) for those finances transactions.",
++    },
++    "invoices": {
++        "label": "Invoices (CVFII)",
++        "description": "Accounting invoices table or view (CVFII-style) linked by storage or order_id.",
++    },
++    "returns_refunds": {
++        "label": "Returns / Refunds",
++        "description": "Post-order returns/refunds records (ebay_returns or compatible view) for the same orders/transactions.",
++    },
++}
++
++
++def _load_computer_analytics_sources(db: Session) -> dict:
++    """Load mapping of logical analytics containers to physical tables.
++
++    The mapping is stored in ui_tweak_settings.settings["computerAnalyticsSources"],
++    with safe defaults when no custom config is present.
++    """
++    from ..models_sqlalchemy.models import UiTweakSettings
++
++    # Defaults can be overridden via UiTweakSettings.
++    defaults: dict[str, dict[str, str]] = COMPUTER_ANALYTICS_DEFAULT_SOURCES
++
++    row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
++    if not row or not row.settings:
++        return defaults
++
++    cfg = row.settings.get("computerAnalyticsSources") or {}
++
++    merged: dict[str, dict[str, str]] = {k: v.copy() for k, v in defaults.items()}
++    for key, val in cfg.items():
++        if key in merged and isinstance(val, dict):
++            table_name = val.get("table")
++            if isinstance(table_name, str) and table_name:
++                merged[key]["table"] = table_name
++
++    return merged
+
+
+def _safe_table_name(name: str) -> str:
+    """Very small guard against accidental SQL injection in configurable table names.
+
+    Admin-only feature, but we still restrict characters to identifiers,
+    schema-qualified names, and optional quotes.
+    """
+    import re
+
+    if not isinstance(name, str) or not name:
+        raise HTTPException(status_code=400, detail="invalid_table_name")
+    if not re.match(r'^[A-Za-z0-9_\.\"]+$', name):
+        raise HTTPException(status_code=400, detail="invalid_table_name")
+    return name
+
+
+class ComputerAnalyticsSourceConfig(BaseModel):
+    """Single logical container configuration for Test Computer Analytics."""
+
+    table: str
+
+
+class ComputerAnalyticsSourcesPayload(BaseModel):
+    """Payload for reading/updating analytics container → table mapping."""
+
+    sources: dict[str, ComputerAnalyticsSourceConfig]
+
+
+@router.get("/test-computer-analytics/sources")
+async def get_test_computer_analytics_sources(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Return effective container → table mapping for Test Computer Analytics.
+
+    The response includes both the *current* table and the baked-in default
+    table for each logical container, plus human-friendly labels and
+    descriptions used by the Admin UI.
+    """
+
+    sources = _load_computer_analytics_sources(db)
+
+    containers: list[dict[str, Any]] = []
+    for key, cfg in sources.items():
+        meta = COMPUTER_ANALYTICS_CONTAINER_META.get(key, {})
+        default_cfg = COMPUTER_ANALYTICS_DEFAULT_SOURCES.get(key, {})
+        containers.append(
+            {
+                "key": key,
+                "table": cfg.get("table"),
+                "default_table": default_cfg.get("table"),
+                "label": meta.get("label", key),
+                "description": meta.get("description", ""),
+            }
+        )
+
+    return {"containers": containers}
+
+
+@router.put("/test-computer-analytics/sources")
+async def update_test_computer_analytics_sources(
+    payload: ComputerAnalyticsSourcesPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Update the container → table mapping for Test Computer Analytics.
+
+    This endpoint only persists the subset of fields relevant to
+    computerAnalyticsSources inside UiTweakSettings, leaving all other
+    UITweak settings untouched.
+    """
+    from sqlalchemy.exc import ProgrammingError
+    from ..models_sqlalchemy.models import UiTweakSettings
+
+    try:
+        row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
+    except ProgrammingError as exc:  # pragma: no cover - defensive
+        msg = str(exc)
+        if "ui_tweak_settings" in msg and "UndefinedTable" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "ui_tweak_settings table is missing; apply the "
+                    "ui_tweak_settings_20251121 migration before editing "
+                    "computer analytics sources."
+                ),
+            )
+        raise
+
+    if row is None:
+        row = UiTweakSettings(settings={})
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
+    settings_dict: dict[str, Any] = dict(row.settings or {})
+
+    # Build a clean mapping with validated table names.
+    new_sources: dict[str, dict[str, str]] = {}
+    for key, cfg in payload.sources.items():
+        if key not in COMPUTER_ANALYTICS_DEFAULT_SOURCES:
+            # Ignore unknown container keys to keep config strict.
+            continue
+        table_name = _safe_table_name(cfg.table)
+        new_sources[key] = {"table": table_name}
+
+    settings_dict["computerAnalyticsSources"] = new_sources
+    row.settings = settings_dict
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    # Return the same shape as the GET endpoint for convenience.
+    merged = _load_computer_analytics_sources(db)
+    containers: list[dict[str, Any]] = []
+    for key, cfg in merged.items():
+        meta = COMPUTER_ANALYTICS_CONTAINER_META.get(key, {})
+        default_cfg = COMPUTER_ANALYTICS_DEFAULT_SOURCES.get(key, {})
+        containers.append(
+            {
+                "key": key,
+                "table": cfg.get("table"),
+                "default_table": default_cfg.get("table"),
+                "label": meta.get("label", key),
+                "description": meta.get("description", ""),
+            }
+        )
+
+    return {"containers": containers}
+
 
 @router.get("/test-computer-analytics")
 async def get_test_computer_analytics(
@@ -86,19 +294,28 @@ async def get_test_computer_analytics(
     """Experimental analytics endpoint for a single computer by Storage ID.
 
     Given a Storage ID from buying.storage (e.g. A127 / A331), this endpoint
-    returns a compact JSON tree with:
-    - buying rows
-    - legacy parts inventory (tbl_parts_inventory)
-    - modern inventory + parts_detail
-    - sales transactions (transactions table)
-    - finances transactions (ebay_finances_transactions)
-    - finances fees (ebay_finances_fees)
+    returns a compact JSON tree grouped into logical containers:
+    - root purchase (VB / BUYING)
+    - inventory (legacy + modern)
+    - sales transactions
+    - finances transactions & fees
+    - placeholders for invoices and returns/refunds
 
-    NOTE: this is an internal admin/debug endpoint and may evolve.
+    The physical tables used for each container can be overridden via
+    ui_tweak_settings.settings["computerAnalyticsSources"].
     """
     from sqlalchemy import text as sa_text
     from datetime import datetime as dt_type
     from decimal import Decimal
+
+    sources = _load_computer_analytics_sources(db)
+
+    buying_table = _safe_table_name(sources["root_purchase"]["table"])
+    inv_legacy_table = _safe_table_name(sources["inventory_legacy"]["table"])
+    inv_table = _safe_table_name(sources["inventory"]["table"])
+    tx_table = _safe_table_name(sources["transactions"]["table"])
+    fin_tx_table = _safe_table_name(sources["finances_transactions"]["table"])
+    fin_fee_table = _safe_table_name(sources["finances_fees"]["table"])
 
     norm_storage = storage_id.strip()
 
@@ -115,11 +332,11 @@ async def get_test_computer_analytics(
 
     result: dict = {"storage_id": norm_storage}
 
-    # 1) Buying rows for this storage
+    # 1) Root purchase (BUYING / VB)
     sql_buying = sa_text(
-        """
+        f"""
         SELECT *
-        FROM buying
+        FROM {buying_table}
         WHERE lower(trim(storage)) = lower(:storage_id)
         """
     )
@@ -129,9 +346,9 @@ async def get_test_computer_analytics(
     # 2) Legacy parts inventory (tbl_parts_inventory)
     try:
         sql_legacy_inv = sa_text(
-            """
+            f"""
             SELECT *
-            FROM "tbl_parts_inventory"
+            FROM {inv_legacy_table}
             WHERE lower(trim("Storage")) = lower(:storage_id)
                OR lower(trim("AlternativeStorage")) = lower(:storage_id)
                OR lower(trim("StorageAlias")) = lower(:storage_id)
@@ -145,7 +362,7 @@ async def get_test_computer_analytics(
 
     # 3) Modern inventory + parts_detail for this storage
     sql_inv_pd = sa_text(
-        """
+        f"""
         SELECT
           i.id                AS inventory_id,
           i.storage_id,
@@ -160,7 +377,7 @@ async def get_test_computer_analytics(
           pd.sku,
           pd.item_id         AS parts_item_id,
           pd.storage         AS parts_storage
-        FROM inventory i
+        FROM {inv_table} i
         LEFT JOIN parts_detail pd
           ON pd.id = i.parts_detail_id
         WHERE lower(trim(i.storage_id)) = lower(:storage_id)
@@ -172,17 +389,17 @@ async def get_test_computer_analytics(
 
     # 4) Transactions for SKUs originating from this storage
     sql_tx = sa_text(
-        """
+        f"""
         WITH inv AS (
           SELECT DISTINCT pd.sku
-          FROM inventory i
+          FROM {inv_table} i
           JOIN parts_detail pd ON pd.id = i.parts_detail_id
           WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
                  OR lower(trim(i.storage)) = lower(:storage_id))
             AND pd.sku IS NOT NULL
         )
         SELECT t.*
-        FROM transactions t
+        FROM {tx_table} t
         WHERE t.sku IN (SELECT sku FROM inv)
         """
     )
@@ -191,23 +408,22 @@ async def get_test_computer_analytics(
 
     # 5) Finances transactions (Sell Finances API) linked via order_id/line_item_id
     sql_fin_tx = sa_text(
-        """
-        WITH tx AS (
-          SELECT DISTINCT
-            t.order_id,
-            t.line_item_id
-          FROM transactions t
-          JOIN (
-            SELECT DISTINCT pd.sku
-            FROM inventory i
-            JOIN parts_detail pd ON pd.id = i.parts_detail_id
-            WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
-                   OR lower(trim(i.storage)) = lower(:storage_id))
-              AND pd.sku IS NOT NULL
-          ) inv ON inv.sku = t.sku
+        f"""
+        WITH inv AS (
+          SELECT DISTINCT pd.sku
+          FROM {inv_table} i
+          JOIN parts_detail pd ON pd.id = i.parts_detail_id
+          WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
+                 OR lower(trim(i.storage)) = lower(:storage_id))
+            AND pd.sku IS NOT NULL
+        ),
+        tx AS (
+          SELECT DISTINCT t.order_id, t.line_item_id
+          FROM {tx_table} t
+          JOIN inv ON inv.sku = t.sku
         )
         SELECT eft.*
-        FROM ebay_finances_transactions eft
+        FROM {fin_tx_table} eft
         WHERE (eft.order_id IS NOT NULL AND eft.order_id IN (SELECT order_id FROM tx))
            OR (eft.order_line_item_id IS NOT NULL AND eft.order_line_item_id IN (SELECT line_item_id FROM tx))
         """
@@ -217,44 +433,190 @@ async def get_test_computer_analytics(
 
     # 6) Finances fees for those transactions
     sql_fin_fees = sa_text(
-        """
-        WITH fin AS (
+        f"""
+        WITH inv AS (
+          SELECT DISTINCT pd.sku
+          FROM {inv_table} i
+          JOIN parts_detail pd ON pd.id = i.parts_detail_id
+          WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
+                 OR lower(trim(i.storage)) = lower(:storage_id))
+            AND pd.sku IS NOT NULL
+        ),
+        tx AS (
+          SELECT DISTINCT t.order_id, t.line_item_id, t.transaction_id
+          FROM {tx_table} t
+          JOIN inv ON inv.sku = t.sku
+        ),
+        fin AS (
           SELECT DISTINCT transaction_id
-          FROM ebay_finances_transactions eft
-          WHERE (eft.order_id IS NOT NULL AND eft.order_id IN (
-                    SELECT DISTINCT t.order_id
-                    FROM transactions t
-                    JOIN (
-                      SELECT DISTINCT pd.sku
-                      FROM inventory i
-                      JOIN parts_detail pd ON pd.id = i.parts_detail_id
-                      WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
-                             OR lower(trim(i.storage)) = lower(:storage_id))
-                        AND pd.sku IS NOT NULL
-                    ) inv ON inv.sku = t.sku
-                ))
-             OR (eft.order_line_item_id IS NOT NULL AND eft.order_line_item_id IN (
-                    SELECT DISTINCT t.line_item_id
-                    FROM transactions t
-                    JOIN (
-                      SELECT DISTINCT pd.sku
-                      FROM inventory i
-                      JOIN parts_detail pd ON pd.id = i.parts_detail_id
-                      WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
-                             OR lower(trim(i.storage)) = lower(:storage_id))
-                        AND pd.sku IS NOT NULL
-                    ) inv ON inv.sku = t.sku
-                ))
+          FROM {fin_tx_table} eft
+          WHERE (eft.order_id IS NOT NULL AND eft.order_id IN (SELECT order_id FROM tx))
+             OR (eft.order_line_item_id IS NOT NULL AND eft.order_line_item_id IN (SELECT line_item_id FROM tx))
         )
         SELECT eff.*
-        FROM ebay_finances_fees eff
+        FROM {fin_fee_table} eff
         WHERE eff.transaction_id IN (SELECT transaction_id FROM fin)
         """
     )
     fin_fee_rows = db.execute(sql_fin_fees, {"storage_id": norm_storage}).mappings().all()
     result["finances_fees"] = [_normalize_row(dict(r)) for r in fin_fee_rows]
 
-    # TODO: add legacy ebay_fees, ebay_returns, ebay_inquiries, ebay_cases, etc.
+    # 7) Invoices (generic CVFII-like table, configurable)
+    invoices_rows: list[dict] = []
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        invoices_table = _safe_table_name(sources["invoices"]["table"])
+        inspector = sa_inspect(db.bind)
+        cols = {c["name"] for c in inspector.get_columns(invoices_table)}
+
+        where_clauses = []
+        params = {"storage_id": norm_storage}
+
+        # Prefer direct storage-based filter if table supports it
+        if "storage_id" in cols:
+            where_clauses.append("lower(trim(storage_id)) = lower(:storage_id)")
+        if "storage" in cols:
+            where_clauses.append("lower(trim(storage)) = lower(:storage_id)")
+
+        # Fallback: filter by order_id using the same tx CTE we used above
+        # (only if table has order_id column).
+        if "order_id" in cols:
+            where_clauses.append(
+                "order_id IN (SELECT DISTINCT t.order_id FROM "
+                f"{tx_table} t JOIN (SELECT DISTINCT pd.sku FROM {inv_table} i "
+                "JOIN parts_detail pd ON pd.id = i.parts_detail_id "
+                "WHERE (lower(trim(i.storage_id)) = lower(:storage_id) "
+                "OR lower(trim(i.storage)) = lower(:storage_id)) AND pd.sku IS NOT NULL) inv "
+                "ON inv.sku = t.sku)"
+            )
+
+        if where_clauses:
+            where_sql = " OR ".join(f"({w})" for w in where_clauses)
+            sql_invoices = sa_text(
+                f"""
+                SELECT *
+                FROM {invoices_table}
+                WHERE {where_sql}
+                """
+            )
+            invoices_rows = [
+                _normalize_row(dict(r))
+                for r in db.execute(sql_invoices, params).mappings().all()
+            ]
+    except Exception:
+        invoices_rows = []
+
+    result["invoices"] = invoices_rows
+
+    # 8) Returns & refunds (ebay_returns by default, configurable)
+    returns_rows: list[dict] = []
+    try:
+        returns_table = _safe_table_name(sources["returns_refunds"]["table"])
+
+        sql_returns = sa_text(
+            f"""
+            WITH inv AS (
+              SELECT DISTINCT pd.sku
+              FROM {inv_table} i
+              JOIN parts_detail pd ON pd.id = i.parts_detail_id
+              WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
+                     OR lower(trim(i.storage)) = lower(:storage_id))
+                AND pd.sku IS NOT NULL
+            ),
+            tx AS (
+              SELECT DISTINCT t.order_id, t.transaction_id
+              FROM {tx_table} t
+              JOIN inv ON inv.sku = t.sku
+            ),
+            fin AS (
+              SELECT DISTINCT transaction_id, order_id
+              FROM {fin_tx_table} eft
+              WHERE (eft.order_id IS NOT NULL AND eft.order_id IN (SELECT order_id FROM tx))
+                 OR (eft.transaction_id IS NOT NULL AND eft.transaction_id IN (SELECT transaction_id FROM tx))
+            )
+            SELECT r.*
+            FROM {returns_table} r
+            WHERE (r.order_id IS NOT NULL AND r.order_id IN (
+                     SELECT order_id FROM tx
+                     UNION
+                     SELECT order_id FROM fin
+                   ))
+               OR (r.transaction_id IS NOT NULL AND r.transaction_id IN (
+                     SELECT transaction_id FROM tx
+                     UNION
+                     SELECT transaction_id FROM fin
+                   ))
+            """
+        )
+        returns_rows = [
+            _normalize_row(dict(r))
+            for r in db.execute(sql_returns, {"storage_id": norm_storage}).mappings().all()
+        ]
+    except Exception:
+        returns_rows = []
+
+    result["returns_refunds"] = returns_rows
+
+    # High-level containers description for UI
+    result["containers"] = [
+        {
+            "key": "root_purchase",
+            "label": "VB / BUYING",
+            "table": sources["root_purchase"]["table"],
+            "rows_key": "buying",
+            "rows": result.get("buying", []),
+        },
+        {
+            "key": "inventory_legacy",
+            "label": "Legacy Inventory (tbl_parts_inventory)",
+            "table": sources["inventory_legacy"]["table"],
+            "rows_key": "legacy_inventory",
+            "rows": result.get("legacy_inventory", []),
+        },
+        {
+            "key": "inventory",
+            "label": "Inventory (modern)",
+            "table": sources["inventory"]["table"],
+            "rows_key": "inventory",
+            "rows": result.get("inventory", []),
+        },
+        {
+            "key": "transactions",
+            "label": "Sales Transactions",
+            "table": sources["transactions"]["table"],
+            "rows_key": "transactions",
+            "rows": result.get("transactions", []),
+        },
+        {
+            "key": "finances_transactions",
+            "label": "Finances Transactions",
+            "table": sources["finances_transactions"]["table"],
+            "rows_key": "finances_transactions",
+            "rows": result.get("finances_transactions", []),
+        },
+        {
+            "key": "finances_fees",
+            "label": "Finances Fees",
+            "table": sources["finances_fees"]["table"],
+            "rows_key": "finances_fees",
+            "rows": result.get("finances_fees", []),
+        },
+        {
+            "key": "invoices",
+            "label": "Invoices (CVFII)",
+            "table": sources["invoices"]["table"],
+            "rows_key": "invoices",
+            "rows": result.get("invoices", []),
+        },
+        {
+            "key": "returns_refunds",
+            "label": "Returns / Refunds",
+            "table": sources["returns_refunds"]["table"],
+            "rows_key": "returns_refunds",
+            "rows": result.get("returns_refunds", []),
+        },
+    ]
 
     return result
 

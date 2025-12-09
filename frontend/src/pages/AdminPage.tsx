@@ -131,6 +131,11 @@ export default function AdminPage() {
             <h2 className="text-lg font-semibold text-cyan-700">🧠 Vision Brain</h2>
             <p className="text-sm text-gray-600 mt-1">AI-powered vision analysis with OpenAI</p>
           </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer border-2 border-indigo-200 bg-indigo-50" onClick={() => navigate('/admin/test-computer-analytics')}>
+            <h2 className="text-lg font-semibold text-indigo-700">Test Computer Analytics</h2>
+            <p className="text-sm text-gray-600 mt-1">Storage ID → inventory → sales → fees → returns chain</p>
+          </Card>
         </div>
       </div>
     </div>

@@ -52,6 +52,7 @@ import AdminAiEmailTrainingPage from './pages/AdminAiEmailTrainingPage';
 import AdminAiSettingsPage from './pages/AdminAiSettingsPage';
 import CameraVisionPage from './pages/CameraVisionPage';
 import VisionBrainPage from './pages/VisionBrainPage';
+import AdminTestComputerAnalyticsPage from './pages/AdminTestComputerAnalyticsPage';
 import './App.css';
 import HeroPage from './pages/HeroPage';
 import './App.css';
@@ -161,6 +162,7 @@ function App() {
           <Route path="/admin/notifications" element={<ProtectedRoute><EbayNotificationsPage /></ProtectedRoute>} />
           <Route path="/admin/workers" element={<ProtectedRoute><AdminWorkersPage /></ProtectedRoute>} />
           <Route path="/admin/test-listing" element={<ProtectedRoute><AdminTestListingPage /></ProtectedRoute>} />
+          <Route path="/admin/test-computer-analytics" element={<ProtectedRoute><AdminTestComputerAnalyticsPage /></ProtectedRoute>} />
           <Route
             path="/orders"
             element={
