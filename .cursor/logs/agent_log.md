@@ -68,3 +68,8 @@
 2025-12-08T00:20:00Z - Adjusted Cloudflare proxy routing to not force /api prefix for /grid/preferences (bank statements grid prefs).
 2025-12-09T00:30:00Z - Running command: cd C:\dev\ebay-connector-app; pwd; railway --version; supabase --version
 2025-12-09T00:32:00Z - Running command: railway whoami; railway status; railway logs
+2025-12-09T00:35:00Z - Running command: supabase status
+2025-12-09T00:35:30Z - supabase status failed: Docker engine pipe missing (//./pipe/dockerDesktopLinuxEngine)
+2025-12-09T00:37:00Z - Running command: supabase projects list
+2025-12-09T00:37:20Z - supabase projects list succeeded; projects visible incl. devins ebay app (linked)
+2025-12-09T01:10:00Z - Edited backend/app/services/accounting_parsers/td_bank_parser.py to improve TD summary and multi-line transaction parsing with signed amounts

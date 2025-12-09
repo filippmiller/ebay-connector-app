@@ -252,45 +252,81 @@ class TDBankPDFParser:
         }
 
         # Allow optional leading minus and optional leading '$'
-        amount_line_re = re.compile(r"^(.*?)\s+(-?[$\d,]+\.\d{2})\s*$")
+        amount_re = re.compile(r"-?[$\d,]+\.\d{2}")
+
+        # В TD суммы могут быть на отдельной строке и/или во второй колонке.
+        ordered_keys = [
+            "beginning",
+            "ending",
+            "electronic_deposits_total",
+            "other_credits_total",
+            "checks_paid_total",
+            "electronic_payments_total",
+            "other_withdrawals_total",
+            "service_charges_fees_total",
+            "interest_earned_total",
+        ]
+
+        # Используем список-обёртку, чтобы писать из вложенной функции
+        mut = {
+            "beginning": beginning,
+            "ending": ending,
+            "electronic_deposits_total": electronic_deposits_total,
+            "other_credits_total": other_credits_total,
+            "checks_paid_total": checks_paid_total,
+            "electronic_payments_total": electronic_payments_total,
+            "other_withdrawals_total": other_withdrawals_total,
+            "service_charges_fees_total": service_charges_fees_total,
+            "interest_earned_total": interest_earned_total,
+        }
+
+        def process_fragment(fragment: str, last_label: Optional[str]) -> Optional[str]:
+            frag = fragment.strip()
+            if not frag:
+                return last_label
+
+            amounts = amount_re.findall(frag)
+
+            label_upper = frag.upper().rstrip(":").strip()
+            label_key = None
+            for name, mapped in NAME_MAP.items():
+                if label_upper.startswith(name):
+                    label_key = mapped
+                    break
+
+            if label_key and not amounts:
+                return label_key
+
+            target_key = label_key or last_label
+            if not target_key and ordered_keys:
+                target_key = ordered_keys.pop(0)
+
+            if amounts and target_key:
+                amt_val = self._parse_amount(amounts[-1]) or Decimal("0.00")
+                mut[target_key] = amt_val
+
+            return label_key or last_label
+
+        last_label: Optional[str] = None
 
         for raw_line in block.split("\n"):
             line = raw_line.strip()
             if not line:
                 continue
-            m = amount_line_re.match(line)
-            if not m:
-                continue
-            label_raw, amount_str = m.group(1), m.group(2)
-            label = label_raw.upper().strip().rstrip(":")
-            key = None
-            for name, mapped in NAME_MAP.items():
-                if label.startswith(name):
-                    key = mapped
-                    break
-            if not key:
-                continue
 
-            amt = self._parse_amount(amount_str) or Decimal("0.00")
+            fragments = re.split(r"\s{2,}", line)
+            for frag in fragments:
+                last_label = process_fragment(frag, last_label)
 
-            if key == "beginning":
-                beginning = amt
-            elif key == "ending":
-                ending = amt
-            elif key == "electronic_deposits_total":
-                electronic_deposits_total = amt
-            elif key == "other_credits_total":
-                other_credits_total = amt
-            elif key == "checks_paid_total":
-                checks_paid_total = amt
-            elif key == "electronic_payments_total":
-                electronic_payments_total = amt
-            elif key == "other_withdrawals_total":
-                other_withdrawals_total = amt
-            elif key == "service_charges_fees_total":
-                service_charges_fees_total = amt
-            elif key == "interest_earned_total":
-                interest_earned_total = amt
+        beginning = mut["beginning"]
+        ending = mut["ending"]
+        electronic_deposits_total = mut["electronic_deposits_total"]
+        other_credits_total = mut["other_credits_total"]
+        checks_paid_total = mut["checks_paid_total"]
+        electronic_payments_total = mut["electronic_payments_total"]
+        other_withdrawals_total = mut["other_withdrawals_total"]
+        service_charges_fees_total = mut["service_charges_fees_total"]
+        interest_earned_total = mut["interest_earned_total"]
 
         return BankStatementSummaryV1(
             beginning_balance=beginning,
@@ -331,86 +367,62 @@ class TDBankPDFParser:
 
         lines = tx_block.split('\n')
 
-        buffer: Optional[Dict[str, Any]] = None  # {date: 'MM/DD', desc_parts: [..]}
-        amount_only_re = re.compile(r'^-?[\d,]+\.\d{2}$')
+        date_re = re.compile(r'^(\d{1,2}/\d{1,2})\b')
+        amount_re = re.compile(r'-?[\d,]+\.\d{2}')
 
-        for raw_line in lines:
-            line = raw_line.strip()
-            if not line:
-                continue
+        buffer: Optional[Dict[str, Any]] = None  # {date, desc_parts, numbers}
 
-            # Section headers (do not treat as transactions)
-            for header, section_code in TD_SECTION_HEADERS.items():
-                if header.upper() in line.upper() and not re.search(r'\d+\.\d{2}', line):
-                    current_section = section_code
-                    # Do not continue here; header lines might also contain dates in rare cases
-                    break
-
-            # 1) Full transaction in one line: MM/DD ... amount
-            txn_match = re.match(r'^(\d{1,2}/\d{1,2})\s+(.+?)\s{2,}([\d,]+\.\d{2})$', line)
-            if not txn_match:
-                txn_match = re.match(r'^(\d{1,2}/\d{1,2})\s+(.+?)\s+([\d,]+\.\d{2})$', line)
-
-            if txn_match:
-                date_str = txn_match.group(1)
-                desc = txn_match.group(2).strip()
-                amount_str = txn_match.group(3)
-                buffer = {"date": date_str, "desc_parts": [desc]}
-                # fall through and handle as buffered + amount-only line below
-
-            # 2) Amount-only line finishing a buffered description
-            if amount_only_re.match(line) and buffer is not None and not re.match(r'^\d{1,2}/\d{1,2}', line):
-                date_str = buffer["date"]
-                desc_parts = buffer["desc_parts"]
-                amount_str = line
-                buffer = None
-            elif txn_match:
-                # We already have amount on the same line
-                date_str = txn_match.group(1)
-                desc_parts = [txn_match.group(2).strip()]
-                amount_str = txn_match.group(3)
-                buffer = None
-            else:
-                # 3) Continuation of multi-line description
-                if buffer is not None:
-                    buffer["desc_parts"].append(line)
-                continue
+        def flush_buffer():
+            nonlocal buffer, txn_id, current_section
+            if not buffer:
+                return
+            date_str = buffer["date"]
+            desc_parts = buffer["desc_parts"]
+            numbers: List[str] = buffer.get("numbers", [])
 
             posting_date = self._parse_date(date_str, year)
-            amount = self._parse_amount(amount_str)
-            if not (posting_date and amount is not None):
-                continue
+            if not posting_date:
+                buffer = None
+                return
 
-            # Normalize whitespace in description; keep original content
+            amount_val: Optional[Decimal] = None
+            balance_after_val: Optional[Decimal] = None
+            if numbers:
+                # Последнее число — сумма; предпоследнее (если есть) трактуем как balance_after
+                amount_val = self._parse_amount(numbers[-1])
+                if len(numbers) >= 2:
+                    balance_after_val = self._parse_amount(numbers[-2])
+
             description = re.sub(r"\s+", " ", " ".join(desc_parts)).strip()
+
+            if amount_val is None:
+                buffer = None
+                return
 
             txn_id += 1
 
             # If section headers were not detected correctly, try to infer
-            # bank_section and direction from the description itself.
             inferred_section = current_section
             desc_upper = description.upper().replace(' ', '')
             if inferred_section == BankSectionCode.UNKNOWN:
-                # CCDDEPOSIT / CCD DEPOSIT / ACHDEPOSIT / ACH DEPOSIT / plain DEPOSIT
                 if (
                     "CCDDEPOSIT" in desc_upper
-                    or "CCD DEPOSIT".replace(' ', '') in desc_upper
+                    or "CCDDEPOSIT" in desc_upper
                     or "ACHDEPOSIT" in desc_upper
                     or "ACHCREDIT" in desc_upper
                     or desc_upper.startswith("DEPOSIT")
                 ):
                     inferred_section = BankSectionCode.ELECTRONIC_DEPOSIT
-                elif any(key in desc_upper for key in ["SERVICE CHARGE", "MAINTENANCE FEE", "OVERDRAFT"]):
+                elif any(key in desc_upper for key in ["SERVICECHARGE", "MAINTENANCEFEE", "OVERDRAFT"]):
                     inferred_section = BankSectionCode.SERVICE_CHARGE
-                # Другие эвристики можно добавлять по мере необходимости
 
             direction = SECTION_DIRECTION.get(inferred_section, TransactionDirection.DEBIT)
-            bank_subtype = self._extract_subtype(description)
-
             if direction == TransactionDirection.DEBIT:
-                amount = -abs(amount)
+                amount_val = -abs(amount_val)
             else:
-                amount = abs(amount)
+                amount_val = abs(amount_val)
+
+            bank_subtype = self._extract_subtype(description)
 
             check_number = None
             check_match = re.match(r'(?:CHECK|CHK)\s+(\d+)', description, re.IGNORECASE)
@@ -421,17 +433,54 @@ class TDBankPDFParser:
                 id=txn_id,
                 posting_date=posting_date,
                 description=description,
-                amount=amount,
-                bank_section=current_section,
+                amount=amount_val,
+                bank_section=inferred_section,
                 bank_subtype=bank_subtype,
                 direction=direction,
                 accounting_group=AccountingGroup.OTHER,
                 classification=ClassificationCode.UNKNOWN,
                 status=TransactionStatus.OK,
                 check_number=check_number,
+                balance_after=balance_after_val,
                 description_raw=description,
             )
             transactions.append(txn)
+            buffer = None
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            # Section headers (do not treat as transactions)
+            section_switched = False
+            for header, section_code in TD_SECTION_HEADERS.items():
+                if header.upper() in line.upper() and not amount_re.search(line):
+                    current_section = section_code
+                    section_switched = True
+                    break
+            if section_switched:
+                continue
+
+            date_match = date_re.match(line)
+            if date_match:
+                # new transaction starts
+                flush_buffer()
+                date_str = date_match.group(1)
+                rest = line[date_match.end():].strip()
+                buffer = {"date": date_str, "desc_parts": [], "numbers": []}
+                if rest:
+                    buffer["desc_parts"].append(rest)
+                    buffer["numbers"].extend(amount_re.findall(rest))
+                continue
+
+            # continuation of current transaction
+            if buffer is not None:
+                buffer["desc_parts"].append(line)
+                buffer["numbers"].extend(amount_re.findall(line))
+
+        # flush last
+        flush_buffer()
 
         logger.info(f"TD PDF Parser: Extracted {len(transactions)} transactions")
         return transactions
