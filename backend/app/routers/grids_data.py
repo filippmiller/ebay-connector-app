@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, asc, or_
+from sqlalchemy import desc, asc, or_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import text as sa_text
 import enum
@@ -384,6 +384,8 @@ async def get_grid_data(
     is_internal_transfer: Optional[bool] = Query(None),
     # Inventory-specific filters
     ebay_status: Optional[str] = Query(None),
+    # Optional toggle to include per-SKU/ItemID counts in the inventory grid
+    include_counts: bool = Query(False, alias="includeCounts"),
     # SKU Catalog specific filters
     model: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
@@ -536,6 +538,7 @@ async def get_grid_data(
                 inv_statussku=inv_statussku,
                 inv_storage=inv_storage,
                 inv_serial_number=inv_serial_number,
+                include_counts=include_counts,
             )
         finally:
             db_sqla.close()
@@ -1217,6 +1220,7 @@ def _get_inventory_data(
     inv_statussku: Optional[str],
     inv_storage: Optional[str],
     inv_serial_number: Optional[str],
+    include_counts: bool = False,
 ) -> Dict[str, Any]:
     """Inventory grid backed directly by the Supabase table tbl_parts_inventory.
 
@@ -1243,6 +1247,17 @@ def _get_inventory_data(
     # Map columns by key and by lowercase key for flexible lookup.
     cols_by_key = {c.key: c for c in table.columns}
     cols_by_lower = {c.key.lower(): c for c in table.columns}
+
+    # Convenience references for the most important logical columns. All lookups
+    # are defensive and fall back gracefully when a given column is missing in
+    # a particular environment.
+    sku_col = (
+        cols_by_lower.get("sku")
+        or cols_by_lower.get("sku_code")
+        or cols_by_lower.get("sku1")
+    )
+    itemid_col = cols_by_lower.get("itemid") or cols_by_lower.get("item_id")
+    statussku_col = cols_by_lower.get("statussku") or cols_by_lower.get("status_sku")
 
     # Query rows as plain row mappings using the reflected table columns.
     columns = list(table.columns)
@@ -1343,11 +1358,12 @@ def _get_inventory_data(
 
     rows_db = query.offset(offset).limit(limit).all()
 
-
-    # Optional mapping of StatusSKU numeric codes to human-readable names from
+     # Optional mapping of StatusSKU numeric codes to human-readable names from
     # tbl_parts_inventorystatus. If the lookup table is missing in this
     # environment, we silently fall back to showing the raw numeric code.
     status_label_by_id: Dict[int, Dict[str, Any]] = {}
+    active_status_ids: set[int] = set()
+    sold_status_ids: set[int] = set()
     try:
         status_sql = sa_text(
             'SELECT "InventoryStatus_ID" AS id, "InventoryShortStatus_Name" AS label, "Color" AS color '
@@ -1356,14 +1372,92 @@ def _get_inventory_data(
         result = db.execute(status_sql)
         for row in result:
             try:
-                status_label_by_id[int(row.id)] = {
-                    "label": str(row.label) if row.label is not None else None,
-                    "color": str(row.color) if row.color is not None else None,
-                }
+                sid = int(row.id)
             except Exception:
                 continue
+            label = str(row.label) if row.label is not None else ""
+            color = str(row.color) if row.color is not None else None
+            status_label_by_id[sid] = {
+                "label": label or None,
+                "color": color,
+            }
+            # Heuristic grouping of legacy numeric StatusSKU codes into
+            # "active" vs "sold" buckets based on the short status label.
+            ln = label.strip().lower()
+            if ln:
+                if "active" in ln or "актив" in ln:
+                    active_status_ids.add(sid)
+                if "sold" in ln or "продан" in ln:
+                    sold_status_ids.add(sid)
     except Exception:
         status_label_by_id = {}
+        active_status_ids = set()
+        sold_status_ids = set()
+
+    # ------------------------------------------------------------------
+    # Optional per-page SKU / ItemID aggregates when include_counts=True
+    # ------------------------------------------------------------------
+    sku_counts: Dict[Any, Dict[str, int]] = {}
+    itemid_counts: Dict[Any, Dict[str, int]] = {}
+
+    if include_counts and (sku_col is not None or itemid_col is not None):
+        # Collect the distinct SKU / ItemID values from the current page so
+        # that aggregation can run only for the keys visible in the grid.
+        page_skus: set[Any] = set()
+        page_itemids: set[Any] = set()
+        for row in rows_db:
+            mapping = getattr(row, "_mapping", row)
+            if sku_col is not None:
+                try:
+                    v = mapping.get(sku_col.key)
+                except Exception:
+                    v = None
+                if v is not None:
+                    page_skus.add(v)
+            if itemid_col is not None:
+                try:
+                    v = mapping.get(itemid_col.key)
+                except Exception:
+                    v = None
+                if v is not None:
+                    page_itemids.add(v)
+
+        # Only run aggregation when we have both a status column and at least
+        # one of the active/sold groups defined.
+        if statussku_col is not None and (active_status_ids or sold_status_ids):
+            if sku_col is not None and page_skus:
+                q = (
+                    db.query(
+                        sku_col.label("sku_key"),
+                        func.count().filter(statussku_col.in_(list(active_status_ids))).label("active_count"),
+                        func.count().filter(statussku_col.in_(list(sold_status_ids))).label("sold_count"),
+                    )
+                    .select_from(table)
+                    .filter(sku_col.in_(list(page_skus)))
+                    .group_by(sku_col)
+                )
+                for r in q.all():
+                    sku_counts[r.sku_key] = {
+                        "active": int(r.active_count or 0),
+                        "sold": int(r.sold_count or 0),
+                    }
+
+            if itemid_col is not None and page_itemids:
+                q = (
+                    db.query(
+                        itemid_col.label("itemid_key"),
+                        func.count().filter(statussku_col.in_(list(active_status_ids))).label("active_count"),
+                        func.count().filter(statussku_col.in_(list(sold_status_ids))).label("sold_count"),
+                    )
+                    .select_from(table)
+                    .filter(itemid_col.in_(list(page_itemids)))
+                    .group_by(itemid_col)
+                )
+                for r in q.all():
+                    itemid_counts[r.itemid_key] = {
+                        "active": int(r.active_count or 0),
+                        "sold": int(r.sold_count or 0),
+                    }
 
     def _serialize(row_) -> Dict[str, Any]:
         mapping = getattr(row_, "_mapping", row_)
@@ -1401,9 +1495,36 @@ def _get_inventory_data(
                 else:
                     row[col] = value
             except Exception:
-                 # Skip columns that cause errors
+                # Ignore columns that fail individual serialization and move on.
                 continue
-        
+
+        # Optionally decorate SKU / ItemID with per-page Active/Sold counts so
+        # that the grid can display the legacy "SKU (A/S)" style without
+        # introducing extra physical columns.
+        if include_counts:
+            if sku_col is not None:
+                try:
+                    sku_val = mapping.get(sku_col.key)
+                except Exception:
+                    sku_val = None
+                if sku_val is not None:
+                    meta = sku_counts.get(sku_val)
+                    if meta:
+                        base = row.get(sku_col.key, sku_val)
+                        row[sku_col.key] = f"{base} ({meta['active']}/{meta['sold']})"
+
+            if itemid_col is not None:
+                try:
+                    item_val = mapping.get(itemid_col.key)
+                except Exception:
+                    item_val = None
+                if item_val is not None:
+                    meta = itemid_counts.get(item_val)
+                    if meta:
+                        base = row.get(itemid_col.key, item_val)
+                        row[itemid_col.key] = f"{base} ({meta['active']}/{meta['sold']})"
+
+        return row
         
         return row
 
