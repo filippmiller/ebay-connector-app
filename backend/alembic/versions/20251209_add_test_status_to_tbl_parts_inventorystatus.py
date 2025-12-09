@@ -39,6 +39,12 @@ def upgrade() -> None:
         sa.column("InventoryStatus_ID", sa.Integer()),
         sa.column("InventoryStatus_Name", sa.Text()),
         sa.column("InventoryShortStatus_Name", sa.Text()),
+        sa.column("disabled", sa.Boolean()),
+        sa.column("Role1", sa.Text()),
+        sa.column("Role2", sa.Text()),
+        sa.column("Role3", sa.Text()),
+        sa.column("StatusAfterCancellationFlag", sa.Boolean()),
+        sa.column("StatusAfterCancellationDoNotChangeFlag", sa.Boolean()),
         sa.column("Color", sa.Text()),
     )
 
@@ -48,6 +54,12 @@ def upgrade() -> None:
             InventoryStatus_ID=next_id,
             InventoryStatus_Name="TEST",
             InventoryShortStatus_Name="TEST",
+            disabled=False,
+            Role1=None,
+            Role2=None,
+            Role3=None,
+            StatusAfterCancellationFlag=None,
+            StatusAfterCancellationDoNotChangeFlag=None,
             Color="#ff00ff",
         )
     )

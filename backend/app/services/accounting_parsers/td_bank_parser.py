@@ -501,6 +501,13 @@ class TDBankPDFParser:
         date_re = re.compile(r'^(\d{1,2}/\d{1,2})\b')
         amount_re = re.compile(r'([\d,]+\.\d{2})')
         
+        # Check line pattern - multiple formats:
+        # - #331 03/31 $4,000.00
+        # - #1234 03/31 | $4,000.00
+        # - CHECK #331 03/31 4000.00
+        # Format: #CHECK_NUM MM/DD [anything] AMOUNT
+        check_re = re.compile(r'^#(\d+)\s+(\d{1,2}/\d{1,2}).*?[\$\s]([\d,]+\.\d{2})')
+        
         # Pattern for daily balance lines: amount followed by date
         daily_balance_re = re.compile(r'^\d[\d,]*\.\d{2}\s+\d{1,2}/\d{1,2}')
 
@@ -725,9 +732,46 @@ class TDBankPDFParser:
                     "lines": [rest_of_line] if rest_of_line else [],
                     "section": current_section,
                 }
-            elif current_txn is not None:
-                # Continuation line
-                current_txn["lines"].append(line)
+            else:
+                # Check for check line format: #331 03/31 $4,000.00
+                check_match = check_re.match(line)
+                if check_match:
+                    # Flush previous transaction
+                    flush_transaction()
+                    
+                    check_num = check_match.group(1)
+                    check_date = check_match.group(2)
+                    check_amount = check_match.group(3)
+                    
+                    # Create check transaction directly (single-line)
+                    logger.info(f"TD PDF Parser: Found check #{check_num} on {check_date} for ${check_amount}")
+                    
+                    posting_date = self._parse_date(check_date, year)
+                    if posting_date:
+                        amount = self._parse_amount(check_amount)
+                        if amount is not None:
+                            # Checks are debits (negative)
+                            amount = -abs(amount)
+                            txn_id += 1
+                            
+                            txn = BankStatementTransactionV1(
+                                id=txn_id,
+                                posting_date=posting_date,
+                                description=f"CHECK #{check_num}",
+                                amount=amount,
+                                bank_section=BankSectionCode.CHECKS_PAID,
+                                bank_subtype="CHECK",
+                                direction=TransactionDirection.DEBIT,
+                                accounting_group=AccountingGroup.OTHER,
+                                classification=ClassificationCode.UNKNOWN,
+                                status=TransactionStatus.OK,
+                                check_number=check_num,
+                                description_raw=line,
+                            )
+                            transactions.append(txn)
+                elif current_txn is not None:
+                    # Continuation line
+                    current_txn["lines"].append(line)
 
         # Flush last transaction
         flush_transaction()
