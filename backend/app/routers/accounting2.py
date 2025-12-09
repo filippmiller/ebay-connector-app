@@ -208,47 +208,56 @@ async def upload_bank_statement_v2(
         op_date: Optional[date] = txn.posting_date
         currency = meta.currency
 
-        db.execute(
-            text(
-                """
-                insert into public.transaction_spending (
-                    bank_statement_id,
-                    operation_date,
-                    description_raw,
-                    description_clean,
-                    amount,
-                    balance_after,
-                    currency,
-                    bank_section,
-                    raw_transaction_json
-                ) values (
-                    :bank_statement_id,
-                    :operation_date,
-                    :description_raw,
-                    :description_clean,
-                    :amount,
-                    :balance_after,
-                    :currency,
-                    :bank_section,
-                    :raw_transaction_json
-                )
-                """
-            ),
-            {
-                "bank_statement_id": stmt.id,
-                "operation_date": op_date,
-                "description_raw": txn.description,
-                "description_clean": desc_clean,
-                "amount": amount,
-                "balance_after": balance_after,
-                "currency": currency,
-                "bank_section": txn.bank_section.value if txn.bank_section else None,
-                "raw_transaction_json": json.dumps(txn.model_dump(mode="json")),
-            },
-        )
-        total_rows += 1
+        try:
+            db.execute(
+                text(
+                    """
+                    insert into public.transaction_spending (
+                        bank_statement_id,
+                        operation_date,
+                        description_raw,
+                        description_clean,
+                        amount,
+                        balance_after,
+                        currency,
+                        bank_section,
+                        raw_transaction_json
+                    ) values (
+                        :bank_statement_id,
+                        :operation_date,
+                        :description_raw,
+                        :description_clean,
+                        :amount,
+                        :balance_after,
+                        :currency,
+                        :bank_section,
+                        :raw_transaction_json
+                    )
+                    """
+                ),
+                {
+                    "bank_statement_id": stmt.id,
+                    "operation_date": op_date,
+                    "description_raw": txn.description,
+                    "description_clean": desc_clean,
+                    "amount": float(amount) if amount is not None else None,
+                    "balance_after": float(balance_after) if balance_after is not None else None,
+                    "currency": currency,
+                    "bank_section": txn.bank_section.value if txn.bank_section else None,
+                    "raw_transaction_json": json.dumps(txn.model_dump(mode="json")),
+                },
+            )
+            total_rows += 1
+        except Exception as e:
+            logger.error(f"Accounting2: Failed to insert transaction {txn.id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to insert transaction: {e}")
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        logger.error(f"Accounting2: Failed to commit transactions: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to commit transactions: {e}")
     logger.info(f"Accounting2: committed {total_rows} transactions for statement_id={stmt.id}")
     
     # Verify rows were actually saved

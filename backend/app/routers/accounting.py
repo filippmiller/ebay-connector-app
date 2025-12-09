@@ -369,11 +369,14 @@ async def get_bank_statement_rows(
     return {"rows": rows}
 
 
+class CommitRowsRequest(BaseModel):
+    commit_all_non_ignored: bool = False
+    row_ids: Optional[List[int]] = None
+
 @router.post("/bank-statements/{statement_id}/commit-rows")
 async def commit_bank_rows_to_transactions(
     statement_id: int,
-    row_ids: Optional[List[int]] = Query(None, alias="row_ids"),
-    commit_all_non_ignored: bool = Body(False),
+    body: CommitRowsRequest = Body(default=CommitRowsRequest()),
     db: Session = Depends(get_db_sqla),
     current_user: User = Depends(require_admin_user),
 ):
@@ -388,10 +391,10 @@ async def commit_bank_rows_to_transactions(
         raise HTTPException(status_code=404, detail="Bank statement not found")
 
     rows_q = db.query(AccountingBankRow).filter(AccountingBankRow.bank_statement_id == stmt.id)
-    if commit_all_non_ignored:
+    if body.commit_all_non_ignored:
         rows_q = rows_q.filter(AccountingBankRow.parsed_status != "ignored")
-    elif row_ids:
-        rows_q = rows_q.filter(AccountingBankRow.id.in_(row_ids))
+    elif body.row_ids:
+        rows_q = rows_q.filter(AccountingBankRow.id.in_(body.row_ids))
     else:
         raise HTTPException(status_code=400, detail="Provide row_ids or set commit_all_non_ignored=true")
 
