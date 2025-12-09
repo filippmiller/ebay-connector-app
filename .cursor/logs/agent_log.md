@@ -73,3 +73,4 @@
 2025-12-09T00:37:00Z - Running command: supabase projects list
 2025-12-09T00:37:20Z - supabase projects list succeeded; projects visible incl. devins ebay app (linked)
 2025-12-09T01:10:00Z - Edited backend/app/services/accounting_parsers/td_bank_parser.py to improve TD summary and multi-line transaction parsing with signed amounts
+2025-12-09T01:22:00Z - Adjusted TD parser to emit float amounts/balance_after to avoid frontend toFixed error

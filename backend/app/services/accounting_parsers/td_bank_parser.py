@@ -422,6 +422,11 @@ class TDBankPDFParser:
             else:
                 amount_val = abs(amount_val)
 
+            # Приводим к float, чтобы на фронте не падало toFixed
+            amount_val = float(amount_val)
+            if balance_after_val is not None:
+                balance_after_val = float(balance_after_val)
+
             bank_subtype = self._extract_subtype(description)
 
             check_number = None
