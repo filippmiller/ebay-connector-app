@@ -31,6 +31,7 @@ import CasesPage from './pages/CasesPage';
 import AdminPage from './pages/AdminPage';
 import AdminTestListingPage from './pages/AdminTestListingPage';
 import AdminDataMigrationPage from './pages/AdminDataMigrationPage';
+import AdminTestComputerAnalyticsGraphPage from './pages/AdminTestComputerAnalyticsGraphPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
 import TasksPage from './pages/TasksPage';
@@ -163,6 +164,7 @@ function App() {
           <Route path="/admin/workers" element={<ProtectedRoute><AdminWorkersPage /></ProtectedRoute>} />
           <Route path="/admin/test-listing" element={<ProtectedRoute><AdminTestListingPage /></ProtectedRoute>} />
           <Route path="/admin/test-computer-analytics" element={<ProtectedRoute><AdminTestComputerAnalyticsPage /></ProtectedRoute>} />
+          <Route path="/admin/test-computer-analytics-graph" element={<ProtectedRoute><AdminTestComputerAnalyticsGraphPage /></ProtectedRoute>} />
           <Route
             path="/orders"
             element={

@@ -30,6 +30,78 @@ FEATURE_TOKEN_INFO = os.getenv('FEATURE_TOKEN_INFO', 'false').lower() == 'true'
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+# -------------------------------
+# Test Computer Analytics (classic + graph)
+# -------------------------------
+
+# Graph-mode default configuration for Test Computer Analytics. This is kept
+# intentionally simple and JSON-friendly so it can be edited from the Admin UI
+# without migrations. All fields are optional; when missing we fall back to
+# safe defaults in the analytics endpoint.
+DEFAULT_COMPUTER_ANALYTICS_GRAPH: dict[str, Any] = {
+    "nodes": {
+        "buying": {
+            "label": "Buying",
+            "table": "buying",
+            "storageColumns": ["storage"],
+            "emit": {"storage": ["storage"]},
+        },
+        "inventory_legacy": {
+            "label": "Legacy Inventory (tbl_parts_inventory)",
+            "table": "tbl_parts_inventory",
+            "storageColumns": ["Storage", "AlternativeStorage", "StorageAlias"],
+            "skuColumns": ["SKU", "OverrideSKU"],
+        },
+        "inventory": {
+            "label": "Inventory (modern)",
+            "table": "inventory",
+            "storageColumns": ["storage_id", "storage"],
+            "skuColumns": ["sku"],
+        },
+        "transactions": {
+            "label": "Sales Transactions",
+            "table": "transactions",
+            "matchFrom": {
+                "sku": ["sku"],
+            },
+            "emit": {
+                "order_id": ["order_id"],
+                "transaction_id": ["transaction_id"],
+                "line_item_id": ["line_item_id"],
+            },
+        },
+        "finances_transactions": {
+            "label": "Finances Transactions",
+            "table": "ebay_finances_transactions",
+            "matchFrom": {
+                "order_id": ["order_id"],
+                "line_item_id": ["order_line_item_id"],
+            },
+            "emit": {
+                "transaction_id": ["transaction_id"],
+                "order_id": ["order_id"],
+            },
+        },
+        "returns_refunds": {
+            "label": "Returns / Refunds",
+            "table": "ebay_returns",
+            "matchFrom": {
+                "order_id": ["order_id"],
+                "transaction_id": ["transaction_id"],
+            },
+        },
+    },
+    "order": [
+        "buying",
+        "inventory_legacy",
+        "inventory",
+        "transactions",
+        "finances_transactions",
+        "returns_refunds",
+    ],
+}
+
+
 @router.get("/debug/environment")
 async def debug_environment(db: Session = Depends(get_db)):
     """Debug endpoint to check environment configuration.
@@ -210,6 +282,70 @@ class ComputerAnalyticsSourcesPayload(BaseModel):
     sources: dict[str, ComputerAnalyticsSourceConfig]
 
 
+# -------------------------------
+# Graph-mode configuration helpers
+# -------------------------------
+
+
+def _load_computer_analytics_graph(db: Session) -> dict[str, Any]:
+    """Load graph-mode analytics configuration from UiTweakSettings.
+
+    If the underlying ``ui_tweak_settings`` table is missing or the graph
+    config is not set, this falls back to DEFAULT_COMPUTER_ANALYTICS_GRAPH.
+    """
+    from sqlalchemy.exc import ProgrammingError
+    from ..models_sqlalchemy.models import UiTweakSettings
+
+    cfg: dict[str, Any] = DEFAULT_COMPUTER_ANALYTICS_GRAPH
+
+    try:
+        row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
+    except ProgrammingError as exc:  # pragma: no cover - defensive
+        msg = str(exc)
+        if "ui_tweak_settings" in msg and "UndefinedTable" in msg:
+            # Same behaviour as classic path: log and fallback to defaults.
+            logger.error(
+                "ui_tweak_settings table is missing; Test Computer Analytics "
+                "(graph) will use built-in defaults only. Apply migration "
+                "ui_tweak_settings_20251121 to enable persistence.",
+            )
+            return cfg
+        raise
+
+    if not row or not row.settings:
+        return cfg
+
+    raw = row.settings.get("computerAnalyticsGraph")
+    if not isinstance(raw, dict):
+        return cfg
+
+    # Shallow-merge nodes/order so that we always have the core defaults and
+    # only override user-provided pieces.
+    merged: dict[str, Any] = {
+        "nodes": {**DEFAULT_COMPUTER_ANALYTICS_GRAPH.get("nodes", {}), **(raw.get("nodes") or {})},
+        "order": raw.get("order") or DEFAULT_COMPUTER_ANALYTICS_GRAPH.get("order", []),
+    }
+    return merged
+
+
+class ComputerAnalyticsGraphNodePayload(BaseModel):
+    """Single node config for graph-mode analytics (JSON-friendly)."""
+
+    label: Optional[str] = None
+    table: Optional[str] = None
+    storageColumns: Optional[list[str]] = None
+    skuColumns: Optional[list[str]] = None
+    matchFrom: Optional[dict[str, list[str]]] = None
+    emit: Optional[dict[str, list[str]]] = None
+
+
+class ComputerAnalyticsGraphPayload(BaseModel):
+    """Payload for reading/updating computerAnalyticsGraph mapping."""
+
+    nodes: dict[str, ComputerAnalyticsGraphNodePayload]
+    order: Optional[list[str]] = None
+
+
 @router.get("/test-computer-analytics/sources")
 async def get_test_computer_analytics_sources(
     db: Session = Depends(get_db),
@@ -311,6 +447,116 @@ async def update_test_computer_analytics_sources(
         )
 
     return {"containers": containers}
+
+
+# -------------------------------
+# Graph-mode endpoints
+# -------------------------------
+
+
+@router.get("/test-computer-analytics-graph/sources")
+async def get_test_computer_analytics_graph_sources(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Return graph-mode nodes/order configuration.
+
+    This is a thin wrapper around the computerAnalyticsGraph setting with
+    sensible defaults so that the Admin UI can edit it without migrations.
+    """
+
+    graph_cfg = _load_computer_analytics_graph(db)
+    return graph_cfg
+
+
+@router.put("/test-computer-analytics-graph/sources")
+async def update_test_computer_analytics_graph_sources(
+    payload: ComputerAnalyticsGraphPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+):
+    """Update graph-mode nodes/order configuration.
+
+    This stores the payload under ui_tweak_settings.settings["computerAnalyticsGraph"].
+    Other UITweak settings remain untouched.
+    """
+    from sqlalchemy.exc import ProgrammingError
+    from ..models_sqlalchemy.models import UiTweakSettings
+
+    try:
+        row = db.query(UiTweakSettings).order_by(UiTweakSettings.id.asc()).first()
+    except ProgrammingError as exc:  # pragma: no cover - defensive
+        msg = str(exc)
+        if "ui_tweak_settings" in msg and "UndefinedTable" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "ui_tweak_settings table is missing; apply Alembic migration "
+                    "ui_tweak_settings_20251121 before editing graph analytics sources."
+                ),
+            )
+        raise
+
+    if row is None:
+        row = UiTweakSettings(settings={})
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
+    settings_dict: dict[str, Any] = dict(row.settings or {})
+
+    # Persist exactly what the client sent (Pydantic already validated types).
+    graph_payload = {
+        "nodes": {k: v.dict(exclude_none=True) for k, v in payload.nodes.items()},
+        "order": payload.order,
+    }
+    settings_dict["computerAnalyticsGraph"] = graph_payload
+    row.settings = settings_dict
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    # Return the merged effective config so the UI sees defaults filled in.
+    graph_cfg = _load_computer_analytics_graph(db)
+    return graph_cfg
+
+
+@router.get("/test-computer-analytics-graph")
+async def get_test_computer_analytics_graph(
+    storage_id: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),
+):
+    """Graph-mode variant of Test Computer Analytics for a single computer.
+
+    For the first version this endpoint reuses the classic analytics logic to
+    compute the actual rows, but it also returns the effective graph
+    configuration so the frontend can experiment with table/column linking
+    without breaking the existing implementation.
+    """
+
+    # Reuse the classic implementation by calling the same code path. To avoid
+    # duplication we keep the main logic in the classic handler and treat this
+    # endpoint as a thin wrapper.
+    classic_result = await get_test_computer_analytics(storage_id=storage_id, db=db, current_user=current_user)
+
+    graph_cfg = _load_computer_analytics_graph(db)
+
+    return {
+        "storage_id": classic_result["storage_id"],
+        "graph": graph_cfg,
+        "containers": classic_result.get("containers", []),
+        "sections": {
+            "buying": classic_result.get("buying", []),
+            "legacy_inventory": classic_result.get("legacy_inventory", []),
+            "inventory": classic_result.get("inventory", []),
+            "transactions": classic_result.get("transactions", []),
+            "finances_transactions": classic_result.get("finances_transactions", []),
+            "finances_fees": classic_result.get("finances_fees", []),
+            "invoices": classic_result.get("invoices", []),
+            "returns_refunds": classic_result.get("returns_refunds", []),
+        },
+    }
 
 
 @router.get("/test-computer-analytics")
