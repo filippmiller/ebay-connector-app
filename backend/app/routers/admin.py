@@ -332,7 +332,7 @@ async def get_test_computer_analytics(
     The physical tables used for each container can be overridden via
     ui_tweak_settings.settings["computerAnalyticsSources"].
     """
-    from sqlalchemy import text as sa_text
+    from sqlalchemy import text as sa_text, inspect as sa_inspect
     from datetime import datetime as dt_type
     from decimal import Decimal
 
@@ -344,6 +344,35 @@ async def get_test_computer_analytics(
     tx_table = _safe_table_name(sources["transactions"]["table"])
     fin_tx_table = _safe_table_name(sources["finances_transactions"]["table"])
     fin_fee_table = _safe_table_name(sources["finances_fees"]["table"])
+
+    # Determine whether the legacy inventory mirror table is present. When it
+    # exists, we include its SKUs (and OverrideSKU) into the analytics chain so
+    # that environments which have not fully migrated to the modern inventory
+    # model still see transactions/finances linked correctly.
+    has_legacy_inventory = False
+    try:
+        inspector = sa_inspect(db.bind)
+        has_legacy_inventory = inv_legacy_table in inspector.get_table_names()
+    except Exception:  # pragma: no cover - defensive fallback
+        has_legacy_inventory = False
+
+    legacy_sku_union = ""
+    if has_legacy_inventory:
+        legacy_sku_union = f"""
+          UNION
+          SELECT DISTINCT CAST(pi.\"SKU\" AS text) AS sku
+          FROM {inv_legacy_table} pi
+          WHERE (lower(trim(pi.\"Storage\")) = lower(:storage_id)
+                 OR lower(trim(pi.\"AlternativeStorage\")) = lower(:storage_id)
+                 OR lower(trim(pi.\"StorageAlias\")) = lower(:storage_id))
+          UNION
+          SELECT DISTINCT CAST(pi.\"OverrideSKU\" AS text) AS sku
+          FROM {inv_legacy_table} pi
+          WHERE (lower(trim(pi.\"Storage\")) = lower(:storage_id)
+                 OR lower(trim(pi.\"AlternativeStorage\")) = lower(:storage_id)
+                 OR lower(trim(pi.\"StorageAlias\")) = lower(:storage_id))
+            AND pi.\"OverrideSKU\" IS NOT NULL
+        """
 
     norm_storage = storage_id.strip()
 
@@ -425,6 +454,7 @@ async def get_test_computer_analytics(
           WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
                  OR lower(trim(i.storage)) = lower(:storage_id))
             AND pd.sku IS NOT NULL
+          {legacy_sku_union}
         )
         SELECT t.*
         FROM {tx_table} t
@@ -444,6 +474,7 @@ async def get_test_computer_analytics(
           WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
                  OR lower(trim(i.storage)) = lower(:storage_id))
             AND pd.sku IS NOT NULL
+          {legacy_sku_union}
         ),
         tx AS (
           SELECT DISTINCT t.order_id, t.line_item_id
@@ -469,6 +500,7 @@ async def get_test_computer_analytics(
           WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
                  OR lower(trim(i.storage)) = lower(:storage_id))
             AND pd.sku IS NOT NULL
+          {legacy_sku_union}
         ),
         tx AS (
           SELECT DISTINCT t.order_id, t.line_item_id, t.transaction_id
@@ -551,6 +583,7 @@ async def get_test_computer_analytics(
               WHERE (lower(trim(i.storage_id)) = lower(:storage_id)
                      OR lower(trim(i.storage)) = lower(:storage_id))
                 AND pd.sku IS NOT NULL
+              {legacy_sku_union}
             ),
             tx AS (
               SELECT DISTINCT t.order_id, t.transaction_id
