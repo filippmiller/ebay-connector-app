@@ -152,6 +152,14 @@ def _load_computer_analytics_sources(db: Session) -> dict:
         if "ui_tweak_settings" in msg and "UndefinedTable" in msg:
             # Mirror behaviour of the dedicated /ui-tweak router: log and
             # gracefully fall back to defaults without breaking admin APIs.
+            # IMPORTANT: rollback the current DB session because this error
+            # leaves the transaction in an aborted state; otherwise all
+            # subsequent queries in this request would fail with
+            # "current transaction is aborted".
+            try:
+                db.rollback()
+            except Exception:  # pragma: no cover - defensive
+                pass
             logger.error(
                 "ui_tweak_settings table is missing; Test Computer Analytics "
                 "will use built-in defaults only. Apply migration "
