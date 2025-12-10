@@ -36,6 +36,7 @@ from app.routers import (
     sq_catalog,
     ebay_notifications,
     shipping,
+    shipping_bulk,
     ui_tweak,
     security_center,
     admin_users,
@@ -60,6 +61,7 @@ from app.routers import (
     db_compare,
     admin_workers,
     admin_ebay_listing_test,
+    ai_assistant,  # Phase 1: AI Assistant with analytics
 )
 from app.utils.logger import logger
 import os
@@ -147,6 +149,7 @@ app.include_router(tasks.router)
 app.include_router(listing.router)
 app.include_router(sq_catalog.router)
 app.include_router(shipping.router)
+app.include_router(shipping_bulk.router)
 app.include_router(ui_tweak.router)
 app.include_router(security_center.router)
 app.include_router(admin_users.router)
@@ -169,6 +172,7 @@ app.include_router(cv_brain.router)   # Computer Vision brain module
 app.include_router(db_compare.router)
 app.include_router(admin_workers.router)
 app.include_router(admin_ebay_listing_test.router)
+app.include_router(ai_assistant.router)  # Phase 1: AI Assistant
 
 @app.on_event("startup")
 async def startup_event():
