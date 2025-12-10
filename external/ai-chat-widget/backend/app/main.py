@@ -53,7 +53,8 @@ app.include_router(stt.router)
 
 
 # Serve widget files
-widget_path = os.path.join(os.path.dirname(__file__), "../../widget")
+# In Docker: widget copied to /app/widget, main.py is at /app/app/main.py
+widget_path = "/app/widget"
 if os.path.exists(widget_path):
     app.mount("/widget", StaticFiles(directory=widget_path), name="widget")
 
