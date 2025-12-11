@@ -43,6 +43,10 @@ export default function MyTimesheetPage() {
     return bTime - aTime;
   });
 
+  const totalMinutes = weekEntries.reduce((sum, e) => sum + (e.durationMinutes ?? 0), 0);
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalMinutesRemainder = totalMinutes % 60;
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -100,6 +104,33 @@ export default function MyTimesheetPage() {
     if (!value) return;
     const target = startOfWeekMonday(new Date(`${value}T00:00:00`));
     setWeekStart(formatDateInput(target));
+  };
+
+  const toCsvValue = (val: string | number | null | undefined) => {
+    if (val === null || val === undefined) return '""';
+    const str = String(val).replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const exportWeekCsv = () => {
+    const header = ['Start', 'End', 'Duration (min)', 'Description', 'Rate'];
+    const rows = weekEntriesSorted.map((e) => [
+      e.startTime ? new Date(e.startTime).toISOString() : '',
+      e.endTime ? new Date(e.endTime).toISOString() : '',
+      e.durationMinutes ?? '',
+      e.description ?? '',
+      e.rate ?? '',
+    ]);
+    const csv = [header, ...rows]
+      .map((r) => r.map((c) => toCsvValue(c as string | number | null | undefined)).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `timesheet_week_${weekStart}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const formatDateTime = (iso: string | null) => {
@@ -199,7 +230,12 @@ export default function MyTimesheetPage() {
         <Card className="p-4 mb-4">
           <div className="flex flex-col gap-3">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <h2 className="text-lg font-semibold">Weekly calendar (Mon-Sun)</h2>
+              <div className="flex flex-col">
+                <h2 className="text-lg font-semibold">Weekly calendar (Mon-Sun)</h2>
+                <div className="text-sm text-gray-600">
+                  Total: {totalHours} h {totalMinutesRemainder} min
+                </div>
+              </div>
               <div className="flex flex-wrap gap-2 items-center">
                 <Button variant="outline" size="sm" onClick={() => shiftWeek(-1)} disabled={loading}>
                   Previous week
@@ -213,6 +249,9 @@ export default function MyTimesheetPage() {
                   onChange={(e) => handleWeekInputChange(e.target.value)}
                   className="w-40"
                 />
+                <Button variant="outline" size="sm" onClick={exportWeekCsv} disabled={weekEntriesSorted.length === 0}>
+                  Export CSV
+                </Button>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

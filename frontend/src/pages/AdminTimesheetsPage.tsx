@@ -5,9 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { adminListTimesheets, adminAddTimesheet, adminPatchTimesheet, TimesheetEntry } from '@/api/timesheets';
 
+const PAGE_SIZE = 100;
+
 export default function AdminTimesheetsPage() {
   const [entries, setEntries] = useState<TimesheetEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [userFilter, setUserFilter] = useState('');
   const [usernameFilter, setUsernameFilter] = useState('');
   const [from, setFrom] = useState('');
@@ -25,27 +30,48 @@ export default function AdminTimesheetsPage() {
   const [editRate, setEditRate] = useState('');
   const [editDescription, setEditDescription] = useState('');
 
-  const loadData = async () => {
-    setLoading(true);
+  const fetchPage = async (targetPage: number, append: boolean) => {
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const resp = await adminListTimesheets({
         userId: userFilter || undefined,
         username: usernameFilter || undefined,
         from: from || undefined,
         to: to || undefined,
+        page: targetPage,
+        pageSize: PAGE_SIZE,
       });
       if (resp.success && resp.data) {
-        setEntries(resp.data.items || []);
+        const items = resp.data.items || [];
+        setEntries((prev) => (append ? [...prev, ...items] : items));
+        const totalPages = resp.data.totalPages || 1;
+        setPage(targetPage);
+        setHasMore(targetPage < totalPages);
       } else {
+        setPage(1);
+        setHasMore(false);
         setEntries([]);
       }
     } catch (e) {
       console.error('Failed to load admin timesheets', e);
+      setPage(1);
+      setHasMore(false);
       setEntries([]);
     } finally {
-      setLoading(false);
+      if (append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
+
+  const loadData = async () => fetchPage(1, false);
+  const loadMore = async () => fetchPage(page + 1, true);
 
   useEffect(() => {
     loadData();
@@ -199,7 +225,7 @@ export default function AdminTimesheetsPage() {
           ) : entries.length === 0 ? (
             <div className="text-gray-500 text-sm">No entries for current filters.</div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto flex flex-col gap-3">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b bg-gray-100">
@@ -317,6 +343,13 @@ export default function AdminTimesheetsPage() {
                   })}
                 </tbody>
               </table>
+              {hasMore && (
+                <div className="flex justify-center">
+                  <Button onClick={loadMore} disabled={loadingMore} variant="outline" className="w-40">
+                    {loadingMore ? 'Loading…' : 'Load more'}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </Card>

@@ -91,3 +91,4 @@
 2025-12-11T07:35:00Z - Pointed computer analytics defaults to tbl_ebay_buyer (graph + classic) for buying container
 2025-12-11T07:45:00Z - Made buying query storage-aware via inspector (handles Storage/storage/storage_id variants)
 2025-12-11T08:05:00Z - Timesheets: admin view now loads all records newest-first by default; MyTimesheet adds Monday-based weekly calendar and week selector (read-only); backend timesheets endpoints allow unpaged fetches for full history
+2025-12-11T08:25:00Z - Timesheets: admin page now supports paged “Load more” newest-first; user page shows weekly totals and CSV export for selected Monday-start week
