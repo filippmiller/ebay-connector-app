@@ -23,6 +23,11 @@ export interface BrowseListing {
   condition?: string | null;
   description?: string | null;
   ebay_url?: string | null;
+  // New fields for card display
+  image_url?: string | null;
+  seller_name?: string | null;
+  seller_location?: string | null;
+  item_condition?: string | null;
 }
 
 export interface CategoryRefinement {

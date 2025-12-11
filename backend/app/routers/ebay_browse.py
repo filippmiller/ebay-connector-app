@@ -78,6 +78,11 @@ class BrowseListing(BaseModel):
     condition: Optional[str]
     description: Optional[str]
     ebay_url: Optional[str]
+    # New fields for card display
+    image_url: Optional[str] = None
+    seller_name: Optional[str] = None
+    seller_location: Optional[str] = None
+    item_condition: Optional[str] = None
 
 
 class CategoryRefinement(BaseModel):
@@ -274,6 +279,11 @@ async def search_ebay_browse(
                 condition=s.condition,
                 description=s.description,
                 ebay_url=f"https://www.ebay.com/itm/{s.item_id}",
+                # New fields for card display
+                image_url=s.image_url,
+                seller_name=s.seller_name,
+                seller_location=s.seller_location,
+                item_condition=s.condition,
             )
         )
 

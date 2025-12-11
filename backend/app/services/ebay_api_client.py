@@ -28,6 +28,10 @@ class EbayListingSummary:
     shipping: float
     condition: Optional[str]
     description: Optional[str]
+    # New fields for card display
+    image_url: Optional[str] = None
+    seller_name: Optional[str] = None
+    seller_location: Optional[str] = None
 
 
 @dataclass
@@ -170,6 +174,31 @@ async def search_active_listings(
 
         condition = item.get("condition") or item.get("conditionDisplayName")
         description = item.get("shortDescription") or None
+        
+        # Extract image URL
+        image_url = None
+        image_obj = item.get("image")
+        if image_obj and isinstance(image_obj, dict):
+            image_url = image_obj.get("imageUrl")
+        
+        # Extract seller info
+        seller_name = None
+        seller_obj = item.get("seller")
+        if seller_obj and isinstance(seller_obj, dict):
+            seller_name = seller_obj.get("username")
+        
+        # Extract location
+        seller_location = None
+        location_obj = item.get("itemLocation")
+        if location_obj and isinstance(location_obj, dict):
+            city = location_obj.get("city", "")
+            country = location_obj.get("country", "")
+            if city and country:
+                seller_location = f"{city}, {country}"
+            elif city:
+                seller_location = city
+            elif country:
+                seller_location = country
 
         results.append(
             EbayListingSummary(
@@ -179,6 +208,9 @@ async def search_active_listings(
                 shipping=shipping_cost,
                 condition=condition,
                 description=description,
+                image_url=image_url,
+                seller_name=seller_name,
+                seller_location=seller_location,
             )
         )
 
