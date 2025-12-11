@@ -36,6 +36,18 @@ interface GraphAnalyticsResponse {
   sections: Record<string, Record<string, any>[]>;
 }
 
+interface TableInfo {
+  schema: string;
+  name: string;
+  row_estimate?: number;
+}
+
+interface TableSchema {
+  schema: string;
+  name: string;
+  columns: { name: string }[];
+}
+
 const GRAPH_HELP = `Test Computer Analytics (Graph beta)
 
 Этот режим позволяет не только выбирать таблицы для каждого контейнера,
@@ -100,6 +112,11 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [tables, setTables] = useState<TableInfo[]>([]);
+  const [tableLoadError, setTableLoadError] = useState<string | null>(null);
+  const [columnsByTable, setColumnsByTable] = useState<Record<string, string[]>>({});
+  const [loadingColumnsFor, setLoadingColumnsFor] = useState<string | null>(null);
+
   const [graphDraft, setGraphDraft] = useState<GraphConfig | null>(null);
   const [savingGraph, setSavingGraph] = useState(false);
 
@@ -108,6 +125,18 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
   const containers = useMemo<AnalyticsContainer[]>(() => data?.containers ?? [], [data]);
 
   useEffect(() => {
+    const loadTables = async () => {
+      try {
+        const resp = await api.get<TableInfo[]>('/api/admin/db/tables');
+        setTables(resp.data || []);
+        setTableLoadError(null);
+      } catch (e: any) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load tables list', e);
+        setTableLoadError(e?.response?.data?.detail || e?.message || 'Не удалось загрузить список таблиц');
+      }
+    };
+
     const loadGraph = async () => {
       try {
         const resp = await api.get<GraphConfig>('/api/admin/test-computer-analytics-graph/sources');
@@ -118,8 +147,35 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
         console.error('Failed to load graph sources', e);
       }
     };
+
+    void loadTables();
     void loadGraph();
   }, []);
+
+  const loadColumnsForTable = async (tableName: string) => {
+    if (!tableName || columnsByTable[tableName]) return;
+    setLoadingColumnsFor(tableName);
+    try {
+      const resp = await api.get<TableSchema>(`/api/admin/db/tables/${encodeURIComponent(tableName)}/schema`);
+      const cols = resp.data?.columns?.map((c) => c.name).filter(Boolean) || [];
+      setColumnsByTable((prev) => ({ ...prev, [tableName]: cols }));
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load columns for table', tableName, e);
+    } finally {
+      setLoadingColumnsFor((prev) => (prev === tableName ? null : prev));
+    }
+  };
+
+  useEffect(() => {
+    if (!graphDraft) return;
+    const tableNames = Object.values(graphDraft.nodes || {})
+      .map((n) => n.table)
+      .filter(Boolean) as string[];
+    tableNames.forEach((t) => {
+      void loadColumnsForTable(t);
+    });
+  }, [graphDraft]);
 
   const handleSearch = async () => {
     const trimmed = pendingStorageId.trim();
@@ -173,17 +229,11 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
     return order.filter((k) => graphDraft.nodes[k]);
   }, [graphDraft]);
 
-  const handleNodeFieldChange = (key: string, field: keyof GraphNodeConfig, value: string) => {
+  const handleNodeArrayChange = (key: string, field: keyof Pick<GraphNodeConfig, 'storageColumns' | 'skuColumns'>, values: string[]) => {
     setGraphDraft((prev) => {
       if (!prev) return prev;
       const existing = prev.nodes[key] || {};
-      const next: GraphNodeConfig = { ...existing };
-      if (field === 'storageColumns' || field === 'skuColumns') {
-        const arr = value.split(',').map((s) => s.trim()).filter(Boolean);
-        (next as any)[field] = arr;
-      } else {
-        (next as any)[field] = value || undefined;
-      }
+      const next: GraphNodeConfig = { ...existing, [field]: values };
       return {
         ...prev,
         nodes: {
@@ -192,6 +242,26 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
         },
       };
     });
+  };
+
+  const handleNodeFieldChange = (key: string, field: keyof GraphNodeConfig, value: string) => {
+    setGraphDraft((prev) => {
+      if (!prev) return prev;
+      const existing = prev.nodes[key] || {};
+      const next: GraphNodeConfig = { ...existing };
+      (next as any)[field] = value || undefined;
+      return {
+        ...prev,
+        nodes: {
+          ...prev.nodes,
+          [key]: next,
+        },
+      };
+    });
+
+    if (field === 'table' && value) {
+      void loadColumnsForTable(value);
+    }
   };
 
   const handleMatchFromChange = (key: string, logicalKey: string, value: string) => {
@@ -216,6 +286,27 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
     });
   };
 
+  const handleMatchFromArrayChange = (key: string, logicalKey: string, values: string[]) => {
+    setGraphDraft((prev) => {
+      if (!prev) return prev;
+      const existing = prev.nodes[key] || {};
+      const matchFrom = { ...(existing.matchFrom || {}) };
+      if (!values.length) {
+        delete matchFrom[logicalKey];
+      } else {
+        matchFrom[logicalKey] = values;
+      }
+      const next: GraphNodeConfig = { ...existing, matchFrom };
+      return {
+        ...prev,
+        nodes: {
+          ...prev.nodes,
+          [key]: next,
+        },
+      };
+    });
+  };
+
   const handleEmitChange = (key: string, logicalKey: string, value: string) => {
     setGraphDraft((prev) => {
       if (!prev) return prev;
@@ -226,6 +317,27 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
         delete emit[logicalKey];
       } else {
         emit[logicalKey] = arr;
+      }
+      const next: GraphNodeConfig = { ...existing, emit };
+      return {
+        ...prev,
+        nodes: {
+          ...prev.nodes,
+          [key]: next,
+        },
+      };
+    });
+  };
+
+  const handleEmitArrayChange = (key: string, logicalKey: string, values: string[]) => {
+    setGraphDraft((prev) => {
+      if (!prev) return prev;
+      const existing = prev.nodes[key] || {};
+      const emit = { ...(existing.emit || {}) };
+      if (!values.length) {
+        delete emit[logicalKey];
+      } else {
+        emit[logicalKey] = values;
       }
       const next: GraphNodeConfig = { ...existing, emit };
       return {
@@ -329,6 +441,9 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
                 Настройка таблиц и ключей для графа Buying → Inventory → Transactions → Finances → Returns.
                 Изменения влияют только на Graph beta, классический режим не трогается.
               </p>
+              {tableLoadError && (
+                <div className="text-xs text-red-600 mb-2">{tableLoadError}</div>
+              )}
               {!graphDraft && (
                 <div className="text-xs text-gray-500">Loading graph config…</div>
               )}
@@ -338,73 +453,157 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
                     const node = graphDraft.nodes[key] || {};
                     const label = node.label || key;
                     const table = node.table || '';
-                    const storageCols = (node.storageColumns || []).join(', ');
-                    const skuCols = (node.skuColumns || []).join(', ');
-                    const matchSku = (node.matchFrom?.sku || []).join(', ');
-                    const matchOrderId = (node.matchFrom?.order_id || []).join(', ');
-                    const matchTxnId = (node.matchFrom?.transaction_id || []).join(', ');
-                    const emitSku = (node.emit?.sku || []).join(', ');
-                    const emitOrderId = (node.emit?.order_id || []).join(', ');
-                    const emitTxnId = (node.emit?.transaction_id || []).join(', ');
+                    const availableColumns = columnsByTable[table] || [];
+                    const columnsWithExisting = (extras: string[]) =>
+                      Array.from(new Set([
+                        ...availableColumns,
+                        ...extras.filter(Boolean),
+                      ]));
+                    const storageCols = node.storageColumns || [];
+                    const skuCols = node.skuColumns || [];
+                    const matchSku = node.matchFrom?.sku || [];
+                    const matchOrderId = node.matchFrom?.order_id || [];
+                    const matchTxnId = node.matchFrom?.transaction_id || [];
+                    const emitSku = node.emit?.sku || [];
+                    const emitOrderId = node.emit?.order_id || [];
+                    const emitTxnId = node.emit?.transaction_id || [];
                     return (
                       <div key={key} className="border rounded px-2 py-1.5 bg-gray-50">
                         <div className="text-xs font-semibold text-gray-800 mb-1">{label}</div>
                         <div className="space-y-1">
-                          <label className="text-[11px] text-gray-600">
+                          <label className="text-[11px] text-gray-600 flex items-center gap-2">
                             Table name
-                            <Input
-                              className="mt-0.5 h-7 text-xs font-mono"
+                            <select
+                              className="mt-0.5 h-7 text-xs font-mono flex-1 border rounded px-2"
                               value={table}
                               onChange={(e) => handleNodeFieldChange(key, 'table', e.target.value)}
-                            />
+                            >
+                              <option value="">Select table…</option>
+                              {tables.map((t) => (
+                                <option key={`${t.schema}.${t.name}`} value={t.name}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              onClick={() => table && loadColumnsForTable(table)}
+                              disabled={!table || loadingColumnsFor === table}
+                            >
+                              {loadingColumnsFor === table ? 'Cols…' : 'Reload cols'}
+                            </Button>
                           </label>
+                          {table && availableColumns.length === 0 && (
+                            <div className="text-[11px] text-gray-500">Колонки не загружены. Нажмите Reload cols.</div>
+                          )}
                           <label className="text-[11px] text-gray-600">
                             Storage columns (for Storage ID)
-                            <Input
-                              className="mt-0.5 h-7 text-xs font-mono"
+                            <select
+                              multiple
+                              className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                               value={storageCols}
-                              onChange={(e) => handleNodeFieldChange(key, 'storageColumns', e.target.value)}
-                              placeholder="storage, storage_id"
-                            />
+                              onChange={(e) =>
+                                handleNodeArrayChange(
+                                  key,
+                                  'storageColumns',
+                                  Array.from(e.target.selectedOptions).map((o) => o.value),
+                                )
+                              }
+                            >
+                              {columnsWithExisting(storageCols).map((col) => (
+                                <option key={`${key}_storage_${col}`} value={col}>
+                                  {col}
+                                </option>
+                              ))}
+                            </select>
                           </label>
                           <label className="text-[11px] text-gray-600">
                             SKU columns
-                            <Input
-                              className="mt-0.5 h-7 text-xs font-mono"
+                            <select
+                              multiple
+                              className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                               value={skuCols}
-                              onChange={(e) => handleNodeFieldChange(key, 'skuColumns', e.target.value)}
-                              placeholder="SKU, OverrideSKU"
-                            />
+                              onChange={(e) =>
+                                handleNodeArrayChange(
+                                  key,
+                                  'skuColumns',
+                                  Array.from(e.target.selectedOptions).map((o) => o.value),
+                                )
+                              }
+                            >
+                              {columnsWithExisting(skuCols).map((col) => (
+                                <option key={`${key}_sku_${col}`} value={col}>
+                                  {col}
+                                </option>
+                              ))}
+                            </select>
                           </label>
 
                           <div className="mt-1 border-t pt-1.5 space-y-1">
                             <div className="text-[11px] font-semibold text-gray-700">Match from</div>
                             <label className="text-[11px] text-gray-600">
                               From SKU keys → columns
-                              <Input
-                                className="mt-0.5 h-7 text-xs font-mono"
+                              <select
+                                multiple
+                                className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                                 value={matchSku}
-                                onChange={(e) => handleMatchFromChange(key, 'sku', e.target.value)}
-                                placeholder="sku"
-                              />
+                                onChange={(e) =>
+                                  handleMatchFromArrayChange(
+                                    key,
+                                    'sku',
+                                    Array.from(e.target.selectedOptions).map((o) => o.value),
+                                  )
+                                }
+                              >
+                                {columnsWithExisting(matchSku).map((col) => (
+                                  <option key={`${key}_matchsku_${col}`} value={col}>
+                                    {col}
+                                  </option>
+                                ))}
+                              </select>
                             </label>
                             <label className="text-[11px] text-gray-600">
                               From order_id keys → columns
-                              <Input
-                                className="mt-0.5 h-7 text-xs font-mono"
+                              <select
+                                multiple
+                                className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                                 value={matchOrderId}
-                                onChange={(e) => handleMatchFromChange(key, 'order_id', e.target.value)}
-                                placeholder="order_id, order_line_item_id"
-                              />
+                                onChange={(e) =>
+                                  handleMatchFromArrayChange(
+                                    key,
+                                    'order_id',
+                                    Array.from(e.target.selectedOptions).map((o) => o.value),
+                                  )
+                                }
+                              >
+                                {columnsWithExisting(matchOrderId).map((col) => (
+                                  <option key={`${key}_matchorder_${col}`} value={col}>
+                                    {col}
+                                  </option>
+                                ))}
+                              </select>
                             </label>
                             <label className="text-[11px] text-gray-600">
                               From transaction_id keys → columns
-                              <Input
-                                className="mt-0.5 h-7 text-xs font-mono"
+                              <select
+                                multiple
+                                className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                                 value={matchTxnId}
-                                onChange={(e) => handleMatchFromChange(key, 'transaction_id', e.target.value)}
-                                placeholder="transaction_id"
-                              />
+                                onChange={(e) =>
+                                  handleMatchFromArrayChange(
+                                    key,
+                                    'transaction_id',
+                                    Array.from(e.target.selectedOptions).map((o) => o.value),
+                                  )
+                                }
+                              >
+                                {columnsWithExisting(matchTxnId).map((col) => (
+                                  <option key={`${key}_matchtxn_${col}`} value={col}>
+                                    {col}
+                                  </option>
+                                ))}
+                              </select>
                             </label>
                           </div>
 
@@ -412,30 +611,66 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
                             <div className="text-[11px] font-semibold text-gray-700">Emit keys</div>
                             <label className="text-[11px] text-gray-600">
                               Emit sku columns
-                              <Input
-                                className="mt-0.5 h-7 text-xs font-mono"
+                              <select
+                                multiple
+                                className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                                 value={emitSku}
-                                onChange={(e) => handleEmitChange(key, 'sku', e.target.value)}
-                                placeholder="sku"
-                              />
+                                onChange={(e) =>
+                                  handleEmitArrayChange(
+                                    key,
+                                    'sku',
+                                    Array.from(e.target.selectedOptions).map((o) => o.value),
+                                  )
+                                }
+                              >
+                                {columnsWithExisting(emitSku).map((col) => (
+                                  <option key={`${key}_emitsku_${col}`} value={col}>
+                                    {col}
+                                  </option>
+                                ))}
+                              </select>
                             </label>
                             <label className="text-[11px] text-gray-600">
                               Emit order_id columns
-                              <Input
-                                className="mt-0.5 h-7 text-xs font-mono"
+                              <select
+                                multiple
+                                className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                                 value={emitOrderId}
-                                onChange={(e) => handleEmitChange(key, 'order_id', e.target.value)}
-                                placeholder="order_id"
-                              />
+                                onChange={(e) =>
+                                  handleEmitArrayChange(
+                                    key,
+                                    'order_id',
+                                    Array.from(e.target.selectedOptions).map((o) => o.value),
+                                  )
+                                }
+                              >
+                                {columnsWithExisting(emitOrderId).map((col) => (
+                                  <option key={`${key}_emitorder_${col}`} value={col}>
+                                    {col}
+                                  </option>
+                                ))}
+                              </select>
                             </label>
                             <label className="text-[11px] text-gray-600">
                               Emit transaction_id columns
-                              <Input
-                                className="mt-0.5 h-7 text-xs font-mono"
+                              <select
+                                multiple
+                                className="mt-0.5 h-20 text-xs font-mono w-full border rounded"
                                 value={emitTxnId}
-                                onChange={(e) => handleEmitChange(key, 'transaction_id', e.target.value)}
-                                placeholder="transaction_id"
-                              />
+                                onChange={(e) =>
+                                  handleEmitArrayChange(
+                                    key,
+                                    'transaction_id',
+                                    Array.from(e.target.selectedOptions).map((o) => o.value),
+                                  )
+                                }
+                              >
+                                {columnsWithExisting(emitTxnId).map((col) => (
+                                  <option key={`${key}_emittxn_${col}`} value={col}>
+                                    {col}
+                                  </option>
+                                ))}
+                              </select>
                             </label>
                           </div>
                         </div>

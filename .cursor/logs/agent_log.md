@@ -82,3 +82,4 @@
 2025-12-08T00:20:00Z - Adjusted Cloudflare proxy routing to not force /api prefix for /grid/preferences (bank statements grid prefs).
 2025-12-11T05:10:00Z - Cleaned AdminAiTrainingPage unused React/default import and examples state to fix build TS6133
 2025-12-11T05:18:00Z - Merged cursor/fix-admin-ai-training into main and deleted branch locally/remotely
+2025-12-11T06:45:00Z - Added Supabase migration 20251211090000_ui_tweak_settings.sql and updated AdminTestComputerAnalyticsGraphPage.tsx to load live tables/columns and multi-select key fields
