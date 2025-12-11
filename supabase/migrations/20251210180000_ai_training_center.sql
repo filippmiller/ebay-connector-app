@@ -1,11 +1,12 @@
--- Phase 2: AI Training Center tables (FIXED - no users FK)
 -- Admin UI for training AI Assistant with voice input
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 BEGIN;
 
 -- 1. ai_training_sessions - Training sessions
 CREATE TABLE IF NOT EXISTS ai_training_sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id VARCHAR(36), -- No FK constraint (users table may not exist)
     domain TEXT NOT NULL,
     title TEXT,
@@ -23,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_training_sessions_started
 
 -- 2. ai_training_examples - Individual training examples
 CREATE TABLE IF NOT EXISTS ai_training_examples (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID REFERENCES ai_training_sessions(id) ON DELETE CASCADE,
     domain TEXT NOT NULL,
     input_mode TEXT DEFAULT 'text',

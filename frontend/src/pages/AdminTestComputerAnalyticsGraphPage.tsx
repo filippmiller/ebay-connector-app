@@ -206,6 +206,9 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
     if (!graphDraft) return;
     setSavingGraph(true);
     try {
+      // Helpful runtime signal so admins see the click in console even if network is blocked
+      // eslint-disable-next-line no-console
+      console.info('Saving graph mapping...', graphDraft);
       const payload = {
         nodes: graphDraft.nodes,
         order: graphDraft.order,
@@ -634,6 +637,7 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
                     );
                   })}
                   <Button
+                    type="button"
                     size="sm"
                     className="w-full mt-1"
                     onClick={() => void handleSaveGraph()}

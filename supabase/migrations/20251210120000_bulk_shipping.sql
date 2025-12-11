@@ -21,7 +21,8 @@ $$;
 -- 2) Core tables from the Phase 1 shipping module (created only if absent)
 CREATE TABLE IF NOT EXISTS public.shipping_jobs (
     id                VARCHAR(36) PRIMARY KEY,
-    ebay_account_id   UUID REFERENCES public.ebay_accounts(id) ON DELETE SET NULL,
+    -- Use TEXT to match existing ebay_accounts.id type in remote DB
+    ebay_account_id   TEXT REFERENCES public.ebay_accounts(id) ON DELETE SET NULL,
     ebay_order_id     TEXT,
     ebay_order_line_item_ids JSONB,
     buyer_user_id     TEXT,
@@ -34,7 +35,8 @@ CREATE TABLE IF NOT EXISTS public.shipping_jobs (
     paid_time         TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by        UUID REFERENCES public.users(id) ON DELETE SET NULL
+    -- users.id is varchar in remote DB, keep FK compatible
+    created_by        TEXT REFERENCES public.users(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_shipping_jobs_status_warehouse ON public.shipping_jobs(status, warehouse_id);
@@ -78,7 +80,8 @@ CREATE TABLE IF NOT EXISTS public.shipping_batches (
     id          VARCHAR(36) PRIMARY KEY,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by  UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    -- users.id is varchar in remote DB
+    created_by  TEXT REFERENCES public.users(id) ON DELETE SET NULL,
     labels_count INTEGER NOT NULL DEFAULT 0,
     total_cost  NUMERIC(14,2),
     currency    CHAR(3) NOT NULL DEFAULT 'USD',
@@ -126,8 +129,8 @@ ALTER TABLE public.shipping_labels
     ADD COLUMN IF NOT EXISTS label_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     ADD COLUMN IF NOT EXISTS label_pdf_url TEXT,
     ADD COLUMN IF NOT EXISTS label_zpl_url TEXT,
-    ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES public.users(id) ON DELETE SET NULL;
+    ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES public.users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS updated_by TEXT REFERENCES public.users(id) ON DELETE SET NULL;
 
 -- 4b) Helpful indexes
 CREATE INDEX IF NOT EXISTS ix_shipping_labels_tracking_number ON public.shipping_labels(tracking_number);

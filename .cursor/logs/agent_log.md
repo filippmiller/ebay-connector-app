@@ -84,3 +84,8 @@
 2025-12-11T05:18:00Z - Merged cursor/fix-admin-ai-training into main and deleted branch locally/remotely
 2025-12-11T06:45:00Z - Added Supabase migration 20251211090000_ui_tweak_settings.sql and updated AdminTestComputerAnalyticsGraphPage.tsx to load live tables/columns and multi-select key fields
 2025-12-11T06:55:00Z - Fixed TS build errors: removed unused handlers and set Button size to sm in AdminTestComputerAnalyticsGraphPage.tsx
+2025-12-11T07:05:00Z - Attempted supabase db push; adjusted shipping_jobs.ebay_account_id to TEXT to match remote key type after FK mismatch
+2025-12-11T07:12:00Z - Updated shipping migration FKs to TEXT for users/ebay_accounts and added uuid-ossp extension to ai_training_center migration before retrying supabase db push
+2025-12-11T07:18:00Z - Switched ai_training_center IDs to gen_random_uuid() with pgcrypto extension after uuid_generate_v4() missing on remote
+2025-12-11T07:25:00Z - Added console signal + type=button to Save graph mapping button to ensure click fires visibly
+2025-12-11T07:35:00Z - Pointed computer analytics defaults to tbl_ebay_buyer (graph + classic) for buying container

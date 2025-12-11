@@ -42,7 +42,8 @@ DEFAULT_COMPUTER_ANALYTICS_GRAPH: dict[str, Any] = {
     "nodes": {
         "buying": {
             "label": "Buying",
-            "table": "buying",
+            # Use the canonical Supabase mirror for VB buying records
+            "table": "tbl_ebay_buyer",
             "storageColumns": ["storage"],
             "emit": {"storage": ["storage"]},
         },
@@ -150,7 +151,8 @@ async def debug_environment(db: Session = Depends(get_db)):
 
 # Default logical containers and their physical table names for Test Computer Analytics.
 COMPUTER_ANALYTICS_DEFAULT_SOURCES: dict[str, dict[str, str]] = {
-    "root_purchase": {"table": "buying"},
+    # Default BUYING source points to the Supabase mirror table
+    "root_purchase": {"table": "tbl_ebay_buyer"},
     "inventory_legacy": {"table": "tbl_parts_inventory"},
     "inventory": {"table": "inventory"},
     "transactions": {"table": "transactions"},
