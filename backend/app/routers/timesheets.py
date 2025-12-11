@@ -3,7 +3,7 @@ from typing import List, Optional, Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import func
 from pydantic import BaseModel
 
 from app.database import get_db
@@ -11,7 +11,6 @@ from app.db_models import Timesheet, User
 from app.models.user import User as UserModel, UserRole
 from app.services.auth import get_current_active_user
 from app.config import settings
-from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/timesheets", tags=["timesheets"])
 
@@ -276,61 +275,38 @@ async def list_my_timesheets(
 # ---- Admin endpoints ----
 
 
-def _ensure_admin(current_user: UserModel, db: Session | None = None) -> None:
-    """Ensure that the caller is an admin.
+def _ensure_admin(current_user: UserModel) -> None:
+    """Ensure that the caller is an admin based on app-level role and allowlists.
 
-    We accept *three* sources of truth:
-    1) `users.role == 'admin'` (legacy app role)
-    2) ENV allowlists (ADMIN_EMAIL_ALLOWLIST / ADMIN_USERNAME_ALLOWLIST)
-    3) Supabase mapping table `public.user_roles` with `role = 'admin'`
+    This deliberately *does not* depend on external Supabase tables so that
+    timesheets admin checks work even when auth/users live in a separate
+    database. The logic mirrors the original implementation used when
+    timesheets was first introduced.
     """
 
-    # 1) Legacy app role on the user row
+    # Accept either plain string or UserRole enum; normalize to lowercase string.
     role_raw = getattr(current_user, "role", None)
     if hasattr(role_raw, "value"):
         role_ok = str(role_raw.value).lower() == "admin"
     else:
         role_ok = str(role_raw or "").lower() == "admin"
 
-    # 2) Static allowlists from settings (comma-separated)
     allow_emails = (
-        [e.strip().lower() for e in settings.ADMIN_EMAIL_ALLOWLIST.split(",") if e.strip()]
-        if settings.ADMIN_EMAIL_ALLOWLIST
+        [e.strip().lower() for e in (settings.ADMIN_EMAIL_ALLOWLIST or "").split(",") if e.strip()]
+        if getattr(settings, "ADMIN_EMAIL_ALLOWLIST", None) is not None
         else []
     )
     allow_usernames = (
-        [u.strip().lower() for u in settings.ADMIN_USERNAME_ALLOWLIST.split(",") if u.strip()]
-        if settings.ADMIN_USERNAME_ALLOWLIST
+        [u.strip().lower() for u in (settings.ADMIN_USERNAME_ALLOWLIST or "").split(",") if u.strip()]
+        if getattr(settings, "ADMIN_USERNAME_ALLOWLIST", None) is not None
         else []
     )
-    email = getattr(current_user, "email", "") or ""
-    username = getattr(current_user, "username", "") or ""
-    allowlist_ok = email.lower() in allow_emails or username.lower() in allow_usernames
 
-    # 3) Supabase app roles table: public.user_roles (user_id uuid, role app_role)
-    supabase_roles_ok = False
-    if db is not None:
-        try:
-            user_id = str(getattr(current_user, "id", ""))
-            if user_id:
-                res = db.execute(
-                    text(
-                        "SELECT 1 FROM public.user_roles WHERE user_id = :uid AND role = 'admin' LIMIT 1"
-                    ),
-                    {"uid": user_id},
-                )
-                supabase_roles_ok = bool(res.scalar())
-        except Exception as e:
-            # Fail open on this check: if the mapping table is missing or broken,
-            # we still fall back to role/allowlist logic above.
-            logger.warning(
-                "Timesheets admin check: failed to query public.user_roles for user_id=%s: %s: %s",
-                getattr(current_user, "id", None),
-                type(e).__name__,
-                e,
-            )
+    email = (getattr(current_user, "email", "") or "").lower()
+    username = (getattr(current_user, "username", "") or "").lower()
+    allowlist_ok = email in allow_emails or username in allow_usernames
 
-    if not (role_ok or allowlist_ok or supabase_roles_ok):
+    if not (role_ok or allowlist_ok):
         raise _forbidden()
 
 
@@ -345,7 +321,7 @@ async def admin_list_timesheets(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_admin(current_user, db)
+    _ensure_admin(current_user)
 
     query = db.query(Timesheet).filter(Timesheet.delete_flag.is_(False))
 
@@ -393,7 +369,7 @@ async def admin_add_timesheet(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_admin(current_user, db)
+    _ensure_admin(current_user)
 
     # Validate times
     if payload.endTime <= payload.startTime:
@@ -455,7 +431,7 @@ async def admin_patch_timesheet(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_admin(current_user, db)
+    _ensure_admin(current_user)
 
     ts: Optional[Timesheet] = db.query(Timesheet).filter(Timesheet.id == timesheet_id).first()
     if not ts:
