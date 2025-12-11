@@ -227,7 +227,7 @@ async def list_my_timesheets(
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = None,
     page: int = Query(1, ge=1),
-    pageSize: int = Query(50, ge=1, le=200),
+    pageSize: Optional[int] = Query(None, ge=1),
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -242,22 +242,26 @@ async def list_my_timesheets(
         query = query.filter(Timesheet.start_time < to)
 
     total_items = query.count()
-    total_pages = (total_items + pageSize - 1) // pageSize if total_items else 1
-    offset = (page - 1) * pageSize
+    effective_page_size = pageSize or total_items or 1
+    total_pages = (total_items + effective_page_size - 1) // effective_page_size if total_items else 1
+    offset = (page - 1) * effective_page_size
 
-    rows = (
-        query.order_by(Timesheet.start_time.desc())
-        .offset(offset)
-        .limit(pageSize)
-        .all()
-    )
+    if pageSize is None:
+        rows = query.order_by(Timesheet.start_time.desc()).all()
+    else:
+        rows = (
+            query.order_by(Timesheet.start_time.desc())
+            .offset(offset)
+            .limit(pageSize)
+            .all()
+        )
 
     items = [_to_timesheet_entry(r) for r in rows]
 
     pagination = Pagination(
         items=items,
         page=page,
-        pageSize=pageSize,
+        pageSize=effective_page_size,
         totalItems=total_items,
         totalPages=total_pages,
     )
@@ -281,7 +285,7 @@ async def admin_list_timesheets(
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = None,
     page: int = Query(1, ge=1),
-    pageSize: int = Query(50, ge=1, le=200),
+    pageSize: Optional[int] = Query(None, ge=1),
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -300,22 +304,26 @@ async def admin_list_timesheets(
         query = query.filter(Timesheet.start_time < to)
 
     total_items = query.count()
-    total_pages = (total_items + pageSize - 1) // pageSize if total_items else 1
-    offset = (page - 1) * pageSize
+    effective_page_size = pageSize or total_items or 1
+    total_pages = (total_items + effective_page_size - 1) // effective_page_size if total_items else 1
+    offset = (page - 1) * effective_page_size
 
-    rows = (
-        query.order_by(Timesheet.start_time.desc())
-        .offset(offset)
-        .limit(pageSize)
-        .all()
-    )
+    if pageSize is None:
+        rows = query.order_by(Timesheet.start_time.desc()).all()
+    else:
+        rows = (
+            query.order_by(Timesheet.start_time.desc())
+            .offset(offset)
+            .limit(pageSize)
+            .all()
+        )
 
     items = [_to_timesheet_entry(r) for r in rows]
 
     pagination = Pagination(
         items=items,
         page=page,
-        pageSize=pageSize,
+        pageSize=effective_page_size,
         totalItems=total_items,
         totalPages=total_pages,
     )

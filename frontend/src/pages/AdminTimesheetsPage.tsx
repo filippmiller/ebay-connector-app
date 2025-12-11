@@ -33,8 +33,6 @@ export default function AdminTimesheetsPage() {
         username: usernameFilter || undefined,
         from: from || undefined,
         to: to || undefined,
-        page: 1,
-        pageSize: 100,
       });
       if (resp.success && resp.data) {
         setEntries(resp.data.items || []);

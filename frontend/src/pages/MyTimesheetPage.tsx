@@ -7,33 +7,58 @@ import { startTimesheet, stopTimesheet, getMyTimesheets, TimesheetEntry } from '
 
 export default function MyTimesheetPage() {
   const [description, setDescription] = useState('');
-  const [entries, setEntries] = useState<TimesheetEntry[]>([]);
+  const [allEntries, setAllEntries] = useState<TimesheetEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeEntry, setActiveEntry] = useState<TimesheetEntry | null>(null);
+
+  const startOfWeekMonday = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay(); // 0 = Sun, 1 = Mon
+    const diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const formatDateInput = (date: Date) => date.toISOString().slice(0, 10);
+  const [weekStart, setWeekStart] = useState(() => formatDateInput(startOfWeekMonday(new Date())));
+
+  const { startDate: weekStartDate, endDate: weekEndDate } = (() => {
+    const startDate = new Date(`${weekStart}T00:00:00`);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + 7);
+    return { startDate, endDate };
+  })();
+
+  const weekEntries = allEntries.filter((e) => {
+    if (!e.startTime) return false;
+    const d = new Date(e.startTime);
+    return d >= weekStartDate && d < weekEndDate;
+  });
+
+  const weekEntriesSorted = [...weekEntries].sort((a, b) => {
+    const aTime = a.startTime ? new Date(a.startTime).getTime() : 0;
+    const bTime = b.startTime ? new Date(b.startTime).getTime() : 0;
+    return bTime - aTime;
+  });
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const now = new Date();
-      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-      const resp = await getMyTimesheets({
-        from: fourteenDaysAgo.toISOString(),
-        to: now.toISOString(),
-        page: 1,
-        pageSize: 100,
-      });
+      const resp = await getMyTimesheets({});
       if (resp.success && resp.data) {
         const items = resp.data.items || [];
-        setEntries(items);
+        setAllEntries(items);
         const open = items.find((e) => e.endTime === null && !e.deleteFlag) || null;
         setActiveEntry(open || null);
       } else {
-        setEntries([]);
+        setAllEntries([]);
         setActiveEntry(null);
       }
     } catch (e) {
       console.error('Failed to load timesheets', e);
-      setEntries([]);
+      setAllEntries([]);
       setActiveEntry(null);
     } finally {
       setLoading(false);
@@ -64,6 +89,19 @@ export default function MyTimesheetPage() {
     await loadData();
   };
 
+  const shiftWeek = (deltaWeeks: number) => {
+    const base = new Date(`${weekStart}T00:00:00`);
+    base.setDate(base.getDate() + deltaWeeks * 7);
+    const monday = startOfWeekMonday(base);
+    setWeekStart(formatDateInput(monday));
+  };
+
+  const handleWeekInputChange = (value: string) => {
+    if (!value) return;
+    const target = startOfWeekMonday(new Date(`${value}T00:00:00`));
+    setWeekStart(formatDateInput(target));
+  };
+
   const formatDateTime = (iso: string | null) => {
     if (!iso) return '';
     return new Date(iso).toLocaleString();
@@ -76,6 +114,48 @@ export default function MyTimesheetPage() {
     if (h === 0) return `${m} min`;
     return `${h} h ${m} min`;
   };
+
+  const dayCards = Array.from({ length: 7 }).map((_, idx) => {
+    const currentDay = new Date(weekStartDate);
+    currentDay.setDate(weekStartDate.getDate() + idx);
+    const currentKey = formatDateInput(currentDay);
+    const dayEntries = weekEntries
+      .filter((e) => e.startTime && formatDateInput(new Date(e.startTime)) === currentKey)
+      .sort((a, b) => {
+        const aTime = a.startTime ? new Date(a.startTime).getTime() : 0;
+        const bTime = b.startTime ? new Date(b.startTime).getTime() : 0;
+        return aTime - bTime;
+      });
+
+    return (
+      <div key={currentKey} className="border rounded p-3 bg-white shadow-sm">
+        <div className="font-semibold text-sm mb-2">
+          {currentDay.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+        </div>
+        {dayEntries.length === 0 ? (
+          <div className="text-xs text-gray-500">No sessions</div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {dayEntries.map((e) => (
+              <div key={e.id} className="text-xs leading-snug">
+                <div className="font-medium">
+                  {e.startTime
+                    ? new Date(e.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : ''}
+                  {' – '}
+                  {e.endTime
+                    ? new Date(e.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '…'}
+                </div>
+                <div>{formatDuration(e.durationMinutes)}</div>
+                {e.description && <div className="text-gray-600">{e.description}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  });
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -116,12 +196,40 @@ export default function MyTimesheetPage() {
           )}
         </Card>
 
+        <Card className="p-4 mb-4">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <h2 className="text-lg font-semibold">Weekly calendar (Mon-Sun)</h2>
+              <div className="flex flex-wrap gap-2 items-center">
+                <Button variant="outline" size="sm" onClick={() => shiftWeek(-1)} disabled={loading}>
+                  Previous week
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => shiftWeek(1)} disabled={loading}>
+                  Next week
+                </Button>
+                <Input
+                  type="date"
+                  value={weekStart}
+                  onChange={(e) => handleWeekInputChange(e.target.value)}
+                  className="w-40"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {dayCards}
+            </div>
+          </div>
+        </Card>
+
         <Card className="p-4">
-          <h2 className="text-lg font-semibold mb-2">Recent entries</h2>
+          <h2 className="text-lg font-semibold mb-2">
+            Entries for week of {weekStartDate.toLocaleDateString()} –{' '}
+            {new Date(weekEndDate.getTime() - 1).toLocaleDateString()}
+          </h2>
           {loading ? (
             <div className="text-gray-500 text-sm">Loading…</div>
-          ) : entries.length === 0 ? (
-            <div className="text-gray-500 text-sm">No timesheet entries yet.</div>
+          ) : weekEntriesSorted.length === 0 ? (
+            <div className="text-gray-500 text-sm">No timesheet entries for this week.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
@@ -137,7 +245,7 @@ export default function MyTimesheetPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((e) => {
+                  {weekEntriesSorted.map((e) => {
                     const start = e.startTime ? new Date(e.startTime) : null;
                     const end = e.endTime ? new Date(e.endTime) : null;
                     return (
