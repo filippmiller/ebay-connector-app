@@ -5,14 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { adminListTimesheets, adminAddTimesheet, adminPatchTimesheet, TimesheetEntry } from '@/api/timesheets';
 
-const PAGE_SIZE = 100;
-
 export default function AdminTimesheetsPage() {
   const [entries, setEntries] = useState<TimesheetEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
   const [userFilter, setUserFilter] = useState('');
   const [usernameFilter, setUsernameFilter] = useState('');
   const [from, setFrom] = useState('');
@@ -30,49 +25,27 @@ export default function AdminTimesheetsPage() {
   const [editRate, setEditRate] = useState('');
   const [editDescription, setEditDescription] = useState('');
 
-  const fetchPage = async (targetPage: number, append: boolean) => {
-    if (append) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
-    }
+  const loadData = async () => {
+    setLoading(true);
     try {
       const resp = await adminListTimesheets({
         userId: userFilter || undefined,
         username: usernameFilter || undefined,
         from: from || undefined,
         to: to || undefined,
-        page: targetPage,
-        // For initial load, fetch all records (no pageSize). If we ever append, use PAGE_SIZE.
-        pageSize: append ? PAGE_SIZE : undefined,
       });
       if (resp.success && resp.data) {
-        const items = resp.data.items || [];
-        setEntries((prev) => (append ? [...prev, ...items] : items));
-        const totalPages = resp.data.totalPages || 1;
-        setPage(targetPage);
-        setHasMore(targetPage < totalPages);
+        setEntries(resp.data.items || []);
       } else {
-        setPage(1);
-        setHasMore(false);
         setEntries([]);
       }
     } catch (e) {
       console.error('Failed to load admin timesheets', e);
-      setPage(1);
-      setHasMore(false);
       setEntries([]);
     } finally {
-      if (append) {
-        setLoadingMore(false);
-      } else {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   };
-
-  const loadData = async () => fetchPage(1, false);
-  const loadMore = async () => fetchPage(page + 1, true);
 
   useEffect(() => {
     loadData();
@@ -344,13 +317,6 @@ export default function AdminTimesheetsPage() {
                   })}
                 </tbody>
               </table>
-              {hasMore && (
-                <div className="flex justify-center">
-                  <Button onClick={loadMore} disabled={loadingMore} variant="outline" className="w-40">
-                    {loadingMore ? 'Loading…' : 'Load more'}
-                  </Button>
-                </div>
-              )}
             </div>
           )}
         </Card>
