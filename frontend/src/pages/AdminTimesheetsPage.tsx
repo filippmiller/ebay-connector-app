@@ -43,7 +43,8 @@ export default function AdminTimesheetsPage() {
         from: from || undefined,
         to: to || undefined,
         page: targetPage,
-        pageSize: PAGE_SIZE,
+        // For initial load, fetch all records (no pageSize). If we ever append, use PAGE_SIZE.
+        pageSize: append ? PAGE_SIZE : undefined,
       });
       if (resp.success && resp.data) {
         const items = resp.data.items || [];

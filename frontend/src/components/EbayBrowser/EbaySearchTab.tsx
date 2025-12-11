@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { EbayListingCard } from './EbayListingCard';
 import { EbaySidebar } from './EbaySidebar';
 import { EbayDetailsPanel } from './EbayDetailsPanel';
+import { EbayItemModal } from './EbayItemModal';
 
 export const EbaySearchTab: React.FC = () => {
   const [keywords, setKeywords] = useState('');
@@ -18,6 +19,8 @@ export const EbaySearchTab: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<BrowseListing | null>(null);
+  const [modalItem, setModalItem] = useState<BrowseListing | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const [categories, setCategories] = useState<CategoryRefinement[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>('177');
@@ -67,28 +70,34 @@ export const EbaySearchTab: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Compact Search Bar - Single Row */}
-      <div className="px-4 py-2 bg-white border-b flex items-center gap-3 flex-shrink-0">
+      {/* Compact Search Bar - NO top padding, right against navbar */}
+      <div className="px-4 py-1 bg-white border-b flex items-center gap-3 flex-shrink-0">
         <Input
           placeholder="Search laptops... (e.g. Lenovo L500, MacBook Pro)"
           value={keywords}
           onChange={(e) => setKeywords(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch(false)}
-          className="flex-1 max-w-lg"
+          className="flex-1 max-w-lg h-8"
         />
         <Input
           type="number"
           placeholder="Max price"
           value={maxPrice ?? ''}
           onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : undefined)}
-          className="w-28"
+          className="w-28 h-8"
         />
         <Button
           onClick={() => handleSearch(false)}
           disabled={loading || !keywords.trim()}
+          size="sm"
         >
           {loading ? 'Searching...' : 'Search'}
         </Button>
+        {rows.length > 0 && (
+          <span className="text-xs text-gray-600">
+            Showing {rows.length} {hasMore && `(load more available)`}
+          </span>
+        )}
         {error && <span className="text-xs text-red-600">{error}</span>}
       </div>
 
@@ -146,10 +155,24 @@ export const EbaySearchTab: React.FC = () => {
             <EbayDetailsPanel
               listing={selectedItem}
               onClose={() => setSelectedItem(null)}
+              onItemIdClick={() => {
+                setModalItem(selectedItem);
+                setModalOpen(true);
+              }}
             />
           )}
         </div>
       </div>
+
+      {/* Full Item Modal */}
+      <EbayItemModal
+        listing={modalItem}
+        open={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          setModalItem(null);
+        }}
+      />
     </div>
   );
 };

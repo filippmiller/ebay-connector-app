@@ -4,15 +4,16 @@ import { X } from 'lucide-react';
 interface EbayDetailsPanelProps {
     listing: BrowseListing | null;
     onClose: () => void;
+    onItemIdClick: () => void;
 }
 
-export const EbayDetailsPanel: React.FC<EbayDetailsPanelProps> = ({ listing, onClose }) => {
+export const EbayDetailsPanel: React.FC<EbayDetailsPanelProps> = ({ listing, onClose, onItemIdClick }) => {
     if (!listing) return null;
 
-    const imageUrl = listing.image_url || 'https://via.placeholder.com/300?text=No+Image';
+    const imageUrl = listing.image_url || 'https://via.placeholder.com/200?text=No+Image';
 
     return (
-        <div className="h-[250px] border-t bg-white flex flex-col">
+        <div className="h-[280px] border-t bg-white flex flex-col flex-shrink-0">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
                 <h3 className="font-semibold text-sm">Listing Details</h3>
@@ -27,64 +28,81 @@ export const EbayDetailsPanel: React.FC<EbayDetailsPanelProps> = ({ listing, onC
 
             {/* Content */}
             <div className="flex-1 overflow-auto p-4">
-                <div className="flex gap-4">
+                <div className="flex gap-4 h-full">
                     {/* Image */}
                     <div className="flex-shrink-0">
                         <img
                             src={imageUrl}
                             alt={listing.title}
-                            className="w-[200px] h-[200px] object-contain border rounded"
+                            className="w-[180px] h-[180px] object-contain border rounded"
                             onError={(e) => {
-                                e.currentTarget.src = 'https://via.placeholder.com/200?text=No+Image';
+                                e.currentTarget.src = 'https://via.placeholder.com/180?text=No+Image';
                             }}
                         />
                     </div>
 
-                    {/* Details */}
-                    <div className="flex-1 space-y-2">
-                        <h4 className="font-semibold text-base">{listing.title}</h4>
+                    {/* Left Side - Details */}
+                    <div className="flex flex-col gap-2 text-sm min-w-[250px]">
+                        <h4 className="font-semibold text-sm line-clamp-2">{listing.title}</h4>
 
-                        {listing.description && (
-                            <p className="text-sm text-gray-700">{listing.description}</p>
-                        )}
-
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                            <div>
-                                <span className="font-medium">Price:</span> ${listing.price.toFixed(2)}
-                            </div>
-                            <div>
-                                <span className="font-medium">Shipping:</span> ${listing.shipping.toFixed(2)}
-                            </div>
-                            <div>
-                                <span className="font-medium">Total:</span> <strong>${listing.total_price.toFixed(2)}</strong>
-                            </div>
-                            {listing.item_condition && (
-                                <div>
-                                    <span className="font-medium">Condition:</span> {listing.item_condition}
-                                </div>
-                            )}
-                            {listing.seller_name && (
-                                <div>
-                                    <span className="font-medium">Seller:</span> {listing.seller_name}
-                                </div>
-                            )}
-                            {listing.seller_location && (
-                                <div>
-                                    <span className="font-medium">Location:</span> {listing.seller_location}
+                        {/* Price info */}
+                        <div>
+                            <div className="text-lg font-bold">${listing.price.toFixed(2)}</div>
+                            {listing.shipping > 0 && (
+                                <div className="text-xs text-gray-600">
+                                    +${listing.shipping.toFixed(2)} shipping
                                 </div>
                             )}
                         </div>
 
-                        {listing.ebay_url && (
-                            <a
-                                href={listing.ebay_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-block mt-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700"
-                            >
-                                View on eBay
-                            </a>
+                        {/* Condition */}
+                        {listing.item_condition && (
+                            <div className="text-xs">
+                                <span className="font-medium">Condition:</span> {listing.item_condition}
+                            </div>
                         )}
+
+                        {/* Seller & Location */}
+                        {listing.seller_name && (
+                            <div className="text-xs">
+                                <span className="font-medium">Seller:</span> {listing.seller_name}
+                            </div>
+                        )}
+                        {listing.seller_location && (
+                            <div className="text-xs">
+                                <span className="font-medium">Location:</span> {listing.seller_location}
+                            </div>
+                        )}
+
+                        {/* Item ID - Clickable */}
+                        <div className="text-xs mt-auto">
+                            <span className="font-medium">Item ID:</span>{' '}
+                            <button
+                                onClick={onItemIdClick}
+                                className="text-blue-600 hover:underline cursor-pointer"
+                            >
+                                {listing.item_id}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Right Side - Description boxes */}
+                    <div className="flex-1 flex flex-col gap-3 min-w-0">
+                        {/* Description */}
+                        <div className="border border-red-400 rounded p-2 bg-red-50 flex-1 overflow-auto">
+                            <h5 className="text-xs font-semibold text-red-700 mb-1">Item description from seller</h5>
+                            <p className="text-xs text-gray-700 whitespace-pre-wrap">
+                                {listing.description || 'No description available'}
+                            </p>
+                        </div>
+
+                        {/* Condition Description */}
+                        <div className="border border-red-400 rounded p-2 bg-red-50 flex-1 overflow-auto">
+                            <h5 className="text-xs font-semibold text-red-700 mb-1">Condition description</h5>
+                            <p className="text-xs text-gray-700">
+                                {listing.item_condition || 'No condition description'}
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
