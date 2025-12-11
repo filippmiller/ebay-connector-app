@@ -39,8 +39,8 @@ export const EbaySearchTab: React.FC = () => {
         keywords: keywords.trim(),
         max_total_price: maxPrice,
         category_id: selectedCategoryId,
-        category_hint: 'laptop',
-        exclude_keywords: ['for parts', 'not working', 'не работает'],
+        // Removed: exclude_keywords - was filtering out 99.99% of results
+        // Removed: category_hint - redundant with category_id: '177'
         limit: 50,
         offset: currentOffset,
         sort: 'newlyListed',

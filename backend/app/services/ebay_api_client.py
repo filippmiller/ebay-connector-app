@@ -173,7 +173,15 @@ async def search_active_listings(
             shipping_cost = 0.0
 
         condition = item.get("condition") or item.get("conditionDisplayName")
-        description = item.get("shortDescription") or None
+        
+        # Extract description - prioritize product.description from PRODUCT fieldgroup
+        description = None
+        product_obj = item.get("product")
+        if product_obj and isinstance(product_obj, dict):
+            description = product_obj.get("description")
+        # Fallback to shortDescription if product.description not available
+        if not description:
+            description = item.get("shortDescription")
         
         # Extract image URL
         image_url = None

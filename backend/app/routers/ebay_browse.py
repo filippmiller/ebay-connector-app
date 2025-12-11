@@ -230,7 +230,7 @@ async def search_ebay_browse(
         if parts:
             aspect_filter_param = ",".join(parts)
 
-    fieldgroups: List[str] = ["MATCHING_ITEMS"]
+    fieldgroups: List[str] = ["MATCHING_ITEMS", "PRODUCT"]  # PRODUCT adds description field
     if payload.include_refinements:
         fieldgroups.extend([
             "CATEGORY_REFINEMENTS",

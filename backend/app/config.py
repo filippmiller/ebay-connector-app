@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     FRONTEND_URL: str = "http://localhost:5173"
+
+    # Comma-separated allowlists for admin override (for legacy users lacking role)
+    ADMIN_EMAIL_ALLOWLIST: Optional[str] = None
+    ADMIN_USERNAME_ALLOWLIST: Optional[str] = None
     
     class Config:
         # Do not silently read .env in CI; Railway injects env
