@@ -64,8 +64,9 @@ export interface BrowseSearchResponse {
 
 import api from '@/lib/apiClient';
 
+// Trigger deployment - fixed API path to include /api prefix for direct Railway backend calls
 export async function searchBrowse(payload: BrowseSearchRequest): Promise<BrowseSearchResponse> {
-  // Use relative path so baseURL (/api) is preserved
-  const resp = await api.post<BrowseSearchResponse>('ebay/browse/search', payload);
+  // Backend route is /api/ebay/browse/search, so we need /api prefix
+  const resp = await api.post<BrowseSearchResponse>('/api/ebay/browse/search', payload);
   return resp.data;
 }
