@@ -5,7 +5,7 @@ from app.database import Base
 
 
 class Timesheet(Base):
-    __tablename__ = "timesheets"
+    __tablename__ = "tbl_timesheet"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)

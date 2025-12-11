@@ -261,12 +261,12 @@ async def search_ebay_browse(
         if payload.min_total_price is not None and total_price < payload.min_total_price:
             continue
 
-        # Category/type hint (e.g. restrict to whole laptops)
-        if not _matches_category_hint(s, payload.category_hint):
+        # Category/type hint (e.g. restrict to whole laptops) - ONLY if specified
+        if payload.category_hint and not _matches_category_hint(s, payload.category_hint):
             continue
 
-        # Exclude parts/undesired keywords
-        if not _matches_exclude_keywords(s, payload.exclude_keywords):
+        # Exclude parts/undesired keywords - ONLY if specified
+        if payload.exclude_keywords and not _matches_exclude_keywords(s, payload.exclude_keywords):
             continue
 
         results.append(
