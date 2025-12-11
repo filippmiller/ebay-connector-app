@@ -14,6 +14,7 @@ export interface TimesheetEntry {
   recordCreatedBy: string | null;
   recordUpdated: string;
   recordUpdatedBy: string | null;
+  legacyId: number | null;
 }
 
 export interface Pagination<T> {

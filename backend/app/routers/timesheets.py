@@ -58,6 +58,7 @@ class TimesheetEntry(BaseModel):
     recordCreatedBy: Optional[str]
     recordUpdated: datetime
     recordUpdatedBy: Optional[str]
+    legacyId: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -112,6 +113,7 @@ def _to_timesheet_entry(ts: Timesheet) -> TimesheetEntry:
         recordCreatedBy=ts.record_created_by,
         recordUpdated=ts.record_updated,
         recordUpdatedBy=ts.record_updated_by,
+        legacyId=int(ts.legacy_id) if getattr(ts, "legacy_id", None) is not None else None,
     )
 
 
