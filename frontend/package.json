@@ -7,6 +7,7 @@
     "dev": "vite",
     "prebuild": "node scripts/write-build-meta.mjs",
     "build": "tsc -b && vite build",
+    "postbuild": "node -e \"require('fs').cpSync('functions', 'dist/functions', { recursive: true })\"",
     "lint": "eslint .",
     "preview": "vite preview"
   },
