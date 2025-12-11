@@ -264,28 +264,6 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
     }
   };
 
-  const handleMatchFromChange = (key: string, logicalKey: string, value: string) => {
-    setGraphDraft((prev) => {
-      if (!prev) return prev;
-      const existing = prev.nodes[key] || {};
-      const matchFrom = { ...(existing.matchFrom || {}) };
-      const arr = value.split(',').map((s) => s.trim()).filter(Boolean);
-      if (arr.length === 0) {
-        delete matchFrom[logicalKey];
-      } else {
-        matchFrom[logicalKey] = arr;
-      }
-      const next: GraphNodeConfig = { ...existing, matchFrom };
-      return {
-        ...prev,
-        nodes: {
-          ...prev.nodes,
-          [key]: next,
-        },
-      };
-    });
-  };
-
   const handleMatchFromArrayChange = (key: string, logicalKey: string, values: string[]) => {
     setGraphDraft((prev) => {
       if (!prev) return prev;
@@ -297,28 +275,6 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
         matchFrom[logicalKey] = values;
       }
       const next: GraphNodeConfig = { ...existing, matchFrom };
-      return {
-        ...prev,
-        nodes: {
-          ...prev.nodes,
-          [key]: next,
-        },
-      };
-    });
-  };
-
-  const handleEmitChange = (key: string, logicalKey: string, value: string) => {
-    setGraphDraft((prev) => {
-      if (!prev) return prev;
-      const existing = prev.nodes[key] || {};
-      const emit = { ...(existing.emit || {}) };
-      const arr = value.split(',').map((s) => s.trim()).filter(Boolean);
-      if (arr.length === 0) {
-        delete emit[logicalKey];
-      } else {
-        emit[logicalKey] = arr;
-      }
-      const next: GraphNodeConfig = { ...existing, emit };
       return {
         ...prev,
         nodes: {
@@ -487,7 +443,7 @@ const AdminTestComputerAnalyticsGraphPage: React.FC = () => {
                             </select>
                             <Button
                               variant="outline"
-                              size="xs"
+                              size="sm"
                               onClick={() => table && loadColumnsForTable(table)}
                               disabled={!table || loadingColumnsFor === table}
                             >

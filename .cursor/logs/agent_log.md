@@ -83,3 +83,4 @@
 2025-12-11T05:10:00Z - Cleaned AdminAiTrainingPage unused React/default import and examples state to fix build TS6133
 2025-12-11T05:18:00Z - Merged cursor/fix-admin-ai-training into main and deleted branch locally/remotely
 2025-12-11T06:45:00Z - Added Supabase migration 20251211090000_ui_tweak_settings.sql and updated AdminTestComputerAnalyticsGraphPage.tsx to load live tables/columns and multi-select key fields
+2025-12-11T06:55:00Z - Fixed TS build errors: removed unused handlers and set Button size to sm in AdminTestComputerAnalyticsGraphPage.tsx
