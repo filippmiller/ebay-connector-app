@@ -18,6 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { EbayListingCard } from './EbayListingCard';
+import { EbaySidebar } from './EbaySidebar';
 
 const TARGET_ASPECTS = ['Screen Size', 'Processor', 'Operating System', 'Brand'] as const;
 
@@ -40,7 +42,7 @@ export const EbaySearchTab: React.FC = () => {
   const [conditions, setConditions] = useState<ConditionRefinement[]>([]);
   const [aspects, setAspects] = useState<AspectRefinement[]>([]);
   const [taxonomySuggestions, setTaxonomySuggestions] = useState<TaxonomySuggestion[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>('177'); // 177 = PC Laptops & Netbooks
   const [selectedConditionIds, setSelectedConditionIds] = useState<string[]>([]);
   const [selectedAspectValues, setSelectedAspectValues] = useState<AspectSelection>({});
   const [total, setTotal] = useState<number | undefined>(undefined);
@@ -307,11 +309,10 @@ export const EbaySearchTab: React.FC = () => {
           <span className="font-semibold mr-1">Категории:</span>
           <button
             type="button"
-            className={`px-2 py-1 rounded border text-xs ${
-              selectedCategoryId === null
-                ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-white'
-            }`}
+            className={`px-2 py-1 rounded border text-xs ${selectedCategoryId === null
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white'
+              }`}
             onClick={() => handleCategoryClick(null)}
           >
             Все
@@ -320,11 +321,10 @@ export const EbaySearchTab: React.FC = () => {
             <button
               key={c.id}
               type="button"
-              className={`px-2 py-1 rounded border text-xs whitespace-nowrap ${
-                selectedCategoryId === c.id
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white hover:bg-gray-50'
-              }`}
+              className={`px-2 py-1 rounded border text-xs whitespace-nowrap ${selectedCategoryId === c.id
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white hover:bg-gray-50'
+                }`}
               onClick={() => handleCategoryClick(c)}
             >
               {c.name} ({c.match_count})
@@ -363,65 +363,32 @@ export const EbaySearchTab: React.FC = () => {
         </div>
       )}
 
-      <div className="flex-1 min-h-0 border rounded bg-white overflow-auto text-xs">
-        {rows.length === 0 ? (
-          <div className="p-4 text-gray-500">Нет результатов. Задайте параметры и нажмите "Искать".</div>
-        ) : (
-          <table className="min-w-full text-left border-collapse">
-            <thead className="bg-gray-100 text-[11px] uppercase tracking-wide text-gray-600">
-              <tr>
-                <th className="px-3 py-2 border-b">Title</th>
-                <th className="px-3 py-2 border-b">Price</th>
-                <th className="px-3 py-2 border-b">Shipping</th>
-                <th className="px-3 py-2 border-b">Total</th>
-                <th className="px-3 py-2 border-b">Condition</th>
-                <th className="px-3 py-2 border-b">Link</th>
-              </tr>
-            </thead>
-            <tbody>
+      {/* Results Section with Sidebar */}
+      <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
+        {/* Sidebar */}
+        <EbaySidebar
+          categories={categories}
+          selectedCategoryId={selectedCategoryId}
+          onCategorySelect={(catId) => {
+            setSelectedCategoryId(catId);
+            void handleSearch(false);
+          }}
+        />
+
+        {/* Results Grid */}
+        <div className="flex-1 overflow-auto bg-gray-50 p-3">
+          {rows.length === 0 ? (
+            <div className="p-4 text-gray-500 text-center">
+              Нет результатов. Задайте параметры и нажмите "Искать".
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3">
               {rows.map((row) => (
-                <tr key={row.item_id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 border-b align-top max-w-md">
-                    <div className="font-semibold text-gray-800 truncate" title={row.title}>
-                      {row.title}
-                    </div>
-                    {row.description && (
-                      <div className="text-[11px] text-gray-500 truncate" title={row.description}>
-                        {row.description}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 border-b align-top whitespace-nowrap">
-                    {row.price.toFixed(2)}
-                  </td>
-                  <td className="px-3 py-2 border-b align-top whitespace-nowrap">
-                    {row.shipping.toFixed(2)}
-                  </td>
-                  <td className="px-3 py-2 border-b align-top whitespace-nowrap font-semibold">
-                    {row.total_price.toFixed(2)}
-                  </td>
-                  <td className="px-3 py-2 border-b align-top whitespace-nowrap">
-                    {row.condition || '—'}
-                  </td>
-                  <td className="px-3 py-2 border-b align-top whitespace-nowrap">
-                    {row.ebay_url ? (
-                      <a
-                        href={row.ebay_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 hover:underline"
-                      >
-                        Open
-                      </a>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                </tr>
+                <EbayListingCard key={row.item_id} listing={row} />
               ))}
-            </tbody>
-          </table>
-        )}
+            </div>
+          )}
+        </div>
       </div>
 
       {rows.length > 0 && hasMore && (
