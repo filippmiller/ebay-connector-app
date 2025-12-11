@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.db_models import Timesheet, User
-from app.models.user import User as UserModel
+from app.models.user import User as UserModel, UserRole
 from app.services.auth import get_current_active_user
 from app.config import settings
 
