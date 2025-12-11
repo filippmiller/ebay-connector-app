@@ -407,6 +407,7 @@ class Inventory(Base):
     price_currency = Column(CHAR(3), nullable=True)
     
     ebay_listing_id = Column(String(100), nullable=True, index=True)
+    item_id = Column(String(120), nullable=True, index=True)
     ebay_status = Column(Enum(EbayStatus), nullable=True, index=True)
     
     status = Column(Enum(InventoryStatus), default=InventoryStatus.AVAILABLE, index=True)
@@ -3094,6 +3095,27 @@ class ShippingJob(Base):
     )
 
 
+class ShippingBatch(Base):
+    __tablename__ = "shipping_batches"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+
+    labels_count = Column(Integer, nullable=False, default=0)
+    total_cost = Column(Numeric(14, 2), nullable=True)
+    currency = Column(CHAR(3), nullable=False, default="USD")
+    status = Column(String(20), nullable=False, default="DRAFT")  # DRAFT, PURCHASING, PURCHASED, FAILED
+    notes = Column(Text, nullable=True)
+
+    labels = relationship("ShippingLabel", back_populates="batch")
+
+    __table_args__ = (
+        Index("idx_shipping_batches_status_created", "status", "created_at"),
+    )
+
+
 class ShippingPackage(Base):
     __tablename__ = "shipping_packages"
 
@@ -3122,6 +3144,7 @@ class ShippingLabel(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     shipping_job_id = Column(String(36), ForeignKey("shipping_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    batch_id = Column(String(36), ForeignKey("shipping_batches.id", ondelete="SET NULL"), nullable=True, index=True)
 
     provider = Column(Enum(ShippingLabelProvider), nullable=False)
     provider_shipment_id = Column(Text, nullable=True)
@@ -3139,10 +3162,35 @@ class ShippingLabel(Base):
     purchased_at = Column(DateTime(timezone=True), nullable=True, index=True)
     voided = Column(Boolean, nullable=False, default=False, index=True)
 
+    # Bulk shipping metadata
+    order_id = Column(String(120), nullable=True, index=True)
+    order_line_item_id = Column(String(120), nullable=True, index=True)
+    legacy_transaction_id = Column(String(120), nullable=True)
+    item_id = Column(String(120), nullable=True, index=True)
+    sku = Column(String(120), nullable=True, index=True)
+    inventory_id = Column(Integer, ForeignKey("inventory.id"), nullable=True, index=True)
+    storage_id = Column(String(120), nullable=True, index=True)
+    quantity = Column(Integer, nullable=False, default=1)
+
+    weight_oz = Column(Numeric(10, 2), nullable=True)
+    length_in = Column(Numeric(10, 2), nullable=True)
+    width_in = Column(Numeric(10, 2), nullable=True)
+    height_in = Column(Numeric(10, 2), nullable=True)
+
+    carrier_code = Column(String(50), nullable=True)
+    service_code = Column(String(120), nullable=True)
+    label_status = Column(String(20), nullable=False, default="PENDING", index=True)
+    label_pdf_url = Column(Text, nullable=True)
+    label_zpl_url = Column(Text, nullable=True)
+
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    updated_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     job = relationship("ShippingJob", back_populates="label")
+    batch = relationship("ShippingBatch", back_populates="labels")
 
     __table_args__ = (
         Index("idx_shipping_labels_provider_shipment", "provider", "provider_shipment_id"),

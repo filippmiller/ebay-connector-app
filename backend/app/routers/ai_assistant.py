@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from app.routers.dependencies import get_db, get_current_admin_user
+from app.models_sqlalchemy import get_db
+from app.services.admin_auth import get_current_admin_user
 from app.services.ai.schema_discovery import refresh_schema_catalog
 from app.services.ai_query_engine import build_sql_from_prompt
 from app.utils.logger import logger

@@ -26,6 +26,7 @@ import AdminWorkersPage from './pages/AdminWorkersPage';
 import SKUPage from './pages/SKUPage';
 import ListingPage from './pages/ListingPage';
 import ShippingPage from './pages/ShippingPage';
+import BulkShippingPage from './pages/BulkShippingPage';
 import ReturnsPage from './pages/ReturnsPage';
 import CasesPage from './pages/CasesPage';
 import AdminPage from './pages/AdminPage';
@@ -51,6 +52,7 @@ import AdminAiCenterPage from './pages/AdminAiCenterPage';
 import AdminIntegrationsPage from './pages/AdminIntegrationsPage';
 import AdminAiEmailTrainingPage from './pages/AdminAiEmailTrainingPage';
 import AdminAiSettingsPage from './pages/AdminAiSettingsPage';
+import AdminAiTrainingPage from './pages/AdminAiTrainingPage';
 import CameraVisionPage from './pages/CameraVisionPage';
 import VisionBrainPage from './pages/VisionBrainPage';
 import AdminTestComputerAnalyticsPage from './pages/AdminTestComputerAnalyticsPage';
@@ -154,6 +156,7 @@ function App() {
           <Route path="/admin/ai-rules" element={<ProtectedRoute><AdminAiRulesPage /></ProtectedRoute>} />
           <Route path="/admin/ai-email-training" element={<ProtectedRoute><AdminAiEmailTrainingPage /></ProtectedRoute>} />
           <Route path="/admin/ai-settings" element={<ProtectedRoute><AdminAiSettingsPage /></ProtectedRoute>} />
+          <Route path="/admin/ai-training" element={<ProtectedRoute><AdminAiTrainingPage /></ProtectedRoute>} />
           <Route path="/admin/monitor" element={<ProtectedRoute><AdminMonitoringPage /></ProtectedRoute>} />
           <Route path="/admin/model-profit" element={<ProtectedRoute><AdminModelProfitPage /></ProtectedRoute>} />
           <Route path="/admin/actions" element={<ProtectedRoute><AdminActionsPage /></ProtectedRoute>} />
@@ -278,6 +281,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ShippingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/shipping/bulk"
+            element={
+              <ProtectedRoute>
+                <BulkShippingPage />
               </ProtectedRoute>
             }
           />
