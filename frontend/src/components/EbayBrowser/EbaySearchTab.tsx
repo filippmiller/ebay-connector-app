@@ -23,7 +23,7 @@ export const EbaySearchTab: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
 
   const [categories, setCategories] = useState<CategoryRefinement[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>('177');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null); // null = ALL categories
 
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -38,13 +38,13 @@ export const EbaySearchTab: React.FC = () => {
       const body: BrowseSearchRequest = {
         keywords: keywords.trim(),
         max_total_price: maxPrice,
-        category_id: selectedCategoryId,
+        category_id: selectedCategoryId, // null = search ALL categories
         // Removed: exclude_keywords - was filtering out 99.99% of results
         // Removed: category_hint - redundant with category_id: '177'
         limit: 50,
         offset: currentOffset,
         sort: 'newlyListed',
-        include_refinements: true,
+        include_refinements: true, // Always get categories/refinements
         use_taxonomy_suggestions: false,
       };
 
@@ -71,34 +71,39 @@ export const EbaySearchTab: React.FC = () => {
   return (
     <div className="h-full flex flex-col">
       {/* Compact Search Bar - NO top padding, right against navbar */}
-      <div className="px-4 py-1 bg-white border-b flex items-center gap-3 flex-shrink-0">
-        <Input
-          placeholder="Search laptops... (e.g. Lenovo L500, MacBook Pro)"
-          value={keywords}
-          onChange={(e) => setKeywords(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch(false)}
-          className="flex-1 max-w-lg h-8"
-        />
-        <Input
-          type="number"
-          placeholder="Max price"
-          value={maxPrice ?? ''}
-          onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : undefined)}
-          className="w-28 h-8"
-        />
-        <Button
-          onClick={() => handleSearch(false)}
-          disabled={loading || !keywords.trim()}
-          size="sm"
-        >
-          {loading ? 'Searching...' : 'Search'}
-        </Button>
-        {rows.length > 0 && (
-          <span className="text-xs text-gray-600">
-            Showing {rows.length} {hasMore && `(load more available)`}
-          </span>
-        )}
-        {error && <span className="text-xs text-red-600">{error}</span>}
+      <div className="px-4 py-1 bg-white border-b">
+        <div className="flex items-center gap-3">
+          <Input
+            placeholder="Search laptops... (e.g. Lenovo L500, MacBook Pro)"
+            value={keywords}
+            onChange={(e) => setKeywords(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch(false)}
+            className="flex-1 max-w-lg h-8"
+          />
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600">Max $:</label>
+            <Input
+              type="number"
+              placeholder="Max price"
+              value={maxPrice ?? ''}
+              onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : undefined)}
+              className="w-24 h-8"
+            />
+          </div>
+          <Button
+            onClick={() => handleSearch(false)}
+            disabled={loading || !keywords.trim()}
+            size="sm"
+          >
+            {loading ? 'Searching...' : 'Search'}
+          </Button>
+          {rows.length > 0 && (
+            <span className="text-xs text-gray-600">
+              Showing {rows.length} {hasMore && `(load more available)`}
+            </span>
+          )}
+        </div>
+        {error && <div className="text-xs text-red-600 mt-1">{error}</div>}
       </div>
 
       {/* Main Content: Sidebar + Results */}

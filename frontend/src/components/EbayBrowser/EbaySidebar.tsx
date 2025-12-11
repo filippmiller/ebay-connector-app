@@ -15,10 +15,7 @@ export const EbaySidebar: React.FC<EbaySidebarProps> = ({
 }) => {
     const [categoryExpanded, setCategoryExpanded] = useState(true);
 
-    if (categories.length === 0) {
-        return null;
-    }
-
+    // Always show sidebar, even when no categories yet
     return (
         <div className="w-[220px] flex-shrink-0 border-r bg-gray-50 p-3 overflow-y-auto">
             <div className="mb-4">
@@ -44,21 +41,27 @@ export const EbaySidebar: React.FC<EbaySidebarProps> = ({
                         </button>
 
                         {/* Category list */}
-                        {categories.map((cat) => (
-                            <button
-                                key={cat.id}
-                                onClick={() => onCategorySelect(cat.id)}
-                                className={`
-                  w-full text-left text-xs px-2 py-1 rounded
-                  ${selectedCategoryId === cat.id ? 'bg-blue-100 text-blue-700 font-semibold' : 'hover:bg-gray-200 text-gray-700'}
-                `}
-                            >
-                                <div className="truncate" title={cat.name}>
-                                    {cat.name}
-                                </div>
-                                <div className="text-[10px] text-gray-500">({cat.match_count})</div>
-                            </button>
-                        ))}
+                        {categories.length === 0 ? (
+                            <div className="text-xs text-gray-500 px-2 py-2">
+                                Search to see categories
+                            </div>
+                        ) : (
+                            categories.map((cat) => (
+                                <button
+                                    key={cat.id}
+                                    onClick={() => onCategorySelect(cat.id)}
+                                    className={`
+                      w-full text-left text-xs px-2 py-1 rounded
+                      ${selectedCategoryId === cat.id ? 'bg-blue-100 text-blue-700 font-semibold' : 'hover:bg-gray-200 text-gray-700'}
+                    `}
+                                >
+                                    <div className="truncate" title={cat.name}>
+                                        {cat.name}
+                                    </div>
+                                    <div className="text-[10px] text-gray-500">({cat.match_count})</div>
+                                </button>
+                            ))
+                        )}
                     </div>
                 )}
             </div>
