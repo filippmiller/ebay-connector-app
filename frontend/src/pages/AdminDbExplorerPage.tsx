@@ -159,6 +159,11 @@ const AdminDbExplorerPage: React.FC = () => {
   const [mssqlDatabase, setMssqlDatabase] = useState('DB_A28F26_parts');
   // Per-column pixel widths for the DB Explorer data grid only.
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  // Column visibility controls
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set());
+  // Row detail modal
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState<Record<string, any> | null>(null);
 
   // Migration console state
   const [migrationCommandText, setMigrationCommandText] = useState('');
@@ -354,7 +359,7 @@ const AdminDbExplorerPage: React.FC = () => {
         );
         setRows(resp.data);
       } else {
-        const resp = await api.post<MssqlTablePreviewResponse>('/api/admin/mssql/table-preview', {
+        const resp = await api.post<MssqlTablePreviewResponse>('/api/admin/mssql/latest-rows', {
           ...buildMssqlConfig(),
           schema: table.schema,
           table: table.name,
@@ -698,6 +703,14 @@ const AdminDbExplorerPage: React.FC = () => {
       }, new Set<string>())
     );
 
+    // Initialize visible columns if not set
+    if (visibleColumns.size === 0 && columns.length > 0) {
+      setVisibleColumns(new Set(columns));
+    }
+
+    // Filter columns based on visibility selection
+    const displayColumns = columns.filter((col) => visibleColumns.has(col));
+
     // Apply client-side sorting on the currently loaded page of rows (both Supabase and MSSQL).
     let sortedRows = rows.rows;
     if (dataSortColumn) {
@@ -727,6 +740,42 @@ const AdminDbExplorerPage: React.FC = () => {
             {rows.total_estimate != null ? `, estimate ~${Math.round(rows.total_estimate)}` : ''} )
           </div>
           <div className="flex items-center gap-4">
+            {/* Column visibility controls */}
+            <div className="flex items-center gap-1">
+              <span>Show columns:</span>
+              <div className="relative">
+                <select
+                  multiple
+                  className="border rounded px-1 py-0.5 text-[11px] max-h-[120px] min-w-[180px]"
+                  value={Array.from(visibleColumns)}
+                  onChange={(e) => {
+                    const selected = new Set(Array.from(e.target.selectedOptions).map((opt) => opt.value));
+                    setVisibleColumns(selected);
+                  }}
+                  size={Math.min(5, columns.length)}
+                >
+                  {columns.map((col) => (
+                    <option key={col} value={col}>
+                      {col}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                className="px-1 py-0.5 border rounded bg-white hover:bg-gray-50 text-[10px]"
+                onClick={() => setVisibleColumns(new Set(columns))}
+                title="Select all columns"
+              >
+                All
+              </button>
+              <button
+                className="px-1 py-0.5 border rounded bg-white hover:bg-gray-50 text-[10px]"
+                onClick={() => setVisibleColumns(new Set())}
+                title="Deselect all columns"
+              >
+                None
+              </button>
+            </div>
             {/* Per-column search (Supabase only for now) */}
             {activeDb === 'supabase' && schema && (
               <div className="flex items-center gap-1">
@@ -786,7 +835,11 @@ const AdminDbExplorerPage: React.FC = () => {
           >
             <thead className="bg-gray-100 sticky top-0 z-10">
               <tr>
-                {columns.map((col) => {
+                {/* Actions column */}
+                <th className="px-2 py-1 border text-left font-semibold text-[11px] bg-gray-100 sticky left-0 z-20">
+                  Actions
+                </th>
+                {displayColumns.map((col) => {
                   const width = columnWidths[col];
                   return (
                     <th
@@ -817,8 +870,21 @@ const AdminDbExplorerPage: React.FC = () => {
             </thead>
             <tbody>
               {sortedRows.map((row, idx) => (
-                <tr key={idx} className="border-t">
-                  {columns.map((col) => {
+                <tr key={idx} className="border-t hover:bg-gray-50">
+                  {/* Actions cell */}
+                  <td className="px-2 py-1 border text-center sticky left-0 bg-white z-10">
+                    <button
+                      onClick={() => {
+                        setDetailRow(row);
+                        setDetailModalOpen(true);
+                      }}
+                      className="px-1.5 py-0.5 text-[10px] border rounded bg-blue-50 hover:bg-blue-100 text-blue-700"
+                      title="View all fields"
+                    >
+                      📋 Details
+                    </button>
+                  </td>
+                  {displayColumns.map((col) => {
                     const width = columnWidths[col];
                     return (
                       <td
@@ -849,7 +915,7 @@ const AdminDbExplorerPage: React.FC = () => {
             Load more
           </button>
         </div>
-      </div>
+      </div >
     );
   };
 
