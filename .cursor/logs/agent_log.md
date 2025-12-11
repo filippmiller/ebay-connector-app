@@ -93,4 +93,5 @@
 2025-12-11T08:05:00Z - Timesheets: admin view now loads all records newest-first by default; MyTimesheet adds Monday-based weekly calendar and week selector (read-only); backend timesheets endpoints allow unpaged fetches for full history
 2025-12-11T08:25:00Z - Timesheets: admin page now supports paged “Load more” newest-first; user page shows weekly totals and CSV export for selected Monday-start week
 2025-12-11T08:40:00Z - Timesheets: admin view now loads all entries at once again (no pagination button) to allow full edit/delete visibility
+2025-12-11T08:45:00Z - Fixed build TS6133 by removing unused import X from EbayItemModal.tsx
 2025-12-11T08:35:00Z - Timesheets admin: reverted to initial “fetch all” on first load (pageSize unset) so all rows show immediately for edit/delete

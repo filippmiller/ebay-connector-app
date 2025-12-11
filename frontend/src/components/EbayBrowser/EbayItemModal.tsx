@@ -1,5 +1,4 @@
 import { BrowseListing } from '@/api/ebayBrowser';
-import { X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface EbayItemModalProps {
