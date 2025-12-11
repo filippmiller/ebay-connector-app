@@ -14,7 +14,9 @@ import { EbayItemModal } from './EbayItemModal';
 
 export const EbaySearchTab: React.FC = () => {
   const [keywords, setKeywords] = useState('');
-  const [maxPrice, setMaxPrice] = useState<number | undefined>(200);
+  const [maxPrice, setMaxPrice] = useState<number | undefined>(undefined); // NO DEFAULT - show all results
+  const [condition, setCondition] = useState<'any' | 'new' | 'used'>('any');
+  const [excludeKeywords, setExcludeKeywords] = useState('');
   const [rows, setRows] = useState<BrowseListing[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,12 +37,16 @@ export const EbaySearchTab: React.FC = () => {
     try {
       const currentOffset = isLoadMore ? offset : 0;
 
+      // Build exclude keywords array
+      const excludeArray = excludeKeywords.trim()
+        ? excludeKeywords.split(',').map(k => k.trim()).filter(Boolean)
+        : undefined;
+
       const body: BrowseSearchRequest = {
         keywords: keywords.trim(),
-        max_total_price: maxPrice,
+        max_total_price: maxPrice, // Only if user sets it
         category_id: selectedCategoryId, // null = search ALL categories
-        // Removed: exclude_keywords - was filtering out 99.99% of results
-        // Removed: category_hint - redundant with category_id: '177'
+        exclude_keywords: excludeArray, // Only if user specifies
         limit: 50,
         offset: currentOffset,
         sort: 'newlyListed',
@@ -71,10 +77,11 @@ export const EbaySearchTab: React.FC = () => {
   return (
     <div className="h-full flex flex-col">
       {/* Compact Search Bar - NO top padding, right against navbar */}
-      <div className="px-4 py-1 bg-white border-b">
-        <div className="flex items-center gap-3">
+      <div className="px-4 py-2 bg-white border-b">
+        {/* Row 1: Search + Price + Button */}
+        <div className="flex items-center gap-3 mb-2">
           <Input
-            placeholder="Search laptops... (e.g. Lenovo L500, MacBook Pro)"
+            placeholder="Search... (e.g. Lenovo L500, MacBook Pro)"
             value={keywords}
             onChange={(e) => setKeywords(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch(false)}
@@ -84,7 +91,7 @@ export const EbaySearchTab: React.FC = () => {
             <label className="text-xs text-gray-600">Max $:</label>
             <Input
               type="number"
-              placeholder="Max price"
+              placeholder="No limit"
               value={maxPrice ?? ''}
               onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : undefined)}
               className="w-24 h-8"
@@ -99,10 +106,37 @@ export const EbaySearchTab: React.FC = () => {
           </Button>
           {rows.length > 0 && (
             <span className="text-xs text-gray-600">
-              Showing {rows.length} {hasMore && `(load more available)`}
+              Showing {rows.length} {hasMore && `(load more)`}
             </span>
           )}
         </div>
+
+        {/* Row 2: Filters */}
+        <div className="flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-2">
+            <label className="text-gray-600">Condition:</label>
+            <select
+              value={condition}
+              onChange={(e) => setCondition(e.target.value as any)}
+              className="border rounded px-2 py-1 h-7"
+            >
+              <option value="any">Any</option>
+              <option value="new">New</option>
+              <option value="used">Used</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2 flex-1">
+            <label className="text-gray-600">Exclude:</label>
+            <Input
+              placeholder="for parts, not working..."
+              value={excludeKeywords}
+              onChange={(e) => setExcludeKeywords(e.target.value)}
+              className="h-7 text-xs flex-1 max-w-md"
+            />
+          </div>
+        </div>
+
         {error && <div className="text-xs text-red-600 mt-1">{error}</div>}
       </div>
 
