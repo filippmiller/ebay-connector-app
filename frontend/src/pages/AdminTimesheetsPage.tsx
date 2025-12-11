@@ -5,9 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { adminListTimesheets, adminAddTimesheet, adminPatchTimesheet, TimesheetEntry } from '@/api/timesheets';
 
+const PAGE_SIZE = 50;
+
 export default function AdminTimesheetsPage() {
   const [entries, setEntries] = useState<TimesheetEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
   const [userFilter, setUserFilter] = useState('');
   const [usernameFilter, setUsernameFilter] = useState('');
   const [from, setFrom] = useState('');
@@ -25,7 +30,7 @@ export default function AdminTimesheetsPage() {
   const [editRate, setEditRate] = useState('');
   const [editDescription, setEditDescription] = useState('');
 
-  const loadData = async () => {
+  const fetchPage = async (targetPage: number) => {
     setLoading(true);
     try {
       const resp = await adminListTimesheets({
@@ -33,18 +38,40 @@ export default function AdminTimesheetsPage() {
         username: usernameFilter || undefined,
         from: from || undefined,
         to: to || undefined,
+        page: targetPage,
+        pageSize: PAGE_SIZE,
       });
       if (resp.success && resp.data) {
-        setEntries(resp.data.items || []);
+        const items = resp.data.items || [];
+        setEntries(items);
+        setPage(resp.data.page || targetPage);
+        setTotalPages(resp.data.totalPages || 1);
+        setTotalItems(resp.data.totalItems || items.length);
       } else {
         setEntries([]);
+        setPage(1);
+        setTotalPages(1);
+        setTotalItems(0);
       }
     } catch (e) {
       console.error('Failed to load admin timesheets', e);
       setEntries([]);
+      setPage(1);
+      setTotalPages(1);
+      setTotalItems(0);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadData = async () => fetchPage(1);
+  const goToPrev = async () => {
+    if (page <= 1) return;
+    await fetchPage(page - 1);
+  };
+  const goToNext = async () => {
+    if (page >= totalPages) return;
+    await fetchPage(page + 1);
   };
 
   useEffect(() => {
@@ -91,7 +118,7 @@ export default function AdminTimesheetsPage() {
         console.error('Failed to update timesheet', resp.error);
       }
       setEditingId(null);
-      await loadData();
+      await fetchPage(page);
     } catch (e) {
       console.error('Failed to update timesheet', e);
     }
@@ -103,7 +130,7 @@ export default function AdminTimesheetsPage() {
       if (!resp.success) {
         console.error('Failed to delete timesheet', resp.error);
       }
-      await loadData();
+      await fetchPage(page);
     } catch (e) {
       console.error('Failed to delete timesheet', e);
     }
@@ -194,6 +221,19 @@ export default function AdminTimesheetsPage() {
 
         <Card className="p-4">
           <h2 className="text-lg font-semibold mb-2">Entries</h2>
+          <div className="flex items-center justify-between text-sm text-gray-600 mb-2 flex-wrap gap-2">
+            <span>
+              Page {page} of {totalPages} — showing {PAGE_SIZE} per page (total {totalItems})
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={goToPrev} disabled={loading || page <= 1}>
+                Previous
+              </Button>
+              <Button size="sm" variant="outline" onClick={goToNext} disabled={loading || page >= totalPages}>
+                Next
+              </Button>
+            </div>
+          </div>
           {loading ? (
             <div className="text-gray-500 text-sm">Loading…</div>
           ) : entries.length === 0 ? (

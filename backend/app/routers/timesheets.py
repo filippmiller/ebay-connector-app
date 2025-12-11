@@ -10,6 +10,7 @@ from app.database import get_db
 from app.db_models import Timesheet, User
 from app.models.user import User as UserModel
 from app.services.auth import get_current_active_user
+from app.config import settings
 
 router = APIRouter(prefix="/api/timesheets", tags=["timesheets"])
 
@@ -273,8 +274,26 @@ async def list_my_timesheets(
 
 
 def _ensure_admin(current_user: UserModel) -> None:
-    # In this project, role is a string ("admin" / "user").
-    if str(current_user.role).lower() != "admin":
+    # Accept either plain string or UserRole enum; normalize to lowercase string.
+    role_raw = getattr(current_user, "role", None)
+    if hasattr(role_raw, "value"):
+        role_ok = str(role_raw.value).lower() == "admin"
+    else:
+        role_ok = str(role_raw or "").lower() == "admin"
+    allow_emails = (
+        [e.strip().lower() for e in settings.ADMIN_EMAIL_ALLOWLIST.split(",") if e.strip()]
+        if settings.ADMIN_EMAIL_ALLOWLIST
+        else []
+    )
+    allow_usernames = (
+        [u.strip().lower() for u in settings.ADMIN_USERNAME_ALLOWLIST.split(",") if u.strip()]
+        if settings.ADMIN_USERNAME_ALLOWLIST
+        else []
+    )
+    email = getattr(current_user, "email", "") or ""
+    username = getattr(current_user, "username", "") or ""
+    allowlist_ok = email.lower() in allow_emails or username.lower() in allow_usernames
+    if not (role_ok or allowlist_ok):
         raise _forbidden()
 
 
@@ -285,7 +304,7 @@ async def admin_list_timesheets(
     from_: Optional[datetime] = Query(None, alias="from"),
     to: Optional[datetime] = None,
     page: int = Query(1, ge=1),
-    pageSize: Optional[int] = Query(None, ge=1),
+    pageSize: Optional[int] = Query(50, ge=1, le=200),
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
