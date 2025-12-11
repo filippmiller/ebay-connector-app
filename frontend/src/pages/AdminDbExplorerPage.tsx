@@ -1354,6 +1354,66 @@ const AdminDbExplorerPage: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* Row Detail Modal */}
+      {detailModalOpen && detailRow && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => setDetailModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-auto m-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Row Details</h2>
+              <button
+                onClick={() => setDetailModalOpen(false)}
+                className="px-3 py-1 text-gray-600 hover:text-gray-800 text-2xl leading-none"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-6">
+              <table className="min-w-full border text-sm">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="px-4 py-2 border text-left font-semibold w-1/3">Field Name</th>
+                    <th className="px-4 py-2 border text-left font-semibold">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(detailRow).map(([key, value]) => (
+                    <tr key={key} className="border-t">
+                      <td className="px-4 py-2 border font-mono text-xs bg-gray-50 align-top">
+                        {key}
+                      </td>
+                      <td className="px-4 py-2 border font-mono text-xs">
+                        <div className="whitespace-pre-wrap break-all">
+                          {value === null || value === undefined
+                            ? <span className="text-gray-400 italic">null</span>
+                            : typeof value === 'object'
+                              ? JSON.stringify(value, null, 2)
+                              : String(value)}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="sticky bottom-0 bg-gray-50 border-t px-6 py-3 flex justify-end">
+              <button
+                onClick={() => setDetailModalOpen(false)}
+                className="px-4 py-2 border rounded bg-white hover:bg-gray-100 text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 };
