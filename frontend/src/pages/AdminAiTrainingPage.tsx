@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { apiClient } from '../api/client';
 
 interface TrainingSession {
@@ -11,25 +11,10 @@ interface TrainingSession {
     examples_count: number;
 }
 
-interface TrainingExample {
-    id: string;
-    session_id: string;
-    domain: string;
-    input_mode: string;
-    raw_input_text: string;
-    raw_model_output: any;
-    final_approved_output?: any;
-    linked_semantic_rule_id?: string;
-    status: string;
-    created_at: string;
-    updated_at: string;
-}
-
 export default function AdminAiTrainingPage() {
     const [sessions, setSessions] = useState<TrainingSession[]>([]);
     const [selectedDomain, setSelectedDomain] = useState('analytics');
     const [currentSession, setCurrentSession] = useState<TrainingSession | null>(null);
-    const [examples, setExamples] = useState<TrainingExample[]>([]);
 
     // Voice recording state
     const [isRecording, setIsRecording] = useState(false);

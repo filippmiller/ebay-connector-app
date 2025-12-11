@@ -80,3 +80,4 @@
 2025-12-07T18:05:00Z - Updated DataGridPage fetch to fall back to items array so bank statements grid renders rows
 2025-12-08T00:00:00Z - Started bank statements grid investigation; reviewed AccountingPage/DataGridPage and backend grid serialization.
 2025-12-08T00:20:00Z - Adjusted Cloudflare proxy routing to not force /api prefix for /grid/preferences (bank statements grid prefs).
+2025-12-11T05:10:00Z - Cleaned AdminAiTrainingPage unused React/default import and examples state to fix build TS6133
