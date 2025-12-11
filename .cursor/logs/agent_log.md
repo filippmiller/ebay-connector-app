@@ -89,3 +89,4 @@
 2025-12-11T07:18:00Z - Switched ai_training_center IDs to gen_random_uuid() with pgcrypto extension after uuid_generate_v4() missing on remote
 2025-12-11T07:25:00Z - Added console signal + type=button to Save graph mapping button to ensure click fires visibly
 2025-12-11T07:35:00Z - Pointed computer analytics defaults to tbl_ebay_buyer (graph + classic) for buying container
+2025-12-11T07:45:00Z - Made buying query storage-aware via inspector (handles Storage/storage/storage_id variants)

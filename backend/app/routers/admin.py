@@ -34,6 +34,28 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 # Test Computer Analytics (classic + graph)
 # -------------------------------
 
+# Helper: build WHERE clause for storage_id across variable column casing
+def _build_storage_where(columns: set[str]) -> str:
+    """Return SQL OR clause matching storage_id against known storage column variants."""
+    candidates = [
+        "storage",
+        "Storage",
+        "storage_id",
+        "storageID",
+        "StorageId",
+        "storageid",
+        "alternative_storage",
+        "AlternativeStorage",
+        "storage_alias",
+        "StorageAlias",
+    ]
+    clauses: list[str] = []
+    for col in candidates:
+        if col in columns:
+            clauses.append(f'lower(trim("{col}")) = lower(:storage_id)')
+    return " OR ".join(clauses)
+
+
 # Graph-mode default configuration for Test Computer Analytics. This is kept
 # intentionally simple and JSON-friendly so it can be edited from the Admin UI
 # without migrations. All fields are optional; when missing we fall back to
@@ -604,6 +626,17 @@ async def get_test_computer_analytics(
     except Exception:  # pragma: no cover - defensive fallback
         has_legacy_inventory = False
 
+    # Resolve buying storage columns dynamically (accounts for case-sensitive columns)
+    try:
+        inspector = sa_inspect(db.bind)
+        buying_columns = {col["name"] for col in inspector.get_columns(buying_table)}
+    except Exception:  # pragma: no cover - defensive
+        buying_columns = set()
+    buying_where = _build_storage_where(buying_columns)
+    if not buying_where:
+        logger.error("No storage-like columns found in %s; returning empty buying set", buying_table)
+        buying_where = "1 = 0"
+
     legacy_sku_union = ""
     if has_legacy_inventory:
         legacy_sku_union = f"""
@@ -638,13 +671,7 @@ async def get_test_computer_analytics(
     result: dict = {"storage_id": norm_storage}
 
     # 1) Root purchase (BUYING / VB)
-    sql_buying = sa_text(
-        f"""
-        SELECT *
-        FROM {buying_table}
-        WHERE lower(trim(storage)) = lower(:storage_id)
-        """
-    )
+    sql_buying = sa_text(f"SELECT * FROM {buying_table} WHERE {buying_where}")
     buying_rows = db.execute(sql_buying, {"storage_id": norm_storage}).mappings().all()
     result["buying"] = [_normalize_row(dict(r)) for r in buying_rows]
 
