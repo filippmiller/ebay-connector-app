@@ -193,12 +193,14 @@ class EbayAPIDebugger:
                 "method": "GET",
                 "path": "/sell/fulfillment/v1/order",
                 "params": {
+                    # Minimal request: rely on eBay's default time window and
+                    # just page via limit. Additional filters can be added via
+                    # the interactive prompts.
                     "limit": "1",
-                    "filter": "orderStatus:COMPLETED"
                 },
                 "headers": {},
                 "body": None,
-                "description": "Get seller orders (Fulfillment API)"
+                "description": "Fetch recent orders"
             },
             "transactions": {
                 "name": "Transactions API - Get Transactions",
@@ -246,15 +248,34 @@ class EbayAPIDebugger:
                 "description": "Get payment disputes (Fulfillment API)"
             },
             "messages": {
-                "name": "Messages API - Get Messages",
-                "method": "GET",
-                "path": "/sell/fulfillment/v1/order",
-                "params": {
-                    "limit": "1"
+                "name": "Messages API - Get My Messages (Trading)",
+                "method": "POST",
+                "path": "/ws/api.dll",
+                "params": {},
+                "headers": {
+                    "Content-Type": "text/xml",
+                    "X-EBAY-API-CALL-NAME": "GetMyMessages",
+                    "X-EBAY-API-SITEID": "0",
+                    "X-EBAY-API-COMPATIBILITY-LEVEL": "967"
+                    # X-EBAY-API-IAF-TOKEN will be injected from access token
                 },
-                "headers": {},
-                "body": None,
-                "description": "Get messages (Trading API - placeholder)"
+                "body": """<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<GetMyMessagesRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">\n  <DetailLevel>ReturnHeaders</DetailLevel>\n  <Pagination>\n    <EntriesPerPage>5</EntriesPerPage>\n    <PageNumber>1</PageNumber>\n  </Pagination>\n</GetMyMessagesRequest>""",
+                "description": "Get My Messages via Trading GetMyMessages"
+            },
+            "seller_transactions": {
+                "name": "Trading  GetSellerTransactions",
+                "method": "POST",
+                "path": "/ws/api.dll",
+                "params": {},
+                "headers": {
+                    "Content-Type": "text/xml",
+                    "X-EBAY-API-CALL-NAME": "GetSellerTransactions",
+                    "X-EBAY-API-SITEID": "0",
+                    "X-EBAY-API-COMPATIBILITY-LEVEL": "967"
+                    # X-EBAY-API-IAF-TOKEN will be injected from access token
+                },
+                "body": """<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<GetSellerTransactionsRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">\n  <NumberOfDays>7</NumberOfDays>\n  <Pagination>\n    <EntriesPerPage>50</EntriesPerPage>\n    <PageNumber>1</PageNumber>\n  </Pagination>\n</GetSellerTransactionsRequest>""",
+                "description": "Get seller transactions (order line items) via Trading GetSellerTransactions"
             }
         }
         
@@ -370,12 +391,19 @@ class EbayAPIDebugger:
                           headers: Optional[Dict[str, str]] = None, body: Optional[str] = None) -> httpx.Response:
         """Make HTTP request to eBay API."""
         # Build full URL
+        base_url = self.base_url
+        # Finances API (transactions) lives on apiz.ebay.com / apiz.sandbox.ebay.com
+        if "/sell/finances/" in path:
+            if "sandbox" in base_url:
+                base_url = "https://apiz.sandbox.ebay.com"
+            else:
+                base_url = "https://apiz.ebay.com"
         if path.startswith('/'):
-            url = f"{self.base_url}{path}"
+            url = f"{base_url}{path}"
         elif path.startswith('http'):
             url = path
         else:
-            url = f"{self.base_url}/{path}"
+            url = f"{base_url}/{path}"
         
         # Add query parameters
         if params:
@@ -394,6 +422,11 @@ class EbayAPIDebugger:
         
         if headers:
             request_headers.update(headers)
+
+        # Trading API - GetMyMessages uses XML + X-EBAY-API-IAF-TOKEN
+        if "/ws/api.dll" in url:
+            request_headers.setdefault("X-EBAY-API-IAF-TOKEN", self.access_token)
+            request_headers["Content-Type"] = "text/xml"
         
         # Prepare request data for history
         request_data = {

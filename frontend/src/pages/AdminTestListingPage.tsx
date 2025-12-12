@@ -1,0 +1,785 @@
+import React, { useEffect, useState } from 'react';
+import FixedHeader from '@/components/FixedHeader';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import {
+  ebayApi,
+  TestListingConfigDto,
+  TestListingLogSummaryDto,
+  TestListingLogDetailDto,
+  TestListingPayloadResponseDto,
+  TestListingPayloadFieldDto,
+  TestListingPrepareResponseDto,
+} from '@/api/ebay';
+import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
+import type { WorkerDebugTrace } from '@/api/ebayListingWorker';
+import { formatDateTimeLocal } from '@/lib/dateUtils';
+import { Info } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
+const INVENTORY_STATUS_OPTIONS = [
+  'PENDING_LISTING',
+  'AVAILABLE',
+  'LISTED',
+  'SOLD',
+  'FROZEN',
+  'REPAIR',
+  'RETURNED',
+];
+
+const AdminTestListingPage: React.FC = () => {
+  const [config, setConfig] = useState<TestListingConfigDto | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  const [logs, setLogs] = useState<TestListingLogSummaryDto[]>([]);
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
+
+  const [runLoading, setRunLoading] = useState(false);
+  const [runMessage, setRunMessage] = useState<string | null>(null);
+
+  const [selectedLogDetail, setSelectedLogDetail] = useState<TestListingLogDetailDto | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalTrace, setTerminalTrace] = useState<WorkerDebugTrace | null>(null);
+
+  const [legacyInventoryId, setLegacyInventoryId] = useState<string>('');
+  const [payloadLoading, setPayloadLoading] = useState(false);
+  const [payloadError, setPayloadError] = useState<string | null>(null);
+  const [payload, setPayload] = useState<TestListingPayloadResponseDto | null>(null);
+
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [prepareLoading, setPrepareLoading] = useState(false);
+  const [prepareError, setPrepareError] = useState<string | null>(null);
+  const [prepareData, setPrepareData] = useState<TestListingPrepareResponseDto | null>(null);
+
+  const loadConfig = async () => {
+    try {
+      setConfigLoading(true);
+      setConfigError(null);
+      const data = await ebayApi.getTestListingConfig();
+      setConfig(data);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load test-listing config', e);
+      setConfigError(e?.response?.data?.detail || e.message || 'Failed to load config');
+    } finally {
+      setConfigLoading(false);
+    }
+  };
+
+  const loadLogs = async () => {
+    try {
+      setLogsLoading(true);
+      setLogsError(null);
+      const resp = await ebayApi.getTestListingLogs({ limit: 50, offset: 0 });
+      setLogs(resp.items || []);
+      setLogsTotal(resp.total || 0);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load test-listing logs', e);
+      setLogsError(e?.response?.data?.detail || e.message || 'Failed to load logs');
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadConfig();
+    void loadLogs();
+  }, []);
+
+  const handleLoadPayload = async () => {
+    const raw = (legacyInventoryId || '').trim();
+    const parsed = Number(raw);
+    if (!raw || !Number.isFinite(parsed) || parsed <= 0) {
+      setPayloadError('Enter a valid legacy Inventory ID (tbl_parts_inventory.ID)');
+      setPayload(null);
+      return;
+    }
+
+    try {
+      setPayloadLoading(true);
+      setPayloadError(null);
+      const data = await ebayApi.getTestListingPayloadPreview(parsed);
+      setPayload(data);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load test-listing payload preview', e);
+      setPayloadError(e?.response?.data?.detail || e.message || 'Failed to load payload preview');
+      setPayload(null);
+    } finally {
+      setPayloadLoading(false);
+    }
+  };
+
+  const getEbayExpectedHelp = (
+    key: string,
+    fieldValue: string | null | undefined,
+    currentPayload: TestListingPayloadResponseDto | null,
+  ): string | null => {
+    const v = (fieldValue ?? '').toString().trim();
+    const status = currentPayload?.legacy_status_name || currentPayload?.legacy_status_code || '';
+
+    switch (key) {
+      case 'sku':
+        return 'eBay expects a stable SKU/merchant-managed identifier used to find/create inventory items and offers. We use the legacy numeric SKU value.';
+      case 'title':
+        return 'eBay expects a short item title (typically max 80 chars for many flows). Should be clear, keyword-rich, and not contain prohibited text.';
+      case 'price':
+        return 'eBay expects a numeric price for Buy It Now (fixed price). Must be > 0. Currency is determined by marketplace/account settings.';
+      case 'quantity':
+        return 'eBay expects available quantity for the offer. For our parts workflow this is usually 1.';
+      case 'condition_id':
+        return 'eBay expects a valid Condition ID for the selected category (e.g., Used, New, For parts). Our ConditionID comes from internal dictionaries and must match an eBay-accepted condition for that category.';
+      case 'pictures':
+        return 'eBay expects at least 1 image URL (often more recommended). Images must be accessible via HTTPS and meet eBay image requirements (no watermarks, adequate resolution, etc.).';
+      case 'shipping_group': {
+        // Try to extract code + label from value like "4: no international"
+        const code = v.split(':')[0]?.trim() || v;
+        const label = v.includes(':') ? v.split(':').slice(1).join(':').trim() : '';
+        return [
+          'eBay itself does not understand our internal “ShippingGroup” code.',
+          'This code is our internal policy preset that determines what shipping options we will apply when creating/updating the eBay offer/shipping policy.',
+          `Current value: ${v || '—'}`,
+          code ? `- Internal code: ${code}` : null,
+          label ? `- Internal meaning: ${label}` : null,
+          'Example: “no international” means we should configure the eBay offer/policy to disallow international shipping and restrict to domestic services only.',
+        ]
+          .filter(Boolean)
+          .join('\n');
+      }
+      case 'shipping_type':
+        return 'eBay shipping pricing type is typically Flat (fixed amount) or Calculated (based on package/zone). We store this as a hint for which shipping policy/fees to apply.';
+      case 'listing_type':
+        return 'For this test tool we only support Buy It Now / fixed price listings. Expected value: FixedPriceItem.';
+      case 'listing_duration':
+        return "For fixed price items, duration is often GTC (Good 'Til Cancelled) or a fixed number of days depending on marketplace/policy.";
+      case 'site_id':
+        return 'Marketplace/site identifier (e.g. eBay US). This must match the account marketplace we will publish to.';
+      case 'category':
+        return 'eBay requires a category. We store an internal Category (and optional External/eBay category fields) in tbl_parts_detail; it must map to a valid eBay category for publishing.';
+      case 'mpn':
+        return 'Manufacturer Part Number (MPN). Often optional but improves search; required in some categories unless “Does not apply” is allowed.';
+      case 'upc':
+        return 'Product identifier (UPC/EAN/ISBN). Often optional; in some categories you can use “Does not apply”.';
+      case 'part_number':
+        return 'Internal/Manufacturer part number. Used as an item identifier in many categories; may be required depending on category specifics.';
+      case 'weight':
+      case 'unit':
+        return 'Package weight is used for calculated shipping and carrier labels. For flat shipping it may still be needed for internal logistics and label purchase.';
+      case 'description':
+        return 'Long description (HTML/text). eBay requires a description for most categories; HTML must be safe/allowed. Our worker may transform or template this later.';
+      default:
+        // For pic_url_1..12
+        if (key.startsWith('pic_url_')) {
+          return 'Image URL. Must be publicly accessible via HTTPS and meet eBay image requirements.';
+        }
+        if (key === 'legacy_inventory_id') {
+          return `Internal: this is the legacy inventory row id used only to load data. Current legacy status: ${status || '—'}.`;
+        }
+        return null;
+    }
+  };
+
+  const formatHelp = (field: TestListingPayloadFieldDto): string | null => {
+    // Prefer backend-provided help (full semantics + lookup rows)
+    const h = field.help;
+    if (h && h.ebay_expected) {
+      const parts: string[] = [];
+      parts.push(`eBay expects:\n${String(h.ebay_expected).trim()}`);
+      if (h.internal_semantics) {
+        parts.push(`\nOur internal meaning:\n${String(h.internal_semantics).trim()}`);
+      }
+      if (h.lookup_rows) {
+        try {
+          parts.push(`\nLookup metadata:\n${JSON.stringify(h.lookup_rows, null, 2)}`);
+        } catch {
+          parts.push(`\nLookup metadata:\n${String(h.lookup_rows)}`);
+        }
+      }
+      return parts.join('\n');
+    }
+
+    // Fallback to local hardcoded help (older payloads)
+    return getEbayExpectedHelp(field.key, field.value, payload);
+  };
+
+  const FieldRow: React.FC<{ field: TestListingPayloadFieldDto }> = ({ field }) => {
+    const value = (field.value ?? '').toString();
+    const missing = Boolean(field.missing);
+    const sourcesText = (field.sources || [])
+      .map((s) => `${s.table}.${s.column}`)
+      .join(' → ');
+    const ebayHelp = formatHelp(field);
+
+    return (
+      <div className="flex items-start justify-between gap-3 border-b last:border-b-0 py-1">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-800">{field.label}</span>
+            {ebayHelp && (
+              <span className="relative inline-flex items-center group">
+                <Info className="h-3.5 w-3.5 text-gray-500" />
+                <span className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute z-20 left-0 top-5 w-[360px] max-w-[80vw] whitespace-pre-wrap rounded border bg-white shadow px-2 py-1 text-[11px] text-gray-800">
+                  {ebayHelp}
+                </span>
+              </span>
+            )}
+            {field.required && (
+              <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px] font-semibold">
+                REQUIRED
+              </span>
+            )}
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                missing ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+              }`}
+              title={sourcesText || undefined}
+            >
+              {missing ? 'MISSING' : 'OK'}
+            </span>
+          </div>
+          <div className={`text-[11px] mt-0.5 ${missing ? 'text-red-700' : 'text-gray-700'}`}>
+            {value ? <span className="font-mono break-all">{value}</span> : <span className="text-gray-400">—</span>}
+          </div>
+          {sourcesText && <div className="text-[10px] text-gray-500 mt-0.5">{sourcesText}</div>}
+        </div>
+      </div>
+    );
+  };
+
+  const buildPlannedHttpPreview = () => {
+    const sku = payload?.sku || '—';
+
+    const offerLookup = prepareData?.http_offer_lookup || null;
+    const publishPlanned = prepareData?.http_publish_planned || null;
+
+    const lines: string[] = [];
+    lines.push('=== EBAY HTTP TRANSCRIPT (what will be executed when you click LIST) ===');
+    lines.push('');
+
+    if (offerLookup?.request) {
+      const req = offerLookup.request;
+      lines.push(`${req.method || 'GET'} ${req.url || ''}`.trim());
+      lines.push('headers:');
+      lines.push(JSON.stringify(req.headers || {}, null, 2));
+      if (req.body !== undefined && req.body !== null) {
+        lines.push('body:');
+        lines.push(JSON.stringify(req.body, null, 2));
+      }
+      lines.push('');
+      if (offerLookup.response) {
+        lines.push(`HTTP ${offerLookup.response.status_code ?? ''}`.trim());
+        lines.push('headers:');
+        lines.push(JSON.stringify(offerLookup.response.headers || {}, null, 2));
+        lines.push('body:');
+        lines.push(JSON.stringify(offerLookup.response.body ?? null, null, 2));
+      }
+    } else {
+      lines.push(`GET /sell/inventory/v1/offer?sku=${encodeURIComponent(String(sku))}`);
+      lines.push('headers:');
+      lines.push(JSON.stringify({ Authorization: 'Bearer *** (masked)', Accept: 'application/json' }, null, 2));
+      lines.push('');
+      lines.push('HTTP <pending>');
+      lines.push('body:');
+      lines.push('<pending>');
+    }
+
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+
+    const publishReq = publishPlanned?.request || null;
+    if (publishReq) {
+      lines.push(`${publishReq.method || 'POST'} ${publishReq.url || ''}`.trim());
+      lines.push('headers:');
+      lines.push(JSON.stringify(publishReq.headers || {}, null, 2));
+      lines.push('body:');
+      lines.push(JSON.stringify(publishReq.body ?? null, null, 2));
+    } else {
+      lines.push('POST /sell/inventory/v1/bulk_publish_offer');
+      lines.push('headers:');
+      lines.push(JSON.stringify({ Authorization: 'Bearer *** (masked)', 'Content-Type': 'application/json' }, null, 2));
+      lines.push('body:');
+      lines.push(JSON.stringify({ requests: [{ offerId: `<offerId_resolved_for_sku_${sku}>` }] }, null, 2));
+    }
+
+    return lines.join('\n');
+  };
+
+  const openPreview = () => {
+    setListError(null);
+    setPrepareError(null);
+    setPrepareData(null);
+    setPreviewOpen(true);
+
+    // Kick off real HTTP prepare (offer lookup) for “real feel” preview.
+    if (!payload) return;
+    setPrepareLoading(true);
+    void ebayApi
+      .prepareTestListingLegacyInventory(payload.legacy_inventory_id)
+      .then((data) => setPrepareData(data))
+      .catch((e: any) => {
+        // eslint-disable-next-line no-console
+        console.error('Failed to prepare real HTTP preview', e);
+        setPrepareError(e?.response?.data?.detail || e.message || 'Failed to prepare preview');
+      })
+      .finally(() => setPrepareLoading(false));
+  };
+
+  const handleConfirmList = async () => {
+    if (!payload) return;
+    try {
+      setListLoading(true);
+      setListError(null);
+      const resp = await ebayApi.listTestListingLegacyInventory({
+        legacy_inventory_id: payload.legacy_inventory_id,
+        force: true,
+      });
+      const nextTrace: WorkerDebugTrace | null = (resp?.trace || null) as WorkerDebugTrace | null;
+      setTerminalTrace(nextTrace);
+      setSelectedLogDetail(null);
+      setTerminalOpen(true);
+      setPreviewOpen(false);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to LIST (test listing)', e);
+      setListError(e?.response?.data?.detail || e.message || 'Failed to LIST');
+    } finally {
+      setListLoading(false);
+    }
+  };
+
+  const handleToggleDebug = async () => {
+    if (!config) return;
+    try {
+      const next = await ebayApi.updateTestListingConfig({
+        debug_enabled: !config.debug_enabled,
+      });
+      setConfig(next);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to update debug flag', e);
+      setConfigError(e?.response?.data?.detail || e.message || 'Failed to update debug flag');
+    }
+  };
+
+  const handleChangeStatus = async (value: string) => {
+    try {
+      const next = await ebayApi.updateTestListingConfig({
+        test_inventory_status: value,
+      });
+      setConfig(next);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to update test status', e);
+      setConfigError(e?.response?.data?.detail || e.message || 'Failed to update test status');
+    }
+  };
+
+  const handleChangeMaxItems = async (value: string) => {
+    if (!config) return;
+    const parsed = parseInt(value || '0', 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    try {
+      const next = await ebayApi.updateTestListingConfig({
+        max_items_per_run: parsed,
+      } as any);
+      setConfig(next);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to update max_items_per_run', e);
+      setConfigError(e?.response?.data?.detail || e.message || 'Failed to update max items');
+    }
+  };
+
+  const handleRunOnce = async () => {
+    try {
+      setRunLoading(true);
+      setRunMessage(null);
+      const resp = await ebayApi.runTestListingOnce();
+      setRunMessage(
+        `Run complete: selected=${resp.items_selected}, processed=${resp.items_processed}, success=${resp.items_success}, failed=${resp.items_failed}`,
+      );
+      await loadLogs();
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to run test-listing once', e);
+      setRunMessage(e?.response?.data?.detail || e.message || 'Failed to run test-listing');
+    } finally {
+      setRunLoading(false);
+    }
+  };
+
+  const handleOpenLog = async (logId: number) => {
+    try {
+      const detail = await ebayApi.getTestListingLogDetail(logId);
+      setSelectedLogDetail(detail);
+      setTerminalTrace((detail?.trace || null) as WorkerDebugTrace | null);
+      setTerminalOpen(true);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load test-listing log detail', e);
+      setLogsError(e?.response?.data?.detail || e.message || 'Failed to load log detail');
+    }
+  };
+
+  const trace: WorkerDebugTrace | null =
+    terminalTrace || ((selectedLogDetail?.trace || null) as WorkerDebugTrace | null);
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <FixedHeader />
+      <main className="w-full pt-14 px-4 sm:px-6 lg:px-10 py-4">
+        <div className="w-full mx-auto space-y-4">
+          <h1 className="text-xl font-semibold mb-1">Legacy Offer Publish Debug</h1>
+          <p className="text-xs text-gray-600 max-w-3xl mb-2">
+            Интерфейс для тестового листинга через существующий eBay listing worker. Здесь можно включить глубокий
+            debug, выбрать статус Inventory для теста и запускать тест-листинг с сохранением полного HTTP-трейса.
+          </p>
+
+          <Card className="p-0">
+            <CardHeader className="py-2 px-3 pb-1 flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold">Configuration</CardTitle>
+            </CardHeader>
+            <CardContent className="py-2 px-3 space-y-2 text-xs">
+              {configLoading && <div className="text-gray-600">Loading config…</div>}
+              {configError && <div className="text-red-600">{configError}</div>}
+              {config && (
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-700">Debug mode</span>
+                    <button
+                      type="button"
+                      className="relative inline-flex h-5 w-10 items-center rounded-full border border-gray-300 bg-white transition-colors"
+                      onClick={handleToggleDebug}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-gray-400 shadow transition-transform ${
+                          config.debug_enabled ? 'translate-x-5 bg-green-500' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <span className="text-[11px] text-gray-500">
+                      {config.debug_enabled
+                        ? 'Full WorkerDebugTrace (headers + JSON body) will be persisted for each run.'
+                        : 'Only summary will be returned; heavy HTTP trace is not stored.'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-700">Test Inventory status</span>
+                    <select
+                      className="border rounded px-2 py-1 text-[11px]"
+                      value={config.test_inventory_status || ''}
+                      onChange={(e) => handleChangeStatus(e.target.value)}
+                    >
+                      <option value="">— not configured —</option>
+                      {INVENTORY_STATUS_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[11px] text-gray-500">
+                      Inventory.rows с этим статусом и пустым ebay_listing_id будут кандидатами для тест-листинга.
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-700">Max items per run</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      className="border rounded px-2 py-1 text-[11px] w-20"
+                      value={config.max_items_per_run}
+                      onChange={(e) => handleChangeMaxItems(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      className="px-3 py-1 rounded bg-blue-600 text-white text-[11px] font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      onClick={handleRunOnce}
+                      disabled={runLoading}
+                    >
+                      {runLoading ? 'Running…' : 'Run test-listing once'}
+                    </button>
+                    {runMessage && (
+                      <span className="text-[11px] text-gray-700">{runMessage}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="p-0">
+            <CardHeader className="py-2 px-3 pb-1 flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold">Payload preview (by legacy Inventory ID)</CardTitle>
+            </CardHeader>
+            <CardContent className="py-2 px-3 space-y-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-gray-700">Legacy Inventory ID</span>
+                <input
+                  className="border rounded px-2 py-1 text-[11px] w-40"
+                  placeholder="e.g. 501610"
+                  value={legacyInventoryId}
+                  onChange={(e) => setLegacyInventoryId(e.target.value.replace(/[^0-9]/g, ''))}
+                />
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded bg-black text-white text-[11px] font-medium hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  onClick={() => void handleLoadPayload()}
+                  disabled={payloadLoading}
+                >
+                  {payloadLoading ? 'Loading…' : 'Load preview'}
+                </button>
+                {payload && (
+                  <span className="text-[11px] text-gray-600">
+                    SKU={payload.sku || '—'} • status={payload.legacy_status_name || payload.legacy_status_code || '—'} •
+                    parts_detail_id={payload.parts_detail_id ?? '—'}
+                  </span>
+                )}
+              </div>
+
+              {payloadError && <div className="text-red-600">{payloadError}</div>}
+              {payloadLoading && <div className="text-gray-600">Building payload preview…</div>}
+
+              {payload && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="border rounded bg-white">
+                    <div className="px-2 py-1 border-b bg-gray-50 flex items-center justify-between">
+                      <div className="font-semibold text-gray-800">Mandatory</div>
+                      <div className="text-[11px] text-gray-500">
+                        Missing:{' '}
+                        {payload.mandatory_fields.filter((f) => f.missing).length}/{payload.mandatory_fields.length}
+                      </div>
+                    </div>
+                    <div className="px-2">
+                      {payload.mandatory_fields.map((f) => (
+                        <FieldRow key={f.key} field={f} />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="border rounded bg-white">
+                    <div className="px-2 py-1 border-b bg-gray-50 flex items-center justify-between">
+                      <div className="font-semibold text-gray-800">Optional</div>
+                      <div className="text-[11px] text-gray-500">
+                        Filled:{' '}
+                        {payload.optional_fields.filter((f) => !f.missing).length}/{payload.optional_fields.length}
+                      </div>
+                    </div>
+                    <div className="px-2">
+                      {payload.optional_fields.map((f) => (
+                        <FieldRow key={f.key} field={f} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {payload && (
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    className="px-3 py-1 rounded bg-purple-700 text-white text-[11px] font-medium hover:bg-purple-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    onClick={openPreview}
+                    disabled={!payload || payloadLoading}
+                  >
+                    TEST LIST (preview)
+                  </button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="p-0">
+            <CardHeader className="py-2 px-3 pb-1 flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold">Recent test-listing runs</CardTitle>
+            </CardHeader>
+            <CardContent className="py-2 px-3 text-xs">
+              {logsLoading && <div className="text-gray-600 mb-1">Loading logs…</div>}
+              {logsError && <div className="text-red-600 mb-1">{logsError}</div>}
+              {!logsLoading && logs.length === 0 && (
+                <div className="text-gray-600">No test-listing logs yet.</div>
+              )}
+              {logs.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-[11px] border">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="px-2 py-1 text-left">ID</th>
+                        <th className="px-2 py-1 text-left">Created at</th>
+                        <th className="px-2 py-1 text-left">Status</th>
+                        <th className="px-2 py-1 text-left">Mode</th>
+                        <th className="px-2 py-1 text-left">Account</th>
+                        <th className="px-2 py-1 text-left">Error</th>
+                        <th className="px-2 py-1 text-left">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {logs.map((row) => (
+                        <tr key={row.id} className="border-t hover:bg-gray-50">
+                          <td className="px-2 py-1 whitespace-nowrap">{row.id}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            {formatDateTimeLocal(row.created_at)}
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                row.status === 'SUCCESS'
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}
+                            >
+                              {row.status}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap">{row.mode}</td>
+                          <td className="px-2 py-1 whitespace-nowrap max-w-xs truncate">
+                            {row.account_label || '—'}
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap max-w-xs truncate">
+                            {row.error_message || '—'}
+                          </td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            <button
+                              type="button"
+                              className="px-2 py-0.5 border rounded text-[11px] bg-white hover:bg-gray-50"
+                              onClick={() => void handleOpenLog(row.id)}
+                            >
+                              Open terminal
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="mt-1 text-[11px] text-gray-500">Total: {logsTotal}</div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+
+      <WorkerDebugTerminalModal
+        isOpen={terminalOpen && !!trace}
+        onClose={() => {
+          setTerminalOpen(false);
+          setTerminalTrace(null);
+          setSelectedLogDetail(null);
+        }}
+        trace={trace}
+      />
+
+      <Dialog open={previewOpen} onOpenChange={(open) => !open && setPreviewOpen(false)}>
+        <DialogContent className="max-w-6xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold">
+              Preview test listing request (Review → LIST)
+            </DialogTitle>
+          </DialogHeader>
+
+          {!payload && <div className="text-xs text-gray-600">Load payload preview first.</div>}
+
+          {payload && (
+            <div className="space-y-3">
+              <div className="text-[11px] text-gray-600">
+                legacy_inventory_id={payload.legacy_inventory_id} • sku={payload.sku || '—'}
+                {prepareData?.account_label && (
+                  <span>
+                    {' '}
+                    • account={prepareData.account_label}
+                  </span>
+                )}
+                {prepareData?.offer_id && (
+                  <span>
+                    {' '}
+                    • offerId={prepareData.offer_id}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className="border rounded bg-white">
+                  <div className="px-2 py-1 border-b bg-gray-50 text-xs font-semibold text-gray-800">
+                    Full HTTP call preview (masked)
+                  </div>
+                  {prepareLoading && (
+                    <div className="p-2 text-[11px] text-gray-600">Preparing real HTTP preview (offer lookup)…</div>
+                  )}
+                  {prepareError && (
+                    <div className="p-2 text-[11px] text-red-600">
+                      Prepare failed: {String(prepareError)}
+                    </div>
+                  )}
+                  <pre className="p-2 text-[11px] whitespace-pre-wrap break-all">
+                    {buildPlannedHttpPreview()}
+                  </pre>
+                </div>
+
+                <div className="border rounded bg-white">
+                  <div className="px-2 py-1 border-b bg-gray-50 text-xs font-semibold text-gray-800">
+                    Variables / payload fields to be used for listing
+                  </div>
+                  <div className="p-2 text-[11px] space-y-2">
+                    <div className="font-semibold text-gray-800">Mandatory</div>
+                    <div className="border rounded">
+                      {payload.mandatory_fields.map((f) => (
+                        <div key={f.key} className="px-2 py-1 border-b last:border-b-0">
+                          <span className="font-medium">{f.key}</span>
+                          {' = '}
+                          <span className="font-mono">{String(f.value ?? '—')}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="font-semibold text-gray-800">Optional</div>
+                    <div className="border rounded max-h-[240px] overflow-auto">
+                      {payload.optional_fields.map((f) => (
+                        <div key={f.key} className="px-2 py-1 border-b last:border-b-0">
+                          <span className="font-medium">{f.key}</span>
+                          {' = '}
+                          <span className="font-mono">{String(f.value ?? '—')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {listError && <div className="text-xs text-red-600">{listError}</div>}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded border text-[11px] bg-white hover:bg-gray-50"
+                  onClick={() => setPreviewOpen(false)}
+                  disabled={listLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded bg-green-700 text-white text-[11px] font-medium hover:bg-green-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  onClick={() => void handleConfirmList()}
+                  disabled={listLoading}
+                >
+                  {listLoading ? 'Listing…' : 'LIST'}
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default AdminTestListingPage;

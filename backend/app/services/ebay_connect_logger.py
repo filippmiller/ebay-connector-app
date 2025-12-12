@@ -13,6 +13,7 @@ class EbayConnectLogger:
         request: Optional[Dict[str, Any]] = None,
         response: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> None:
         try:
             db.create_connect_log(
@@ -22,6 +23,7 @@ class EbayConnectLogger:
                 request=request,
                 response=response,
                 error=error,
+                source=source,
             )
         except Exception as e:
             logger.error(f"Failed to log eBay connect event {action}: {type(e).__name__}: {str(e)}")

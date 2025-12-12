@@ -1,0 +1,102 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - button "ORDERS" [ref=e7] [cursor=pointer]
+        - button "BUYING" [ref=e8] [cursor=pointer]
+        - button "SKU" [ref=e9] [cursor=pointer]
+        - button "LISTING" [ref=e10] [cursor=pointer]
+        - button "INVENTORY" [ref=e11] [cursor=pointer]
+        - button "SHIPPING" [ref=e12] [cursor=pointer]
+        - button "RETURNS" [ref=e13] [cursor=pointer]
+        - button "CASES/DISPUTES" [ref=e14] [cursor=pointer]
+        - button "MESSAGES" [ref=e15] [cursor=pointer]
+        - button "OFFERS" [ref=e16] [cursor=pointer]
+        - button "ADMIN" [ref=e17] [cursor=pointer]
+      - generic [ref=e18]:
+        - generic [ref=e19]: "Build #9 • HEAD@d5303a3 • 11/13/2025 21:05"
+        - generic [ref=e20]: filippmiller@gmail.com
+        - button "Logout" [ref=e21] [cursor=pointer]:
+          - img
+          - text: Logout
+  - main [ref=e22]:
+    - generic [ref=e23]:
+      - heading "eBay Connection Management" [level=1] [ref=e24]
+      - generic [ref=e25]:
+        - tablist [ref=e26]:
+          - tab "eBay Connection" [selected] [ref=e27] [cursor=pointer]
+          - tab "Sync Data" [ref=e28] [cursor=pointer]
+          - tab "🔧 API Debugger" [ref=e29] [cursor=pointer]
+          - tab "Connection Terminal" [ref=e30] [cursor=pointer]
+        - tabpanel "eBay Connection" [ref=e31]:
+          - generic [ref=e32]:
+            - generic [ref=e33]:
+              - generic [ref=e34]: eBay Connection Status
+              - generic [ref=e35]: Manage your eBay API connection
+            - generic [ref=e36]:
+              - generic [ref=e37]:
+                - generic [ref=e38]:
+                  - generic [ref=e39]: "Environment:"
+                  - generic [ref=e40]: Sandbox (Testing)
+                - generic [ref=e41]:
+                  - generic [ref=e42]: Sandbox
+                  - 'switch "Environment: Sandbox Production" [disabled] [ref=e43]'
+                  - generic [ref=e44]: Production
+              - alert [ref=e45]:
+                - generic [ref=e46]:
+                  - text: "Disconnect to change environment. Currently using:"
+                  - strong [ref=e47]: sandbox
+              - generic [ref=e48]:
+                - generic [ref=e49]:
+                  - text: "Status:"
+                  - generic [ref=e50]:
+                    - img [ref=e51]
+                    - text: Connected
+                - generic [ref=e54]: "Expires: 11/13/2025, 8:14:11 PM"
+              - generic [ref=e55]:
+                - button "Test eBay API" [ref=e56] [cursor=pointer]
+                - button "Disconnect from eBay" [ref=e57] [cursor=pointer]
+              - generic [ref=e58]:
+                - heading "About eBay OAuth" [level=3] [ref=e59]
+                - paragraph [ref=e60]: To connect to eBay, you need to provide your eBay API credentials (Client ID, Client Secret, and Redirect URI) in the backend configuration. Once configured, clicking "Connect to eBay" will redirect you to eBay's authorization page where you can grant access to your eBay account.
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - generic [ref=e63]: Connection Request Preview
+              - generic [ref=e64]: Preview of the authorization request that will be sent to eBay for the selected environment.
+            - generic [ref=e65]:
+              - generic [ref=e66]:
+                - generic [ref=e67]:
+                  - heading "Environment" [level=4] [ref=e68]
+                  - generic [ref=e69]: 🧪 Sandbox
+                  - generic [ref=e70]: "Redirect URI: https://ebay-connector-frontend.pages.dev/ebay/callback"
+                - generic [ref=e71]:
+                  - generic [ref=e72]: "Method: GET"
+                  - generic [ref=e73]: "URL: https://auth.sandbox.ebay.com/oauth2/authorize"
+              - generic [ref=e74]:
+                - heading "Query Parameters" [level=4] [ref=e75]
+                - generic [ref=e78]:
+                  - generic [ref=e79]: "response_type: code"
+                  - generic [ref=e80]: "redirect_uri: https://ebay-connector-frontend.pages.dev/ebay/callback"
+                  - generic [ref=e81]: "scope: https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.account https://api.ebay.com/oauth/api_scope/sell.fulfillment https://api.ebay.com/oauth/api_scope/sell.finances https://api.ebay.com/oauth/api_scope/sell.inventory"
+                  - generic [ref=e82]: "state: generated server-side"
+                - generic [ref=e83]:
+                  - heading "Raw Authorization URL" [level=4] [ref=e84]
+                  - generic [ref=e85]: GET https://auth.sandbox.ebay.com/oauth2/authorize?response_type=code&redirect_uri=https%3A%2F%2Febay-connector-frontend.pages.dev%2Febay%2Fcallback&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope+https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope%2Fsell.account+https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope%2Fsell.fulfillment+https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope%2Fsell.finances+https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope%2Fsell.inventory&state=generated+server-side&client_id=configured+server-side
+                  - paragraph [ref=e86]: Actual values (client_id/state) задаются сервером и логируются в “Connection Terminal”.
+          - generic [ref=e87]:
+            - generic [ref=e88]:
+              - generic [ref=e89]: Connection Terminal
+              - generic [ref=e90]: Real-time history of connect requests and responses. Data is stored in the database for diagnostics.
+            - generic [ref=e91]:
+              - generic [ref=e93]:
+                - button "Save JSON" [ref=e94] [cursor=pointer]
+                - button "Save NDJSON" [ref=e95] [cursor=pointer]
+                - button "Save TXT" [ref=e96] [cursor=pointer]
+              - generic [ref=e97]:
+                - img [ref=e98]
+                - text: Loading connection logs...
+              - generic [ref=e103]: No connection events yet. Click "Connect to eBay" to generate logs.
+```

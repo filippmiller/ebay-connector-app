@@ -1,7 +1,16 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import api from "@/lib/apiClient";
 
-type User = { id: string; email: string; username: string; role: string; is_active: boolean; created_at: string; ebay_connected: boolean };
+type User = {
+  id: string;
+  email: string;
+  username: string;
+  role: string;
+  is_active: boolean;
+  must_change_password?: boolean;
+  created_at: string;
+  ebay_connected: boolean;
+};
 type AuthContextShape = {
   user: User | null;
   loading: boolean;
@@ -57,7 +66,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       console.log("[Auth] Login successful, token received");
       localStorage.setItem("auth_token", token);
-      
+
       // Await refreshMe to ensure user is set before login completes
       console.log("[Auth] Fetching user data...");
       await refreshMe();
@@ -110,3 +119,4 @@ export const useAuth = () => {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 };
+

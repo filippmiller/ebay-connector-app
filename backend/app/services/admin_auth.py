@@ -13,5 +13,9 @@ async def get_current_admin_user(current_user: User = Depends(get_current_active
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
-        )
+    )
     return current_user
+
+
+# Alias used by new modules (e.g. accounting) for clarity
+require_admin_user = get_current_admin_user

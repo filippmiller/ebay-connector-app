@@ -1,0 +1,1410 @@
+# Gmail Integrations & AI Email Training
+
+This document tracks the implementation of a generic Integrations module with Gmail as the first connector, plus the email/AI training data layer.
+
+This iteration covers:
+
+- **Phase 0 – Audit** of existing code (backend, frontend, workers).
+- **Phase 1 – DB schema** (Alembic migrations + SQLAlchemy models + credentials encryption wiring).
+
+Subsequent iterations will add OAuth flows, admin UI, workers, and AI training views.
+
+---
+
+## Phase 2 – Backend: Gmail OAuth2 flow & basic API
+
+### Gmail ENV configuration
+
+Gmail-specific settings are added to the main backend config (`backend/app/config.py`) and exposed via the global `settings` object:
+
+- `GMAIL_CLIENT_ID: Optional[str]`
+- `GMAIL_CLIENT_SECRET: Optional[str]`
+- `GMAIL_OAUTH_REDIRECT_BASE_URL: Optional[str]`
+  - Public base URL for backend API, typically including the `/api` prefix.
+  - Example: `https://api.yourdomain.com/api`.
+  - The actual callback URL becomes `{GMAIL_OAUTH_REDIRECT_BASE_URL}/integrations/gmail/callback`.
+- `GMAIL_OAUTH_SCOPES: str`
+  - Space-separated scopes; default is `"https://www.googleapis.com/auth/gmail.readonly"`.
+
+These variables are documented and exemplified in `backend/.env.example`:
+
+- `GMAIL_OAUTH_REDIRECT_BASE_URL=https://api.yourdomain.com/api`
+- `GMAIL_CLIENT_ID=your-gmail-oauth-client-id`
+- `GMAIL_CLIENT_SECRET=your-gmail-oauth-client-secret`
+- `GMAIL_OAUTH_SCOPES=https://www.googleapis.com/auth/gmail.readonly`
+
+At runtime, router code reads them only via `from app.config import settings`, never directly from `os.environ`.
+
+### Gmail provider seeding
+
+The Gmail provider row is created **lazily** the first time a successful OAuth callback is processed.
+
+- Helper: `_ensure_gmail_provider(db: Session) -> IntegrationProvider` in
+  `backend/app/routers/integrations.py`.
+- Behavior:
+  - Queries `IntegrationProvider` where `code = "gmail"`.
+  - If found, returns it.
+  - Otherwise creates a new row:
+    - `code = "gmail"`
+    - `name = "Gmail"`
+    - `auth_type = "oauth2"`
+    - `default_scopes` – parsed from `settings.GMAIL_OAUTH_SCOPES` into a JSON list of strings.
+  - Flushes the session to obtain `id` and logs a short info line.
+
+There is no separate startup seeding step; the provider row is guaranteed to exist after the first successful Gmail integration.
+
+### OAuth endpoints
+
+All Gmail and Integrations backend endpoints are implemented in a new router:
+
+- File: `backend/app/routers/integrations.py`
+- Router registration in `backend/app/main.py`:
+  - Imported as `integrations` from `app.routers`.
+  - Included via `app.include_router(integrations.router)`.
+- Router prefix: `/integrations`
+  - Externally, with the Cloudflare `/api` proxy, these endpoints are reachable as `/api/integrations/...`.
+
+#### POST /api/integrations/gmail/auth-url
+
+**Path in code:** `@router.post("/gmail/auth-url")`
+
+**Purpose:**
+Return a Google OAuth URL that the frontend can redirect the browser to in order to connect a Gmail account for the currently authenticated user.
+
+**Auth:**
+
+- `current_user: User = Depends(get_current_active_user)` – standard authenticated user.
+
+**Logic:**
+
+1. Validate configuration:
+   - If `settings.GMAIL_CLIENT_ID` is missing, return HTTP 500 with a clear message (`"Gmail OAuth is not configured (missing GMAIL_CLIENT_ID)"`).
+2. Compute redirect URI:
+   - Use `_get_gmail_redirect_uri()` helper:
+     - `base = settings.GMAIL_OAUTH_REDIRECT_BASE_URL`.
+     - Final `redirect_uri = base.rstrip("/") + "/integrations/gmail/callback"`.
+3. Build `state` JSON payload:
+
+   ```json
+   {
+     "owner_user_id": "<current_user.id>",
+     "nonce": "<ISO8601 timestamp>"
+   }
+   ```
+
+   - Serialized via `json.dumps`.
+4. Compute scopes:
+   - `scopes_raw = settings.GMAIL_OAUTH_SCOPES or "https://www.googleapis.com/auth/gmail.readonly"`.
+   - Split on whitespace to get list; join with a single space for the `scope` query param.
+5. Construct Google OAuth URL:
+   - Base: `https://accounts.google.com/o/oauth2/v2/auth`.
+   - Query parameters:
+     - `client_id = settings.GMAIL_CLIENT_ID`
+     - `redirect_uri = <computed redirect_uri>`
+     - `response_type = "code"`
+     - `scope = <space-separated scopes>`
+     - `access_type = "offline"` (we need refresh tokens)
+     - `prompt = "consent"` (ensures refresh_token is returned on first connect)
+     - `state = <JSON string from step 3>`
+   - Final URL is built using `urllib.parse.urlencode`.
+6. Log a short info entry (user id and redirect_uri).
+
+**Response JSON:**
+
+```json
+{
+  "auth_url": "https://accounts.google.com/o/oauth2/v2/auth?..."
+}
+```
+
+No tokens or secrets are returned or logged.
+
+#### GET /api/integrations/gmail/callback
+
+**Path in code:** `@router.get("/gmail/callback")`
+
+**Purpose:**
+Handle Google’s OAuth redirect, exchange the `code` for tokens, determine the Gmail address, and upsert `IntegrationProvider`, `IntegrationAccount`, and `IntegrationCredentials` rows.
+
+**Auth:**
+
+- No JWT-based auth; this route is hit by the browser after Google redirects back.
+- The owner is derived solely from the `state` parameter generated by `/gmail/auth-url`.
+
+**Query parameters:**
+
+- `code: str | None` – authorization code from Google.
+- `state: str | None` – JSON string containing `owner_user_id` and a nonce.
+
+**High-level behavior:**
+
+1. **Basic validation:**
+   - If `code` is missing → redirect to frontend:
+     - `FRONTEND_URL/admin/integrations?gmail=error&reason=missing_code`.
+   - If `state` is missing or cannot be parsed as JSON → redirect with `reason=missing_state` or `invalid_state`.
+   - Extract `owner_user_id` from parsed state; if missing → redirect with `reason=missing_owner`.
+2. **Token exchange:**
+   - Endpoint: `https://oauth2.googleapis.com/token`.
+   - POST form fields:
+     - `client_id = settings.GMAIL_CLIENT_ID`
+     - `client_secret = settings.GMAIL_CLIENT_SECRET`
+     - `code = <code from query>`
+     - `grant_type = "authorization_code"`
+     - `redirect_uri = _get_gmail_redirect_uri()` (must match the one used in `/auth-url`).
+   - Performed via `httpx.AsyncClient` with a 30-second timeout.
+   - If HTTP error or non-200 status → redirect with `reason=token_http` or `token_failed`.
+   - Parse JSON and extract:
+     - `access_token`
+     - `refresh_token` (may be `null` on re-consent)
+     - `expires_in` (seconds)
+3. **Profile lookup to determine Gmail address:**
+   - Call `GET https://gmail.googleapis.com/gmail/v1/users/me/profile` with header:
+     - `Authorization: Bearer <access_token>`.
+   - On 200, extract `emailAddress` as `profile_email`.
+   - On failure or missing `emailAddress`, log warning and redirect with `reason=profile_failed`.
+4. **DB upsert (inside a try/except with rollback on error):**
+   - Use SQLAlchemy session from `get_db()`.
+   - Ensure provider exists via `_ensure_gmail_provider(db)`.
+   - Optionally load owner `SAUser` row (for logging and serialization only).
+   - **IntegrationAccount:**
+     - Query by `(provider_id, owner_user_id, external_account_id=profile_email)`.
+     - If none:
+       - Create `IntegrationAccount` with:
+         - `provider_id = provider.id`
+         - `owner_user_id = owner_user_id`
+         - `external_account_id = profile_email`
+         - `display_name = f"Gmail – {profile_email}"`
+         - `status = "active"`
+       - `db.add(account)` and `db.flush()`.
+     - If exists:
+       - Ensure `status = "active"`.
+   - **IntegrationCredentials:**
+     - Query by `integration_account_id = account.id`.
+     - Create if missing (`IntegrationCredentials(integration_account_id=account.id)`).
+     - Set properties (these use the encryption helper under the hood):
+       - `creds.access_token = access_token`
+       - If `refresh_token` is present:
+         - `creds.refresh_token = refresh_token`
+         - If `refresh_token` is absent (common on re-consent), the previous stored value is preserved.
+       - If `expires_in` present:
+         - `creds.expires_at = now_utc + timedelta(seconds=expires_in)`.
+       - `creds.scopes`:
+         - From `token_payload["scope"]` if present, otherwise from `settings.GMAIL_OAUTH_SCOPES`.
+         - Stored as a list of individual scope strings.
+   - `db.commit()` on success; `db.rollback()` and log on any exception.
+5. **Redirect back to frontend:**
+   - On success:
+     - `FRONTEND_URL/admin/integrations?gmail=connected` (HTTP 302).
+   - On failure at any point:
+     - Redirect with `gmail=error&reason=<short_reason>` (never including sensitive details).
+
+No access_token or refresh_token is ever logged or returned to the client; both are stored only via the encrypted `IntegrationCredentials` model.
+
+### Integrations admin API
+
+The same router also exposes backend-only admin endpoints for listing and controlling `integrations_accounts`.
+
+All routes below are mounted under `/integrations` prefix → externally `/api/integrations/...`.
+
+#### GET /api/integrations/accounts
+
+**Path in code:** `@router.get("/accounts")`
+
+**Auth:**
+
+- `current_user: User = Depends(admin_required)` – admin-only.
+
+**Query parameters (optional):**
+
+- `provider: str | None` – filter by provider code (e.g., `"gmail"`).
+- `owner_user_id: str | None` – filter by owning user ID.
+
+**Logic:**
+
+- Query joins:
+  - `IntegrationAccount`
+  - `IntegrationProvider`
+  - `User` (SQLAlchemy model, aliased as `SAUser`) via left join for owner email.
+- Apply filters if provided.
+- Order by `provider.code`, then `account.display_name`.
+- Serialize each row using `_serialize_integration_account(...)`:
+
+  ```json
+  {
+    "id": "<integration_account_id>",
+    "provider_code": "gmail",
+    "provider_name": "Gmail",
+    "owner_user_id": "<user id>",
+    "owner_email": "user@example.com",
+    "external_account_id": "user@gmail.com",
+    "display_name": "Gmail – user@gmail.com",
+    "status": "active" | "disabled" | "error",
+    "last_sync_at": "2025-11-25T12:34:56+00:00" | null,
+    "meta": { ... }
+  }
+  ```
+
+**Response JSON:**
+
+```json
+{
+  "accounts": [ /* list of objects as above */ ],
+  "count": 1
+}
+```
+
+No credentials or tokens are included.
+
+#### POST /api/integrations/accounts/{id}/disable
+
+**Path in code:** `@router.post("/accounts/{account_id}/disable")`
+
+**Auth:**
+
+- Admin-only via `admin_required`.
+
+**Logic:**
+
+- Look up `IntegrationAccount` by `id`.
+- If not found → 404 `integration_account_not_found`.
+- Set `status = "disabled"`.
+- Commit and refresh.
+- Look up `IntegrationProvider` and owner `SAUser` for serialization.
+- Log an info line indicating which admin disabled which account.
+
+**Response:**
+
+- Same shape as a single entry from `GET /accounts` (serialized account).
+
+#### POST /api/integrations/accounts/{id}/enable
+
+**Path in code:** `@router.post("/accounts/{account_id}/enable")`
+
+- Mirror of `/disable`:
+  - Sets `status = "active"`.
+  - Returns updated serialized account.
+
+#### POST /api/integrations/accounts/{id}/resync
+
+**Path in code:** `@router.post("/accounts/{account_id}/resync")`
+
+**Purpose:**
+Mark an integration account for manual resync. Later, the Gmail worker will use this as a hint to prioritize the account.
+
+**Auth:**
+
+- Admin-only via `admin_required`.
+
+**Logic:**
+
+- Look up account by id; 404 if missing.
+- Copy current `account.meta` (or `{}` if `None`).
+- Set:
+
+  ```python
+  meta["manual_resync_requested_at"] = datetime.now(timezone.utc).isoformat()
+  account.meta = meta
+  ```
+
+- Commit & refresh.
+- Return serialized account as above.
+
+**Response:**
+
+- Same as `/disable` and `/enable`.
+
+### Testing checklist for Phase 2
+
+1. **Configure Gmail ENV variables (dev/local):**
+
+   - In `backend/.env.example` (or your real `.env`), set:
+
+   ```bash path=null start=null
+   GMAIL_OAUTH_REDIRECT_BASE_URL=https://api.yourdomain.com/api
+   GMAIL_CLIENT_ID=your-gmail-oauth-client-id
+   GMAIL_CLIENT_SECRET=your-gmail-oauth-client-secret
+   GMAIL_OAUTH_SCOPES=https://www.googleapis.com/auth/gmail.readonly
+   ```
+
+   - Ensure these are visible in the running backend via `settings.GMAIL_*`.
+
+2. **Start backend API:**
+
+   ```bash path=null start=null
+   poetry -C backend run uvicorn app.main:app --reload
+   ```
+
+3. **Test `POST /api/integrations/gmail/auth-url`:**
+
+   - Authenticate as a normal user (obtain a JWT via `/auth/login`).
+   - Call `POST /integrations/gmail/auth-url` with `Authorization: Bearer <token>`.
+   - Verify response JSON:
+
+     ```json
+     {
+       "auth_url": "https://accounts.google.com/o/oauth2/v2/auth?...client_id=...&redirect_uri=.../integrations/gmail/callback&scope=...&state=..."
+     }
+     ```
+
+   - Check that:
+     - `client_id` matches your `GMAIL_CLIENT_ID`.
+     - `redirect_uri` matches `{GMAIL_OAUTH_REDIRECT_BASE_URL}/integrations/gmail/callback`.
+     - `scope` contains `https://www.googleapis.com/auth/gmail.readonly` (or your configured scopes).
+
+4. **End-to-end OAuth test (with real credentials):**
+
+   - In the browser, navigate to the `auth_url` from step 3.
+   - Complete Google consent.
+   - Google will redirect to your backend callback; the backend then redirects to:
+     - `FRONTEND_URL/admin/integrations?gmail=connected` on success, or
+     - `...gmail=error&reason=...` on failure.
+   - After a successful run, verify in the database:
+     - `integrations_providers` has a row with `code = 'gmail'`.
+     - `integrations_accounts` has a row with:
+       - `provider_id` → Gmail provider.
+       - `owner_user_id` → your user id.
+       - `external_account_id` → your Gmail address.
+     - `integrations_credentials` has a row pointing to that account with non-null `access_token` and possibly `refresh_token` (encrypted).
+
+5. **Verify tokens are stored encrypted:**
+
+   - Directly query `integrations_credentials.access_token` and `refresh_token` from Postgres.
+   - Values should be opaque `ENC:v1:...` strings; no raw bearer tokens in the DB.
+
+6. **Test `GET /api/integrations/accounts` as admin:**
+
+   - Authenticate as an admin user.
+   - Call `GET /api/integrations/accounts`.
+   - Verify the Gmail account appears with correct `provider_code`, `external_account_id`, and `display_name`.
+   - Optionally filter:
+     - `GET /api/integrations/accounts?provider=gmail`.
+
+7. **Test enable/disable and resync endpoints:**
+
+   - `POST /api/integrations/accounts/{id}/disable` → `status` becomes `"disabled"`.
+   - `POST /api/integrations/accounts/{id}/enable` → `status` becomes `"active"`.
+   - `POST /api/integrations/accounts/{id}/resync` → `meta.manual_resync_requested_at` is set to a recent ISO timestamp.
+
+These backend capabilities complete **Phase 2**: Gmail OAuth wiring and a minimal yet functional Integrations admin API, ready to be consumed by the upcoming admin UI and Gmail sync worker.
+
+---
+
+## Phase 0 – Audit
+
+### Backend findings
+
+- **No existing generic "integrations" module**
+  - Searched for `integration`, `gmail`, `google`, `oauth` across `backend/app`.
+  - No tables or models named `integrations_*`, `emails_messages`, or `ai_training_pairs` exist.
+  - Existing OAuth/integration logic is **eBay-specific only**.
+
+- **Existing OAuth-style flow for eBay (good reference for Gmail later)**
+  - Router: `backend/app/routers/ebay.py` implements eBay auth/callback endpoints and scope handling.
+  - Supporting docs: `EBAY_OAUTH_TROUBLESHOOTING.md`, `EBAY_SETUP_GUIDE.md`, `docs/ebay-api-scopes-summary.md` explain the current OAuth patterns.
+  - Frontend pages `EbayConnectionPage.tsx` and `EbayCallbackPage.tsx` (see frontend findings) are wired to these endpoints.
+
+- **Existing encryption helper (reused for integrations)**
+  - Module: `backend/app/utils/crypto.py`.
+  - Implements AES-GCM encryption with versioned ciphertexts (`ENC:v1:` prefix) and derives the key from `settings.secret_key` via HKDF-SHA256.
+  - Already used by `User` ORM for eBay tokens:
+    - `User._ebay_access_token` / `User._ebay_refresh_token` columns.
+    - Properties `ebay_access_token`, `ebay_refresh_token`, `ebay_sandbox_*` call `crypto.encrypt` / `crypto.decrypt`.
+  - **Decision:** Reuse `app.utils.crypto.encrypt/decrypt` for `integrations_credentials` rather than introducing a second crypto helper or a new ENV key.
+
+- **Existing AI-related tables (context only)**
+  - `AiRule` → table `ai_rules` (analytics rules).
+  - `AiQueryLog` → table `ai_query_log`.
+  - `AiEbayCandidate` → table `ai_ebay_candidates`.
+  - `AiEbayAction` → table `ai_ebay_actions`.
+  - These confirm the project already uses dedicated AI tables and Alembic migrations (`ai_analytics_20251125.py`, `ai_ebay_candidates_20251125.py`, `ai_ebay_actions_20251125.py`).
+
+- **No pre-existing Gmail or generic email layer**
+  - No Gmail- or Google-specific modules under `backend/app/services` or `backend/app/routers`.
+  - No normalized `emails`/`messages` table independent of eBay messages – only eBay-specific message normalization exists in `docs/MESSAGES_NORMALIZATION.md` and related tables.
+
+### Frontend findings
+
+- **Admin dashboard has no "Integrations" section yet**
+  - File: `frontend/src/pages/AdminPage.tsx`.
+  - Existing admin cards: Background Jobs, Settings, Users, eBay Connection, DB Explorer, Data Migration, Notifications, Security Center, UI Tweak, AI Grid Playground, AI Rules, Monitoring Candidates, Model Profitability, Auto-Offer / Auto-Buy Actions, Timesheets, Todo List.
+  - **No card or route for a generic "Integrations" module or for Gmail specifically.**
+
+- **Existing OAuth-style flow is eBay-only**
+  - `frontend/src/pages/EbayConnectionPage.tsx` handles eBay connection management.
+  - `frontend/src/pages/EbayCallbackPage.tsx` handles the OAuth callback from eBay.
+  - There is an `oauth-smoke` Playwright test in `frontend/tests/oauth-smoke.spec.ts` that exercises the eBay OAuth flow.
+  - **Decision:** These will be used as reference patterns for Gmail OAuth, but a new Integrations UI will be added separately in later phases.
+
+### Worker patterns
+
+- **Worker entrypoints and loop patterns (to reuse for Gmail sync later)**
+  - `backend/app/workers/__init__.py` exports a set of worker loops:
+    - `run_token_refresh_worker_loop` – token refresh.
+    - `run_health_check_worker_loop` – health checks.
+    - `run_ebay_workers_loop` / `run_ebay_workers_once` – eBay data workers.
+    - `run_tasks_reminder_worker_loop` – reminders.
+    - `run_sniper_loop` – sniper executor.
+    - `run_monitoring_loop` – listing monitoring.
+    - `run_auto_offer_buy_loop` – auto-offer/auto-buy actions.
+  - `backend/app/workers/ebay_workers_loop.py` implements a canonical async loop:
+    - Calls `run_cycle_for_all_accounts()` from `app.services.ebay_workers`.
+    - Sleeps `interval_seconds` between cycles.
+  - Additional single-purpose workers follow the same style:
+    - `backend/app/workers/token_refresh_worker.py`.
+    - `backend/app/workers/health_check_worker.py`.
+    - `backend/app/workers/ebay_monitor_worker.py`.
+    - `backend/app/workers/sniper_executor.py`.
+
+- **Decision for Gmail worker**
+  - The future `gmail_sync` / `integrations-worker` will follow the same pattern:
+    - A dedicated module under `backend/app/workers/` with a `run_gmail_sync_loop` entrypoint.
+    - A service layer function that processes all active accounts (similar to `run_cycle_for_all_accounts`).
+  - No conflicting or overlapping generic integrations worker exists today, so the new worker can be introduced cleanly in a later phase.
+
+---
+
+## Phase 1 – DB schema
+
+Phase 1 introduces the generic **Integrations** schema and the **email + AI training data** layer, implemented via:
+
+- A new Alembic migration: `backend/alembic/versions/gmail_integrations_20251125.py`.
+- New SQLAlchemy ORM models in `backend/app/models_sqlalchemy/models.py`.
+- Wiring of encryption for credentials using the existing `app.utils.crypto` module.
+
+### Tables
+
+#### `integrations_providers`
+
+Catalog of integration providers (Gmail, eBay, Slack, etc.).
+
+- **Table name:** `integrations_providers`
+- **Columns:**
+  - `id` – `String(36)`, PK, UUID string.
+  - `code` – `String(64)`, **unique** provider code (`"gmail"`, `"slack"`, ...).
+  - `name` – `Text`, human-readable name (`"Gmail"`).
+  - `auth_type` – `String(32)`, e.g. `"oauth2"`, `"api_key"`, `"webhook"`.
+  - `default_scopes` – `JSONB`, optional default scope list.
+  - `created_at` – `DateTime(timezone=True)`, `server_default=func.now()`.
+  - `updated_at` – `DateTime(timezone=True)`, `server_default=func.now()`, `onupdate=func.now()`.
+- **Indexes / constraints:**
+  - `uq_integrations_providers_code` – unique index on `code`.
+- **Relationships:**
+  - One-to-many with `integrations_accounts` via `IntegrationProvider.accounts`.
+
+#### `integrations_accounts`
+
+Concrete connected accounts per provider and per owner (e.g. "Filipp – Gmail main").
+
+- **Table name:** `integrations_accounts`
+- **Columns:**
+  - `id` – `String(36)`, PK, UUID string.
+  - `provider_id` – `String(36)`, FK → `integrations_providers.id`, `ondelete="CASCADE"`, indexed.
+  - `owner_user_id` – `String(36)`, FK → `users.id`, `ondelete="SET NULL"`, nullable, indexed.
+  - `external_account_id` – `Text`, e.g. Gmail email address.
+  - `display_name` – `Text`, label shown in the UI.
+  - `status` – `String(32)`, default `"active"`, indexed (`"active" | "error" | "disabled"`).
+  - `last_sync_at` – `DateTime(timezone=True)`, nullable.
+  - `meta` – `JSONB`, arbitrary metadata (granted scopes, labels, etc.).
+  - `created_at` – `DateTime(timezone=True)`, `server_default=func.now()`.
+  - `updated_at` – `DateTime(timezone=True)`, `server_default=func.now()`, `onupdate=func.now()`.
+- **Indexes:**
+  - `idx_integrations_accounts_provider_id` on `provider_id`.
+  - `idx_integrations_accounts_owner_user_id` on `owner_user_id`.
+  - Implicit index on `status` via ORM model.
+- **Relationships (ORM):**
+  - `provider` – `IntegrationProvider`.
+  - `owner` – `User`.
+  - `credentials` – `IntegrationCredentials` (one-to-one in practice).
+  - `email_messages` – collection of `EmailMessage`.
+  - `training_pairs` – collection of `AiEmailTrainingPair`.
+
+#### `integrations_credentials`
+
+Encrypted access/refresh tokens and scopes for an `IntegrationAccount`.
+
+- **Table name:** `integrations_credentials`
+- **Columns:**
+  - `id` – `String(36)`, PK, UUID string.
+  - `integration_account_id` – `String(36)`, FK → `integrations_accounts.id`, `ondelete="CASCADE"`, indexed.
+  - `access_token` – `Text`, encrypted string at rest.
+  - `refresh_token` – `Text`, encrypted string at rest.
+  - `expires_at` – `DateTime(timezone=True)`, nullable (access token expiry).
+  - `scopes` – `JSONB`, actual granted scopes.
+  - `created_at` – `DateTime(timezone=True)`, `server_default=func.now()`.
+  - `updated_at` – `DateTime(timezone=True)`, `server_default=func.now()`, `onupdate=func.now()`.
+- **Indexes:**
+  - `idx_integrations_credentials_account_id` on `integration_account_id`.
+- **Relationships (ORM):**
+  - `account` – `IntegrationAccount.credentials`.
+
+#### `emails_messages`
+
+Provider-agnostic normalized email messages fetched from external providers (Gmail first).
+
+- **Table name:** `emails_messages`
+- **Columns:**
+  - `id` – `String(36)`, PK, UUID string.
+  - `integration_account_id` – `String(36)`, FK → `integrations_accounts.id`, `ondelete="CASCADE"`, indexed.
+  - `external_id` – `Text`, provider message id (e.g. Gmail `message.id`).
+  - `thread_id` – `Text`, provider thread id (e.g. Gmail `threadId`), indexed.
+  - `direction` – `String(16)`, `"incoming"` or `"outgoing"`.
+  - `from_address` – `Text`.
+  - `to_addresses` – `JSONB`, list of recipient addresses.
+  - `cc_addresses` – `JSONB`, list, nullable.
+  - `bcc_addresses` – `JSONB`, list, nullable.
+  - `subject` – `Text`, nullable.
+  - `body_text` – `Text`, nullable (primary normalized text body).
+  - `body_html` – `Text`, nullable (HTML body if stored).
+  - `sent_at` – `DateTime(timezone=True)`, nullable, indexed.
+  - `raw_headers` – `JSONB`, optional full header blob.
+  - `created_at` – `DateTime(timezone=True)`, `server_default=func.now()`.
+  - `updated_at` – `DateTime(timezone=True)`, `server_default=func.now()`, `onupdate=func.now()`.
+- **Indexes / constraints:**
+  - `uq_emails_messages_account_external_id` – unique on `(integration_account_id, external_id)`.
+  - `idx_emails_messages_account` – on `integration_account_id`.
+  - `idx_emails_messages_thread` – on `thread_id`.
+  - `idx_emails_messages_sent_at` – on `sent_at`.
+- **Relationships (ORM):**
+  - `integration_account` – owning `IntegrationAccount`.
+  - `client_pairs` – `AiEmailTrainingPair` rows where this message is the client message.
+  - `reply_pairs` – `AiEmailTrainingPair` rows where this message is our reply.
+
+#### `ai_training_pairs`
+
+Email-based training pairs linking a client message to our reply within a thread.
+
+- **Table name:** `ai_training_pairs`
+- **Columns:**
+  - `id` – `String(36)`, PK, UUID string.
+  - `integration_account_id` – `String(36)`, FK → `integrations_accounts.id`, `ondelete="CASCADE"`, indexed.
+  - `thread_id` – `Text`, optional reference to `emails_messages.thread_id`, indexed.
+  - `client_message_id` – `String(36)`, FK → `emails_messages.id`, `ondelete="CASCADE"`.
+  - `our_reply_message_id` – `String(36)`, FK → `emails_messages.id`, `ondelete="CASCADE"`.
+  - `client_text` – `Text`, cleaned client email text (no long history, minimal noise).
+  - `our_reply_text` – `Text`, cleaned reply text.
+  - `status` – `String(32)`, default `"new"`, indexed (`"new" | "approved" | "rejected"` in later phases).
+  - `labels` – `JSONB`, optional tags (category, language, sentiment, etc.).
+  - `created_at` – `DateTime(timezone=True)`, `server_default=func.now()`.
+  - `updated_at` – `DateTime(timezone=True)`, `server_default=func.now()`, `onupdate=func.now()`.
+- **Indexes:**
+  - `idx_ai_training_pairs_status` – on `status`.
+  - `idx_ai_training_pairs_integration_account` – on `integration_account_id`.
+  - `idx_ai_training_pairs_thread` – on `thread_id`.
+- **Relationships (ORM):**
+  - `integration_account` – parent `IntegrationAccount`.
+  - `client_message` – `EmailMessage` referenced by `client_message_id`.
+  - `our_reply_message` – `EmailMessage` referenced by `our_reply_message_id`.
+
+### ORM models & locations
+
+All new ORM models live in the existing main SQLAlchemy models module:
+
+- File: `backend/app/models_sqlalchemy/models.py`
+- New classes:
+  - `IntegrationProvider` → `integrations_providers`
+  - `IntegrationAccount` → `integrations_accounts`
+  - `IntegrationCredentials` → `integrations_credentials`
+  - `EmailMessage` → `emails_messages`
+  - `AiEmailTrainingPair` → `ai_training_pairs`
+
+These classes follow existing conventions:
+
+- `id` fields use `String(36)` with a `uuid.uuid4()` default at the ORM level.
+- Timestamps use `DateTime(timezone=True)` with `server_default=func.now()` and `onupdate=func.now()`.
+- JSON payloads use `JSONB` from `sqlalchemy.dialects.postgresql`.
+- Indexes declared in `__table_args__` mirror the Alembic migration constraints.
+
+### Credentials encryption
+
+We **reuse the existing encryption helper** instead of adding a new one:
+
+- Module: `backend/app/utils/crypto.py`
+  - Provides `encrypt(plaintext: str) -> str` and `decrypt(value: str) -> str`.
+  - Uses AES-GCM with a key derived from `settings.secret_key` via HKDF-SHA256.
+  - Ciphertexts are versioned with `ENC:v1:`; `decrypt` is backward-compatible and safe.
+
+`IntegrationCredentials` is wired similarly to the existing `User` token fields:
+
+- ORM columns:
+  - `_access_token` mapped to physical column `access_token`.
+  - `_refresh_token` mapped to `refresh_token`.
+- Properties:
+  - `access_token` and `refresh_token` properties encrypt on write and decrypt on read:
+    - Writes:
+      - If value is `None`/empty → store `NULL`.
+      - Else → `crypto.encrypt(value)`.
+    - Reads:
+      - If DB value is `NULL` → `None`.
+      - Else → `crypto.decrypt(raw_value)`.
+
+**No new ENV variables** are introduced at this stage:
+
+- Encryption key material continues to come from `settings.secret_key` via `app.utils.crypto`.
+- When we later add Gmail, its OAuth tokens will be stored encrypted in `integrations_credentials` using this same helper.
+
+### Migration notes
+
+- **Migration file:**
+  - Path: `backend/alembic/versions/gmail_integrations_20251125.py`
+  - `revision`: `"gmail_integrations_20251125"`
+  - `down_revision`: `"ai_ebay_actions_20251125"`
+- **What it does:**
+  - Creates:
+    - `integrations_providers`
+    - `integrations_accounts`
+    - `integrations_credentials`
+    - `emails_messages`
+    - `ai_training_pairs`
+  - Adds all indexes and unique constraints described above.
+  - `downgrade()` drops the tables and indexes in reverse dependency order.
+
+---
+
+## How to apply Phase 1 changes locally
+
+> Note: These commands assume you are running them from the repo root and have Poetry installed; adjust if your workflow differs.
+
+1. **Install backend dependencies (if not already done):**
+
+```bash path=null start=null
+poetry -C backend install
+```
+
+2. **Run Alembic migrations to apply the new schema:**
+
+```bash path=null start=null
+poetry -C backend run alembic upgrade head
+```
+
+This will apply the `gmail_integrations_20251125` revision along with any earlier pending migrations.
+
+3. **Quick sanity check: start the backend API locally (optional):**
+
+```bash path=null start=null
+poetry -C backend run uvicorn app.main:app --reload
+```
+
+If the server starts without errors and the migration has been applied, you should see the new tables (`integrations_providers`, `integrations_accounts`, `integrations_credentials`, `emails_messages`, `ai_training_pairs`) in the Postgres database.
+
+---
+
+## Phase 3 – Admin UI: Integrations page
+
+Phase 3 turns the backend integrations API into a transparent admin "terminal" for Gmail, with a dedicated Integrations page, diagnostic fields, and a manual `Run sync now` flow.
+
+### Files
+
+- Frontend:
+  - `frontend/src/pages/AdminPage.tsx`
+    - New **Integrations** card linking to `/admin/integrations`.
+  - `frontend/src/pages/AdminIntegrationsPage.tsx`
+    - New page implementing the Integrations admin UI.
+- Backend (already from Phase 2, extended in Phase 3):
+  - `backend/app/routers/integrations.py`
+    - Existing `GET /integrations/accounts`, `POST /integrations/accounts/{id}/enable|disable|resync`.
+    - New `POST /integrations/accounts/{id}/sync-now` endpoint for one-off sync.
+
+### Admin Integrations page (`/admin/integrations`)
+
+The Integrations page is reachable via the **Integrations** card on `AdminPage` or directly at `/admin/integrations`.
+
+#### Gmail provider card
+
+Component: `AdminIntegrationsPage`.
+
+- Shows a **Gmail** card with:
+  - Title and description explaining that Gmail is used only to read historical emails and train AI.
+  - Explicit note:
+    - Gmail is *read-only* for training; replies to clients will be sent from the app's **Messages** section.
+  - Button **Connect Gmail account**:
+    - Calls `POST /api/integrations/gmail/auth-url`.
+    - On success, redirects the browser to the returned Google OAuth URL.
+    - Uses a `gmailLoading` state to disable the button and show "Redirecting…".
+  - A small status line:
+    - "Есть активные Gmail интеграции." when any active Gmail account exists.
+    - "Пока нет активных Gmail аккаунтов." otherwise.
+
+The page also handles Gmail callback query parameters coming from the backend redirect:
+
+- If URL contains `?gmail=connected`:
+  - Shows a green flash message: "Gmail аккаунт успешно подключён.".
+- If URL contains `?gmail=error&reason=...`:
+  - Maps `reason` to a localized error message using the `GMAIL_ERROR_REASONS` dictionary:
+    - `missing_code`, `missing_state`, `invalid_state`, `missing_owner`, `server_config`, `token_http`, `token_failed`, `missing_access_token`, `profile_failed`, `persist_failed`.
+  - Shows a red flash message with the mapped text.
+- After showing the message, the component calls `navigate(location.pathname, { replace: true })` to strip query parameters so the flash does not reappear on refresh.
+
+#### Integration accounts table
+
+The lower part of the page shows an **Integration Accounts** table backed by:
+
+- API: `GET /api/integrations/accounts`.
+- DTO shape (per row):
+  - `id`, `provider_code`, `provider_name`, `owner_user_id`, `owner_email`,
+    `external_account_id`, `display_name`, `status`, `last_sync_at`, `meta`.
+
+Columns:
+
+- **Provider** – human-readable provider name + provider code (monospace).
+- **Account** – display name and external account id (e.g. Gmail address).
+- **Owner** – owner email + owner id (monospace).
+- **Status** – colored pill (`active`, `disabled`, `error`).
+- **Last Sync** – formatted timestamp from `last_sync_at`.
+- **Summary** – derived from `meta.last_sync_summary` when available:
+  - Example: `msgs: 120 · pairs: 45 · errors: 0` and a small line `at 2025-11-26 10:34`.
+- **Actions** – per-account buttons:
+  - **Enable / Disable** → `POST /api/integrations/accounts/{id}/enable|disable`.
+  - **Request resync** → `POST /api/integrations/accounts/{id}/resync`.
+  - **Run sync now** (Gmail only) → `POST /api/integrations/accounts/{id}/sync-now`.
+
+#### Manual sync endpoint: `POST /api/integrations/accounts/{id}/sync-now`
+
+**Path in code:** `sync_integration_account_now` in `backend/app/routers/integrations.py`.
+
+- **Auth:** Admin-only via `admin_required`.
+- **Scope:**
+  - Only supports Gmail accounts for now:
+    - Verifies the account exists and its provider has `code == "gmail"`.
+    - Returns 400 with `sync_not_supported_for_provider` for other providers.
+- **Behavior:**
+  - Calls `await sync_gmail_account(db, account.id, manual=True)` from `app.services.gmail_sync`.
+  - On success, reloads the account row and returns a JSON summary:
+
+    ```json
+    {
+      "account_id": "...",
+      "messages_fetched": 123,
+      "messages_upserted": 120,
+      "pairs_created": 45,
+      "pairs_skipped_existing": 10,
+      "errors": ["..."],
+      "last_sync_at": "2025-11-26T10:34:12+00:00",
+      "meta": { "last_sync_summary": { ... } }
+    }
+    ```
+
+  - On controlled errors (missing credentials, inactive account, etc.):
+    - Raises `RuntimeError` from `sync_gmail_account`, which is converted to HTTP 400 with a short `detail`.
+  - On unexpected errors (network, code bugs):
+    - Logs full exception and returns HTTP 500 `gmail_sync_failed`.
+
+Internally, `sync_gmail_account` also updates:
+
+- `IntegrationAccount.last_sync_at`.
+- `IntegrationAccount.meta["last_sync_summary"]` with the same summary structure.
+- `IntegrationAccount.status = "error"` on fatal token refresh issues.
+
+#### Gmail manual sync UX (modals & summaries)
+
+On the frontend, clicking **Run sync now** on a Gmail account:
+
+1. Sets `syncLoadingAccountId` to the account id and disables all sync buttons.
+2. Calls `POST /api/integrations/accounts/{id}/sync-now`.
+3. On success:
+   - Stores the returned summary in state and opens a **Gmail sync result** modal using the shared `Dialog` UI component.
+   - The modal shows:
+     - Account id (monospace).
+     - Messages fetched / upserted.
+     - Pairs created and skipped.
+     - A list of short errors, if any.
+     - Last sync timestamp.
+   - Triggers a best-effort reload of `/api/integrations/accounts` to refresh `last_sync_at` and `last_sync_summary` in the table.
+   - Shows a short green flash message: "Gmail sync completed.".
+4. On HTTP error:
+   - Sets a red `error` banner with the backend `detail` string.
+5. In all cases:
+   - Resets `syncLoadingAccountId` on completion to re-enable buttons.
+
+### Testing checklist – Phase 3
+
+1. **Connect Gmail from Admin Integrations:**
+   - Log in as admin and open `/admin/integrations`.
+   - Click **Connect Gmail account** and complete Google consent.
+   - You should be redirected back to `/admin/integrations?gmail=connected` and see a green success flash.
+2. **Verify accounts listing:**
+   - Confirm that your Gmail account appears in the Integration Accounts table with:
+     - Correct `provider_code = gmail`.
+     - Display name `Gmail – <address>`.
+     - `status = active`.
+3. **Test enable/disable and resync:**
+   - Disable and re-enable the Gmail account and check the status pill updates.
+   - Click **Request resync** and verify `meta.manual_resync_requested_at` is set in the DB.
+4. **Test manual sync (sync-now):**
+   - Click **Run sync now** on the Gmail account.
+   - Wait for the modal to open and confirm that counts look plausible (0+ messages, any pairs created).
+   - Check the Integration Accounts table shows updated `last_sync_at` and a non-empty Summary column.
+   - Intentionally misconfigure Google OAuth (invalid client id/secret) and confirm proper error handling in the modal and error banner.
+
+---
+
+## Phase 4 – Gmail sync worker & AI training pairs
+
+Phase 4 implements the actual Gmail sync logic and worker, plus utility functions to build `ai_training_pairs` from `emails_messages`.
+
+### Files
+
+- `backend/app/services/gmail_client.py`
+  - `GmailClient` – thin wrapper around Gmail REST API.
+- `backend/app/services/gmail_sync.py`
+  - `sync_gmail_account` – core sync function for one account.
+  - Internal helpers for cleaning text and building training pairs.
+- `backend/app/workers/gmail_sync_worker.py`
+  - Worker entrypoints `run_gmail_sync_once` and `run_gmail_sync_loop`.
+- `backend/app/workers/__init__.py`
+  - Exports `run_gmail_sync_once` and `run_gmail_sync_loop` for external callers.
+
+### GmailClient (`app/services/gmail_client.py`)
+
+`GmailClient` is initialised with:
+
+- `db: Session` – SQLAlchemy session.
+- `account: IntegrationAccount` – Gmail integration account.
+- `credentials: IntegrationCredentials` – encrypted access and refresh tokens.
+
+Key methods:
+
+- `async refresh_access_token_if_needed()`:
+  - Checks `credentials.expires_at` against current time with a configurable margin (~60 seconds).
+  - If the token is close to expiry and `refresh_token` is present:
+    - Calls `https://oauth2.googleapis.com/token` with `grant_type=refresh_token`.
+    - On success, updates `credentials.access_token` and `credentials.expires_at` via encrypted properties and commits the session.
+    - On failure, sets `account.status = "error"` and commits, then raises.
+- `async list_message_ids_since(since: datetime, max_results: int = 100) -> List[GmailMessageMeta]`:
+  - Builds a coarse Gmail query `after:YYYY/MM/DD` based on `since` date.
+  - Calls `GET https://gmail.googleapis.com/gmail/v1/users/me/messages` with `maxResults` and query.
+  - Returns a list of `{id, thread_id}` objects.
+- `async get_message(message_id: str) -> Optional[GmailMessage]`:
+  - Calls `GET https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}?format=full`.
+  - Parses headers: `From`, `To`, `Cc`, `Bcc`, `Subject`, `Date`.
+  - Recursively walks MIME parts to extract first `text/plain` and `text/html` bodies, decoding base64url payloads.
+  - Parses the `Date` header into a timezone-aware `sent_at` datetime.
+  - Returns a normalized dataclass:
+    - `external_id`, `thread_id`, `from_address`, `to_addresses`, `cc_addresses`, `bcc_addresses`, `subject`, `body_text`, `body_html`, `sent_at`.
+
+### Gmail sync service (`app/services/gmail_sync.py`)
+
+Main entrypoint:
+
+- `async sync_gmail_account(db: Session, account_id: str, *, manual: bool = False, max_messages: int = 100) -> dict`.
+
+Steps:
+
+1. Load Gmail provider and account:
+   - Ensures `IntegrationProvider.code == "gmail"` and the account exists and is `status="active"`.
+   - Loads the related `IntegrationCredentials`; errors if missing.
+2. Token refresh:
+   - Calls `GmailClient.refresh_access_token_if_needed()`.
+   - On failure, sets `account.status = "error"`, commits, and returns a summary with error.
+3. Calculate sync window:
+   - Uses `account.last_sync_at` if present.
+   - Otherwise looks back a default number of days (e.g. 30 days) from current UTC time.
+4. List and fetch messages:
+   - Calls `list_message_ids_since(since, max_results=max_messages)`.
+   - For each message id:
+     - Calls `get_message(id)`.
+     - Determines `direction` based on `from_address` vs `account.external_account_id`.
+       - If `from_address` contains the account email → `outgoing`, else `incoming`.
+     - Upserts into `EmailMessage` by `(integration_account_id, external_id)`.
+     - Updates `thread_id`, direction, addresses, subject, `body_text`, `body_html`, `sent_at`.
+     - Tracks the maximum `sent_at` and collects `thread_id`s that saw new/updated messages.
+5. Build training pairs:
+   - For each distinct `thread_id` touched in this sync:
+     - Loads all `EmailMessage` rows for `(integration_account_id, thread_id)` sorted by `sent_at` and `created_at`.
+     - For each `incoming` message, finds the first subsequent `outgoing` message.
+     - Builds a candidate pair `(client_message, reply_message)`.
+     - Uses `_clean_email_text` to strip quoted history and signatures.
+     - Upserts `AiEmailTrainingPair` with uniqueness on `(client_message_id, our_reply_message_id)`:
+       - New rows get `status="new"` and optional empty `labels`.
+6. Update account metadata and summary:
+   - Sets `account.last_sync_at` to max `sent_at` (or now if none).
+   - Writes `account.meta["last_sync_summary"]` with a dict:
+
+     ```json
+     {
+       "account_id": "...",
+       "manual": true | false,
+       "messages_fetched": N,
+       "messages_upserted": M,
+       "pairs_created": P,
+       "pairs_skipped_existing": K,
+       "errors": ["..."],
+       "finished_at": "2025-11-26T10:34:12+00:00"
+     }
+     ```
+
+   - Commits the transaction and returns the same summary structure to callers.
+
+### Gmail sync worker (`app/workers/gmail_sync_worker.py`)
+
+Two entrypoints are provided:
+
+- `async run_gmail_sync_once(max_accounts: int = 50) -> dict`:
+  - Opens its own `SessionLocal` session.
+  - Finds the Gmail provider row and all active Gmail accounts (with a limit):
+    - `IntegrationProvider.code == "gmail"`.
+    - `IntegrationAccount.status == "active"`.
+  - Orders accounts by `last_sync_at` (older first) to prioritise long-unseen accounts.
+  - Iterates accounts and calls `sync_gmail_account(db, account.id, manual=False)` for each.
+  - Collects per-account summaries into a list and returns:
+
+    ```json
+    {
+      "status": "ok",
+      "accounts_processed": N,
+      "results": [ ... per-account summaries ... ]
+    }
+    ```
+
+- `async run_gmail_sync_loop(interval_seconds: int = 300) -> None`:
+  - Infinite loop:
+    - Calls `run_gmail_sync_once()`.
+    - Logs the summary.
+    - Sleeps `interval_seconds` (default 300 seconds = 5 minutes).
+
+`backend/app/workers/__init__.py` now exports `run_gmail_sync_once` and `run_gmail_sync_loop`, so Railway or any other process manager can import and run the loop easily.
+
+### How to run the Gmail worker
+
+- **Locally (development):**
+
+  ```bash path=null start=null
+  poetry -C backend run python -m app.workers.gmail_sync_worker
+  ```
+
+  - This starts `run_gmail_sync_loop()` with the default 300-second interval.
+
+- **One-off debug run:**
+
+  ```bash path=null start=null
+  poetry -C backend run python -c "import asyncio; from app.workers.gmail_sync_worker import run_gmail_sync_once; asyncio.run(run_gmail_sync_once())"
+  ```
+
+- **Railway worker service (example):**
+  - Command: `poetry -C backend run python -m app.workers.gmail_sync_worker`.
+  - Configure as a background worker in Railway with appropriate schedule/always-on settings.
+
+### Testing checklist – Phase 4
+
+1. **Initial sync:**
+   - Ensure at least one active Gmail `IntegrationAccount` exists (via `/admin/integrations`).
+   - Run `run_gmail_sync_once()` locally.
+   - Check logs for per-account summaries and confirm no fatal errors.
+2. **Database verification:**
+   - Inspect `emails_messages` for the Gmail account:
+     - Should contain recent emails with direction `incoming`/`outgoing`.
+   - Inspect `ai_training_pairs`:
+     - Should contain rows with `status="new"`.
+     - `client_text` and `our_reply_text` should be non-empty and not huge quoted threads.
+3. **Manual sync + worker:**
+   - Run the worker loop and then click **Run sync now** in `/admin/integrations`.
+   - Confirm that subsequent worker runs pick up newly requested resyncs (based on `meta.manual_resync_requested_at`) and update `last_sync_summary`.
+4. **Error scenarios:**
+   - Revoke Gmail tokens or misconfigure OAuth and rerun sync.
+   - Confirm:
+     - `account.status` flips to `error` on fatal token refresh issues.
+     - Summaries contain informative error codes like `token_refresh_failed:...`.
+
+---
+
+## Phase 5 – AI Email Training admin view
+
+Phase 5 introduces an admin-facing view to inspect, approve, or reject `ai_training_pairs` built from Gmail threads.
+
+### Backend API
+
+Implemented in `backend/app/routers/integrations.py` and protected by `admin_required`.
+
+#### GET /api/integrations/ai-email-pairs
+
+- **Signature in code:**
+
+  ```python
+  @router.get("/ai-email-pairs")
+  async def list_ai_email_pairs(
+      status: str = Query("new"),
+      provider: Optional[str] = Query(None),
+      integration_account_id: Optional[str] = Query(None),
+      limit: int = Query(100, ge=1, le=500),
+      offset: int = Query(0, ge=0),
+      ...
+  )
+  ```
+
+- **Parameters:**
+  - `status` – filter by pair status; defaults to `new`.
+  - `provider` – optional provider code, e.g. `gmail`.
+  - `integration_account_id` – optional id of a specific `IntegrationAccount`.
+  - `limit`, `offset` – pagination controls.
+- **Behavior:**
+  - Joins `AiEmailTrainingPair` with `IntegrationAccount` and `IntegrationProvider`.
+  - Applies filters.
+  - Returns JSON:
+
+    ```json
+    {
+      "items": [
+        {
+          "id": "...",
+          "provider_code": "gmail",
+          "integration_account_id": "...",
+          "integration_display_name": "Gmail – user@gmail.com",
+          "thread_id": "...",
+          "status": "new",
+          "client_text": "...",
+          "our_reply_text": "...",
+          "created_at": "2025-11-26T10:30:00+00:00",
+          "updated_at": "2025-11-26T10:30:00+00:00"
+        }
+      ],
+      "count": 123,
+      "limit": 100,
+      "offset": 0
+    }
+    ```
+
+#### POST /api/integrations/ai-email-pairs/{pair_id}/status
+
+- **Body:**
+
+  ```json
+  { "status": "approved" | "rejected" | "new" }
+  ```
+
+- **Behavior:**
+  - Validates `status` is one of `new`, `approved`, `rejected`.
+  - Looks up the pair; 404 if missing.
+  - Updates `AiEmailTrainingPair.status` and commits.
+  - Returns the updated pair via `_serialize_ai_email_pair` (same shape as in the list API).
+
+### Frontend page – `/admin/ai-email-training`
+
+- File: `frontend/src/pages/AdminAiEmailTrainingPage.tsx`.
+- Route: added in `frontend/src/App.tsx` as a protected route:
+
+  ```tsx
+  <Route path="/admin/ai-email-training" element={<ProtectedRoute><AdminAiEmailTrainingPage /></ProtectedRoute>} />
+  ```
+
+- Navigation:
+  - `AdminPage.tsx` now includes a card **AI Email Training** linking to `/admin/ai-email-training`.
+
+#### UI behavior
+
+- **Filters:**
+  - `Status` dropdown: `new`, `approved`, `rejected`.
+  - `Provider` dropdown: `All`, `Gmail` (extensible for future providers).
+  - Changing filters automatically reloads pairs.
+- **Table columns:**
+  - Provider.
+  - Integration (display name + account id).
+  - Thread ID.
+  - Client preview (first ~120 chars of `client_text`).
+  - Reply preview (first ~120 chars of `our_reply_text`).
+  - Status pill (`new`, `approved`, `rejected`).
+  - Created at.
+  - Actions.
+- **Row actions:**
+  - Buttons per row:
+    - **Approve** → sets status to `approved`.
+    - **Reject** → sets status to `rejected`.
+    - **Reset** → sets status back to `new`.
+  - These call `POST /api/integrations/ai-email-pairs/{id}/status` and update local state.
+- **Details modal:**
+  - Clicking a row opens a dialog showing full texts:
+    - Provider, Integration, Thread ID, Status.
+    - Left column: full client message text.
+    - Right column: full reply text.
+
+### Testing checklist – Phase 5
+
+1. **Basic list & filters:**
+   - Trigger a Gmail sync (worker or manual) so that some `ai_training_pairs` exist.
+   - Open `/admin/ai-email-training`.
+   - Confirm the table shows pairs with `status=new` by default.
+   - Change Status to `approved` / `rejected` and verify filtering works.
+2. **Status transitions:**
+   - For a `new` pair, click **Approve**:
+     - Status pill updates to `approved`.
+     - Reloading page shows the pair under `approved` filter.
+   - Set the same pair to `rejected` and then back to `new` using **Reset**.
+3. **Details modal:**
+   - Click a row to open the modal.
+   - Verify full `client_text` and `our_reply_text` are visible and legible.
+4. **Authorization:**
+   - Access the APIs without JWT or as a non-admin and confirm 401/403.
+   - Confirm `/admin/ai-email-training` redirects to `/login` when unauthenticated.
+
+---
+
+## Phase 6 – AI provider config (OpenAI) & knowledge base
+
+Phase 6 introduces:
+
+1. A dedicated `ai_providers` table and ORM model for AI provider configuration (OpenAI first).
+2. Admin API and UI to set the OpenAI API key and default model.
+3. Documentation of `emails_messages` + `ai_training_pairs` as the email "knowledge base".
+
+### DB & ORM: `ai_providers`
+
+- **Migration:** `backend/alembic/versions/ai_providers_openai_20251126.py`
+  - `revision = "ai_providers_openai_20251126"`.
+  - `down_revision = "ensure_buy_offer_auction_scope_20251126"`.
+  - Creates table `ai_providers`:
+    - `id: String(36)` – PK.
+    - `provider_code: Text` – unique code (`"openai"`, etc.).
+    - `name: Text` – human-readable name.
+    - `owner_user_id: String(36)` – optional FK to `users.id` (admin who configured the provider).
+    - `api_key: Text` – encrypted at ORM level.
+    - `model_default: Text` – logical default model name (`"gpt-4.1-mini"`, `"gpt-4.1"`, etc.).
+    - `created_at`, `updated_at` – timestamps with `server_default=func.now()`.
+  - Adds index `idx_ai_providers_owner_user_id` on `owner_user_id`.
+- **ORM model:** `AiProvider` in `backend/app/models_sqlalchemy/models.py`.
+  - Fields mirror the table above.
+  - Uses encrypted accessors for `api_key`:
+
+    ```python
+    class AiProvider(Base):
+        __tablename__ = "ai_providers"
+        id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+        provider_code = Column(Text, nullable=False, unique=True)
+        name = Column(Text, nullable=False)
+        owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+        _api_key = Column("api_key", Text, nullable=True)
+        model_default = Column(Text, nullable=True)
+        ...
+
+        @property
+        def api_key(self) -> str | None:
+            from app.utils import crypto
+            raw = self._api_key
+            return None if raw is None else crypto.decrypt(raw)
+
+        @api_key.setter
+        def api_key(self, value: str | None) -> None:
+            from app.utils import crypto
+            self._api_key = None if not value else crypto.encrypt(value)
+    ```
+
+  - Encryption uses the same `app.utils.crypto` helper (AES-GCM with key derived from `settings.secret_key`).
+
+### Admin API: OpenAI provider config
+
+Implemented in `backend/app/routers/integrations.py`.
+
+#### GET /api/integrations/ai-provider/openai
+
+- **Auth:** `admin_required`.
+- **Behavior:**
+  - Loads `AiProvider` where `provider_code="openai"`.
+  - Returns a safe summary (never the raw API key):
+
+    ```json
+    {
+      "provider_code": "openai",
+      "name": "OpenAI",
+      "has_api_key": true,
+      "model_default": "gpt-4.1-mini"
+    }
+    ```
+
+#### POST /api/integrations/ai-provider/openai
+
+- **Body:**
+
+  ```json
+  {
+    "api_key": "sk-..." | null,
+    "model_default": "gpt-4.1-mini"
+  }
+  ```
+
+- **Behavior:**
+  - Fetches or creates an `AiProvider` row with `provider_code="openai"`.
+  - If `api_key` is non-empty, encrypts and stores it via `provider.api_key`.
+    - If `api_key` is omitted or empty, preserves the existing key.
+  - If `model_default` is provided, trims and stores it.
+  - Sets `owner_user_id` to the current admin’s id when creating a new row.
+  - Returns the same safe summary shape as the GET endpoint.
+
+### Admin UI: AI Settings page
+
+- **File:** `frontend/src/pages/AdminAiSettingsPage.tsx`.
+- **Route:** `/admin/ai-settings` as a protected admin route in `App.tsx`.
+- **Navigation:** `AdminPage.tsx` includes an **AI Settings** card linking to `/admin/ai-settings`.
+
+#### UI behavior
+
+- Shows:
+  - A description explaining that this is the OpenAI key and default model for AI features.
+  - A password input **OpenAI API key**:
+    - Placeholder indicates whether a key already exists (masked as `••••••••`).
+    - Leaving it empty keeps the existing key.
+  - A **Default model** select with static options like `gpt-4.1-mini`, `gpt-4.1`, `o3-mini`.
+- On load:
+  - Calls `GET /api/integrations/ai-provider/openai`.
+  - Pre-fills `model_default` from the response.
+- On **Save settings**:
+  - Calls `POST /api/integrations/ai-provider/openai` with:
+
+    ```json
+    {
+      "api_key": "<entered or null>",
+      "model_default": "<selected>"
+    }
+    ```
+
+  - Clears the API key field in the form.
+  - Shows a green flash: "Настройки сохранены. Новый ключ будет использоваться для AI-запросов.".
+  - Reloads provider info.
+
+### Knowledge base: emails_messages + ai_training_pairs
+
+The **knowledge base** for email AI is defined by two layered tables:
+
+1. `emails_messages` – raw, normalized emails:
+   - One row per message per integration account.
+   - Contains direction (`incoming`/`outgoing`), parties, subject, text/HTML bodies, headers, and timestamp.
+2. `ai_training_pairs` – cleaned client/reply pairs:
+   - Each row links `client_message_id` and `our_reply_message_id` within a thread.
+   - `client_text` and `our_reply_text` store cleaned excerpts suitable for training.
+   - `status` determines suitability for training:
+     - `new` – needs admin review.
+     - `approved` – **eligible** for training and future embeddings.
+     - `rejected` – excluded from training.
+
+**Future recommendation (not yet implemented in code):**
+
+- Add an `ai_email_embeddings` table, for example:
+  - `id`, `pair_id` (FK → `ai_training_pairs.id`), `embedding` (vector or JSON), `model`, `created_at`.
+- Compute embeddings only for `ai_training_pairs` where `status="approved"`.
+- Use this table for:
+  - RAG-style retrieval of similar past cases when drafting new replies.
+  - Analytics on typical complaint/response patterns.
+
+### Gmail HTML → text & Training Pairs Fix (2025-11)
+
+After connecting real Gmail accounts and running manual syncs, we observed that:
+
+- Many incoming eBay-related emails were **HTML-only**.
+- Our Gmail client populated `body_html` but left `body_text` as `NULL` for these messages.
+- The pairing logic for `ai_training_pairs` relied primarily on `body_text`.
+- As a result, `pairs_created = 0` even for threads where we clearly had "client question → our reply" exchanges.
+
+To address this without changing the overall architecture, we implemented the following fixes.
+
+#### 1. Gmail HTML → text extraction
+
+File: `backend/app/services/gmail_client.py`
+
+Changes:
+
+- Added a lightweight HTML-to-text helper `_HtmlTextExtractor` based on `html.parser.HTMLParser`:
+  - Collects all text nodes while parsing HTML.
+  - Strips whitespace and joins segments with single spaces.
+  - Decodes HTML entities via `html.unescape`.
+- Introduced `_html_to_text(value: Optional[str]) -> Optional[str]`:
+  - Returns `None` when the result is empty after stripping.
+  - On parser errors falls back to a very naive `html.unescape(value)`.
+- Updated `GmailClient.get_message`:
+  - After walking MIME parts and populating `body_text` / `body_html`, we now run:
+
+    ```python path=null start=null
+    if body_text is None and body_html:
+        body_text = _html_to_text(body_html)
+    ```
+
+Effect:
+
+- For HTML-only emails (typical for eBay notifications), `emails_messages.body_text` now contains a readable plain-text approximation of the email body.
+- Existing `body_html` behaviour is unchanged.
+
+#### 2. Pairing logic validation
+
+File: `backend/app/services/gmail_sync.py`
+
+- Pairing already favours `body_text` and falls back to `body_html` only when necessary:
+
+  ```python path=null start=null
+  client_text = _clean_email_text(msg.body_text or msg.body_html or "")
+  reply_text = _clean_email_text(reply.body_text or reply.body_html or "")
+  if not client_text or not reply_text:
+      continue
+  ```
+
+- With the new HTML→text extraction, incoming messages from eBay/Gmail now have non-empty `body_text`, so this filter no longer drops all pairs.
+- We intentionally keep the filter simple: any non-empty cleaned text is considered valid; there is no minimum length threshold beyond `len(strip()) > 0`.
+
+#### 3. Diagnostics and rebuild of training pairs (no Gmail API calls)
+
+File: `backend/app/services/gmail_sync.py`
+
+We added two helpers that operate purely on local DB data:
+
+1. `get_gmail_account_diagnostics(db: Session, account_id: str) -> dict`
+   - Returns aggregate stats for one `IntegrationAccount`:
+     - `total_messages`
+     - `incoming_messages`
+     - `outgoing_messages`
+     - `total_threads` (distinct `thread_id`)
+     - `threads_with_incoming_and_outgoing` (threads that contain both directions)
+   - Uses only the `emails_messages` table; does not talk to Gmail.
+
+2. `rebuild_training_pairs_for_account(db: Session, account_id: str) -> dict`
+   - Intended for backfill/diagnostics when pairing logic changes.
+   - Steps:
+     - Ensures the account exists and belongs to the Gmail provider.
+     - Deletes all existing `ai_training_pairs` for that `integration_account_id`.
+     - Collects all distinct non-null `thread_id` values for this account.
+     - Calls the existing `_build_pairs_for_threads(...)` helper to recreate pairs from the current `emails_messages` rows.
+     - Commits the transaction.
+     - Calls `get_gmail_account_diagnostics(...)` and extends that dict with:
+       - `pairs_created`
+       - `pairs_skipped_existing`
+       - `pairs_deleted_before_rebuild`
+     - Logs a concise summary and returns it.
+
+File: `backend/app/routers/integrations.py`
+
+- Extended imports to include the new helpers:
+
+  ```python path=null start=null
+  from app.services.gmail_sync import (
+      sync_gmail_account,
+      get_gmail_account_diagnostics,
+      rebuild_training_pairs_for_account,
+  )
+  ```
+
+- Added two admin-only endpoints:
+
+1. **POST `/api/integrations/accounts/{account_id}/rebuild-training-pairs`**
+   - Auth: `admin_required`.
+   - Behaviour:
+     - Calls `rebuild_training_pairs_for_account(db, account_id)`.
+     - On `RuntimeError` (unknown account, not Gmail, provider missing) returns 400 with a short `detail`.
+     - On success returns the diagnostics dict described above.
+   - Does **not** call Gmail; works entirely on local data.
+
+2. **GET `/api/integrations/accounts/{account_id}/diagnostics`**
+   - Auth: `admin_required`.
+   - Returns the output of `get_gmail_account_diagnostics(db, account_id)`.
+   - Useful for quickly understanding how many messages/threads we have and how many threads can potentially yield Q→A pairs.
+
+These endpoints are designed to be safe to run in production for inspection and rebuilding pairs without re-reading email content from Gmail.
+
+### Testing checklist – Phase 6
+
+1. **Set OpenAI key:**
+   - Open `/admin/ai-settings` as admin.
+   - Enter a dummy key (in non-production) and select a model.
+   - Click **Save settings** and confirm a success flash appears.
+   - Verify in DB that `ai_providers` has a row with `provider_code='openai'` and encrypted `api_key` (`ENC:v1:...`).
+2. **Update default model:**
+   - Change the model and save again.
+   - Confirm `model_default` is updated in DB and reflected on reload.
+3. **Authorization:**
+   - Call the OpenAI provider endpoints without admin privileges and confirm 401/403.
+4. **Knowledge base sanity:**
+   - Confirm that:
+     - `emails_messages` and `ai_training_pairs` continue to grow as Gmail sync runs.
+     - Only `approved` pairs are considered as high-quality training data when you design downstream AI features (embeddings, draft suggestions, etc.).

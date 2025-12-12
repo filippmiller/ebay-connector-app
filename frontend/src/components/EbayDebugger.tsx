@@ -10,8 +10,27 @@ import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Switch } from './ui/switch';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import api from '../lib/apiClient';
-const FEATURE_TOKEN_INFO = (import.meta.env.VITE_FEATURE_TOKEN_INFO === 'true');
+import { ebayApi } from '../api/ebay';
+// Feature flag with safe fallbacks: env var, localStorage, or ?tokeninfo=1
+const FEATURE_TOKEN_INFO = (
+  (import.meta.env.VITE_FEATURE_TOKEN_INFO === 'true') ||
+  (typeof window !== 'undefined' && (localStorage.getItem('enable_token_info') === '1' || new URLSearchParams(window.location.search).get('tokeninfo') === '1'))
+);
+
+// Scopes that require special eBay approval and must not be requested in
+// regular user-consent flows (they cause `invalid_scope` errors).
+const FORBIDDEN_REQUEST_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope/buy.offer.auction',
+];
+
+const sanitizeScopes = (scopes: string[]): string[] =>
+  scopes.filter((s) => !FORBIDDEN_REQUEST_SCOPES.includes(s));
+
+// Catalog-backed seller scope set is loaded dynamically from GET /ebay/scopes.
+// This replaces the previous hardcoded MY_SCOPES list so that all tools use
+// the same canonical scope catalog as /ebay/auth/start.
 import { Loader2, Play, Copy, Check } from 'lucide-react';
 
 interface DebugTemplate {
@@ -88,11 +107,26 @@ export const EbayDebugger: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<DebugResponse | null>(null);
   const [error, setError] = useState<string>('');
+  const [stdError, setStdError] = useState<string>('');
+  const [rawError, setRawError] = useState<string>('');
   
   // Total Testing Mode
   const [totalTestingMode, setTotalTestingMode] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<any[]>([]);
+  const [debugLogsLoading, setDebugLogsLoading] = useState(false);
   const [rawRequest, setRawRequest] = useState<string>('');
   const [copied, setCopied] = useState<string>('');
+  const [lineWrap, setLineWrap] = useState<boolean>(false);
+
+  // Trading GetSellerTransactions parameters
+  const [sellerTxNumberOfDays, setSellerTxNumberOfDays] = useState<number>(7);
+  const [sellerTxEntriesPerPage, setSellerTxEntriesPerPage] = useState<number>(50);
+  const [sellerTxPageNumber, setSellerTxPageNumber] = useState<number>(1);
+
+  // Reconnect modal state
+  const [showReconnect, setShowReconnect] = useState(false);
+  const [reconnectUrl, setReconnectUrl] = useState('');
+  const [reconnectScopes, setReconnectScopes] = useState<string[]>([]);
   
   // Token Info
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
@@ -100,6 +134,48 @@ export const EbayDebugger: React.FC = () => {
   const [refreshingAdmin, setRefreshingAdmin] = useState(false);
   const [tokenInfoLoading, setTokenInfoLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'debugger' | 'token-info'>('debugger');
+
+  // eBay accounts for account selection (multi-account)
+  type EbayAccountWithToken = {
+    id: string;
+    org_id: string;
+    ebay_user_id: string;
+    username: string | null;
+    house_name: string;
+    status: string;
+    token?: {
+      id: string;
+      ebay_account_id: string;
+      expires_at?: string | null;
+      last_refreshed_at?: string | null;
+      refresh_error?: string | null;
+    } | null;
+  };
+  const [accounts, setAccounts] = useState<EbayAccountWithToken[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+
+  // Admin view: accounts + scopes vs catalog
+  type AdminAccountsScopes = {
+    scope_catalog: { scope: string; grant_type: string; description?: string }[];
+    accounts: {
+      id: string;
+      username: string | null;
+      ebay_user_id: string;
+      house_name: string;
+      is_active: boolean;
+      connected_at?: string | null;
+      scopes: string[];
+      scopes_count: number;
+      has_all_catalog_scopes: boolean;
+      missing_catalog_scopes: string[];
+      token?: { access_expires_at?: string | null; has_refresh_token?: boolean } | null;
+    }[];
+  } | null;
+  const [accountsScopes, setAccountsScopes] = useState<AdminAccountsScopes>(null);
+  const [accountsScopesLoading, setAccountsScopesLoading] = useState(false);
+  const [accountsScopesError, setAccountsScopesError] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
     const saved = localStorage.getItem('ebay_environment');
     return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
@@ -137,16 +213,35 @@ export const EbayDebugger: React.FC = () => {
   const [tokenInfoHistory, setTokenInfoHistory] = useState<TokenInfoHistoryEntry[]>([]);
   const [tokenInfoRequestLoading, setTokenInfoRequestLoading] = useState(false);
 
+  const [catalogScopes, setCatalogScopes] = useState<string[]>([]);
+
   useEffect(() => {
     loadTemplates();
+    void loadAccounts();
+    void loadCatalogScopes();
+    if (activeTab === 'debugger') {
+      // Keep debugger terminal fresh, but keep controls compact
+      void loadDebuggerLogs();
+      // Also load lightweight token info for the selected account (no Identity call)
+      void loadTokenInfo(environment, { skipIdentityTest: true });
+      const id = setInterval(() => { if (!totalTestingMode) void loadDebuggerLogs(); }, 10000);
+      return () => clearInterval(id);
+    }
     if (activeTab === 'token-info') {
       loadTokenInfo();
       if (FEATURE_TOKEN_INFO && environment === 'production') {
         void loadAdminTokenInfo();
         void loadTokenLogs();
+        void loadAdminAccountsScopes();
       }
     }
-  }, [activeTab, environment]);
+  }, [activeTab, environment, totalTestingMode]);
+
+  // Reset errors when switching mode
+  useEffect(() => {
+    setStdError('');
+    setRawError('');
+  }, [totalTestingMode]);
 
   // Update rawRequest URL when environment changes
   useEffect(() => {
@@ -167,8 +262,77 @@ export const EbayDebugger: React.FC = () => {
     }
   }, [environment, totalTestingMode]);
 
+  // When reconnect modal opens or scopes change, pre-generate the authorization URL.
+  // IMPORTANT: always request the full catalog-backed seller scope set, not just the
+  // minimal missing scopes, so that reconnect from the Debugger never "shrinks"
+  // the token to a narrower scope set.
+  useEffect(() => {
+    const gen = async () => {
+      if (!showReconnect || reconnectScopes.length === 0) return;
+      try {
+        const rawBaseScopes = catalogScopes.length
+          ? catalogScopes
+          : ['https://api.ebay.com/oauth/api_scope'];
+        const baseScopes = sanitizeScopes(rawBaseScopes);
+        const requestedReconnect = sanitizeScopes(reconnectScopes || []);
+        const union = Array.from(new Set([...requestedReconnect, ...baseScopes]));
+        const redirectUri = `${window.location.origin}/ebay/callback`;
+        const { data } = await api.post(
+          `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+          { scopes: union },
+        );
+        setReconnectUrl(data.authorization_url);
+      } catch {
+        // ignore
+      }
+    };
+    void gen();
+  }, [showReconnect, reconnectScopes, environment, catalogScopes]);
+
+  const loadCatalogScopes = async () => {
+    try {
+      const res = await ebayApi.getAvailableScopes();
+      const scopes = (res.scopes || []).map((s) => s.scope);
+      setCatalogScopes(scopes);
+
+      // Cross-check that REQUIRED_SCOPES_BY_TEMPLATE are present in the catalog.
+      const missingByTemplate: Record<string, string[]> = {};
+      Object.entries(REQUIRED_SCOPES_BY_TEMPLATE).forEach(([tpl, required]) => {
+        const missing = required.filter((s) => !scopes.includes(s));
+        if (missing.length > 0) {
+          missingByTemplate[tpl] = missing;
+        }
+      });
+      if (Object.keys(missingByTemplate).length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn('Debugger REQUIRED_SCOPES_BY_TEMPLATE refers to scopes not present in catalog:', missingByTemplate);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load eBay scope catalog for debugger:', e);
+      setCatalogScopes([]);
+    }
+  };
+
+  const loadAccounts = async () => {
+    try {
+      setAccountsLoading(true);
+      setAccountsError(null);
+      const data = await ebayApi.getAccounts(true);
+      setAccounts(data || []);
+      if (!selectedAccountId && data && data.length > 0) {
+        setSelectedAccountId(data[0].id);
+      }
+    } catch (e: any) {
+      console.error('Failed to load eBay accounts:', e);
+      setAccountsError(e?.response?.data?.detail || 'Failed to load eBay accounts');
+    } finally {
+      setAccountsLoading(false);
+    }
+  };
+
   const loadAdminTokenInfo = async () => {
-    if (!FEATURE_TOKEN_INFO || environment !== 'production') { setAdminTokenInfo(null); return; }
+    if (environment !== 'production') { setAdminTokenInfo(null); return; }
     try {
       const { data } = await api.get('/admin/ebay/tokens/info?env=production');
       setAdminTokenInfo(data);
@@ -192,33 +356,57 @@ export const EbayDebugger: React.FC = () => {
 
   // Auto-poll logs every 10s while on token-info tab in production
   useEffect(() => {
-    if (!(FEATURE_TOKEN_INFO && environment === 'production' && activeTab === 'token-info')) return;
+    if (!(environment === 'production' && activeTab === 'token-info')) return;
     const id = setInterval(() => { void loadTokenLogs(); }, 10000);
     return () => clearInterval(id);
   }, [FEATURE_TOKEN_INFO, environment, activeTab]);
 
   const refreshAdminToken = async () => {
-    if (!FEATURE_TOKEN_INFO || environment !== 'production') return;
+    if (environment !== 'production') return;
     setRefreshingAdmin(true);
     try {
       await api.post('/admin/ebay/tokens/refresh?env=production');
       await loadAdminTokenInfo();
       await loadTokenLogs();
+      await loadAdminAccountsScopes();
     } finally {
       setRefreshingAdmin(false);
     }
   };
 
-  const loadTokenInfo = async (env?: 'sandbox' | 'production') => {
+  const loadAdminAccountsScopes = async () => {
+    if (!FEATURE_TOKEN_INFO || environment !== 'production') {
+      setAccountsScopes(null);
+      setAccountsScopesError(null);
+      return;
+    }
+    setAccountsScopesLoading(true);
+    setAccountsScopesError(null);
+    try {
+      const { data } = await api.get('/admin/ebay/accounts/scopes');
+      setAccountsScopes(data);
+    } catch (e: any) {
+      setAccountsScopesError(e?.response?.data?.detail || 'Failed to load accounts/scopes');
+    } finally {
+      setAccountsScopesLoading(false);
+    }
+  };
+
+  const loadTokenInfo = async (
+    env?: 'sandbox' | 'production',
+    options?: { skipIdentityTest?: boolean },
+  ) => {
     const targetEnv = env || environment;
     setTokenInfoLoading(true);
     setError('');
     try {
-      const res = await api.get(`/ebay/token-info?environment=${targetEnv}`);
+      const params = new URLSearchParams({ environment: targetEnv });
+      if (selectedAccountId) params.set('account_id', selectedAccountId);
+      const res = await api.get(`/ebay/token-info?${params.toString()}`);
       setTokenInfo(res.data);
       
-      // Automatically test Identity API call if token is available
-      if (res.data.token_full && res.data.ebay_connected) {
+      // Automatically test Identity API call if token is available (unless explicitly skipped)
+      if (res.data.token_full && res.data.ebay_connected && !options?.skipIdentityTest) {
         await testIdentityAPI(targetEnv, res.data.token_full);
       }
     } catch (err: any) {
@@ -229,15 +417,18 @@ export const EbayDebugger: React.FC = () => {
     }
   };
 
-const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
-  if (environment === newEnv) return;
-  setEnvironment(newEnv);
-  localStorage.setItem('ebay_environment', newEnv);
-  setError('');
-  if (activeTab === 'token-info') {
-    void loadTokenInfo(newEnv);
-  }
-};
+  const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
+    if (environment === newEnv) return;
+    setEnvironment(newEnv);
+    localStorage.setItem('ebay_environment', newEnv);
+    setError('');
+    if (activeTab === 'token-info') {
+      void loadTokenInfo(newEnv);
+    } else if (activeTab === 'debugger') {
+      // Keep small token badge in sync without spamming Identity API
+      void loadTokenInfo(newEnv, { skipIdentityTest: true });
+    }
+  };
 
   const testIdentityAPI = async (env: 'sandbox' | 'production', token: string) => {
     setTokenInfoRequestLoading(true);
@@ -264,7 +455,9 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         path: '/identity/v1/oauth2/userinfo',
         environment: env
       });
-      
+      if (selectedAccountId) {
+        queryParams.set('account_id', selectedAccountId);
+      }
       const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
       
       const historyEntry: TokenInfoHistoryEntry = {
@@ -347,6 +540,67 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
     offers: ['https://api.ebay.com/oauth/api_scope/sell.inventory'],
     disputes: ['https://api.ebay.com/oauth/api_scope/sell.fulfillment'],
     messages: ['https://api.ebay.com/oauth/api_scope/trading'],
+    seller_transactions: ['https://api.ebay.com/oauth/api_scope/trading'],
+  };
+
+  const loadDebuggerLogs = async () => {
+    try {
+      setDebugLogsLoading(true);
+      const { data } = await api.get(`/ebay/connect/logs?environment=${environment}&limit=100`);
+      const onlyDebug = (data.logs || []).filter((l:any)=> String(l.action||'').startsWith('debug_'));
+      setDebugLogs(onlyDebug);
+    } catch {
+      // ignore
+    } finally {
+      setDebugLogsLoading(false);
+    }
+  };
+
+  // Export helpers for debugger terminal
+  const exportDebuggerLogs = (format: 'json' | 'ndjson' | 'txt') => {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filenameBase = `debugger_logs_${environment}_${ts}`;
+    let blob: Blob;
+    if (format === 'json') {
+      blob = new Blob([JSON.stringify({ logs: debugLogs }, null, 2)], { type: 'application/json' });
+      triggerDownload(`${filenameBase}.json`, blob);
+      return;
+    }
+    if (format === 'ndjson') {
+      const nd = debugLogs.map((l:any) => JSON.stringify(l)).join('\n');
+      blob = new Blob([nd], { type: 'application/x-ndjson' });
+      triggerDownload(`${filenameBase}.ndjson`, blob);
+      return;
+    }
+    const txt = debugLogs.map((l:any) => {
+      const seg: string[] = [];
+      seg.push(`[${new Date(l.created_at).toISOString()}] ${l.action}`);
+      if (l.request) {
+        seg.push(`→ ${l.request.method || ''} ${l.request.url || ''}`);
+        if (l.request.headers) seg.push(`headers: ${JSON.stringify(l.request.headers)}`);
+        if (l.request.body) seg.push(`body: ${typeof l.request.body === 'string' ? l.request.body : JSON.stringify(l.request.body)}`);
+      }
+      if (l.response) {
+        seg.push(`← status: ${l.response.status ?? ''}`);
+        if (l.response.headers) seg.push(`resp-headers: ${JSON.stringify(l.response.headers)}`);
+        if (typeof l.response.body !== 'undefined') seg.push(`resp-body: ${typeof l.response.body === 'string' ? l.response.body : JSON.stringify(l.response.body)}`);
+      }
+      if (l.error) seg.push(`error: ${l.error}`);
+      return seg.join('\n');
+    }).join('\n\n');
+    blob = new Blob([txt], { type: 'text/plain' });
+    triggerDownload(`${filenameBase}.txt`, blob);
+  };
+
+  const triggerDownload = (filename: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   const handleTemplateSelect = (templateName: string) => {
@@ -356,7 +610,13 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
       setMethod(template.method);
       setPath(template.path);
       setParams(Object.entries(template.params).map(([k, v]) => `${k}=${v}`).join('&'));
-      setHeaders('');
+      // Default headers per template
+      if (templateName === 'transactions') {
+        // Finances API requires marketplace header
+        setHeaders('X-EBAY-C-MARKETPLACE-ID: EBAY_US');
+      } else {
+        setHeaders('');
+      }
       setBody('');
     } else if (templateName === "custom") {
       setMethod('GET');
@@ -378,44 +638,66 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
   };
 
   const handleDebug = async () => {
-    // Scope guard for Quick Templates (only when a non-custom template is selected)
+    setStdError('');
+    // Scope guard for Quick Templates (only when a non-custom template is selected).
+    // We no longer block the request; we only show a warning + optional reconnect modal.
     try {
       const tpl = selectedTemplate && selectedTemplate !== 'custom' ? selectedTemplate : null;
       if (tpl) {
         const required = REQUIRED_SCOPES_BY_TEMPLATE[tpl] || [];
-        const userScopes: string[] = (FEATURE_TOKEN_INFO && environment === 'production')
-          ? (adminTokenInfo?.scopes || [])
-          : (tokenInfo?.scopes || []);
-        const missing = required.filter(r => !(userScopes || []).includes(r));
-        if (missing.length > 0) {
-          setError(`Missing required scopes: ${missing.join(', ')}`);
-          // Log to token terminal (production only, behind flag)
-          if (FEATURE_TOKEN_INFO && environment === 'production') {
-            try { await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
-              template: tpl,
-              path,
-              required_scopes: required,
-              missing_scopes: missing,
-            }); } catch {}
+        // Always use the scopes from the currently selected account/tokenInfo.
+        // Admin-level scopes may differ or be stale and would give false negatives.
+        if (!tokenInfo || !Array.isArray(tokenInfo.scopes)) {
+          // Token info not loaded yet – skip scope warning to avoid false negatives.
+        } else {
+          const userScopes: string[] = tokenInfo.scopes || [];
+          const missing = required.filter(r => !(userScopes || []).includes(r));
+          if (missing.length > 0) {
+            setStdError(`Missing required scopes: ${missing.join(', ')}`);
+            setReconnectScopes(missing);
+            setShowReconnect(true);
+            // Log to token terminal (production only, behind flag)
+            if (FEATURE_TOKEN_INFO && environment === 'production') {
+              try {
+                await api.post('/admin/ebay/tokens/logs/blocked-scope?env=production', {
+                  template: tpl,
+                  path,
+                  required_scopes: required,
+                  missing_scopes: missing,
+                });
+              } catch {}
+            }
+            // Do NOT return here – still send the request to eBay so the debugger remains usable.
           }
-          return; // Block send
         }
       }
     } catch {}
 
     if (totalTestingMode) {
-      // Handle raw request
+      // Handle raw request via backend
       if (!rawRequest.trim()) {
         setError('Raw request is required');
         return;
       }
-      // TODO: Parse raw request and send
-      setError('Total Testing Mode - raw request parsing not yet implemented');
+      setLoading(true);
+      setError('');
+      setStdError('');
+      setRawError('');
+      setResponse(null);
+      try {
+        const res = await api.post(`/ebay/debug/raw?environment=${environment}`, { raw: rawRequest });
+        setResponse(res.data);
+      } catch (err:any) {
+        console.error('Raw debug request failed:', err);
+        setRawError(err?.response?.data?.detail || err?.message || 'Failed to make raw debug request');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
     if (!path) {
-      setError('Path is required');
+      setStdError('Path is required');
       return;
     }
 
@@ -444,21 +726,43 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
         });
       }
 
+      // Build body: for Trading GetSellerTransactions we construct XML from dedicated fields
+      let effectiveBody = body;
+      if (selectedTemplate === 'seller_transactions') {
+        const nd = Math.min(30, Math.max(1, Number.isFinite(sellerTxNumberOfDays) ? sellerTxNumberOfDays : 7));
+        const epp = Math.min(200, Math.max(1, Number.isFinite(sellerTxEntriesPerPage) ? sellerTxEntriesPerPage : 50));
+        const pn = Math.max(1, Number.isFinite(sellerTxPageNumber) ? sellerTxPageNumber : 1);
+        effectiveBody = `<?xml version="1.0" encoding="utf-8"?>\n` +
+          `<GetSellerTransactionsRequest xmlns="urn:ebay:apis:eBLBaseComponents">\n` +
+          `  <NumberOfDays>${nd}</NumberOfDays>\n` +
+          `  <Pagination>\n` +
+          `    <EntriesPerPage>${epp}</EntriesPerPage>\n` +
+          `    <PageNumber>${pn}</PageNumber>\n` +
+          `  </Pagination>\n` +
+          `</GetSellerTransactionsRequest>`;
+      }
+
       const queryParams = new URLSearchParams({
         method,
         path,
         environment: environment,
         ...(params ? { params: Object.entries(paramsObj).map(([k, v]) => `${k}=${v}`).join('&') } : {}),
         ...(headers ? { headers: Object.entries(headersObj).map(([k, v]) => `${k}: ${v}`).join(', ') } : {}),
-        ...(body ? { body } : {}),
+        ...(effectiveBody ? { body: effectiveBody } : {}),
         ...(selectedTemplate && selectedTemplate !== "custom" ? { template: selectedTemplate } : {})
       });
 
+      if (selectedAccountId) {
+        queryParams.set('account_id', selectedAccountId);
+      }
       const res = await api.post(`/ebay/debug?${queryParams.toString()}`, {});
       setResponse(res.data);
+      // refresh terminal logs shortly after send
+      try { setTimeout(() => { void loadDebuggerLogs(); }, 200); } catch {}
     } catch (err: any) {
       console.error('Debug request failed:', err);
-      setError(err.response?.data?.detail || 'Failed to make debug request');
+      setStdError(err.response?.data?.detail || 'Failed to make debug request');
+      try { setTimeout(() => { void loadDebuggerLogs(); }, 200); } catch {}
     } finally {
       setLoading(false);
     }
@@ -494,7 +798,9 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                   loadTokenInfo();
                 }
               }}
-              variant="default"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              variant="outline"
             >
               View Token Info
             </Button>
@@ -504,9 +810,9 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
 
       {/* Tabs for Debugger and Token Info */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'debugger' | 'token-info')}>
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="debugger">🔧 API Debugger</TabsTrigger>
-          <TabsTrigger value="token-info">🔑 Token Info</TabsTrigger>
+        <TabsList className="grid w-full max-w-xs grid-cols-2 text-xs mb-2">
+          <TabsTrigger value="debugger" className="h-8 py-1 text-xs">🔧 API Debugger</TabsTrigger>
+          <TabsTrigger value="token-info" className="h-8 py-1 text-xs">🔑 Token Info</TabsTrigger>
         </TabsList>
 
         <TabsContent value="debugger" className="space-y-4">
@@ -519,17 +825,18 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Environment Selector */}
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
-            <div className="flex items-center gap-3">
-              <Label htmlFor="debugger-env" className="font-medium">
-                Environment:
-              </Label>
-              <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
-                {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
-              </Badge>
-            </div>
-            <div className="flex items-center gap-3">
+          {/* Environment + Account Selector + Token badge */}
+          <div className="flex flex-col gap-3 p-3 bg-gray-50 rounded-lg border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Label htmlFor="debugger-env" className="font-medium">
+                  Environment:
+                </Label>
+                <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
+                  {environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-3">
               <Label htmlFor="debugger-env" className="text-sm text-gray-600">
                 Sandbox
               </Label>
@@ -545,14 +852,80 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 Production
               </Label>
             </div>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="text-xs font-medium text-gray-700">eBay account:</div>
+              <div className="flex items-center gap-2 flex-1">
+                {accountsLoading ? (
+                  <div className="text-xs text-gray-500">Loading accounts...</div>
+                ) : accountsError ? (
+                  <div className="text-xs text-red-500">{accountsError}</div>
+                ) : accounts.length === 0 ? (
+                  <div className="text-xs text-gray-500">No eBay accounts. Connect to eBay first.</div>
+                ) : (
+                  <Select
+                    value={selectedAccountId || accounts[0]?.id}
+                    onValueChange={(val) => {
+                      setSelectedAccountId(val);
+                      // Refresh lightweight token info when switching accounts
+                      void loadTokenInfo(environment, { skipIdentityTest: true });
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-64 h-8 text-xs">
+                      <SelectValue placeholder="Select eBay account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {accounts.map((acc) => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            </div>
+
+            {/* Compact token status for selected account */}
+            <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px] text-gray-600">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">Token:</span>
+                {tokenInfoLoading ? (
+                  <span>Loading…</span>
+                ) : tokenInfo && tokenInfo.token_full ? (
+                  <span className="font-mono break-all">
+                    {tokenInfo.token_full.slice(0, 16)}…
+                  </span>
+                ) : (
+                  <span className="text-gray-400">Not loaded</span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span>
+                  Status:
+                  {' '}
+                  {tokenInfo && tokenInfo.ebay_connected ? (
+                    <span className="text-green-600 font-medium">live</span>
+                  ) : (
+                    <span className="text-red-600 font-medium">not connected</span>
+                  )}
+                </span>
+                {tokenInfo?.token_expires_at && (
+                  <span className="text-gray-500">
+                    expires at {tokenInfo.token_expires_at}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Mode Toggle */}
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center gap-2 text-xs">
             <Button
               variant={!totalTestingMode ? "default" : "outline"}
               onClick={() => setTotalTestingMode(false)}
               size="sm"
+              className="h-8 px-3 text-xs"
             >
               Standard Mode
             </Button>
@@ -560,6 +933,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
               variant={totalTestingMode ? "default" : "outline"}
               onClick={() => setTotalTestingMode(true)}
               size="sm"
+              className="h-8 px-3 text-xs"
             >
               Total Testing Mode
             </Button>
@@ -567,8 +941,8 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
 
           {totalTestingMode ? (
             /* Total Testing Mode */
-            <div className="space-y-2">
-              <Label>Raw Request (Full URL + Headers + Body)</Label>
+              <div className="space-y-1">
+                <Label className="text-xs font-medium">Raw Request (Full URL + Headers + Body)</Label>
               <Textarea
                 placeholder={environment === 'sandbox' 
                   ? "GET https://api.sandbox.ebay.com/identity/v1/oauth2/userinfo\nAuthorization: Bearer v^1.1#...\nX-EBAY-C-MARKETPLACE-ID: EBAY_US"
@@ -578,6 +952,9 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 rows={8}
                 className="font-mono text-sm"
               />
+              {rawError && (
+                <Alert variant="destructive"><AlertDescription>{rawError}</AlertDescription></Alert>
+              )}
               <p className="text-xs text-gray-500">
                 Paste full request here (method, URL, headers, body). One line per header.
               </p>
@@ -585,30 +962,31 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
           ) : (
             /* Standard Mode */
             <>
-              {/* Template Selection */}
-              <div className="space-y-2">
-                <Label>Quick Templates</Label>
-                <Select value={selectedTemplate || "custom"} onValueChange={handleTemplateSelect}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a template or use custom" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="custom">Custom Request</SelectItem>
-                    {Object.entries(templates).map(([key, template]) => (
-                      <SelectItem key={key} value={key}>
-                        {template.name} - {template.description}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Compact parameter row: Templates + Method + Path + Query + Headers */}
+              <div className="flex flex-wrap items-end gap-3 text-xs">
+                {/* Quick Templates */}
+                <div className="flex-1 min-w-[220px]">
+                  <Label className="text-xs font-medium">Quick Templates</Label>
+                  <Select value={selectedTemplate || "custom"} onValueChange={handleTemplateSelect}>
+                    <SelectTrigger className="mt-1 h-8 text-xs">
+                      <SelectValue placeholder="Select a template or use custom" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="custom">Custom Request</SelectItem>
+                      {Object.entries(templates).map(([key, template]) => (
+                        <SelectItem key={key} value={key}>
+                          {template.name} - {template.description}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {/* Method and Path */}
-              <div className="grid grid-cols-4 gap-4">
-                <div className="space-y-2">
-                  <Label>Method</Label>
+                {/* Method */}
+                <div className="w-24">
+                  <Label className="text-xs font-medium">Method</Label>
                   <Select value={method} onValueChange={setMethod}>
-                    <SelectTrigger>
+                    <SelectTrigger className="mt-1 h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -620,40 +998,45 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="col-span-3 space-y-2">
-                  <Label>API Path *</Label>
+
+                {/* API Path */}
+                <div className="flex-[2] min-w-[260px]">
+                  <Label className="text-xs font-medium">API Path *</Label>
                   <Input
+                    className="mt-1 h-8 text-xs"
                     placeholder="/sell/fulfillment/v1/order"
                     value={path}
                     onChange={(e) => setPath(e.target.value)}
                   />
                 </div>
-              </div>
 
-              {/* Query Parameters */}
-              <div className="space-y-2">
-                <Label>Query Parameters</Label>
-                <Input
-                  placeholder="limit=1&filter=orderStatus:COMPLETED"
-                  value={params}
-                  onChange={(e) => setParams(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">Format: key1=value1&key2=value2</p>
-              </div>
+                {/* Query Parameters */}
+                <div className="flex-1 min-w-[220px]">
+                  <Label className="text-xs font-medium">Query Parameters</Label>
+                  <Input
+                    className="mt-1 h-8 text-xs"
+                    placeholder="limit=1&filter=orderStatus:COMPLETED"
+                    value={params}
+                    onChange={(e) => setParams(e.target.value)}
+                  />
+                  <p className="text-[11px] text-gray-500">Format: key1=value1&key2=value2</p>
+                </div>
 
-              {/* Headers */}
-              <div className="space-y-2">
-                <Label>Additional Headers (optional)</Label>
-                <Input
-                  placeholder="X-EBAY-C-MARKETPLACE-ID: EBAY_US"
-                  value={headers}
-                  onChange={(e) => setHeaders(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">Format: Header1: Value1, Header2: Value2</p>
+                {/* Headers */}
+                <div className="flex-1 min-w-[240px]">
+                  <Label className="text-xs font-medium">Additional Headers (optional)</Label>
+                  <Input
+                    className="mt-1 h-8 text-xs"
+                    placeholder="X-EBAY-C-MARKETPLACE-ID: EBAY_US"
+                    value={headers}
+                    onChange={(e) => setHeaders(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500">Format: Header1: Value1, Header2: Value2</p>
+                </div>
               </div>
 
               {/* Body */}
-              {(method === 'POST' || method === 'PUT' || method === 'PATCH') && (
+              {(method === 'POST' || method === 'PUT' || method === 'PATCH') && selectedTemplate !== 'seller_transactions' && (
                 <div className="space-y-2">
                   <Label>Request Body (JSON)</Label>
                   <Textarea
@@ -665,18 +1048,95 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                   />
                 </div>
               )}
+
+              {/* Trading GetSellerTransactions parameters */}
+              {selectedTemplate === 'seller_transactions' && (
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <Label className="text-xs font-medium">NumberOfDays</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={30}
+                      className="mt-1 h-8 text-xs"
+                      value={sellerTxNumberOfDays}
+                      onChange={(e) => setSellerTxNumberOfDays(Number(e.target.value) || 0)}
+                    />
+                    <p className="text-[11px] text-gray-500">Days back to retrieve transactions (130, default 7).</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">EntriesPerPage</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={200}
+                      className="mt-1 h-8 text-xs"
+                      value={sellerTxEntriesPerPage}
+                      onChange={(e) => setSellerTxEntriesPerPage(Number(e.target.value) || 0)}
+                    />
+                    <p className="text-[11px] text-gray-500">Number of transactions per page (100, default 50).</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">PageNumber</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      className="mt-1 h-8 text-xs"
+                      value={sellerTxPageNumber}
+                      onChange={(e) => setSellerTxPageNumber(Number(e.target.value) || 0)}
+                    />
+                    <p className="text-[11px] text-gray-500">Page number to retrieve (&gt;= 1).</p>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
           {/* Error */}
-          {error && (
+          {stdError && (
             <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>{stdError}</AlertDescription>
             </Alert>
           )}
 
-          {/* Submit Button */}
-          <Button onClick={handleDebug} disabled={loading || (!totalTestingMode && !path) || (totalTestingMode && !rawRequest.trim())}>
+            {/* Raw Request Preview (one line + headers) */}
+            {!totalTestingMode && (
+              <div className="mb-3 p-3 bg-gray-50 rounded border">
+                <Label className="text-xs text-gray-500 mb-1 block">Raw Request Preview</Label>
+                <pre className="text-xs font-mono whitespace-pre-wrap break-all">{`${method} ${(() => {
+                  // Choose base host depending on API family
+                  let base: string;
+                  const isFinances = selectedTemplate === 'transactions' || path.includes('/sell/finances/');
+                  if (isFinances) {
+                    base = environment === 'sandbox'
+                      ? 'https://apiz.sandbox.ebay.com'
+                      : 'https://apiz.ebay.com';
+                  } else {
+                    base = environment === 'sandbox'
+                      ? 'https://api.sandbox.ebay.com'
+                      : 'https://api.ebay.com';
+                  }
+                  const p = path.startsWith('http') ? path : (path.startsWith('/') ? `${base}${path}` : `${base}/${path}`);
+                  const paramsObj: Record<string,string> = {};
+                  (params||'').split('&').forEach((pair)=>{ const [k,v] = pair.split('='); if(k&&v) paramsObj[k.trim()] = v.trim(); });
+                  const qs = new URLSearchParams(paramsObj).toString();
+                  return qs ? `${p}?${qs}` : p;
+                })()}`}
+{Object.entries((() => {
+  const hdrs: Record<string,string> = {};
+  (headers||'').split(',').forEach((pair)=>{ const [k,v] = pair.split(':'); if(k&&v) hdrs[k.trim()] = v.trim(); });
+  // We always add Authorization/Accept/Content-Type
+  hdrs['Authorization'] = 'Bearer ***';
+  hdrs['Accept'] = 'application/json';
+  if(['POST','PUT','PATCH'].includes(method.toUpperCase())) hdrs['Content-Type']='application/json';
+  return hdrs;
+})()).map(([k,v])=>`\n${k}: ${v}`).join('')}
+{['POST','PUT','PATCH'].includes(method.toUpperCase()) && body ? `\n\n${body}` : ''}
+</pre>
+              </div>
+            )}
+            {/* Submit Button */}
+            <Button onClick={handleDebug} disabled={loading || (!totalTestingMode && !path) || (totalTestingMode && !rawRequest.trim())}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -786,18 +1246,22 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
             {/* Full URL in one line */}
             <div className="mb-4 p-3 bg-gray-50 rounded border">
               <div className="flex items-center justify-between">
-                <div className="flex-1">
+                <div className="flex-1 overflow-x-auto">
                   <Label className="text-xs text-gray-500 mb-1 block">Full Request URL (one line)</Label>
                   <p className="font-mono text-sm break-all">{response.request.url_full || response.request.url}</p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => copyToClipboard(response.request.url_full || response.request.url, 'url')}
-                  className="ml-2"
-                >
-                  {copied === 'url' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
+                <div className="flex items-center gap-2 ml-2">
+                  <Button variant="outline" size="sm" onClick={() => setLineWrap(prev => !prev)}>
+                    {lineWrap ? 'Disable wrap' : 'Wrap lines'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(response.request.url_full || response.request.url, 'url')}
+                  >
+                    {copied === 'url' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -814,26 +1278,26 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     </div>
                     <div>
                       <Label className="text-xs text-gray-500">URL</Label>
-                      <p className="font-mono text-xs break-all">{response.request.url}</p>
+                      <p className="font-mono text-xs break-all overflow-x-auto">{response.request.url}</p>
                     </div>
                     {Object.keys(response.request.params).length > 0 && (
                       <div>
                         <Label className="text-xs text-gray-500">Query Parameters</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {JSON.stringify(response.request.params, null, 2)}
                         </pre>
                       </div>
                     )}
                     <div>
                       <Label className="text-xs text-gray-500">Headers</Label>
-                      <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                      <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                         {JSON.stringify(response.request.headers, null, 2)}
                       </pre>
                     </div>
                     {response.request.body && (
                       <div>
                         <Label className="text-xs text-gray-500">Body</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {typeof response.request.body === 'string' 
                             ? response.request.body 
                             : JSON.stringify(response.request.body, null, 2)}
@@ -843,7 +1307,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     {response.request.curl_command && (
                       <div>
                         <Label className="text-xs text-gray-500">cURL Command</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {response.request.curl_command}
                         </pre>
                       </div>
@@ -865,7 +1329,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     </div>
                     <div>
                       <Label className="text-xs text-gray-500">Response Body</Label>
-                      <pre className="text-xs bg-white p-2 rounded overflow-auto border max-h-[500px]">
+                      <pre className={`text-xs bg-white p-2 rounded overflow-auto border max-h-[500px] ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                         {typeof response.response.body === 'string'
                           ? response.response.body
                           : JSON.stringify(response.response.body, null, 2)}
@@ -893,13 +1357,13 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                       <>
                         <div>
                           <Label className="text-xs text-gray-500">eBay-Specific Headers</Label>
-                          <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                          <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                             {JSON.stringify(response.response.ebay_headers, null, 2)}
                           </pre>
                         </div>
                         <div>
                           <Label className="text-xs text-gray-500">All Response Headers</Label>
-                          <pre className="text-xs bg-white p-2 rounded overflow-auto border max-h-[400px]">
+                          <pre className={`text-xs bg-white p-2 rounded overflow-auto border max-h-[400px] ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                             {JSON.stringify(response.response.headers, null, 2)}
                           </pre>
                         </div>
@@ -907,7 +1371,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     ) : (
                       <div>
                         <Label className="text-xs text-gray-500">All Response Headers</Label>
-                        <pre className="text-xs bg-white p-2 rounded overflow-auto border">
+                        <pre className={`text-xs bg-white p-2 rounded overflow-auto border ${lineWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
                           {JSON.stringify(response.response.headers, null, 2)}
                         </pre>
                       </div>
@@ -919,6 +1383,107 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
           </CardContent>
         </Card>
         )}
+
+        {/* Debugger Terminal (last 100) */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Debugger Terminal (last 100)</CardTitle>
+                <CardDescription>Live request/response events from the Debugger. No secrets are stored.</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => exportDebuggerLogs('json')}>Save JSON</Button>
+                <Button size="sm" variant="outline" onClick={() => exportDebuggerLogs('ndjson')}>Save NDJSON</Button>
+                <Button size="sm" variant="outline" onClick={() => exportDebuggerLogs('txt')}>Save TXT</Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {debugLogsLoading && <div className="text-sm text-gray-600">Loading...</div>}
+            <ScrollArea className="h-80 rounded border bg-gray-900 p-4 font-mono text-xs">
+              {debugLogs.length === 0 ? (
+                <div className="text-gray-400">No debugger events yet.</div>
+              ) : (
+                <div className="space-y-3">
+                  {debugLogs.map((log:any)=> (
+                    <div key={log.id} className="border-b border-gray-800 pb-3">
+                      <div className="flex items-center justify-between text-gray-400">
+                        <span>[{new Date(log.created_at).toLocaleString()}]</span>
+                        <span>{log.action}</span>
+                      </div>
+                      {log.request && (
+                        <div className="mt-1 text-green-300">
+                          → {log.request.method} {log.request.url}
+                          {log.request.headers && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-24 whitespace-pre-wrap break-words">{JSON.stringify(log.request.headers, null, 2)}</pre>
+                          )}
+                          {log.request.body && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-24 whitespace-pre-wrap break-words">{typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}</pre>
+                          )}
+                        </div>
+                      )}
+                      {log.response && (
+                        <div className="mt-1 text-blue-300">
+                          ← status: {log.response.status}
+                          {log.response.headers && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-24 whitespace-pre-wrap break-words">{JSON.stringify(log.response.headers, null, 2)}</pre>
+                          )}
+                          {typeof log.response.body !== 'undefined' && (
+                            <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto overflow-x-auto max-h-32 whitespace-pre-wrap break-words">{typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}</pre>
+                          )}
+                        </div>
+                      )}
+                      {log.error && (
+                        <div className="mt-1 text-red-300">error: {log.error}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </CardContent>
+        </Card>
+
+        {/* Reconnect with required scopes (pre-flight) */}
+        <Dialog open={showReconnect} onOpenChange={(o)=> setShowReconnect(o)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Reconnect with required scopes</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="text-gray-700">Scopes we are about to request:</div>
+              <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
+                {reconnectScopes.map((s,i)=> (
+                  <span key={i} className="text-xs px-2 py-0.5 border rounded bg-gray-50">{s}</span>
+                ))}
+              </div>
+              {reconnectUrl && (
+                <div className="p-3 bg-gray-50 rounded border font-mono text-xs overflow-x-auto">
+                  GET {reconnectUrl}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={()=> setShowReconnect(false)}>Cancel</Button>
+              <Button variant="outline" onClick={async ()=> {
+                try {
+                  const redirectUri = `${window.location.origin}/ebay/callback`;
+                  const rawBaseScopes = catalogScopes.length
+                    ? catalogScopes
+                    : ['https://api.ebay.com/oauth/api_scope'];
+                  const baseScopes = sanitizeScopes(rawBaseScopes);
+                  const requestedReconnect = sanitizeScopes(reconnectScopes || []);
+                  const union = Array.from(new Set([...requestedReconnect, ...baseScopes]));
+                  const { data } = await api.post(`/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`, { scopes: union });
+                  localStorage.setItem('ebay_oauth_environment', environment);
+                  window.location.href = data.authorization_url;
+                } catch {}
+              }}>Request all my scopes</Button>
+              <Button onClick={()=> { if (reconnectUrl) { localStorage.setItem('ebay_oauth_environment', environment); window.location.href = reconnectUrl; } }}>Proceed to eBay</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         </TabsContent>
 
         <TabsContent value="token-info" className="space-y-4">
@@ -958,7 +1523,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 </div>
               </div>
 
-              {tokenInfoLoading ? (
+          {tokenInfoLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin mr-2" />
                   Loading token information...
@@ -969,7 +1534,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                 </Alert>
               ) : tokenInfo ? (
                 <div className="space-y-4">
-                  {FEATURE_TOKEN_INFO && environment === 'production' && (
+          {environment === 'production' && (
                     <div className="space-y-2 p-3 bg-amber-50 border border-amber-200 rounded">
                       <div className="flex items-center justify-between">
                         <div>
@@ -1019,7 +1584,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     </div>
                   )}
                   {/* Condensed User Summary */}
-                  <div className="p-2 bg-blue-50 rounded-lg border border-blue-200 text-sm">
+              <div className="p-2 bg-blue-50 rounded-lg border border-blue-200 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold">User:</span> <span>{tokenInfo.user_email}</span>
                       <span>•</span>
@@ -1091,6 +1656,107 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
                     <Loader2 className={`h-4 w-4 mr-2 ${(tokenInfoLoading || tokenInfoRequestLoading) ? 'animate-spin' : ''}`} />
                     {tokenInfoRequestLoading ? 'Testing API...' : 'Refresh Token Info & Test API'}
                   </Button>
+
+                  {/* Admin: Accounts + Scopes vs Catalog (production only) */}
+                  {FEATURE_TOKEN_INFO && environment === 'production' && (
+                    <Card className="mt-4">
+                      <CardHeader>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <CardTitle>Accounts &amp; Scopes (Admin)</CardTitle>
+                            <CardDescription>
+                              For this org: all eBay accounts, stored scopes, and comparison with scope catalog.
+                            </CardDescription>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={loadAdminAccountsScopes} disabled={accountsScopesLoading}>
+                            {accountsScopesLoading ? <><Loader2 className="mr-1 h-3 w-3 animate-spin"/>Reloading...</> : 'Reload'}
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-4 text-sm">
+                        {accountsScopesError && (
+                          <Alert variant="destructive"><AlertDescription>{accountsScopesError}</AlertDescription></Alert>
+                        )}
+                        {accountsScopes && (
+                          <>
+                            <div className="text-xs text-gray-600 mb-1">
+                              Scope catalog: {accountsScopes.scope_catalog.length} scopes
+                            </div>
+                            <details className="mb-3">
+                              <summary className="cursor-pointer text-blue-600 hover:text-blue-800 text-xs">Show scope catalog</summary>
+                              <ul className="mt-2 space-y-1 list-disc list-inside">
+                                {accountsScopes.scope_catalog.map((s) => (
+                                  <li key={s.scope} className="font-mono text-xs text-gray-700">
+                                    {s.scope}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                            {accountsScopes.accounts.length === 0 ? (
+                              <div className="text-gray-600 text-sm">No eBay accounts found for this org.</div>
+                            ) : (
+                              <div className="space-y-3">
+                                {accountsScopes.accounts.map((acc) => (
+                                  <div key={acc.id} className="p-3 border rounded bg-gray-50">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div>
+                                        <div className="font-semibold">{acc.house_name || acc.username || acc.id}</div>
+                                        <div className="text-xs text-gray-600">eBay: {acc.username || '—'} ({acc.ebay_user_id})</div>
+                                        {acc.connected_at && (
+                                          <div className="text-xs text-gray-500">Connected at: {new Date(acc.connected_at).toLocaleString()}</div>
+                                        )}
+                                      </div>
+                                      <div className="text-right text-xs">
+                                        <div>Scopes: {acc.scopes_count} / {accountsScopes.scope_catalog.length}</div>
+                                        <div>
+                                          {acc.has_all_catalog_scopes ? (
+                                            <span className="text-green-600 font-semibold">Full catalog granted</span>
+                                          ) : (
+                                            <span className="text-amber-600 font-semibold">Missing {acc.missing_catalog_scopes.length} scopes</span>
+                                          )}
+                                        </div>
+                                        {acc.token && (
+                                          <div className="mt-1 text-xs text-gray-500">
+                                            Access expires: {acc.token.access_expires_at || '—'}
+                                            {acc.token.has_refresh_token ? ' • has refresh token' : ''}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <details className="mt-2">
+                                      <summary className="cursor-pointer text-blue-600 hover:text-blue-800 text-xs">Show account scopes</summary>
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {acc.scopes.length === 0 ? (
+                                          <span className="text-xs text-red-600">No scopes stored</span>
+                                        ) : (
+                                          acc.scopes.map((s) => (
+                                            <span key={s} className="text-xs px-2 py-0.5 border rounded bg-white font-mono">{s}</span>
+                                          ))
+                                        )}
+                                      </div>
+                                    </details>
+                                    {!acc.has_all_catalog_scopes && acc.missing_catalog_scopes.length > 0 && (
+                                      <details className="mt-2">
+                                        <summary className="cursor-pointer text-amber-700 hover:text-amber-900 text-xs">Show missing catalog scopes</summary>
+                                        <ul className="mt-1 list-disc list-inside">
+                                          {acc.missing_catalog_scopes.map((s) => (
+                                            <li key={s} className="text-xs font-mono text-amber-800">{s}</li>
+                                          ))}
+                                        </ul>
+                                      </details>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {!accountsScopes && !accountsScopesLoading && !accountsScopesError && (
+                          <div className="text-xs text-gray-500">Click "Reload" to load accounts/scopes from admin API.</div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
               ) : (
                 <Alert>
@@ -1101,7 +1767,7 @@ const handleEnvironmentChange = (newEnv: 'sandbox' | 'production') => {
               )}
 
               {/* Token Terminal Log (persistent, last 100) */}
-              {FEATURE_TOKEN_INFO && environment === 'production' && (
+              {environment === 'production' && (
                 <Card className="mt-4">
                   <CardHeader>
                     <CardTitle>🖥️ Token Terminal Log</CardTitle>

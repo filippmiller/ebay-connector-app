@@ -1,0 +1,291 @@
+You’re right, I hit some friction while editing diffs. Let me summarize what’s already changed conceptually, where in the code it lives, and how to verify it. I’ll also outline the docs you asked for so you can create/adjust them safely.
+
+
+
+1. High-level summary of changes
+
+1. Introduced an in-memory AppToken cache in EbayService:
+◦  New internal raw minting helper for AppToken that returns (token, expires_in).
+◦  New cached helper get_browse_app_token(...) that reuses tokens until they are near expiry.
+2. Kept existing get_app_access_token(...) behavior intact for current callers:
+◦  Still mints a fresh AppToken per call.
+◦  Now built on top of the new raw helper.
+3. Switched Sniper’s Browse metadata fetch (_fetch_auction_metadata) to AppToken:
+◦  No longer pulls EbayToken from ebay_tokens just to call get_item_by_legacy_id.
+◦  Uses a shared AppToken via get_browse_app_token(...).
+4. Switched Sniper worker’s REST item ID resolution to AppToken:
+◦  _resolve_rest_item_id now uses the shared Browse AppToken instead of user-token.
+◦  Buy Offer bidding (place_proxy_bid / get_bidding_status) still uses user tokens from ebay_tokens exactly as before.
+5. Documented AppToken behavior in docs/EBAY_APP_TOKEN_INFRASTRUCTURE.md:
+◦  Added sections about the cache, Sniper not using AppToken yet, etc. (now needs a small update to say “Sniper Browse uses AppToken”).
+
+
+
+2. Files and functions touched
+
+Below are the key paths and symbols that were (or should be) adjusted. You can use this as a checklist against your git diff.
+
+2.1. AppToken cache and helpers
+
+File: backend/app/services/ebay.py
+
+New/changed pieces:
+
+1. Imports at the top now include:
+•  Iterable from typing
+•  timezone from datetime
+•  dataclass from dataclasses
+2. AppToken cache entry + globals
+
+Near the top of the file, before class EbayService:
+python
+3. Low-level minting helper (replaces direct logic in get_app_access_token):
+python
+4. Existing get_app_access_token(...) now thin wrapper:
+python
+5. New cached helper for Browse:
+python
+2.2. Sniper router: Browse via AppToken
+
+File: backend/app/routers/sniper.py
+
+Imports:
+
+•  Removed EbayToken import (no longer needed here).
+•  Added:
+python
+Function: _fetch_auction_metadata(db: Session, ebay_account_id: str, item_id: str)
+
+Key changes:
+
+1. No longer reads EbayToken. Instead validates the account exists:
+python
+2. Uses AppToken for Browse, via cache:
+python
+3. Everything else in _fetch_auction_metadata (validation of auction vs fixed price, parsing itemEndDate, price, imageUrl, etc.) is unchanged.
+
+2.3. Sniper worker: REST itemId resolution via AppToken
+
+File: backend/app/workers/sniper_executor.py
+
+Function signature change:
+
+Before:
+python
+After:
+python
+Call sites updated:
+
+•  In _place_bid_for_snipe:
+python
+•  In _finalize_ended_snipes:
+python
+Everything else — especially:
+
+•  resolving EbayAccount + EbayToken for bidding,
+•  calling ebay_service.place_proxy_bid(...) and ebay_service.get_bidding_status(...) with user tokens,
+
+remains unchanged.
+
+
+
+3. Documentation status
+
+3.1. docs/EBAY_APP_TOKEN_INFRASTRUCTURE.md
+
+This file already exists and describes:
+
+•  Application vs User tokens.
+•  get_app_access_token, Notification API uses, signature verification.
+•  Config/env, lifetime (no caching), and where AppTokens are used.
+•  Gaps/risks/TODOs, including the need for caching and Sniper/AI use.
+
+Given the new behavior, you should add a short subsection along these lines:
+markdown
+3.2. New doc: docs/EBAY_SNIPER_BROWSE_APP_TOKEN.md
+
+I wasn’t able to cleanly create this file in your repo without conflicting diffs, but here is the outline + suggested content you can paste into a new file:
+
+
+
+
+
+# Sniper Browse + AppToken Integration
+
+## 1. Overview
+
+The Sniper module schedules last-second bids on eBay auction listings.
+
+- **Browse (read-only):** used to resolve legacy ItemIDs and fetch auction
+  metadata (title, end time, price, image). This now uses a shared
+  **Application access token (AppToken)**.
+- **Buy Offer (bidding):** used to place proxy bids and read bidding status.
+  This continues to use **per-account user access tokens** with user scopes
+  including `https://api.ebay.com/oauth/api_scope/buy.offer.auction`.
+
+The goal is to decouple read-only discovery from per-account user tokens while
+keeping all write-sensitive operations tied to user consent.
+
+## 2. Token usage model
+
+- **AppToken (client_credentials):**
+  - Used for:
+    - `GET /buy/browse/v1/item/get_item_by_legacy_id` in:
+      - `backend/app/routers/sniper.py::_fetch_auction_metadata`.
+      - `backend/app/workers/sniper_executor.py::_resolve_rest_item_id`.
+  - Obtained via:
+    - `EbayService.get_browse_app_token(...)`, which wraps
+      `EbayService._get_app_access_token_raw(...)` and an in-memory cache.
+  - Scopes:
+    - Default: `["https://api.ebay.com/oauth/api_scope"]`.
+
+- **User access token (authorization_code + refresh_token):**
+  - Used for:
+    - Buy Offer bidding:
+      - `POST /buy/offer/v1_beta/bidding/{item_id}/place_proxy_bid`.
+      - `GET /buy/offer/v1_beta/bidding/{item_id}`.
+  - Source:
+    - `ebay_tokens` table (per `EbayAccount`) via `_resolve_account_and_token`
+      in `backend/app/workers/sniper_executor.py`.
+  - Required scopes:
+    - `https://api.ebay.com/oauth/api_scope`.
+    - `https://api.ebay.com/oauth/api_scope/buy.offer.auction`.
+    - Plus existing seller scopes from `ebay_scope_definitions`.
+
+## 3. AppToken cache behavior
+
+- Implemented in `backend/app/services/ebay.py`:
+
+  - Cache entry type: `_AppTokenCacheEntry` with:
+    - `access_token: str`
+    - `expires_at: datetime` (UTC).
+
+  - Global cache:
+    - `_APP_TOKEN_CACHE: Dict[Tuple[str, str], _AppTokenCacheEntry]`
+      where the key is `(environment, scopes_key)`.
+
+  - `scopes_key`:
+    - Deterministic string built from `sorted(set(scopes_list))`, joined by
+      spaces.
+
+- `EbayService.get_browse_app_token(...)` algorithm:
+
+  1. Compute `target_env` from `environment` argument or `EBAY_ENVIRONMENT`.
+  2. Normalize scopes (default to `["https://api.ebay.com/oauth/api_scope"]`).
+  3. Build `cache_key = (target_env, scopes_key)`.
+  4. If cache entry exists and `entry.expires_at > now_utc`, return
+     `entry.access_token`.
+  5. Otherwise:
+     - Call `_get_app_access_token_raw(...)` to mint a new token and read
+       `expires_in`.
+     - Compute a conservative `expires_at = now_utc + (expires_in - safety)`,
+       where `safety` is at most half of `expires_in` but capped by a small
+       constant (e.g. 120 seconds).
+     - Store the entry in `_APP_TOKEN_CACHE` and return the new token.
+
+- Persistence:
+  - AppTokens are **not stored in the DB**.
+  - The cache is **process-local**, per backend instance.
+
+## 4. Code references
+
+- **Browse AppToken helper:**
+
+  - File: `backend/app/services/ebay.py`
+  - Functions:
+    - `EbayService._get_app_access_token_raw(...)`
+    - `EbayService.get_browse_app_token(...)`
+
+- **Sniper router (metadata fetch):**
+
+  - File: `backend/app/routers/sniper.py`
+  - Function:
+    - `_fetch_auction_metadata(db, ebay_account_id, item_id)`:
+      - Resolves `EbayAccount`.
+      - Calls `get_browse_app_token()` for AppToken.
+      - Calls `GET /buy/browse/v1/item/get_item_by_legacy_id` with AppToken.
+
+- **Sniper worker (REST itemId resolution):**
+
+  - File: `backend/app/workers/sniper_executor.py`
+  - Functions:
+    - `_resolve_rest_item_id(legacy_item_id: str)`:
+      - Uses `get_browse_app_token()` for AppToken.
+      - Calls Browse API and returns `itemId`.
+    - `_place_bid_for_snipe(...)` and `_finalize_ended_snipes(...)`:
+      - Call `_resolve_rest_item_id(...)`.
+      - Continue to use user tokens for Buy Offer operations.
+
+## 5. Limitations and future extensions
+
+- The AppToken cache is intentionally simple and process-local; if you add more
+  workers or scale out horizontally, each process will maintain its own cache.
+- AppToken scopes are currently hardcoded to the base Browse scope. If we add
+  more AppToken-based features (e.g. other read-only APIs), we may want to:
+  - Extend `EBAY_APP_TOKEN_INFRASTRUCTURE.md` with a matrix of
+    AppToken-consumers and scopes.
+  - Tie AppToken scopes into the `ebay_scope_definitions` catalog via a
+    `grant_type = 'client'` entry.
+
+- AI workers that need to scan public or semi-public listing data can reuse
+  `get_browse_app_token(...)` to avoid multiplying user-token usage and to stay
+  within eBay’s `client_credentials` best practices.
+
+
+
+
+4. Minimal test plan
+
+Here’s a concise test plan you can run manually.
+
+4.1. AppToken cache sanity
+
+1. Unit-level / local check (if you have tests or a REPL):
+◦  Call await ebay_service.get_browse_app_token() twice in quick succession.
+◦  Insert temporary debug logs (or breakpoints) to observe:
+▪  First call → underlying _get_app_access_token_raw hits the Identity API.
+▪  Second call → returns from _APP_TOKEN_CACHE without another HTTP call.
+2. Log-based check in dev:
+◦  Enable logging around app_token_request / app_token_response.
+◦  Trigger multiple Sniper Browse operations (see below).
+◦  Confirm:
+▪  You see app_token_request only occasionally, not for every Browse call.
+▪  No frequent HTTP 400/401/429 from /identity/v1/oauth2/token.
+
+4.2. Sniper creation uses AppToken for Browse
+
+1. Ensure at least one eBay account is connected and has valid user-token/scopes.
+2. Call POST /api/sniper/snipes (via UI or API) with:
+◦  ebay_account_id of the connected account.
+◦  item_id = a real auction legacy ItemID.
+◦  A small max_bid_amount.
+3. Expected behavior:
+◦  The request succeeds and creates a snipe.
+◦  Logs show a Browse call GET .../buy/browse/v1/item/get_item_by_legacy_id with an AppToken (not user-token).
+◦  The created snipe has:
+▪  end_time and fire_at filled.
+▪  title, currency, current_bid_at_creation populated.
+4. Edge case: temporarily break the user-token (e.g., force an expired token in ebay_tokens) while leaving Client ID / Cert ID valid:
+◦  Sniper creation should still be able to fetch metadata (because it now uses AppToken for Browse).
+◦  Bidding will still fail later if user-token is invalid — that’s expected.
+
+4.3. Bidding still uses user-token
+
+1. Re-authorize the eBay account so that the user-token has:
+◦  https://api.ebay.com/oauth/api_scope
+◦  https://api.ebay.com/oauth/api_scope/buy.offer.auction
+2. Create a Sniper for a sandbox auction with safe low bid.
+3. Ensure sniper worker is running.
+4. As the auction approaches end_time:
+◦  Confirm that the worker:
+▪  Calls _resolve_rest_item_id(...) with Browse AppToken.
+▪  Calls place_proxy_bid with the user-token from ebay_tokens.
+◦  Verify in logs / EbaySnipeLog:
+▪  place_bid entries reference Buy Offer endpoint.
+▪  Any scope-related errors are about the user-token, not AppToken.
+5. After the auction ends:
+◦  Confirm get_bidding_status continues to use the user-token and behaves as before (statuses bidding → won/lost/error).
+
+
+
+If you’d like, next step can be to clean up any rough edges in ebay.py around the _get_app_access_token_raw error handling (I intentionally kept behavior-compatible but we can polish the try/except structure), and then we can finalize the two docs to exactly match the new behavior.

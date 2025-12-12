@@ -1,0 +1,66 @@
+I’ve located the key frontend admin pages and router entrypoints, as well as the existing integrations router and worker patterns on the backend. Next I’ll open the admin dashboard and routing files plus the workers __init__ to wire in new pages and the Gmail sync worker.
+
+C:\Users\filip\.gemini\antigravity\playground\silent-spirit\frontend\src\pages\AdminPage.tsx
+C:\Users\filip\.gemini\antigravity\playground\silent-spirit\frontend\src\App.tsx
+C:\Users\filip\.gemini\antigravity\playground\silent-spirit\frontend\src\main.tsx
+C:\Users\filip\.gemini\antigravity\playground\silent-spirit\backend\app\workers\__init__.py
+C:\Users\filip\.gemini\antigravity\playground\silent-spirit\backend\app\routers\integrations.py
+Implement frontend Admin Integrations page and routing
+Implement frontend AI Email Training admin page
+Implement Gmail client and sync services on backend
+Implement Gmail sync worker and export from workers package
+Extend integrations router with AI email training endpoints and update docs
+I’ve added the Admin Integrations UI and wired it into routing.
+
+What’s done:
+
+1. New page /admin/integrations
+◦  File: frontend/src/pages/AdminIntegrationsPage.tsx
+◦  Features:
+▪  Loads integration accounts via GET /api/integrations/accounts.
+▪  Shows inline loading and error states.
+▪  Gmail card:
+▪  Button “Connect Gmail account” calls POST /api/integrations/gmail/auth-url.
+▪  Redirects the browser to the returned auth_url.
+▪  Shows whether there are any active Gmail accounts (based on provider_code === 'gmail' && status === 'active').
+▪  Accounts table:
+▪  Columns: Provider, Account, Owner, Status, Last Sync, Actions.
+▪  For each account:
+▪  Enable/Disable buttons → POST /api/integrations/accounts/{id}/enable or /disable.
+▪  “Request resync” button → POST /api/integrations/accounts/{id}/resync.
+▪  Table is refreshable via a “Refresh” button that re-calls /api/integrations/accounts.
+▪  Gmail callback handling:
+▪  Reads ?gmail=connected or ?gmail=error&reason=... from query string.
+▪  Shows a green success banner for gmail=connected.
+▪  For gmail=error, maps reason to a human-friendly Russian message using the same reason codes the backend sets (missing_code, missing_state, invalid_state, missing_owner, server_config, token_http, token_failed, missing_access_token, profile_failed, persist_failed).
+▪  After showing the banner, strips query parameters (navigate(location.pathname, { replace: true })) so the message doesn’t re-appear on refresh.
+2. Routing updates
+◦  File: frontend/src/App.tsx
+▪  Imported the new page:
+ts
+•  Added protected route:
+ts
+3. Admin dashboard card
+◦  File: frontend/src/pages/AdminPage.tsx
+◦  Added a new card before the Todo List card:
+
+
+<Card
+       className="p-4 hover:shadow-lg cursor-pointer"
+       onClick={() => navigate('/admin/integrations')}
+     >
+       <h2 className="text-lg font-semibold">Integrations</h2>
+       <p className="text-sm text-gray-600 mt-1">
+         Подключение Gmail и других внешних провайдеров
+       </p>
+     </Card>
+
+
+•  Existing Todo List card remains, just moved down.
+
+
+
+If you want, next I can:
+
+•  Implement the backend Gmail sync + AI pair builder and worker.
+•  Add the AI Email Training admin API + /admin/ai-email-training page on the frontend.

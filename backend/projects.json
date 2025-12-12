@@ -1,0 +1,113 @@
+﻿[
+  {
+    "id": "e2a4908d-6e01-46fa-a3ab-aa99ef3befdf",
+    "name": "pretty-exploration",
+    "createdAt": "2025-10-26T13:47:35.321Z",
+    "updatedAt": "2025-11-14T14:56:30.743Z",
+    "deletedAt": null,
+    "environments": {
+      "edges": [
+        {
+          "node": {
+            "id": "524635cb-8338-482e-b9d6-002af8a12bcd",
+            "name": "production"
+          }
+        }
+      ]
+    },
+    "services": {
+      "edges": [
+        {
+          "node": {
+            "id": "31ec6c36-62b8-4f9c-b880-77476b8d340c",
+            "name": "ebay-connector-app",
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "environmentId": "524635cb-8338-482e-b9d6-002af8a12bcd"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "3c2b046c-e9cc-4904-b02a-e049dd471141",
+            "name": "marvelous-achievement",
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "environmentId": "524635cb-8338-482e-b9d6-002af8a12bcd"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "4e4a467e-e30c-4d8c-a0da-76fe7cca0f68",
+            "name": "echocare",
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "environmentId": "524635cb-8338-482e-b9d6-002af8a12bcd"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "bc3b0dc8-f087-45fa-a411-188f626bfe0b",
+            "name": "Postgres",
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "environmentId": "524635cb-8338-482e-b9d6-002af8a12bcd"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "c498c853-dbee-4d8b-a9e0-66ac88ad3cd7",
+            "name": "echocity",
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "environmentId": "524635cb-8338-482e-b9d6-002af8a12bcd"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "e90cf23e-0cac-4fa0-ae6b-ac3e1811a7c9",
+            "name": "gene-tree",
+            "serviceInstances": {
+              "edges": [
+                {
+                  "node": {
+                    "environmentId": "524635cb-8338-482e-b9d6-002af8a12bcd"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+]

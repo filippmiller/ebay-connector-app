@@ -26,10 +26,14 @@ async def get_transactions(
     offset: int = Query(0, ge=0),
     sort: str = Query("sale_date", regex="^(sale_date|sale_value|buyer_username)$"),
     dir: str = Query("desc", regex="^(asc|desc)$"),
+    columns: Optional[str] = Query(None, description="Comma-separated list of columns to include"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get transactions with filtering and pagination"""
+    """Get transactions with filtering and pagination.
+
+    Returns both legacy 'transactions' list and generic 'rows' list for grid usage.
+    """
     query = db.query(Transaction).filter(Transaction.user_id == current_user.id)
     
     if buyer:
@@ -58,8 +62,49 @@ async def get_transactions(
         query = query.order_by(asc(order_col))
     
     txns = query.offset(offset).limit(limit).all()
-    
+
+    # Determine selected columns for generic grid rows
+    allowed_cols = {
+        "transaction_id",
+        "order_id",
+        "sku",
+        "buyer_username",
+        "sale_value",
+        "currency",
+        "sale_date",
+        "quantity",
+        "shipping_charged",
+        "tax_collected",
+        "profit",
+        "profit_status",
+    }
+    if columns:
+        requested = [c.strip() for c in columns.split(",") if c.strip()]
+        selected_cols = [c for c in requested if c in allowed_cols]
+        if not selected_cols:
+            selected_cols = list(allowed_cols)
+    else:
+        selected_cols = list(allowed_cols)
+
+    def _serialize_row(t: Transaction) -> Dict[str, Any]:
+        from datetime import datetime as dt_type
+        from decimal import Decimal
+
+        row: Dict[str, Any] = {}
+        for col in selected_cols:
+            value = getattr(t, col, None)
+            if isinstance(value, dt_type):
+                row[col] = value.isoformat()
+            elif isinstance(value, Decimal):
+                row[col] = float(value)
+            else:
+                row[col] = value
+        return row
+
+    rows = [_serialize_row(t) for t in txns]
+
     return {
+        # Legacy shape
         "transactions": [
             {
                 "transaction_id": t.transaction_id,
@@ -77,10 +122,12 @@ async def get_transactions(
             }
             for t in txns
         ],
+        # Generic grid shape
+        "rows": rows,
         "total": total_count,
         "limit": limit,
         "offset": offset,
-        "has_more": (offset + limit) < total_count
+        "has_more": (offset + limit) < total_count,
     }
 
 

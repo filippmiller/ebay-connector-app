@@ -1,0 +1,1892 @@
+[
+  {
+    "table_name": "ebay_orders",
+    "exists": false,
+    "row_count": 0,
+    "columns": [],
+    "constraints": [],
+    "duplicate_analysis": []
+  },
+  {
+    "table_name": "order_line_items",
+    "exists": true,
+    "row_count": 7896,
+    "columns": [
+      {
+        "name": "id",
+        "type": "BIGINT",
+        "nullable": false
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "line_item_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "sku",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "title",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "quantity",
+        "type": "INTEGER",
+        "nullable": true
+      },
+      {
+        "name": "total_value",
+        "type": "NUMERIC(14, 2)",
+        "nullable": true
+      },
+      {
+        "name": "currency",
+        "type": "CHAR(3)",
+        "nullable": true
+      },
+      {
+        "name": "raw_payload",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      },
+      {
+        "type": "UNIQUE",
+        "columns": [
+          "order_id",
+          "line_item_id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "order_id",
+          "line_item_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_transactions",
+    "exists": true,
+    "row_count": 11913,
+    "columns": [
+      {
+        "name": "transaction_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_type",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_status",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "amount",
+        "type": "DOUBLE PRECISION",
+        "nullable": true
+      },
+      {
+        "name": "currency",
+        "type": "VARCHAR(10)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_data",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "transaction_id",
+          "user_id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "transaction_id",
+          "user_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      },
+      {
+        "key": [
+          "transaction_id",
+          "ebay_account_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_finances_transactions",
+    "exists": true,
+    "row_count": 11645,
+    "columns": [
+      {
+        "name": "id",
+        "type": "BIGINT",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(64)",
+        "nullable": false
+      },
+      {
+        "name": "transaction_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "transaction_type",
+        "type": "VARCHAR(50)",
+        "nullable": false
+      },
+      {
+        "name": "transaction_status",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "booking_date",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "transaction_amount_value",
+        "type": "NUMERIC(18, 4)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_amount_currency",
+        "type": "CHAR(3)",
+        "nullable": true
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "order_line_item_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "payout_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "seller_reference",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_memo",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "raw_payload",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "transaction_id",
+          "transaction_type",
+          "ebay_account_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_finances_fees",
+    "exists": true,
+    "row_count": 19559,
+    "columns": [
+      {
+        "name": "id",
+        "type": "BIGINT",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "transaction_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "fee_type",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "amount_value",
+        "type": "NUMERIC(18, 4)",
+        "nullable": true
+      },
+      {
+        "name": "amount_currency",
+        "type": "CHAR(3)",
+        "nullable": true
+      },
+      {
+        "name": "raw_payload",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "transaction_id",
+          "fee_type",
+          "amount_value",
+          "ebay_account_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 22,
+        "total_rows_in_duplicates": 44,
+        "examples": [
+          {
+            "key_values": {
+              "transaction_id": "25-13747-95262",
+              "fee_type": "FINAL_VALUE_FEE",
+              "amount_value": 1.92,
+              "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c"
+            },
+            "count": 2,
+            "rows": [
+              {
+                "id": 138347,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "transaction_id": "25-13747-95262",
+                "fee_type": "FINAL_VALUE_FEE",
+                "amount_value": 1.92,
+                "amount_currency": "USD",
+                "raw_payload": {
+                  "amount": {
+                    "value": "1.92",
+                    "currency": "USD"
+                  },
+                  "feeType": "FINAL_VALUE_FEE"
+                },
+                "created_at": "2025-11-30T17:40:15.702734+00:00",
+                "updated_at": "2025-11-30T17:40:15.702734+00:00"
+              },
+              {
+                "id": 138348,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "transaction_id": "25-13747-95262",
+                "fee_type": "FINAL_VALUE_FEE",
+                "amount_value": 1.92,
+                "amount_currency": "USD",
+                "raw_payload": {
+                  "amount": {
+                    "value": "1.92",
+                    "currency": "USD"
+                  },
+                  "feeType": "FINAL_VALUE_FEE"
+                },
+                "created_at": "2025-11-30T17:40:15.702734+00:00",
+                "updated_at": "2025-11-30T17:40:15.702734+00:00"
+              }
+            ]
+          },
+          {
+            "key_values": {
+              "transaction_id": "16-13672-92495",
+              "fee_type": "FINAL_VALUE_FEE",
+              "amount_value": 1.09,
+              "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c"
+            },
+            "count": 2,
+            "rows": [
+              {
+                "id": 140942,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "transaction_id": "16-13672-92495",
+                "fee_type": "FINAL_VALUE_FEE",
+                "amount_value": 1.09,
+                "amount_currency": "USD",
+                "raw_payload": {
+                  "amount": {
+                    "value": "1.09",
+                    "currency": "USD"
+                  },
+                  "feeType": "FINAL_VALUE_FEE"
+                },
+                "created_at": "2025-11-30T17:41:09.357182+00:00",
+                "updated_at": "2025-11-30T17:41:09.357182+00:00"
+              },
+              {
+                "id": 140943,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "transaction_id": "16-13672-92495",
+                "fee_type": "FINAL_VALUE_FEE",
+                "amount_value": 1.09,
+                "amount_currency": "USD",
+                "raw_payload": {
+                  "amount": {
+                    "value": "1.09",
+                    "currency": "USD"
+                  },
+                  "feeType": "FINAL_VALUE_FEE"
+                },
+                "created_at": "2025-11-30T17:41:09.357182+00:00",
+                "updated_at": "2025-11-30T17:41:09.357182+00:00"
+              }
+            ]
+          },
+          {
+            "key_values": {
+              "transaction_id": "14-13557-77547",
+              "fee_type": "FINAL_VALUE_FEE",
+              "amount_value": 0.97,
+              "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c"
+            },
+            "count": 2,
+            "rows": [
+              {
+                "id": 144778,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "transaction_id": "14-13557-77547",
+                "fee_type": "FINAL_VALUE_FEE",
+                "amount_value": 0.97,
+                "amount_currency": "USD",
+                "raw_payload": {
+                  "amount": {
+                    "value": "0.97",
+                    "currency": "USD"
+                  },
+                  "feeType": "FINAL_VALUE_FEE"
+                },
+                "created_at": "2025-11-30T17:42:26.319706+00:00",
+                "updated_at": "2025-11-30T17:42:26.319706+00:00"
+              },
+              {
+                "id": 144781,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "transaction_id": "14-13557-77547",
+                "fee_type": "FINAL_VALUE_FEE",
+                "amount_value": 0.97,
+                "amount_currency": "USD",
+                "raw_payload": {
+                  "amount": {
+                    "value": "0.97",
+                    "currency": "USD"
+                  },
+                  "feeType": "FINAL_VALUE_FEE"
+                },
+                "created_at": "2025-11-30T17:42:26.319706+00:00",
+                "updated_at": "2025-11-30T17:42:26.319706+00:00"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_disputes",
+    "exists": true,
+    "row_count": 0,
+    "columns": [
+      {
+        "name": "dispute_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "dispute_reason",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "dispute_status",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "open_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "respond_by_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "dispute_data",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "dispute_id",
+          "user_id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "dispute_id",
+          "user_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_cases",
+    "exists": true,
+    "row_count": 37,
+    "columns": [
+      {
+        "name": "case_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "case_type",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "case_status",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "open_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "close_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "case_data",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "item_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "buyer_username",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "seller_username",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "case_status_enum",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "claim_amount_value",
+        "type": "NUMERIC(12, 2)",
+        "nullable": true
+      },
+      {
+        "name": "claim_amount_currency",
+        "type": "VARCHAR(10)",
+        "nullable": true
+      },
+      {
+        "name": "respond_by",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "creation_date_api",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "last_modified_date_api",
+        "type": "TIMESTAMP",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "case_id",
+          "user_id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "case_id",
+          "user_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_inquiries",
+    "exists": true,
+    "row_count": 47,
+    "columns": [
+      {
+        "name": "inquiry_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(64)",
+        "nullable": true
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "item_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "buyer_username",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "seller_username",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "issue_type",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "opened_at",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "last_update_at",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "claim_amount_value",
+        "type": "NUMERIC(12, 2)",
+        "nullable": true
+      },
+      {
+        "name": "claim_amount_currency",
+        "type": "VARCHAR(10)",
+        "nullable": true
+      },
+      {
+        "name": "desired_outcome",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "raw_json",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "inquiry_id",
+          "user_id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "inquiry_id",
+          "user_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_returns",
+    "exists": true,
+    "row_count": 78,
+    "columns": [
+      {
+        "name": "return_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(64)",
+        "nullable": true
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "item_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "transaction_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "return_state",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "return_type",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "reason",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "buyer_username",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "seller_username",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "total_amount_value",
+        "type": "NUMERIC(12, 2)",
+        "nullable": true
+      },
+      {
+        "name": "total_amount_currency",
+        "type": "VARCHAR(10)",
+        "nullable": true
+      },
+      {
+        "name": "creation_date",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "last_modified_date",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "closed_date",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "raw_json",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "return_id",
+          "user_id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "return_id",
+          "user_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_offers",
+    "exists": true,
+    "row_count": 0,
+    "columns": [
+      {
+        "name": "offer_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "listing_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "buyer_username",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "offer_amount",
+        "type": "DOUBLE PRECISION",
+        "nullable": true
+      },
+      {
+        "name": "offer_currency",
+        "type": "VARCHAR(10)",
+        "nullable": true
+      },
+      {
+        "name": "offer_status",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "offer_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "expiration_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "offer_data",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "offer_id",
+          "user_id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "offer_id",
+          "user_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_active_inventory",
+    "exists": true,
+    "row_count": 20683,
+    "columns": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "sku",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "item_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "title",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "quantity_available",
+        "type": "INTEGER",
+        "nullable": true
+      },
+      {
+        "name": "price",
+        "type": "NUMERIC(14, 2)",
+        "nullable": true
+      },
+      {
+        "name": "currency",
+        "type": "CHAR(3)",
+        "nullable": true
+      },
+      {
+        "name": "listing_status",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "condition_id",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "condition_text",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "raw_payload",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "last_seen_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "sku",
+          "ebay_account_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 8,
+        "total_rows_in_duplicates": 16,
+        "examples": [
+          {
+            "key_values": {
+              "sku": "100000000064584",
+              "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c"
+            },
+            "count": 2,
+            "rows": [
+              {
+                "id": 20331,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "ebay_user_id": "mil_243",
+                "sku": "100000000064584",
+                "item_id": "397336018311",
+                "title": "Genuine HP Spectre X360 15-BL 15.6\" Laptop Set Of Screws Screwsset",
+                "quantity_available": 0,
+                "price": null,
+                "currency": null,
+                "listing_status": null,
+                "condition_id": null,
+                "condition_text": null,
+                "raw_payload": {
+                  "SKU": "100000000064584",
+                  "Title": "Genuine HP Spectre X360 15-BL 15.6\" Laptop Set Of Screws Screwsset",
+                  "ItemID": "397336018311",
+                  "Currency": null,
+                  "Quantity": 1,
+                  "StartPrice": null,
+                  "ConditionID": null,
+                  "QuantitySold": 1,
+                  "ListingStatus": null,
+                  "ConditionDisplayName": null
+                },
+                "last_seen_at": "2025-12-05T10:46:20.628924+00:00"
+              },
+              {
+                "id": 4329,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "ebay_user_id": "mil_243",
+                "sku": "100000000064584",
+                "item_id": "396534305484",
+                "title": "Genuine HP Spectre X360 15-BL 15.6\" Laptop Set Of Screws Screwsset",
+                "quantity_available": 0,
+                "price": null,
+                "currency": null,
+                "listing_status": null,
+                "condition_id": null,
+                "condition_text": null,
+                "raw_payload": {
+                  "SKU": "100000000064584",
+                  "Title": "Genuine HP Spectre X360 15-BL 15.6\" Laptop Set Of Screws Screwsset",
+                  "ItemID": "396534305484",
+                  "Quantity": 2,
+                  "ConditionID": null,
+                  "QuantitySold": 2,
+                  "ListingStatus": null,
+                  "ConditionDisplayName": null
+                },
+                "last_seen_at": "2025-11-25T20:04:28.419258+00:00"
+              }
+            ]
+          },
+          {
+            "key_values": {
+              "sku": "100000000078141",
+              "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c"
+            },
+            "count": 2,
+            "rows": [
+              {
+                "id": 2369,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "ebay_user_id": "mil_243",
+                "sku": "100000000078141",
+                "item_id": "396640482615",
+                "title": "Genuine Dell Alienware 15 R3 15.6\" Laptop Screw Set Screws",
+                "quantity_available": 0,
+                "price": null,
+                "currency": null,
+                "listing_status": null,
+                "condition_id": null,
+                "condition_text": null,
+                "raw_payload": {
+                  "SKU": "100000000078141",
+                  "Title": "Genuine Dell Alienware 15 R3 15.6\" Laptop Screw Set Screws",
+                  "ItemID": "396640482615",
+                  "Quantity": 1,
+                  "ConditionID": null,
+                  "QuantitySold": 1,
+                  "ListingStatus": null,
+                  "ConditionDisplayName": null
+                },
+                "last_seen_at": "2025-11-22T13:43:46.322171+00:00"
+              },
+              {
+                "id": 20335,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "ebay_user_id": "mil_243",
+                "sku": "100000000078141",
+                "item_id": "397336027889",
+                "title": "Genuine Dell Alienware 15 R3 15.6\" Laptop Screw Set Screws",
+                "quantity_available": 1,
+                "price": null,
+                "currency": null,
+                "listing_status": null,
+                "condition_id": null,
+                "condition_text": null,
+                "raw_payload": {
+                  "SKU": "100000000078141",
+                  "Title": "Genuine Dell Alienware 15 R3 15.6\" Laptop Screw Set Screws",
+                  "ItemID": "397336027889",
+                  "Currency": null,
+                  "Quantity": 1,
+                  "StartPrice": null,
+                  "ConditionID": null,
+                  "QuantitySold": 0,
+                  "ListingStatus": null,
+                  "ConditionDisplayName": null
+                },
+                "last_seen_at": "2025-12-05T10:46:20.628924+00:00"
+              }
+            ]
+          },
+          {
+            "key_values": {
+              "sku": "100000000118445",
+              "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c"
+            },
+            "count": 2,
+            "rows": [
+              {
+                "id": 17375,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "ebay_user_id": "mil_243",
+                "sku": "100000000118445",
+                "item_id": "397334252599",
+                "title": "Genuine Acer Nitro 5 AN515-43 AN515-55 Series Battery 15.4V 57.48Wh AP18E8M ",
+                "quantity_available": 1,
+                "price": null,
+                "currency": null,
+                "listing_status": null,
+                "condition_id": null,
+                "condition_text": null,
+                "raw_payload": {
+                  "SKU": "100000000118445",
+                  "Title": "Genuine Acer Nitro 5 AN515-43 AN515-55 Series Battery 15.4V 57.48Wh AP18E8M ",
+                  "ItemID": "397334252599",
+                  "Currency": null,
+                  "Quantity": 1,
+                  "StartPrice": null,
+                  "ConditionID": null,
+                  "QuantitySold": 0,
+                  "ListingStatus": null,
+                  "ConditionDisplayName": null
+                },
+                "last_seen_at": "2025-12-05T10:46:13.780370+00:00"
+              },
+              {
+                "id": 4323,
+                "ebay_account_id": "c38f2c13-b675-46a2-b7f5-b5009da5ac6c",
+                "ebay_user_id": "mil_243",
+                "sku": "100000000118445",
+                "item_id": "396534303821",
+                "title": "Genuine Acer Nitro 5 AN515-43 AN515-55 Series Battery 15.4V 57.48Wh AP18E8M ",
+                "quantity_available": 0,
+                "price": null,
+                "currency": null,
+                "listing_status": null,
+                "condition_id": null,
+                "condition_text": null,
+                "raw_payload": {
+                  "SKU": "100000000118445",
+                  "Title": "Genuine Acer Nitro 5 AN515-43 AN515-55 Series Battery 15.4V 57.48Wh AP18E8M ",
+                  "ItemID": "396534303821",
+                  "Quantity": 1,
+                  "ConditionID": null,
+                  "QuantitySold": 1,
+                  "ListingStatus": null,
+                  "ConditionDisplayName": null
+                },
+                "last_seen_at": "2025-11-25T20:04:28.419258+00:00"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_messages",
+    "exists": true,
+    "row_count": 2734,
+    "columns": [
+      {
+        "name": "message_id",
+        "type": "VARCHAR(100)",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "thread_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "order_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "sender",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "recipient",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "subject",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "message_date",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "is_read",
+        "type": "BOOLEAN",
+        "nullable": true
+      },
+      {
+        "name": "message_data",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "ebay_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": true
+      },
+      {
+        "name": "ebay_user_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "house_name",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "sender_username",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "recipient_username",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "body",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "message_type",
+        "type": "VARCHAR(50)",
+        "nullable": true
+      },
+      {
+        "name": "is_flagged",
+        "type": "BOOLEAN",
+        "nullable": true
+      },
+      {
+        "name": "is_archived",
+        "type": "BOOLEAN",
+        "nullable": true
+      },
+      {
+        "name": "direction",
+        "type": "VARCHAR(20)",
+        "nullable": true
+      },
+      {
+        "name": "read_date",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "listing_id",
+        "type": "VARCHAR(100)",
+        "nullable": true
+      },
+      {
+        "name": "raw_data",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "parsed_body",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "case_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "case_type",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "inquiry_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "return_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "payment_dispute_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "transaction_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "is_case_related",
+        "type": "BOOLEAN",
+        "nullable": false
+      },
+      {
+        "name": "message_topic",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "case_event_type",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "has_attachments",
+        "type": "BOOLEAN",
+        "nullable": false
+      },
+      {
+        "name": "attachments_meta",
+        "type": "JSONB",
+        "nullable": false
+      },
+      {
+        "name": "preview_text",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "message_at",
+        "type": "TIMESTAMP",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "message_id",
+          "user_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "emails_messages",
+    "exists": true,
+    "row_count": 451,
+    "columns": [
+      {
+        "name": "id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "integration_account_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "external_id",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "thread_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "direction",
+        "type": "VARCHAR(16)",
+        "nullable": false
+      },
+      {
+        "name": "from_address",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "to_addresses",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "cc_addresses",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "bcc_addresses",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "subject",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "body_text",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "body_html",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "sent_at",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "raw_headers",
+        "type": "JSONB",
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "duplicate_analysis": [
+      {
+        "key": [
+          "external_id",
+          "integration_account_id"
+        ],
+        "status": "OK",
+        "num_duplicate_groups": 0,
+        "total_rows_in_duplicates": 0,
+        "examples": []
+      }
+    ]
+  },
+  {
+    "table_name": "ebay_sync_jobs",
+    "exists": true,
+    "row_count": 26404,
+    "columns": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "nullable": false
+      },
+      {
+        "name": "user_id",
+        "type": "VARCHAR(36)",
+        "nullable": false
+      },
+      {
+        "name": "sync_type",
+        "type": "VARCHAR(50)",
+        "nullable": false
+      },
+      {
+        "name": "status",
+        "type": "VARCHAR(20)",
+        "nullable": false
+      },
+      {
+        "name": "records_fetched",
+        "type": "INTEGER",
+        "nullable": true
+      },
+      {
+        "name": "records_stored",
+        "type": "INTEGER",
+        "nullable": true
+      },
+      {
+        "name": "started_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "completed_at",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "error_message",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "sync_data",
+        "type": "TEXT",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "duplicate_analysis": []
+  },
+  {
+    "table_name": "ebay_events",
+    "exists": true,
+    "row_count": 2915875,
+    "columns": [
+      {
+        "name": "id",
+        "type": "UUID",
+        "nullable": false
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP",
+        "nullable": false
+      },
+      {
+        "name": "source",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "channel",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "topic",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "entity_type",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "entity_id",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "ebay_account",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "event_time",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "publish_time",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "nullable": false
+      },
+      {
+        "name": "error",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "headers",
+        "type": "JSONB",
+        "nullable": false
+      },
+      {
+        "name": "signature_valid",
+        "type": "BOOLEAN",
+        "nullable": true
+      },
+      {
+        "name": "signature_kid",
+        "type": "TEXT",
+        "nullable": true
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "nullable": false
+      },
+      {
+        "name": "processed_at",
+        "type": "TIMESTAMP",
+        "nullable": true
+      },
+      {
+        "name": "processing_error",
+        "type": "JSONB",
+        "nullable": true
+      }
+    ],
+    "constraints": [
+      {
+        "type": "PK",
+        "columns": [
+          "id"
+        ]
+      }
+    ],
+    "duplicate_analysis": []
+  }
+]

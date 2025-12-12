@@ -1,10 +1,10 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
 @layer base {
   :root {
-    --radius: 0.5rem
-  ;
+    --radius: 0.5rem;
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
     --sidebar-primary: 240 5.9% 10%;
@@ -12,7 +12,76 @@
     --sidebar-accent: 240 4.8% 95.9%;
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%}
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Global UI tweak variables */
+    --ui-root-font-size: 16px;
+    --ui-font-scale: 1;
+    --ui-nav-scale: 1;
+    --ui-nav-active-bg: #2563eb;
+    --ui-nav-active-text: #ffffff;
+    --ui-nav-inactive-bg: transparent;
+    --ui-nav-inactive-text: #374151;
+
+    /* Typography role scales (multipliers on top of base rem + global ui font scale) */
+    --ui-font-scale-page-title: 1;
+    --ui-font-scale-section-title: 1;
+    --ui-font-scale-field-label: 1;
+    --ui-font-scale-micro-label: 1;
+    --ui-font-scale-table-header: 1;
+    --ui-font-scale-table-cell: 1;
+    --ui-font-scale-button-text: 1;
+
+    /* Font weights per role (numeric CSS font-weight values) */
+    --ui-font-weight-page-title: 700;
+    --ui-font-weight-section-title: 600;
+    --ui-font-weight-field-label: 500;
+    --ui-font-weight-table-header: 500;
+    --ui-font-weight-table-cell: 400;
+    --ui-font-weight-button-text: 500;
+
+    /* Micro label styling */
+    --ui-micro-label-transform: none;
+    --ui-micro-label-style: normal;
+
+    /* Text colors */
+    --ui-color-text-primary: #111827;
+    --ui-color-text-secondary: #374151;
+    --ui-color-text-muted: #6b7280;
+    --ui-color-text-heading: #111827;
+    --ui-color-text-link: #2563eb;
+
+    /* Button colors */
+    --ui-color-button-primary-bg: #18181b;
+    --ui-color-button-primary-text: #f9fafb;
+    --ui-color-button-secondary-bg: #e5e7eb;
+    --ui-color-button-secondary-text: #111827;
+
+    /* Controls size */
+    --ui-scale-button-input: 1;
+
+    /* Global grid theme variables */
+    --grid-row-height: 32px;
+    --grid-header-height: 32px;
+    --grid-font-size: 13px;
+    --grid-header-bg: #f3f4f6;
+    /* gray-100 */
+    --grid-header-text-color: #4b5563;
+    /* gray-600 */
+    --grid-row-bg: #ffffff;
+    --grid-row-alt-bg: #f9fafb;
+    /* gray-50 */
+    --grid-row-hover-bg: #eef2ff;
+    /* indigo-50 */
+    --grid-row-selected-bg: #e0f2fe;
+    /* sky-100 */
+  }
+
+  html {
+    /* All Tailwind rem-based sizes (text, h-*, w-*) now scale with --ui-font-scale. */
+    font-size: calc(var(--ui-root-font-size) * var(--ui-font-scale));
+  }
+
   .dark {
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
@@ -21,7 +90,330 @@
     --sidebar-accent: 240 3.7% 15.9%;
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
 }
 
+/* Grid theming helpers applied on .app-grid wrapper in DataGridPage */
+@layer components {
+
+  /* Top header navigation tabs */
+  .ui-nav-tab {
+    font-size: calc(0.7rem * var(--ui-nav-scale));
+    padding: calc(0.4rem * var(--ui-nav-scale)) calc(0.5rem * var(--ui-nav-scale));
+    min-height: calc(2rem * var(--ui-nav-scale));
+    white-space: nowrap;
+  }
+
+  .ui-nav-tab--active {
+    background-color: var(--ui-nav-active-bg);
+    color: var(--ui-nav-active-text);
+  }
+
+  .ui-nav-tab--inactive {
+    background-color: var(--ui-nav-inactive-bg);
+    color: var(--ui-nav-inactive-text);
+  }
+
+  .ui-tabs-trigger {
+    font-size: calc(0.875rem * var(--ui-nav-scale));
+    padding: calc(0.4rem * var(--ui-nav-scale)) calc(0.95rem * var(--ui-nav-scale));
+    min-height: calc(2.25rem * var(--ui-nav-scale));
+  }
+
+  /* AG Grid theme wiring for legacy-style dense grids.
+     We no longer rely on CSS theme classes like ag-theme-quartz; instead,
+     AG Grid's Theming API provides the theme, and these utilities just
+     refine typography and layout where needed. */
+
+  .app-grid__ag-root {
+    font-size: var(--grid-font-size);
+    /* Force denser, darker legacy-like typography across all AG grids */
+    --ag-font-size: var(--grid-font-size);
+    --ag-row-height: 28px;
+    --ag-header-height: 30px;
+    --ag-foreground-color: #111827;
+    --ag-header-foreground-color: #111827;
+    --ag-secondary-foreground-color: #111827;
+  }
+
+  /* Legacy semantic cell styling (shared across all grids using AppDataGrid). */
+  .ag-legacy-number {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ag-legacy-id-link {
+    color: #0000ee;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .ag-legacy-id-link:hover {
+    text-decoration: underline;
+  }
+
+  .ag-legacy-status-error {
+    color: #b91c1c;
+    /* red-700 */
+    font-weight: 600;
+  }
+
+  .ag-legacy-status-warning {
+    color: #b45309;
+    /* amber-700 */
+    font-weight: 600;
+  }
+
+  .ag-legacy-status-ok {
+    color: #166534;
+    /* green-700 */
+    font-weight: 600;
+  }
+
+  .ag-legacy-price-positive {
+    color: #15803d;
+    /* green-700 */
+    text-align: right;
+  }
+
+  .ag-legacy-price-negative {
+    color: #b91c1c;
+    /* red-700 */
+    text-align: right;
+  }
+
+  .ag-legacy-price {
+    text-align: right;
+  }
+
+  .app-grid {
+    font-size: var(--grid-font-size);
+  }
+
+  .app-grid table {
+    font-size: inherit;
+  }
+
+  /* Legacy table header styling (non-AG grids) */
+  .app-grid thead {
+    background-color: var(--grid-header-bg);
+    color: var(--grid-header-text-color);
+  }
+
+  .app-grid thead th {
+    height: var(--grid-header-height);
+  }
+
+  .app-grid tbody tr {
+    height: var(--grid-row-height);
+  }
+
+  .app-grid tbody tr:hover {
+    background-color: var(--grid-row-hover-bg);
+  }
+
+  .app-grid.grid-density-compact {
+    --grid-row-height: 24px;
+    --grid-header-height: 26px;
+    --grid-font-size: 11px;
+  }
+
+  .app-grid.grid-density-normal {
+    --grid-row-height: 28px;
+    --grid-header-height: 30px;
+    --grid-font-size: 12px;
+  }
+
+  .app-grid.grid-density-comfortable {
+    --grid-row-height: 34px;
+    --grid-header-height: 34px;
+    --grid-font-size: 13px;
+  }
+
+  .app-grid.grid-theme-default {
+    --grid-header-bg: #f3f4f6;
+    --grid-header-text-color: #111827;
+  }
+
+  .app-grid.grid-theme-blue {
+    --grid-header-bg: #e0f2fe;
+    --grid-header-text-color: #1d4ed8;
+  }
+
+  .app-grid.grid-theme-dark {
+    --grid-header-bg: #111827;
+    --grid-header-text-color: #e5e7eb;
+  }
+
+  /* Full dark theme: dark background + light text for all grid elements */
+  .app-grid.grid-theme-dark {
+    background-color: #020617;
+    /* slate-950 */
+    color: #e5e7eb;
+    /* gray-200 */
+  }
+
+  .app-grid.grid-theme-dark table,
+  .app-grid.grid-theme-dark thead,
+  .app-grid.grid-theme-dark tbody tr,
+  .app-grid.grid-theme-dark tbody td {
+    background-color: #020617;
+    color: #e5e7eb;
+  }
+
+  .app-grid.grid-theme-dark tbody tr:nth-child(even) {
+    background-color: #020617;
+  }
+
+  .app-grid.grid-theme-dark tbody tr:hover {
+    background-color: #1f2937;
+    /* slate-800 */
+  }
+
+  /* Override Tailwind background utilities inside dark grids */
+  .app-grid.grid-theme-dark .bg-white,
+  .app-grid.grid-theme-dark .bg-gray-50,
+  .app-grid.grid-theme-dark .bg-gray-100,
+  .app-grid.grid-theme-dark .bg-indigo-50 {
+    background-color: transparent;
+  }
+
+  .app-grid.grid-theme-dark .text-gray-500,
+  .app-grid.grid-theme-dark .text-gray-600 {
+    color: #e5e7eb;
+  }
+
+  .app-grid.grid-theme-highContrast {
+    --grid-header-bg: #000000;
+    --grid-header-text-color: #ffffff;
+  }
+
+  /* AG Grid row/header styling using the same grid variables */
+  .app-grid__ag-root .ag-root-wrapper {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    background-color: var(--grid-row-bg);
+  }
+
+  .app-grid__ag-root .ag-header {
+    background-color: var(--grid-header-bg);
+    color: var(--grid-header-text-color);
+    font-size: calc(var(--ui-font-scale-table-header) * 0.78rem * var(--ui-font-scale));
+    font-weight: 600;
+  }
+
+  .app-grid__ag-root .ag-header-cell,
+  .app-grid__ag-root .ag-header-cell-label {
+    font-family: inherit;
+    color: var(--grid-header-text-color);
+  }
+
+  .app-grid__ag-root .ag-header-cell-resize::after {
+    background-color: rgba(148, 163, 184, 0.6);
+    /* gray-400 */
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row {
+    background-color: var(--grid-row-bg);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row.ag-row-odd {
+    background-color: var(--grid-row-alt-bg);
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row.ag-row-hovered {
+    background-color: var(--grid-row-hover-bg);
+  }
+
+  .app-grid__ag-root .ag-center-cols-container .ag-row.ag-row-selected {
+    background-color: var(--grid-row-selected-bg);
+  }
+
+  /* Allow selecting and copying text inside grid cells. */
+  .app-grid__ag-root .ag-root-wrapper,
+  .app-grid__ag-root .ag-root,
+  .app-grid__ag-root .ag-center-cols-viewport,
+  .app-grid__ag-root .ag-center-cols-container,
+  .app-grid__ag-root .ag-cell,
+  .app-grid__ag-root .ag-cell-value {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+    font-size: var(--grid-font-size);
+    color: var(--ui-color-text-primary);
+  }
+
+  .app-grid__ag-root .ag-cell {
+    line-height: 1.35;
+  }
+}
+
+@layer utilities {
+
+  /* Typography role utilities */
+  .ui-page-title {
+    font-size: calc(var(--ui-font-scale-page-title) * 1.1rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-page-title);
+    color: var(--ui-color-text-heading);
+  }
+
+  .ui-section-title {
+    font-size: calc(var(--ui-font-scale-section-title) * 0.95rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-section-title);
+    color: var(--ui-color-text-secondary);
+  }
+
+  .ui-field-label {
+    font-size: calc(var(--ui-font-scale-field-label) * 0.85rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-field-label);
+    color: var(--ui-color-text-secondary);
+  }
+
+  .ui-micro-label {
+    font-size: calc(var(--ui-font-scale-micro-label) * 0.75rem * var(--ui-font-scale));
+    color: var(--ui-color-text-muted);
+    text-transform: var(--ui-micro-label-transform);
+    font-style: var(--ui-micro-label-style);
+  }
+
+  .ui-table-header {
+    font-size: calc(var(--ui-font-scale-table-header) * 0.78rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-table-header);
+    color: var(--ui-color-text-secondary);
+  }
+
+  .ui-table-cell {
+    font-size: calc(var(--ui-font-scale-table-cell) * 0.78rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-table-cell);
+    color: var(--ui-color-text-primary);
+  }
+
+  /* Button + input helpers */
+  .ui-btn {
+    font-size: calc(var(--ui-font-scale-button-text) * 0.875rem * var(--ui-font-scale));
+    font-weight: var(--ui-font-weight-button-text);
+  }
+
+  .ui-btn-primary {
+    background-color: var(--ui-color-button-primary-bg);
+    color: var(--ui-color-button-primary-text);
+  }
+
+  .ui-btn-secondary {
+    background-color: var(--ui-color-button-secondary-bg);
+    color: var(--ui-color-button-secondary-text);
+  }
+
+  .ui-input,
+  .ui-select,
+  .ui-btn {
+    padding-block: calc(var(--ui-scale-button-input) * 0.375rem);
+  }
+
+  .ui-link-text {
+    color: var(--ui-color-text-link);
+  }
+}

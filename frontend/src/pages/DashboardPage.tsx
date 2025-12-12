@@ -1,16 +1,16 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '../components/ui/card';
-import { Mail, Package, DollarSign, LayoutDashboard } from 'lucide-react';
+import { Mail, Package, DollarSign, LayoutDashboard, Clock } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       <FixedHeader />
-      <main className="w-full pt-16 px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 min-h-0 w-full px-4 sm:px-6 lg:px-8 py-8 overflow-auto">
         <div className="max-w-7xl mx-auto">
         <div className="mb-8">
           <h2 className="text-2xl font-bold mb-4">Quick Access</h2>
@@ -63,6 +63,19 @@ export const DashboardPage: React.FC = () => {
                 <div>
                   <h3 className="font-semibold">Analytics</h3>
                   <p className="text-sm text-gray-600">View insights & trends</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card 
+              className="cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => navigate('/timesheets/my')}
+            >
+              <CardContent className="p-6 flex items-center gap-4">
+                <Clock className="h-8 w-8 text-blue-600" />
+                <div>
+                  <h3 className="font-semibold">My Timesheet</h3>
+                  <p className="text-sm text-gray-600">Track your working time</p>
                 </div>
               </CardContent>
             </Card>
