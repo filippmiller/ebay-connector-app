@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.user import User
 from app.models_sqlalchemy import get_db
+from app.models_sqlalchemy.models import EbayAccount
 from app.services.auth import admin_required
+from app.services.ebay_account_service import ebay_account_service
 from app.services.ebay_listing_service import _resolve_account_and_token
 from app.services.ebay_trading import (
     build_add_fixed_price_item_xml,
@@ -42,6 +44,10 @@ class GlobalSiteDto(BaseModel):
 
 class BinDebugRequest(BaseModel):
     legacy_inventory_id: int = Field(..., ge=1, description="Legacy tbl_parts_inventory.ID")
+    account_id: Optional[str] = Field(
+        None,
+        description="Selected eBay account id (uuid from public.ebay_accounts). If provided, overrides parts_detail mapping.",
+    )
 
     # Policies mode: keep canonical SellerProfiles, but allow manual fallback.
     policies_mode: str = Field(
@@ -118,6 +124,39 @@ class BinSourcePreview(BaseModel):
     condition_row: Optional[Dict[str, Any]] = None
     picture_urls: list[str]
     missing_db_fields: list[str]
+
+
+class EbayAccountDto(BaseModel):
+    id: str
+    username: Optional[str] = None
+    house_name: Optional[str] = None
+    marketplace_id: Optional[str] = None
+    site_id: Optional[int] = None
+    is_active: bool = True
+
+
+@router.get("/accounts", response_model=list[EbayAccountDto], dependencies=[Depends(admin_required)])
+async def list_ebay_accounts(
+    active_only: bool = Query(True),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+) -> list[EbayAccountDto]:
+    q = db.query(EbayAccount)
+    if active_only:
+        q = q.filter(EbayAccount.is_active == True)  # noqa: E712
+    q = q.order_by(EbayAccount.connected_at.desc(), EbayAccount.updated_at.desc())
+    rows = q.all()
+    return [
+        EbayAccountDto(
+            id=str(a.id),
+            username=a.username,
+            house_name=a.house_name,
+            marketplace_id=a.marketplace_id,
+            site_id=getattr(a, "site_id", None),
+            is_active=bool(a.is_active),
+        )
+        for a in rows
+    ]
 
 
 @router.get("/site-ids", response_model=list[GlobalSiteDto], dependencies=[Depends(admin_required)])
@@ -428,21 +467,39 @@ async def _call_trading(
         )
 
     # Resolve eBay account token for Trading (OAuth header)
-    # We use the same mapping as worker: username + ebay_id from parts_detail if available, else error.
-    pd_row = None
-    if parts_detail_id is not None:
-        pd_row = db.execute(
-            text("SELECT username, ebay_id FROM public.parts_detail WHERE id = :id"),
-            {"id": parts_detail_id},
-        ).mappings().first()
-    if not pd_row:
-        raise HTTPException(status_code=400, detail="parts_detail_account_not_resolved")
+    # Preferred for debug: explicit account_id from UI.
+    account = None
+    token = None
+    if req.account_id:
+        account = (
+            db.query(EbayAccount)
+            .filter(EbayAccount.id == req.account_id)
+            .first()
+        )
+        if not account:
+            raise HTTPException(status_code=400, detail="ebay_account_not_found")
+        if not account.is_active:
+            raise HTTPException(status_code=400, detail="ebay_account_inactive")
+        t = ebay_account_service.get_token(db, account.id)
+        token = t.access_token if t else None
+        if not token:
+            raise HTTPException(status_code=400, detail=f"missing_oauth_token_for_account_id={account.id}")
+    else:
+        # Fallback: map via parts_detail (legacy worker behavior)
+        pd_row = None
+        if parts_detail_id is not None:
+            pd_row = db.execute(
+                text("SELECT username, ebay_id FROM public.parts_detail WHERE id = :id"),
+                {"id": parts_detail_id},
+            ).mappings().first()
+        if not pd_row:
+            raise HTTPException(status_code=400, detail="parts_detail_account_not_resolved")
 
-    username = (pd_row.get("username") or "").strip()
-    ebay_id = (pd_row.get("ebay_id") or "").strip()
-    account, token, err = _resolve_account_and_token(db, username, ebay_id)
-    if err or not token:
-        raise HTTPException(status_code=400, detail=err or "missing_oauth_token")
+        username = (pd_row.get("username") or "").strip()
+        ebay_id = (pd_row.get("ebay_id") or "").strip()
+        account, token, err = _resolve_account_and_token(db, username, ebay_id)
+        if err or not token:
+            raise HTTPException(status_code=400, detail=err or "missing_oauth_token")
 
     item_xml = build_item_xml(
         title=str(title),
@@ -604,6 +661,11 @@ async def _call_trading(
             },
             "item_specifics": {"brand": brand, "mpn": mpn},
             "environment": getattr(settings, "EBAY_ENVIRONMENT", None) or getattr(settings, "ebay_environment", None),
+            "account": {
+                "id": getattr(account, "id", None),
+                "username": getattr(account, "username", None),
+                "house_name": getattr(account, "house_name", None),
+            },
         },
         request_url=http_res.request_url,
         request_headers_masked=http_res.request_headers_masked,

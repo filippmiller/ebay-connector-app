@@ -39,6 +39,14 @@ export default function AdminBinListingPage() {
   const marketplaceId = 'EBAY_US';
   const lsKey = (k: string) => `bin_${k}_${accountKey}_${marketplaceId}`;
 
+  // eBay account selector (Trading token source)
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<
+    { id: string; username?: string | null; house_name?: string | null; marketplace_id?: string | null; site_id?: number | null; is_active: boolean }[]
+  >([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
+
   const [policiesLoading, setPoliciesLoading] = useState(false);
   const [policiesError, setPoliciesError] = useState<string | null>(null);
   const [policies, setPolicies] = useState<{
@@ -112,6 +120,33 @@ export default function AdminBinListingPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setAccountsLoading(true);
+      setAccountsError(null);
+      try {
+        const rows = await ebayApi.getBinEbayAccounts(true);
+        if (cancelled) return;
+        setAccounts(rows);
+        const saved = localStorage.getItem(lsKey('ebay_account_id'));
+        const preferred = rows.find((a) => (a.username || '').toLowerCase() === 'mil_243') || rows[0];
+        const initial = saved && rows.find((a) => a.id === saved) ? saved : preferred?.id || '';
+        setSelectedAccountId(initial);
+        if (initial) localStorage.setItem(lsKey('ebay_account_id'), initial);
+      } catch (e: any) {
+        if (cancelled) return;
+        setAccountsError(String(e?.response?.data?.detail || e?.message || e));
+      } finally {
+        if (!cancelled) setAccountsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       setSiteIdsLoading(true);
       setSiteIdsError(null);
       try {
@@ -170,6 +205,13 @@ export default function AdminBinListingPage() {
     const hasAllowZero = (v: any) => v !== null && v !== undefined && String(v).trim() !== '';
 
     items.push({ key: 'db.title', label: 'Item.Title (<=80)', ok: has(source?.title), value: source?.title });
+
+    items.push({
+      key: 'cfg.account',
+      label: 'eBay account (token source)',
+      ok: has(selectedAccountId),
+      value: selectedAccountId ? mask(selectedAccountId) : null,
+    });
     items.push({
       key: 'db.description',
       label: 'Item.Description (HTML)',
@@ -244,6 +286,7 @@ export default function AdminBinListingPage() {
     return items;
   }, [
     source,
+    selectedAccountId,
     siteId,
     siteCode,
     listingDuration,
@@ -275,6 +318,7 @@ export default function AdminBinListingPage() {
 
     const payload: BinDebugRequestDto = {
       legacy_inventory_id: source.legacy_inventory_id,
+      account_id: selectedAccountId || undefined,
       policies_mode: policiesMode,
       shipping_profile_id: policiesMode === 'seller_profiles' ? Number(shippingProfileId) : undefined,
       payment_profile_id: policiesMode === 'seller_profiles' ? Number(paymentProfileId) : undefined,
@@ -325,6 +369,28 @@ export default function AdminBinListingPage() {
               <CardTitle className="text-sm font-semibold">Select legacy inventory row</CardTitle>
             </CardHeader>
             <CardContent className="py-2 px-3 space-y-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-gray-700">eBay account</span>
+                <select
+                  className="border rounded px-2 py-1 text-[11px] min-w-[260px]"
+                  value={selectedAccountId}
+                  onChange={(e) => {
+                    setSelectedAccountId(e.target.value);
+                    localStorage.setItem(lsKey('ebay_account_id'), e.target.value);
+                  }}
+                  disabled={accountsLoading}
+                >
+                  <option value="">Select account…</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {(a.username || a.house_name || a.id) + (a.marketplace_id ? ` • ${a.marketplace_id}` : '')}
+                    </option>
+                  ))}
+                </select>
+                {accountsLoading && <span className="text-[11px] text-gray-600">Loading…</span>}
+              </div>
+              {accountsError && <div className="text-red-600">Failed to load eBay accounts: {accountsError}</div>}
+
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-gray-700">Legacy Inventory ID</span>
                 <input

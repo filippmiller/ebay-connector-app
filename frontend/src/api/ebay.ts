@@ -376,6 +376,7 @@ export interface BinSourcePreviewDto {
 
 export interface BinDebugRequestDto {
   legacy_inventory_id: number;
+  account_id?: string | null;
   policies_mode?: 'seller_profiles' | 'manual';
   shipping_profile_id?: number | null;
   payment_profile_id?: number | null;
@@ -454,6 +455,15 @@ export interface EbayGlobalSiteDto {
   territory?: string | null;
   language?: string | null;
   active: boolean;
+}
+
+export interface EbayAccountPickerDto {
+  id: string;
+  username?: string | null;
+  house_name?: string | null;
+  marketplace_id?: string | null;
+  site_id?: number | null;
+  is_active: boolean;
 }
 
 export interface EbayReturnRow {
@@ -944,6 +954,12 @@ export const ebayApi = {
   async getBinTradingSiteIds(activeOnly: boolean = true): Promise<EbayGlobalSiteDto[]> {
     const params = new URLSearchParams({ active_only: String(activeOnly) });
     const response = await apiClient.get<EbayGlobalSiteDto[]>(`/api/admin/ebay/bin/site-ids?${params.toString()}`);
+    return response.data;
+  },
+
+  async getBinEbayAccounts(activeOnly: boolean = true): Promise<EbayAccountPickerDto[]> {
+    const params = new URLSearchParams({ active_only: String(activeOnly) });
+    const response = await apiClient.get<EbayAccountPickerDto[]>(`/api/admin/ebay/bin/accounts?${params.toString()}`);
     return response.data;
   },
 
