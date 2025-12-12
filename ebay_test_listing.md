@@ -207,6 +207,29 @@ Add **full semantics / metadata** per field so the tooltip can show:
 - **Pictures**:
   - `lookup_rows.pic_urls`: list of `{index, url}` for all non-empty image URLs
 
+---
+
+## Iteration 4 — 2025-12-12
+
+### Issue observed
+After adding “full semantics” lookup metadata, the admin UI started showing **Network Error** for:
+- `GET /api/admin/ebay/test-listing/payload?legacy_inventory_id=501610`
+
+Evidence (from user screenshots):
+- Browser devtools shows **HTTP 500 Internal Server Error** for `/api/admin/ebay/test-listing/payload?...`
+- Railway request logs show **httpStatus: 500** for path `/api/admin/ebay/test-listing/payload`.
+
+### Root cause (most likely)
+The new `help.lookup_rows` field included non-JSON-native objects (e.g., SQLAlchemy RowMapping / Decimal / datetime) which can trigger a **server-side JSON serialization failure**, returning HTTP 500.
+
+### Fix
+Backend now runs `fastapi.encoders.jsonable_encoder()` on `help.lookup_rows` so that:
+- SQLAlchemy row mappings become plain dicts
+- Decimals/datetimes are converted into JSON-friendly types
+
+Implementation:
+- `backend/app/routers/admin_ebay_listing_test.py`: `_make_help(..., lookup_rows=...)` now encodes the metadata before returning it.
+
 ### Desired UI behavior (Admin → eBay Test Listing)
 
 #### Input

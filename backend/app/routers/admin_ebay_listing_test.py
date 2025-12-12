@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -182,7 +183,9 @@ def _make_help(
     return TestListingFieldHelp(
         ebay_expected=ebay_expected.strip(),
         internal_semantics=internal_semantics.strip() if isinstance(internal_semantics, str) else internal_semantics,
-        lookup_rows=lookup_rows,
+        # Ensure everything is JSON-serializable (RowMapping, Decimal, datetime, etc.)
+        # to avoid 500 errors during response serialization.
+        lookup_rows=jsonable_encoder(lookup_rows) if lookup_rows is not None else None,
     )
 
 
