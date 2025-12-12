@@ -15,20 +15,6 @@ const getBaseURL = () => {
   });
   
   const ensureApiPrefix = (url: string) => {
-    // Our backend routes are mounted under /api (FastAPI router prefixes).
-    // In some deployments, a full base URL is injected (e.g. Railway) without the /api suffix,
-    // which causes client requests like /accounting/... to 404. Normalize here.
-    const u = (url || '').replace(/\s+/g, '');
-    if (!u) return u;
-
-    // If already points to /api, keep as-is
-    if (u.endsWith('/api') || u.endsWith('/api/')) return u.replace(/\/$/, '');
-
-    // Otherwise append /api
-    return `${u.replace(/\/$/, '')}/api`;
-  };
-
-  const ensureApiPrefix = (url: string) => {
     // Our backend routers are mounted under /api.
     // If a full base URL is injected without /api (e.g. Railway URL), requests like
     // /accounting/bank-statements will 404. Normalize here.
