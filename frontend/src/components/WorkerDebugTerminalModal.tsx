@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
@@ -104,12 +104,22 @@ export const WorkerDebugTerminalModal: React.FC<WorkerDebugTerminalModalProps> =
   trace,
 }) => {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [view, setView] = useState<'raw' | 'decoded'>('raw');
 
   const steps = trace?.steps ?? [];
 
   const startEnd = useMemo(() => {
     if (!steps.length) return { start: null as string | null, end: null as string | null };
     return { start: steps[0].timestamp, end: steps[steps.length - 1].timestamp };
+  }, [steps]);
+
+  const ebayResponses = useMemo(() => {
+    const resSteps = steps.filter((s) => s.type === 'ebay-response' && s.http);
+    const last = resSteps.length ? resSteps[resSteps.length - 1] : null;
+    const lastHttp = last?.http || null;
+    const body = (lastHttp as any)?.body;
+    const responses = body?.responses || body?.response || body?.data || null;
+    return { resSteps, lastHttp, body, responses };
   }, [steps]);
 
   useEffect(() => {
@@ -148,44 +158,136 @@ export const WorkerDebugTerminalModal: React.FC<WorkerDebugTerminalModalProps> =
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 flex flex-col border border-gray-700 bg-black/80 rounded-md overflow-hidden">
+          <div className="border-b border-gray-700 px-2 py-1 flex items-center justify-between bg-black/70 text-xs">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={`px-2 py-0.5 rounded border ${
+                  view === 'raw' ? 'bg-white/10 border-gray-500' : 'bg-transparent border-gray-700'
+                }`}
+                onClick={() => setView('raw')}
+              >
+                Raw trace
+              </button>
+              <button
+                type="button"
+                className={`px-2 py-0.5 rounded border ${
+                  view === 'decoded' ? 'bg-white/10 border-gray-500' : 'bg-transparent border-gray-700'
+                }`}
+                onClick={() => setView('decoded')}
+              >
+                Decoded response
+              </button>
+            </div>
+            <span className="text-gray-500">
+              Sensitive headers and tokens are masked.
+            </span>
+          </div>
           <div
             ref={scrollRef}
             className="flex-1 overflow-auto font-mono text-[11px] leading-snug p-2"
           >
             <ScrollArea className="h-full w-full">
-              <div className="space-y-1">
-                {steps.map((step, idx) => {
-                  const time = formatTime(step.timestamp);
-                  return (
-                    <div key={idx} className="whitespace-pre-wrap break-all">
-                      <span className="text-gray-500 mr-2">[{time}]</span>
-                      <span className={`mr-2 ${stepColor(step.type)}`}>[{step.type}]</span>
-                      {step.label && (
-                        <span className="text-purple-300 mr-1">{step.label}</span>
-                      )}
-                      <span>{step.message}</span>
-                      {step.http && (
-                        <div className="mt-1">
-                          {renderHttp(step.http, step.type === 'ebay-response' ? 'response' : 'request')}
-                        </div>
-                      )}
-                      {step.db_change && (
-                        <div className="mt-1">
-                          <div className="ml-4 text-[11px] text-gray-300 mb-0.5">
-                            table=
-                            {step.db_change.table_name} row_id=
-                            {step.db_change.row_id}
+              {view === 'raw' && (
+                <div className="space-y-1">
+                  {steps.map((step, idx) => {
+                    const time = formatTime(step.timestamp);
+                    return (
+                      <div key={idx} className="whitespace-pre-wrap break-all">
+                        <span className="text-gray-500 mr-2">[{time}]</span>
+                        <span className={`mr-2 ${stepColor(step.type)}`}>[{step.type}]</span>
+                        {step.label && (
+                          <span className="text-purple-300 mr-1">{step.label}</span>
+                        )}
+                        <span>{step.message}</span>
+                        {step.http && (
+                          <div className="mt-1">
+                            {renderHttp(step.http, step.type === 'ebay-response' ? 'response' : 'request')}
                           </div>
-                          {renderDbChange(step.db_change)}
+                        )}
+                        {step.db_change && (
+                          <div className="mt-1">
+                            <div className="ml-4 text-[11px] text-gray-300 mb-0.5">
+                              table=
+                              {step.db_change.table_name} row_id=
+                              {step.db_change.row_id}
+                            </div>
+                            {renderDbChange(step.db_change)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {!steps.length && (
+                    <div className="text-gray-400">No debug steps recorded.</div>
+                  )}
+                </div>
+              )}
+
+              {view === 'decoded' && (
+                <div className="space-y-3 text-[11px]">
+                  {!ebayResponses.lastHttp && (
+                    <div className="text-gray-400">No eBay response steps recorded.</div>
+                  )}
+                  {ebayResponses.lastHttp && (
+                    <>
+                      <div className="border border-gray-700 rounded bg-black/50 p-2">
+                        <div className="text-gray-200 font-semibold mb-1">Last eBay response (decoded)</div>
+                        <div className="text-gray-300">
+                          <div>
+                            <span className="text-gray-500">endpoint:</span>{' '}
+                            <span className="text-gray-200">{ebayResponses.lastHttp.url}</span>
+                          </div>
+                          {ebayResponses.lastHttp.status_code != null && (
+                            <div>
+                              <span className="text-gray-500">status:</span>{' '}
+                              <span className="text-yellow-200">{ebayResponses.lastHttp.status_code}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="border border-gray-700 rounded bg-black/50 p-2">
+                        <div className="text-gray-200 font-semibold mb-1">Response fields</div>
+                        <pre className="whitespace-pre-wrap break-all text-[10px] text-gray-300 bg-black/20 px-2 py-1 rounded">
+                          {JSON.stringify(ebayResponses.body, null, 2)}
+                        </pre>
+                      </div>
+
+                      {/* Heuristic summary for bulkPublishOffer */}
+                      {Array.isArray((ebayResponses.body as any)?.responses) && (
+                        <div className="border border-gray-700 rounded bg-black/50 p-2">
+                          <div className="text-gray-200 font-semibold mb-1">bulkPublishOffer summary</div>
+                          <div className="text-gray-300">
+                            {((ebayResponses.body as any).responses as any[]).map((r, idx) => (
+                              <div key={idx} className="border-t border-gray-700 pt-1 mt-1 first:border-t-0 first:pt-0 first:mt-0">
+                                <div>
+                                  <span className="text-gray-500">offerId:</span>{' '}
+                                  <span className="text-gray-200">{String(r.offerId ?? '—')}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">status:</span>{' '}
+                                  <span className="text-gray-200">{String(r.status ?? r.httpStatusCode ?? '—')}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">listingId:</span>{' '}
+                                  <span className="text-gray-200">{String(r.listingId ?? '—')}</span>
+                                </div>
+                                {r.errors && (
+                                  <div>
+                                    <span className="text-gray-500">errors:</span>{' '}
+                                    <span className="text-red-300">{JSON.stringify(r.errors)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
-                    </div>
-                  );
-                })}
-                {!steps.length && (
-                  <div className="text-gray-400">No debug steps recorded.</div>
-                )}
-              </div>
+                    </>
+                  )}
+                </div>
+              )}
             </ScrollArea>
           </div>
           <div className="border-t border-gray-700 px-2 py-1 flex items-center justify-between bg-black/70 text-xs">

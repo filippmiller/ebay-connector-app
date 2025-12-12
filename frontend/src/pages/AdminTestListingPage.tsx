@@ -13,6 +13,7 @@ import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal'
 import type { WorkerDebugTrace } from '@/api/ebayListingWorker';
 import { formatDateTimeLocal } from '@/lib/dateUtils';
 import { Info } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const INVENTORY_STATUS_OPTIONS = [
   'PENDING_LISTING',
@@ -39,11 +40,16 @@ const AdminTestListingPage: React.FC = () => {
 
   const [selectedLogDetail, setSelectedLogDetail] = useState<TestListingLogDetailDto | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalTrace, setTerminalTrace] = useState<WorkerDebugTrace | null>(null);
 
   const [legacyInventoryId, setLegacyInventoryId] = useState<string>('');
   const [payloadLoading, setPayloadLoading] = useState(false);
   const [payloadError, setPayloadError] = useState<string | null>(null);
   const [payload, setPayload] = useState<TestListingPayloadResponseDto | null>(null);
+
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
 
   const loadConfig = async () => {
     try {
@@ -241,6 +247,59 @@ const AdminTestListingPage: React.FC = () => {
     );
   };
 
+  const buildPlannedHttpPreview = () => {
+    // The current worker publishes existing offers (bulkPublishOffer). OfferId(s) are
+    // resolved at runtime via eBay offers lookup; we show placeholders here.
+    const sku = payload?.sku || '—';
+    return {
+      method: 'POST',
+      url: '/sell/inventory/v1/bulk_publish_offer',
+      headers: {
+        Authorization: 'Bearer *** (masked)',
+        'Content-Type': 'application/json',
+      },
+      body: {
+        requests: [
+          {
+            offerId: `<resolved_at_runtime_for_sku_${sku}>`,
+          },
+        ],
+      },
+      meta: {
+        note:
+          'This is a preview of the publish call. The backend will resolve offerId via GET offers by SKU before calling bulkPublishOffer. Tokens are always masked.',
+      },
+    };
+  };
+
+  const openPreview = () => {
+    setListError(null);
+    setPreviewOpen(true);
+  };
+
+  const handleConfirmList = async () => {
+    if (!payload) return;
+    try {
+      setListLoading(true);
+      setListError(null);
+      const resp = await ebayApi.listTestListingLegacyInventory({
+        legacy_inventory_id: payload.legacy_inventory_id,
+        force: true,
+      });
+      const nextTrace: WorkerDebugTrace | null = (resp?.trace || null) as WorkerDebugTrace | null;
+      setTerminalTrace(nextTrace);
+      setSelectedLogDetail(null);
+      setTerminalOpen(true);
+      setPreviewOpen(false);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to LIST (test listing)', e);
+      setListError(e?.response?.data?.detail || e.message || 'Failed to LIST');
+    } finally {
+      setListLoading(false);
+    }
+  };
+
   const handleToggleDebug = async () => {
     if (!config) return;
     try {
@@ -306,6 +365,7 @@ const AdminTestListingPage: React.FC = () => {
     try {
       const detail = await ebayApi.getTestListingLogDetail(logId);
       setSelectedLogDetail(detail);
+      setTerminalTrace((detail?.trace || null) as WorkerDebugTrace | null);
       setTerminalOpen(true);
     } catch (e: any) {
       // eslint-disable-next-line no-console
@@ -314,7 +374,8 @@ const AdminTestListingPage: React.FC = () => {
     }
   };
 
-  const trace: WorkerDebugTrace | null = (selectedLogDetail?.trace || null) as WorkerDebugTrace | null;
+  const trace: WorkerDebugTrace | null =
+    terminalTrace || ((selectedLogDetail?.trace || null) as WorkerDebugTrace | null);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -470,6 +531,19 @@ const AdminTestListingPage: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {payload && (
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    className="px-3 py-1 rounded bg-purple-700 text-white text-[11px] font-medium hover:bg-purple-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    onClick={openPreview}
+                    disabled={!payload || payloadLoading}
+                  >
+                    TEST LIST (preview)
+                  </button>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -547,10 +621,90 @@ const AdminTestListingPage: React.FC = () => {
         isOpen={terminalOpen && !!trace}
         onClose={() => {
           setTerminalOpen(false);
+          setTerminalTrace(null);
           setSelectedLogDetail(null);
         }}
         trace={trace}
       />
+
+      <Dialog open={previewOpen} onOpenChange={(open) => !open && setPreviewOpen(false)}>
+        <DialogContent className="max-w-6xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold">
+              Preview test listing request (Review → LIST)
+            </DialogTitle>
+          </DialogHeader>
+
+          {!payload && <div className="text-xs text-gray-600">Load payload preview first.</div>}
+
+          {payload && (
+            <div className="space-y-3">
+              <div className="text-[11px] text-gray-600">
+                legacy_inventory_id={payload.legacy_inventory_id} • sku={payload.sku || '—'}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className="border rounded bg-white">
+                  <div className="px-2 py-1 border-b bg-gray-50 text-xs font-semibold text-gray-800">
+                    Full HTTP call preview (masked)
+                  </div>
+                  <pre className="p-2 text-[11px] whitespace-pre-wrap break-all">
+                    {JSON.stringify(buildPlannedHttpPreview(), null, 2)}
+                  </pre>
+                </div>
+
+                <div className="border rounded bg-white">
+                  <div className="px-2 py-1 border-b bg-gray-50 text-xs font-semibold text-gray-800">
+                    Variables / payload fields to be used for listing
+                  </div>
+                  <div className="p-2 text-[11px] space-y-2">
+                    <div className="font-semibold text-gray-800">Mandatory</div>
+                    <div className="border rounded">
+                      {payload.mandatory_fields.map((f) => (
+                        <div key={f.key} className="px-2 py-1 border-b last:border-b-0">
+                          <span className="font-medium">{f.key}</span>
+                          {' = '}
+                          <span className="font-mono">{String(f.value ?? '—')}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="font-semibold text-gray-800">Optional</div>
+                    <div className="border rounded max-h-[240px] overflow-auto">
+                      {payload.optional_fields.map((f) => (
+                        <div key={f.key} className="px-2 py-1 border-b last:border-b-0">
+                          <span className="font-medium">{f.key}</span>
+                          {' = '}
+                          <span className="font-mono">{String(f.value ?? '—')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {listError && <div className="text-xs text-red-600">{listError}</div>}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded border text-[11px] bg-white hover:bg-gray-50"
+                  onClick={() => setPreviewOpen(false)}
+                  disabled={listLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded bg-green-700 text-white text-[11px] font-medium hover:bg-green-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  onClick={() => void handleConfirmList()}
+                  disabled={listLoading}
+                >
+                  {listLoading ? 'Listing…' : 'LIST'}
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

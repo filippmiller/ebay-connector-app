@@ -341,6 +341,11 @@ export interface TestListingPayloadResponseDto {
   optional_fields: TestListingPayloadFieldDto[];
 }
 
+export interface TestListingListRequestDto {
+  legacy_inventory_id: number;
+  force?: boolean;
+}
+
 export interface EbayReturnRow {
   return_id: string;
   account_id: string | null;
@@ -782,6 +787,16 @@ export const ebayApi = {
   ): Promise<TestListingPayloadResponseDto> {
     const response = await apiClient.get<TestListingPayloadResponseDto>(
       `/api/admin/ebay/test-listing/payload?legacy_inventory_id=${encodeURIComponent(String(legacyInventoryId))}`,
+    );
+    return response.data;
+  },
+
+  async listTestListingLegacyInventory(
+    payload: TestListingListRequestDto,
+  ): Promise<{ trace: any; summary: any }> {
+    const response = await apiClient.post<{ trace: any; summary: any }>(
+      '/api/admin/ebay/test-listing/list',
+      payload,
     );
     return response.data;
   },

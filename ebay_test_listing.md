@@ -230,6 +230,43 @@ Backend now runs `fastapi.encoders.jsonable_encoder()` on `help.lookup_rows` so 
 Implementation:
 - `backend/app/routers/admin_ebay_listing_test.py`: `_make_help(..., lookup_rows=...)` now encodes the metadata before returning it.
 
+---
+
+## Iteration 5 — 2025-12-12
+
+### Goal
+Add a **Preview → LIST → Terminal** debug workflow to Admin → eBay Test Listing, wired to the selected **legacy inventory id**.
+
+### UX flow
+1) User loads payload preview by entering `tbl_parts_inventory.ID`.
+2) User clicks **TEST LIST (preview)**.
+3) A **Preview modal** opens with two sections:
+   - **HTTP call preview (masked)**: planned eBay endpoint/method/headers/body. (Tokens masked. OfferId is shown as a placeholder because it is resolved at runtime.)
+   - **Variables / payload fields**: all fields (mandatory + optional) the system will use for listing.
+4) User clicks **LIST** in the modal:
+   - Backend executes listing call and returns `trace + summary`.
+5) A **Terminal window** opens automatically and shows:
+   - **Raw trace**: all steps including masked HTTP requests/responses.
+   - **Decoded response**: derived summaries from the last eBay response (including bulkPublishOffer response entries when present).
+
+### Backend changes
+- `backend/app/services/ebay_listing_service.py`
+  - `run_listing_worker_debug(..., candidates_override=...)` added so admin can force-run a specific `parts_detail` row.
+- `backend/app/routers/admin_ebay_listing_test.py`
+  - `POST /api/admin/ebay/test-listing/list`
+    - Input: `{ legacy_inventory_id, force=true }`
+    - Resolves SKU → modern `inventory.parts_detail_id` → `parts_detail` row
+    - Runs listing worker and returns full `EbayListingDebugResponse` (trace + summary)
+
+### Frontend changes
+- `frontend/src/pages/AdminTestListingPage.tsx`
+  - Added **TEST LIST (preview)** button (enabled after payload is loaded)
+  - Added preview modal + LIST confirm wiring to `/api/admin/ebay/test-listing/list`
+  - Auto-opens terminal with returned trace
+- `frontend/src/components/WorkerDebugTerminalModal.tsx`
+  - Added **Raw trace** / **Decoded response** tabs
+  - Decoded tab shows last eBay response JSON and a heuristic summary for `bulkPublishOffer`.
+
 ### Desired UI behavior (Admin → eBay Test Listing)
 
 #### Input

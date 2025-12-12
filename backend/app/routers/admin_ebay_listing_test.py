@@ -18,6 +18,7 @@ from app.models_sqlalchemy.models import (
 )
 from app.models.ebay_worker_debug import (
     EbayListingDebugRequest,
+    EbayListingDebugResponse,
     WorkerDebugTrace,
 )
 from app.services.auth import admin_required
@@ -126,6 +127,14 @@ class TestListingPayloadResponse(BaseModel):
     parts_detail_id: Optional[int]
     mandatory_fields: list[TestListingPayloadField]
     optional_fields: list[TestListingPayloadField]
+
+
+class TestListingListRequest(BaseModel):
+    legacy_inventory_id: int = Field(..., ge=1, description="Legacy tbl_parts_inventory.ID")
+    force: bool = Field(
+        default=True,
+        description="If true, force-run for the resolved parts_detail_id even if it doesn't satisfy normal Checked/status filters.",
+    )
 
 
 def _get_or_create_config(db: Session) -> EbayListingTestConfig:
@@ -746,6 +755,64 @@ async def get_test_listing_payload_preview(
         mandatory_fields=mandatory,
         optional_fields=optional,
     )
+
+
+@router.post("/list", response_model=EbayListingDebugResponse, dependencies=[Depends(admin_required)])
+async def list_single_legacy_inventory_id(
+    payload: TestListingListRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+) -> EbayListingDebugResponse:
+    """Force-run the listing worker for a single legacy inventory row.
+
+    This is a debug-only endpoint used by the admin UI's Preview → LIST flow.
+    It resolves:
+    - legacy tbl_parts_inventory.ID -> SKU
+    - SKU -> modern inventory.parts_detail_id (best effort)
+    - parts_detail_id -> parts_detail ORM row
+
+    Then runs `run_listing_worker_debug` for that single row and returns the
+    full WorkerDebugTrace so the UI can display raw HTTP requests/responses.
+
+    Note: the underlying worker primarily publishes existing offers
+    (bulkPublishOffer). It does not yet create offers from tbl_parts_detail.
+    """
+
+    inv_row = db.execute(
+        text('SELECT * FROM public."tbl_parts_inventory" WHERE "ID" = :id'),
+        {"id": payload.legacy_inventory_id},
+    ).mappings().first()
+    if not inv_row:
+        raise HTTPException(status_code=404, detail="legacy_inventory_not_found")
+
+    sku = _first_non_empty(inv_row.get("SKU"))
+    if not sku:
+        raise HTTPException(status_code=400, detail="legacy_inventory_missing_sku")
+
+    inv2 = db.execute(
+        text("SELECT parts_detail_id FROM public.inventory WHERE sku_code = :sku ORDER BY id ASC LIMIT 1"),
+        {"sku": sku},
+    ).first()
+    if not inv2 or inv2[0] is None:
+        raise HTTPException(status_code=400, detail="no_parts_detail_id_for_sku")
+
+    try:
+        parts_detail_id = int(inv2[0])
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_parts_detail_id")
+
+    from app.models_sqlalchemy.models import PartsDetail  # local import to avoid circulars
+
+    pd = db.query(PartsDetail).filter(PartsDetail.id == parts_detail_id).first()
+    if not pd:
+        raise HTTPException(status_code=404, detail="parts_detail_not_found")
+
+    req = EbayListingDebugRequest(ids=[parts_detail_id], dry_run=False, max_items=1)
+
+    # Force-run by injecting candidates_override (bypasses _select_candidates_for_listing filters).
+    candidates_override = [pd] if payload.force else None
+    resp = await run_listing_worker_debug(db, req, candidates_override=candidates_override)
+    return resp
 
 
 @router.put("/config", response_model=TestListingConfigResponse, dependencies=[Depends(admin_required)])

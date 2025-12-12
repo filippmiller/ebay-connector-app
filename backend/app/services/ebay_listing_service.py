@@ -575,6 +575,8 @@ def _build_log_row_for_failure(row: PartsDetail, error_message: str, now: dateti
 async def run_listing_worker_debug(
     db: Session,
     req: EbayListingDebugRequest,
+    *,
+    candidates_override: Optional[List[PartsDetail]] = None,
 ) -> EbayListingDebugResponse:
     """Run a single debug pass of the eBay listing worker.
 
@@ -600,8 +602,8 @@ async def run_listing_worker_debug(
         )
     )
 
-    # 1) Select candidates
-    candidates = _select_candidates_for_listing(db, req)
+    # 1) Select candidates (or use explicit override for admin/debug tooling)
+    candidates = candidates_override if candidates_override is not None else _select_candidates_for_listing(db, req)
     trace.items_count = len(candidates)
     trace.steps.append(
         _make_step(
