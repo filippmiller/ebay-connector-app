@@ -24,6 +24,8 @@ from app.models.ebay_worker_debug import (
 from app.services.auth import admin_required
 from app.models.user import User
 from app.services.ebay_listing_service import run_listing_worker_debug
+from app.services.ebay_listing_service import _resolve_account_and_token
+from app.services.ebay import ebay_service
 from app.utils.logger import logger
 from app.config import settings
 
@@ -135,6 +137,21 @@ class TestListingListRequest(BaseModel):
         default=True,
         description="If true, force-run for the resolved parts_detail_id even if it doesn't satisfy normal Checked/status filters.",
     )
+
+
+class TestListingPrepareRequest(BaseModel):
+    legacy_inventory_id: int = Field(..., ge=1, description="Legacy tbl_parts_inventory.ID")
+
+
+class TestListingPrepareResponse(BaseModel):
+    legacy_inventory_id: int
+    sku: str
+    account_label: Optional[str] = None
+    offer_id: Optional[str] = None
+    chosen_offer: Optional[dict] = None
+    offers_payload: Optional[dict] = None
+    http_offer_lookup: Optional[dict] = None
+    http_publish_planned: Optional[dict] = None
 
 
 def _get_or_create_config(db: Session) -> EbayListingTestConfig:
@@ -813,6 +830,115 @@ async def list_single_legacy_inventory_id(
     candidates_override = [pd] if payload.force else None
     resp = await run_listing_worker_debug(db, req, candidates_override=candidates_override)
     return resp
+
+
+@router.post("/prepare", response_model=TestListingPrepareResponse, dependencies=[Depends(admin_required)])
+async def prepare_test_listing_real_http(
+    payload: TestListingPrepareRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+) -> TestListingPrepareResponse:
+    """Prepare a real HTTP preview for listing (no publish).
+
+    Performs the real eBay offer lookup call (GET offers by SKU), selects the
+    offerId the same way the worker does, and returns:
+    - real HTTP request/response metadata for offer lookup (Authorization masked)
+    - resolved offerId
+    - planned publish request (bulkPublishOffer) with resolved offerId
+
+    This does NOT publish to eBay.
+    """
+
+    inv_row = db.execute(
+        text('SELECT * FROM public."tbl_parts_inventory" WHERE "ID" = :id'),
+        {"id": payload.legacy_inventory_id},
+    ).mappings().first()
+    if not inv_row:
+        raise HTTPException(status_code=404, detail="legacy_inventory_not_found")
+
+    sku = _first_non_empty(inv_row.get("SKU"))
+    if not sku:
+        raise HTTPException(status_code=400, detail="legacy_inventory_missing_sku")
+
+    inv2 = db.execute(
+        text("SELECT parts_detail_id FROM public.inventory WHERE sku_code = :sku ORDER BY id ASC LIMIT 1"),
+        {"sku": sku},
+    ).first()
+    if not inv2 or inv2[0] is None:
+        raise HTTPException(status_code=400, detail="no_parts_detail_id_for_sku")
+
+    try:
+        parts_detail_id = int(inv2[0])
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_parts_detail_id")
+
+    from app.models_sqlalchemy.models import PartsDetail  # local import to avoid circulars
+
+    pd = db.query(PartsDetail).filter(PartsDetail.id == parts_detail_id).first()
+    if not pd:
+        raise HTTPException(status_code=404, detail="parts_detail_not_found")
+
+    # Resolve account + token (same logic as worker live mode)
+    account, access_token, account_error = _resolve_account_and_token(db, pd.username or "", pd.ebay_id or "")
+    if account_error or not account or not access_token:
+        raise HTTPException(status_code=400, detail=account_error or "account_or_token_not_available")
+
+    account_label = f"{account.username or 'UNKNOWN'} (ebay_id={account.id or 'N/A'})"
+
+    # Real offer lookup HTTP call (masked)
+    try:
+        offers_debug = await ebay_service.fetch_offers_debug(access_token, sku=str(pd.override_sku or pd.sku or sku), filter_params={"limit": 200})
+    except HTTPException as exc:
+        # Bubble up with useful details (still masked)
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+    offers_payload = offers_debug.get("payload") if isinstance(offers_debug, dict) else None
+    http_offer_lookup = offers_debug.get("http") if isinstance(offers_debug, dict) else None
+
+    offers = (offers_payload or {}).get("offers") or []
+    chosen_offer: Optional[dict] = None
+
+    # Prefer marketplace match when possible (matches worker behavior)
+    for off in offers:
+        marketplace_id = off.get("marketplaceId") or off.get("marketplace_id")
+        if getattr(account, "marketplace_id", None) and marketplace_id == account.marketplace_id:
+            chosen_offer = off
+            break
+
+    if chosen_offer is None and offers:
+        chosen_offer = offers[0]
+
+    offer_id = None
+    if chosen_offer is not None:
+        offer_id = str(chosen_offer.get("offerId") or "").strip() or None
+
+    http_publish_planned = {
+        "request": {
+            "method": "POST",
+            "url": f"{settings.ebay_api_base_url.rstrip('/')}/sell/inventory/v1/bulk_publish_offer",
+            "headers": {
+                "Authorization": "Bearer ***",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            "body": {"requests": [{"offerId": offer_id or "<offerId_not_resolved>"}]},
+        },
+        "meta": {
+            "note": "Planned publish call. Actual publish happens only after user confirms LIST.",
+            "listing_mode": (getattr(settings, "ebay_listing_mode", "stub") or "stub").lower(),
+        },
+    }
+
+    return TestListingPrepareResponse(
+        legacy_inventory_id=payload.legacy_inventory_id,
+        sku=str(pd.override_sku or pd.sku or sku),
+        account_label=account_label,
+        offer_id=offer_id,
+        chosen_offer=jsonable_encoder(chosen_offer) if chosen_offer is not None else None,
+        offers_payload=jsonable_encoder(offers_payload) if offers_payload is not None else None,
+        http_offer_lookup=jsonable_encoder(http_offer_lookup) if http_offer_lookup is not None else None,
+        http_publish_planned=jsonable_encoder(http_publish_planned),
+    )
 
 
 @router.put("/config", response_model=TestListingConfigResponse, dependencies=[Depends(admin_required)])

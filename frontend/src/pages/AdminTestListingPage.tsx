@@ -8,6 +8,7 @@ import {
   TestListingLogDetailDto,
   TestListingPayloadResponseDto,
   TestListingPayloadFieldDto,
+  TestListingPrepareResponseDto,
 } from '@/api/ebay';
 import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
 import type { WorkerDebugTrace } from '@/api/ebayListingWorker';
@@ -50,6 +51,9 @@ const AdminTestListingPage: React.FC = () => {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [prepareLoading, setPrepareLoading] = useState(false);
+  const [prepareError, setPrepareError] = useState<string | null>(null);
+  const [prepareData, setPrepareData] = useState<TestListingPrepareResponseDto | null>(null);
 
   const loadConfig = async () => {
     try {
@@ -248,33 +252,75 @@ const AdminTestListingPage: React.FC = () => {
   };
 
   const buildPlannedHttpPreview = () => {
-    // The current worker publishes existing offers (bulkPublishOffer). OfferId(s) are
-    // resolved at runtime via eBay offers lookup; we show placeholders here.
     const sku = payload?.sku || '—';
-    return {
-      method: 'POST',
-      url: '/sell/inventory/v1/bulk_publish_offer',
-      headers: {
-        Authorization: 'Bearer *** (masked)',
-        'Content-Type': 'application/json',
-      },
-      body: {
-        requests: [
+
+    if (prepareData?.http_offer_lookup || prepareData?.http_publish_planned) {
+      // Real offer-lookup HTTP + planned publish HTTP with resolved offerId
+      return {
+        calls: [
           {
-            offerId: `<resolved_at_runtime_for_sku_${sku}>`,
+            step: 1,
+            purpose: 'Offer lookup (REAL HTTP)',
+            ...(prepareData.http_offer_lookup || {}),
+          },
+          {
+            step: 2,
+            purpose: 'Publish offer (planned)',
+            ...(prepareData.http_publish_planned || {}),
           },
         ],
-      },
-      meta: {
-        note:
-          'This is a preview of the publish call. The backend will resolve offerId via GET offers by SKU before calling bulkPublishOffer. Tokens are always masked.',
-      },
+        resolved: {
+          offer_id: prepareData.offer_id || null,
+          account_label: prepareData.account_label || null,
+        },
+      };
+    }
+
+    // Fallback (no prepare yet): show placeholders.
+    return {
+      calls: [
+        {
+          step: 1,
+          purpose: 'Resolve offerId for SKU (placeholder)',
+          request: {
+            method: 'GET',
+            url: `/sell/inventory/v1/offer?sku=${encodeURIComponent(String(sku))}`,
+            headers: { Authorization: 'Bearer *** (masked)', Accept: 'application/json' },
+            body: null,
+          },
+        },
+        {
+          step: 2,
+          purpose: 'Publish offer(s) (placeholder)',
+          request: {
+            method: 'POST',
+            url: '/sell/inventory/v1/bulk_publish_offer',
+            headers: { Authorization: 'Bearer *** (masked)', 'Content-Type': 'application/json' },
+            body: { requests: [{ offerId: `<resolved_from_step_1_for_sku_${sku}>` }] },
+          },
+        },
+      ],
     };
   };
 
   const openPreview = () => {
     setListError(null);
+    setPrepareError(null);
+    setPrepareData(null);
     setPreviewOpen(true);
+
+    // Kick off real HTTP prepare (offer lookup) for “real feel” preview.
+    if (!payload) return;
+    setPrepareLoading(true);
+    void ebayApi
+      .prepareTestListingLegacyInventory(payload.legacy_inventory_id)
+      .then((data) => setPrepareData(data))
+      .catch((e: any) => {
+        // eslint-disable-next-line no-console
+        console.error('Failed to prepare real HTTP preview', e);
+        setPrepareError(e?.response?.data?.detail || e.message || 'Failed to prepare preview');
+      })
+      .finally(() => setPrepareLoading(false));
   };
 
   const handleConfirmList = async () => {
@@ -641,12 +687,32 @@ const AdminTestListingPage: React.FC = () => {
             <div className="space-y-3">
               <div className="text-[11px] text-gray-600">
                 legacy_inventory_id={payload.legacy_inventory_id} • sku={payload.sku || '—'}
+                {prepareData?.account_label && (
+                  <span>
+                    {' '}
+                    • account={prepareData.account_label}
+                  </span>
+                )}
+                {prepareData?.offer_id && (
+                  <span>
+                    {' '}
+                    • offerId={prepareData.offer_id}
+                  </span>
+                )}
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 <div className="border rounded bg-white">
                   <div className="px-2 py-1 border-b bg-gray-50 text-xs font-semibold text-gray-800">
                     Full HTTP call preview (masked)
                   </div>
+                  {prepareLoading && (
+                    <div className="p-2 text-[11px] text-gray-600">Preparing real HTTP preview (offer lookup)…</div>
+                  )}
+                  {prepareError && (
+                    <div className="p-2 text-[11px] text-red-600">
+                      Prepare failed: {String(prepareError)}
+                    </div>
+                  )}
                   <pre className="p-2 text-[11px] whitespace-pre-wrap break-all">
                     {JSON.stringify(buildPlannedHttpPreview(), null, 2)}
                   </pre>

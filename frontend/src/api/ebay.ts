@@ -346,6 +346,17 @@ export interface TestListingListRequestDto {
   force?: boolean;
 }
 
+export interface TestListingPrepareResponseDto {
+  legacy_inventory_id: number;
+  sku: string;
+  account_label?: string | null;
+  offer_id?: string | null;
+  chosen_offer?: any | null;
+  offers_payload?: any | null;
+  http_offer_lookup?: any | null;
+  http_publish_planned?: any | null;
+}
+
 export interface EbayReturnRow {
   return_id: string;
   account_id: string | null;
@@ -797,6 +808,16 @@ export const ebayApi = {
     const response = await apiClient.post<{ trace: any; summary: any }>(
       '/api/admin/ebay/test-listing/list',
       payload,
+    );
+    return response.data;
+  },
+
+  async prepareTestListingLegacyInventory(
+    legacyInventoryId: number,
+  ): Promise<TestListingPrepareResponseDto> {
+    const response = await apiClient.post<TestListingPrepareResponseDto>(
+      '/api/admin/ebay/test-listing/prepare',
+      { legacy_inventory_id: legacyInventoryId },
     );
     return response.data;
   },

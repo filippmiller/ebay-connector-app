@@ -3332,6 +3332,124 @@ class EbayService:
         
         return offers_data
 
+    async def fetch_offers_debug(
+        self,
+        access_token: str,
+        sku: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch offers and return real HTTP request/response metadata (admin preview tooling).
+
+        Returns:
+          {
+            "payload": <offers_json>,
+            "http": {
+              "request": {method, url, headers, params},
+              "response": {status_code, headers, body},
+              "duration_ms": int
+            }
+          }
+
+        Security:
+        - Authorization header is masked in returned metadata.
+        """
+
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="eBay access token required",
+            )
+
+        start = time.time()
+        base_url = settings.ebay_api_base_url.rstrip("/")
+        api_url = f"{base_url}/sell/inventory/v1/offer"
+
+        headers: Dict[str, Any] = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+            "Accept": "application/json",
+        }
+
+        params: Dict[str, Any] = {"sku": sku}
+        if filter_params:
+            allowed_optional_params = {"limit", "offset", "format", "marketplace_id"}
+            for key, value in filter_params.items():
+                if key in allowed_optional_params and value is not None and value != "":
+                    params[key] = value
+
+        if "limit" not in params:
+            params["limit"] = 200
+        if "offset" not in params:
+            params["offset"] = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(api_url, headers=headers, params=params)
+        except httpx.RequestError as e:
+            duration_ms = int((time.time() - start) * 1000)
+            masked_headers = dict(headers)
+            if "Authorization" in masked_headers:
+                masked_headers["Authorization"] = "Bearer ***"
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "message": f"fetch_offers network error: {e}",
+                    "http": {
+                        "request": {
+                            "method": "GET",
+                            "url": api_url,
+                            "headers": masked_headers,
+                            "params": params,
+                        },
+                        "response": None,
+                        "duration_ms": duration_ms,
+                    },
+                },
+            )
+
+        duration_ms = int((time.time() - start) * 1000)
+        req = response.request
+
+        masked_req_headers = dict(req.headers)
+        if "Authorization" in masked_req_headers:
+            masked_req_headers["Authorization"] = "Bearer ***"
+
+        http_meta: Dict[str, Any] = {
+            "request": {
+                "method": req.method,
+                "url": str(req.url),
+                "headers": dict(masked_req_headers),
+                "params": params,
+            },
+            "response": {
+                "status_code": response.status_code,
+                "headers": dict(response.headers),
+                "body": None,
+            },
+            "duration_ms": duration_ms,
+        }
+
+        try:
+            body: Any = response.json()
+        except Exception:
+            body = response.text
+        http_meta["response"]["body"] = body
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={"message": "fetch_offers_failed", "http": http_meta},
+            )
+
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"message": "fetch_offers_invalid_json", "http": http_meta},
+            )
+
+        return {"payload": body, "http": http_meta}
+
     async def place_proxy_bid(
         self,
         access_token: str,

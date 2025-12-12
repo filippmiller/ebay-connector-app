@@ -267,6 +267,51 @@ Add a **Preview → LIST → Terminal** debug workflow to Admin → eBay Test Li
   - Added **Raw trace** / **Decoded response** tabs
   - Decoded tab shows last eBay response JSON and a heuristic summary for `bulkPublishOffer`.
 
+---
+
+## Iteration 6 — 2025-12-12
+
+### Change request
+In the Preview modal, show the **full HTTP sequence** (not just publish):
+1) **Offer lookup** by SKU (to resolve `offerId`)
+2) **Publish** via `bulkPublishOffer`
+
+### Implementation notes
+- `frontend/src/pages/AdminTestListingPage.tsx`
+  - Preview modal “Full HTTP call preview (masked)” now prints an object with `calls[]`:
+    - Call 1: `GET /sell/inventory/v1/offer?sku=<SKU>` (masked Authorization)
+    - Call 2: `POST /sell/inventory/v1/bulk_publish_offer` (masked Authorization)
+  - `offerId` is shown as a placeholder because it is resolved from the step-1 response at runtime.
+
+---
+
+## Iteration 7 — 2025-12-12
+
+### Change request
+Make the Preview modal feel **real** by showing the **actual HTTP** for the offer lookup call *before* publishing:
+- Step 1 must be a real request to eBay (with real response headers/body), with secrets masked.
+- Step 2 remains a planned publish request, but now includes the **real resolved offerId** from step 1.
+
+### Backend changes
+- `backend/app/services/ebay.py`
+  - Added `EbayService.fetch_offers_debug(...)` which calls eBay and returns:
+    - `payload` (offers JSON)
+    - `http` (request/response/duration metadata; Authorization masked)
+- `backend/app/routers/admin_ebay_listing_test.py`
+  - Added `POST /api/admin/ebay/test-listing/prepare`
+    - Input: `{ legacy_inventory_id }`
+    - Output includes:
+      - `http_offer_lookup` (REAL HTTP request + response)
+      - `offer_id` + `chosen_offer`
+      - `http_publish_planned` (planned publish request using resolved `offer_id`)
+
+### Frontend changes
+- `frontend/src/pages/AdminTestListingPage.tsx`
+  - When Preview modal opens, it now calls `/prepare` automatically.
+  - The “Full HTTP call preview” pane renders:
+    - Step 1: real offer lookup HTTP request/response
+    - Step 2: planned publish HTTP request using the real `offerId`
+
 ### Desired UI behavior (Admin → eBay Test Listing)
 
 #### Input
