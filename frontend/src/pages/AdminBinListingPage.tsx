@@ -167,6 +167,7 @@ export default function AdminBinListingPage() {
     const items: { key: string; label: string; ok: boolean; value?: any }[] = [];
     const has = (v: any) =>
       v !== null && v !== undefined && String(v).trim() !== '' && String(v).trim() !== '0';
+    const hasAllowZero = (v: any) => v !== null && v !== undefined && String(v).trim() !== '';
 
     items.push({ key: 'db.title', label: 'Item.Title (<=80)', ok: has(source?.title), value: source?.title });
     items.push({
@@ -199,8 +200,9 @@ export default function AdminBinListingPage() {
     items.push({
       key: 'cfg.site',
       label: 'Trading SiteID (tbl_GlobalSiteID) + Item.Site',
-      ok: has(siteId) && has(siteCode),
-      value: has(siteId) && has(siteCode) ? `${siteId} / ${siteCode}` : null,
+      // SiteID for eBay US is 0 (valid), so allow zero here.
+      ok: hasAllowZero(siteId) && hasAllowZero(siteCode),
+      value: hasAllowZero(siteId) && hasAllowZero(siteCode) ? `${siteId} / ${siteCode}` : null,
     });
     items.push({ key: 'cfg.duration', label: 'Item.ListingDuration', ok: has(listingDuration), value: listingDuration });
     items.push({ key: 'cfg.currency', label: 'Item.Currency', ok: has(currency), value: currency });
