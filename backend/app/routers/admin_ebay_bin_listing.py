@@ -335,7 +335,9 @@ async def get_bin_source_preview(
         tbl_pd.get("CustomTemplateDescription"),
         tbl_pd.get("ConditionDescription"),
     )
-    category_id = _first_non_empty(tbl_pd.get("Category"))
+    # tbl_parts_detail.Category is an internal category number; eBay Trading needs the external eBay CategoryID.
+    # Prefer ExternalCategoryID when present (e.g. 175676), fallback to internal Category as last resort.
+    category_id = _first_non_empty(tbl_pd.get("ExternalCategoryID"), tbl_pd.get("Category"))
     start_price = _first_non_empty(legacy_inv.get("OverridePrice"), tbl_pd.get("Price"))
     qty_raw = legacy_inv.get("Quantity")
     quantity = int(qty_raw) if qty_raw is not None else None
@@ -404,7 +406,7 @@ async def _call_trading(
         tbl_pd.get("CustomTemplateDescription"),
         tbl_pd.get("ConditionDescription"),
     )
-    category_id = _first_non_empty(tbl_pd.get("Category"))
+    category_id = _first_non_empty(tbl_pd.get("ExternalCategoryID"), tbl_pd.get("Category"))
     start_price = _first_non_empty(legacy_inv.get("OverridePrice"), tbl_pd.get("Price"))
     qty_raw = legacy_inv.get("Quantity")
     quantity = int(qty_raw) if qty_raw is not None else 0

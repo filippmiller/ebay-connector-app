@@ -94,7 +94,7 @@ The UI forces you to choose one mode per run to avoid “mixed-mode mystery fail
 Mapping (simplified):
 - `Item.Title` ← `tbl_parts_inventory.OverrideTitle` → fallback `tbl_parts_detail.Part`
 - `Item.Description` ← `tbl_parts_inventory.OverrideDescription` → fallback `tbl_parts_detail.Description`
-- `Item.PrimaryCategory.CategoryID` ← `tbl_parts_detail.Category`
+- `Item.PrimaryCategory.CategoryID` ← `tbl_parts_detail.ExternalCategoryID` (eBay CategoryID) → fallback `tbl_parts_detail.Category` (internal)
 - `Item.StartPrice` ← `tbl_parts_inventory.OverridePrice` → fallback `tbl_parts_detail.Price`
 - `Item.Quantity` ← `tbl_parts_inventory.Quantity`
 - `Item.ConditionID` ← `tbl_parts_inventory.OverrideConditionID` → fallback `tbl_parts_detail.ConditionID`
