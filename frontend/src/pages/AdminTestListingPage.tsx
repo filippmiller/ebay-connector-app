@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { ebayApi, TestListingConfigDto, TestListingLogSummaryDto, TestListingLogDetailDto } from '@/api/ebay';
+import {
+  ebayApi,
+  TestListingConfigDto,
+  TestListingLogSummaryDto,
+  TestListingLogDetailDto,
+  TestListingPayloadResponseDto,
+  TestListingPayloadFieldDto,
+} from '@/api/ebay';
 import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
 import type { WorkerDebugTrace } from '@/api/ebayListingWorker';
 import { formatDateTimeLocal } from '@/lib/dateUtils';
@@ -31,6 +38,11 @@ const AdminTestListingPage: React.FC = () => {
 
   const [selectedLogDetail, setSelectedLogDetail] = useState<TestListingLogDetailDto | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
+
+  const [legacyInventoryId, setLegacyInventoryId] = useState<string>('');
+  const [payloadLoading, setPayloadLoading] = useState(false);
+  const [payloadError, setPayloadError] = useState<string | null>(null);
+  const [payload, setPayload] = useState<TestListingPayloadResponseDto | null>(null);
 
   const loadConfig = async () => {
     try {
@@ -67,6 +79,65 @@ const AdminTestListingPage: React.FC = () => {
     void loadConfig();
     void loadLogs();
   }, []);
+
+  const handleLoadPayload = async () => {
+    const raw = (legacyInventoryId || '').trim();
+    const parsed = Number(raw);
+    if (!raw || !Number.isFinite(parsed) || parsed <= 0) {
+      setPayloadError('Enter a valid legacy Inventory ID (tbl_parts_inventory.ID)');
+      setPayload(null);
+      return;
+    }
+
+    try {
+      setPayloadLoading(true);
+      setPayloadError(null);
+      const data = await ebayApi.getTestListingPayloadPreview(parsed);
+      setPayload(data);
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load test-listing payload preview', e);
+      setPayloadError(e?.response?.data?.detail || e.message || 'Failed to load payload preview');
+      setPayload(null);
+    } finally {
+      setPayloadLoading(false);
+    }
+  };
+
+  const FieldRow: React.FC<{ field: TestListingPayloadFieldDto }> = ({ field }) => {
+    const value = (field.value ?? '').toString();
+    const missing = Boolean(field.missing);
+    const sourcesText = (field.sources || [])
+      .map((s) => `${s.table}.${s.column}`)
+      .join(' → ');
+
+    return (
+      <div className="flex items-start justify-between gap-3 border-b last:border-b-0 py-1">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-800">{field.label}</span>
+            {field.required && (
+              <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px] font-semibold">
+                REQUIRED
+              </span>
+            )}
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                missing ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+              }`}
+              title={sourcesText || undefined}
+            >
+              {missing ? 'MISSING' : 'OK'}
+            </span>
+          </div>
+          <div className={`text-[11px] mt-0.5 ${missing ? 'text-red-700' : 'text-gray-700'}`}>
+            {value ? <span className="font-mono break-all">{value}</span> : <span className="text-gray-400">—</span>}
+          </div>
+          {sourcesText && <div className="text-[10px] text-gray-500 mt-0.5">{sourcesText}</div>}
+        </div>
+      </div>
+    );
+  };
 
   const handleToggleDebug = async () => {
     if (!config) return;
@@ -226,6 +297,74 @@ const AdminTestListingPage: React.FC = () => {
                     {runMessage && (
                       <span className="text-[11px] text-gray-700">{runMessage}</span>
                     )}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="p-0">
+            <CardHeader className="py-2 px-3 pb-1 flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold">Payload preview (by legacy Inventory ID)</CardTitle>
+            </CardHeader>
+            <CardContent className="py-2 px-3 space-y-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-gray-700">Legacy Inventory ID</span>
+                <input
+                  className="border rounded px-2 py-1 text-[11px] w-40"
+                  placeholder="e.g. 501610"
+                  value={legacyInventoryId}
+                  onChange={(e) => setLegacyInventoryId(e.target.value.replace(/[^0-9]/g, ''))}
+                />
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded bg-black text-white text-[11px] font-medium hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  onClick={() => void handleLoadPayload()}
+                  disabled={payloadLoading}
+                >
+                  {payloadLoading ? 'Loading…' : 'Load preview'}
+                </button>
+                {payload && (
+                  <span className="text-[11px] text-gray-600">
+                    SKU={payload.sku || '—'} • status={payload.legacy_status_name || payload.legacy_status_code || '—'} •
+                    parts_detail_id={payload.parts_detail_id ?? '—'}
+                  </span>
+                )}
+              </div>
+
+              {payloadError && <div className="text-red-600">{payloadError}</div>}
+              {payloadLoading && <div className="text-gray-600">Building payload preview…</div>}
+
+              {payload && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="border rounded bg-white">
+                    <div className="px-2 py-1 border-b bg-gray-50 flex items-center justify-between">
+                      <div className="font-semibold text-gray-800">Mandatory</div>
+                      <div className="text-[11px] text-gray-500">
+                        Missing:{' '}
+                        {payload.mandatory_fields.filter((f) => f.missing).length}/{payload.mandatory_fields.length}
+                      </div>
+                    </div>
+                    <div className="px-2">
+                      {payload.mandatory_fields.map((f) => (
+                        <FieldRow key={f.key} field={f} />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="border rounded bg-white">
+                    <div className="px-2 py-1 border-b bg-gray-50 flex items-center justify-between">
+                      <div className="font-semibold text-gray-800">Optional</div>
+                      <div className="text-[11px] text-gray-500">
+                        Filled:{' '}
+                        {payload.optional_fields.filter((f) => !f.missing).length}/{payload.optional_fields.length}
+                      </div>
+                    </div>
+                    <div className="px-2">
+                      {payload.optional_fields.map((f) => (
+                        <FieldRow key={f.key} field={f} />
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

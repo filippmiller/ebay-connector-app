@@ -6,6 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.models_sqlalchemy import get_db
 from app.models_sqlalchemy.models import (
@@ -88,6 +89,30 @@ class TestListingRunResponse(BaseModel):
     items_failed: int
 
 
+class TestListingFieldSource(BaseModel):
+    table: str
+    column: str
+
+
+class TestListingPayloadField(BaseModel):
+    key: str
+    label: str
+    required: bool
+    value: Optional[str] = None
+    missing: bool
+    sources: list[TestListingFieldSource] = Field(default_factory=list)
+
+
+class TestListingPayloadResponse(BaseModel):
+    legacy_inventory_id: int
+    sku: Optional[str]
+    legacy_status_code: Optional[str]
+    legacy_status_name: Optional[str]
+    parts_detail_id: Optional[int]
+    mandatory_fields: list[TestListingPayloadField]
+    optional_fields: list[TestListingPayloadField]
+
+
 def _get_or_create_config(db: Session) -> EbayListingTestConfig:
     cfg: Optional[EbayListingTestConfig] = db.query(EbayListingTestConfig).order_by(EbayListingTestConfig.id.asc()).first()
     if cfg is None:
@@ -102,6 +127,36 @@ def _get_or_create_config(db: Session) -> EbayListingTestConfig:
     return cfg
 
 
+def _first_non_empty(*vals: Optional[object]) -> Optional[str]:
+    for v in vals:
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s == "" or s.lower() == "null":
+            continue
+        return s
+    return None
+
+
+def _build_field(
+    *,
+    key: str,
+    label: str,
+    required: bool,
+    value: Optional[str],
+    sources: list[tuple[str, str]],
+) -> TestListingPayloadField:
+    missing = value is None or str(value).strip() == ""
+    return TestListingPayloadField(
+        key=key,
+        label=label,
+        required=required,
+        value=value,
+        missing=missing if required else missing,
+        sources=[TestListingFieldSource(table=t, column=c) for (t, c) in sources],
+    )
+
+
 @router.get("/config", response_model=TestListingConfigResponse, dependencies=[Depends(admin_required)])
 async def get_test_listing_config(
     db: Session = Depends(get_db),
@@ -112,6 +167,437 @@ async def get_test_listing_config(
         debug_enabled=bool(cfg.debug_enabled),
         test_inventory_status=cfg.test_inventory_status,
         max_items_per_run=int(cfg.max_items_per_run or 50),
+    )
+
+
+@router.get("/payload", response_model=TestListingPayloadResponse, dependencies=[Depends(admin_required)])
+async def get_test_listing_payload_preview(
+    legacy_inventory_id: int = Query(..., ge=1, description="Legacy tbl_parts_inventory.ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+) -> TestListingPayloadResponse:
+    """Build a prefilled payload preview for a single legacy inventory row.
+
+    The caller provides a legacy `tbl_parts_inventory.ID`. We resolve its SKU,
+    then merge data from:
+    - tbl_parts_inventory overrides
+    - parts_detail overrides (when available)
+    - "SKU_catalog" (SQ edit form payload)
+    - tbl_parts_detail (legacy payload fallback)
+    - lookup tables (shipping groups, categories, conditions, status name)
+    """
+
+    inv_row = db.execute(
+        text(
+            'SELECT * FROM public."tbl_parts_inventory" WHERE "ID" = :id'
+        ),
+        {"id": legacy_inventory_id},
+    ).mappings().first()
+    if not inv_row:
+        raise HTTPException(status_code=404, detail="legacy_inventory_not_found")
+
+    sku_val = inv_row.get("SKU")
+    sku = _first_non_empty(sku_val)
+
+    # Legacy status: numeric code + lookup name
+    legacy_status_code = _first_non_empty(inv_row.get("StatusSKU"))
+    legacy_status_name = None
+    if legacy_status_code:
+        status_row = db.execute(
+            text(
+                'SELECT "InventoryStatus_Name" FROM public."tbl_parts_inventorystatus" WHERE "InventoryStatus_ID" = :sid'
+            ),
+            {"sid": int(float(legacy_status_code))},
+        ).first()
+        if status_row and status_row[0] is not None:
+            legacy_status_name = str(status_row[0])
+
+    # Try to resolve parts_detail_id via modern inventory table (best effort)
+    parts_detail_id: Optional[int] = None
+    if sku:
+        inv2 = db.execute(
+            text(
+                "SELECT parts_detail_id FROM public.inventory WHERE sku_code = :sku ORDER BY id ASC LIMIT 1"
+            ),
+            {"sku": sku},
+        ).first()
+        if inv2 and inv2[0] is not None:
+            try:
+                parts_detail_id = int(inv2[0])
+            except Exception:
+                parts_detail_id = None
+
+    pd_row = None
+    if parts_detail_id is not None:
+        pd_row = db.execute(
+            text("SELECT * FROM public.parts_detail WHERE id = :pid"),
+            {"pid": parts_detail_id},
+        ).mappings().first()
+
+    # SKU_catalog (mixed-case table)
+    sku_catalog_row = None
+    if sku:
+        sku_catalog_row = db.execute(
+            text('SELECT * FROM public."SKU_catalog" WHERE "SKU" = :sku ORDER BY "ID" DESC LIMIT 1'),
+            {"sku": int(float(sku))},
+        ).mappings().first()
+
+    # tbl_parts_detail fallback
+    tbl_parts_detail_row = None
+    if sku:
+        tbl_parts_detail_row = db.execute(
+            text('SELECT * FROM public."tbl_parts_detail" WHERE "SKU" = :sku ORDER BY "ID" DESC LIMIT 1'),
+            {"sku": int(float(sku))},
+        ).mappings().first()
+
+    # Shipping group dictionaries for label
+    shipping_group_code = _first_non_empty(
+        inv_row.get("ShippingGroupToChange"),
+        (pd_row or {}).get("shipping_group") if isinstance(pd_row, dict) else None,  # defensive
+        (sku_catalog_row or {}).get("ShippingGroup"),
+        (tbl_parts_detail_row or {}).get("ShippingGroup"),
+    )
+
+    shipping_group_name = None
+    if shipping_group_code:
+        # Try tbl_internalshippinggroups first (legacy)
+        sg = db.execute(
+            text(
+                'SELECT "Name", "Description" FROM public.tbl_internalshippinggroups WHERE (to_jsonb(tbl_internalshippinggroups)->>\'ID\') = :id LIMIT 1'
+            ),
+            {"id": str(int(float(shipping_group_code)))},
+        ).first()
+        if sg and sg[0] is not None:
+            shipping_group_name = str(sg[0])
+        else:
+            sg2 = db.execute(
+                text("SELECT label FROM public.sq_shipping_groups WHERE id = :id LIMIT 1"),
+                {"id": int(float(shipping_group_code))},
+            ).first()
+            if sg2 and sg2[0] is not None:
+                shipping_group_name = str(sg2[0])
+
+    # Category label
+    category_code = _first_non_empty(
+        (sku_catalog_row or {}).get("Category"),
+        (tbl_parts_detail_row or {}).get("Category"),
+    )
+    category_label = None
+    if category_code:
+        cat = db.execute(
+            text(
+                'SELECT "CategoryDescr", "eBayCategoryName" FROM public."tbl_parts_category" WHERE "CategoryID" = :cid LIMIT 1'
+            ),
+            {"cid": int(float(category_code))},
+        ).first()
+        if cat:
+            descr = str(cat[0] or "").strip()
+            ebay_name = str(cat[1] or "").strip()
+            parts = []
+            if descr:
+                parts.append(descr)
+            if ebay_name:
+                parts.append(ebay_name)
+            category_label = " — ".join(parts) if parts else None
+
+    # Condition label
+    condition_id = _first_non_empty(
+        inv_row.get("OverrideConditionID"),
+        (pd_row or {}).get("override_condition_id") if isinstance(pd_row, dict) else None,
+        (sku_catalog_row or {}).get("ConditionID"),
+        (tbl_parts_detail_row or {}).get("ConditionID"),
+    )
+    condition_label = None
+    if condition_id:
+        cond = db.execute(
+            text("SELECT code, label FROM public.item_conditions WHERE id = :id LIMIT 1"),
+            {"id": int(float(condition_id))},
+        ).first()
+        if cond:
+            condition_label = f"{cond[0]} — {cond[1]}" if cond[1] else str(cond[0])
+
+    # Pictures (prefer inventory overrides, then parts_detail, then SKU_catalog, then tbl_parts_detail)
+    pics: list[str] = []
+    for i in range(1, 13):
+        legacy_key = f"OverridePicURL{i}"
+        pd_key = f"override_pic_url_{i}"
+        sku_key = f"PicURL{i}"
+        val = _first_non_empty(
+            inv_row.get(legacy_key),
+            (pd_row or {}).get(pd_key) if isinstance(pd_row, dict) else None,
+            (sku_catalog_row or {}).get(sku_key),
+            (tbl_parts_detail_row or {}).get(sku_key),
+        )
+        pics.append(val or "")
+
+    pics_non_empty = [p for p in pics if p.strip()]
+
+    # Core listing fields with precedence rules
+    title = _first_non_empty(
+        inv_row.get("OverrideTitle"),
+        (pd_row or {}).get("override_title") if isinstance(pd_row, dict) else None,
+        (sku_catalog_row or {}).get("Part"),
+        (tbl_parts_detail_row or {}).get("Part"),
+    )
+    price = _first_non_empty(
+        inv_row.get("OverridePrice"),
+        (pd_row or {}).get("override_price") if isinstance(pd_row, dict) else None,
+        (pd_row or {}).get("price_to_change") if isinstance(pd_row, dict) else None,
+        (sku_catalog_row or {}).get("Price"),
+        (tbl_parts_detail_row or {}).get("Price"),
+    )
+    quantity = _first_non_empty(inv_row.get("Quantity"))
+    shipping_type = _first_non_empty(
+        (sku_catalog_row or {}).get("ShippingType"),
+        (tbl_parts_detail_row or {}).get("ShippingType"),
+    )
+    listing_type = _first_non_empty(
+        (sku_catalog_row or {}).get("ListingType"),
+        (tbl_parts_detail_row or {}).get("ListingType"),
+    )
+    listing_duration = _first_non_empty(
+        (sku_catalog_row or {}).get("ListingDuration"),
+        (tbl_parts_detail_row or {}).get("ListingDuration"),
+    )
+    site_id = _first_non_empty(
+        (sku_catalog_row or {}).get("SiteID"),
+        (tbl_parts_detail_row or {}).get("SiteID"),
+    )
+    weight = _first_non_empty(
+        (sku_catalog_row or {}).get("Weight"),
+        (tbl_parts_detail_row or {}).get("Weight"),
+    )
+    unit = _first_non_empty(
+        (sku_catalog_row or {}).get("Unit"),
+        (tbl_parts_detail_row or {}).get("Unit"),
+    )
+    mpn = _first_non_empty(
+        (sku_catalog_row or {}).get("MPN"),
+        (tbl_parts_detail_row or {}).get("MPN"),
+    )
+    upc = _first_non_empty(
+        (sku_catalog_row or {}).get("UPC"),
+        (tbl_parts_detail_row or {}).get("UPC"),
+    )
+    part_number = _first_non_empty(
+        (sku_catalog_row or {}).get("Part_Number"),
+        (tbl_parts_detail_row or {}).get("Part_Number"),
+    )
+    description = _first_non_empty(
+        inv_row.get("OverrideDescription"),
+        (pd_row or {}).get("override_description") if isinstance(pd_row, dict) else None,
+        (sku_catalog_row or {}).get("Description"),
+        (tbl_parts_detail_row or {}).get("Description"),
+    )
+
+    mandatory: list[TestListingPayloadField] = []
+    optional: list[TestListingPayloadField] = []
+
+    mandatory.append(
+        _build_field(
+            key="legacy_inventory_id",
+            label="Legacy Inventory ID (tbl_parts_inventory.ID)",
+            required=True,
+            value=str(legacy_inventory_id),
+            sources=[("tbl_parts_inventory", "ID")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="sku",
+            label="SKU",
+            required=True,
+            value=sku,
+            sources=[("tbl_parts_inventory", "SKU"), ("SKU_catalog", "SKU"), ("tbl_parts_detail", "SKU"), ("parts_detail", "sku")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="title",
+            label="Title (<=80 chars)",
+            required=True,
+            value=title,
+            sources=[("tbl_parts_inventory", "OverrideTitle"), ("parts_detail", "override_title"), ("SKU_catalog", "Part"), ("tbl_parts_detail", "Part")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="price",
+            label="Price",
+            required=True,
+            value=price,
+            sources=[("tbl_parts_inventory", "OverridePrice"), ("parts_detail", "override_price/price_to_change"), ("SKU_catalog", "Price"), ("tbl_parts_detail", "Price")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="quantity",
+            label="Quantity",
+            required=True,
+            value=quantity,
+            sources=[("tbl_parts_inventory", "Quantity")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="condition_id",
+            label="ConditionID",
+            required=True,
+            value=condition_id,
+            sources=[("tbl_parts_inventory", "OverrideConditionID"), ("parts_detail", "override_condition_id"), ("SKU_catalog", "ConditionID"), ("tbl_parts_detail", "ConditionID")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="pictures",
+            label="Pictures (at least 1 URL)",
+            required=True,
+            value=str(len(pics_non_empty)),
+            sources=[("tbl_parts_inventory", "OverridePicURL1..12"), ("parts_detail", "override_pic_url_1..12"), ("SKU_catalog", "PicURL1..12"), ("tbl_parts_detail", "PicURL1..12")],
+        )
+    )
+    # Mark pictures missing when none exist
+    mandatory[-1].missing = len(pics_non_empty) == 0
+
+    mandatory.append(
+        _build_field(
+            key="shipping_group",
+            label="Shipping group",
+            required=True,
+            value=_first_non_empty(shipping_group_code, shipping_group_name),
+            sources=[("SKU_catalog", "ShippingGroup"), ("tbl_parts_detail", "ShippingGroup"), ("tbl_internalshippinggroups", "ID/Name"), ("sq_shipping_groups", "id/label")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="shipping_type",
+            label="Shipping type",
+            required=True,
+            value=shipping_type,
+            sources=[("SKU_catalog", "ShippingType"), ("tbl_parts_detail", "ShippingType")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="listing_type",
+            label="Listing type (must be FixedPriceItem for BIN test)",
+            required=True,
+            value=listing_type,
+            sources=[("SKU_catalog", "ListingType"), ("tbl_parts_detail", "ListingType")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="listing_duration",
+            label="Listing duration",
+            required=True,
+            value=listing_duration,
+            sources=[("SKU_catalog", "ListingDuration"), ("tbl_parts_detail", "ListingDuration")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="site_id",
+            label="Site",
+            required=True,
+            value=site_id,
+            sources=[("SKU_catalog", "SiteID"), ("tbl_parts_detail", "SiteID")],
+        )
+    )
+    mandatory.append(
+        _build_field(
+            key="category",
+            label="Category (internal or eBay category)",
+            required=True,
+            value=_first_non_empty(category_code, category_label),
+            sources=[("SKU_catalog", "Category/ExternalCategory*"), ("tbl_parts_detail", "Category/ExternalCategory*"), ("tbl_parts_category", "CategoryID/CategoryDescr/eBayCategoryName")],
+        )
+    )
+
+    optional.append(
+        _build_field(
+            key="mpn",
+            label="MPN",
+            required=False,
+            value=mpn,
+            sources=[("SKU_catalog", "MPN"), ("tbl_parts_detail", "MPN")],
+        )
+    )
+    optional.append(
+        _build_field(
+            key="part_number",
+            label="Part number",
+            required=False,
+            value=part_number,
+            sources=[("SKU_catalog", "Part_Number"), ("tbl_parts_detail", "Part_Number")],
+        )
+    )
+    optional.append(
+        _build_field(
+            key="upc",
+            label="UPC",
+            required=False,
+            value=upc,
+            sources=[("SKU_catalog", "UPC"), ("tbl_parts_detail", "UPC")],
+        )
+    )
+    optional.append(
+        _build_field(
+            key="weight",
+            label="Weight",
+            required=False,
+            value=weight,
+            sources=[("SKU_catalog", "Weight"), ("tbl_parts_detail", "Weight")],
+        )
+    )
+    optional.append(
+        _build_field(
+            key="unit",
+            label="Weight unit",
+            required=False,
+            value=unit,
+            sources=[("SKU_catalog", "Unit"), ("tbl_parts_detail", "Unit")],
+        )
+    )
+    optional.append(
+        _build_field(
+            key="description",
+            label="Description (HTML/long)",
+            required=False,
+            value=description,
+            sources=[("tbl_parts_inventory", "OverrideDescription"), ("parts_detail", "override_description"), ("SKU_catalog", "Description"), ("tbl_parts_detail", "Description")],
+        )
+    )
+    optional.append(
+        _build_field(
+            key="condition_label",
+            label="Condition label (dictionary)",
+            required=False,
+            value=condition_label,
+            sources=[("item_conditions", "id/code/label")],
+        )
+    )
+
+    # Provide raw picture urls as optional fields (PicURL1..12)
+    for i in range(1, 13):
+        optional.append(
+            _build_field(
+                key=f"pic_url_{i}",
+                label=f"Picture URL #{i}",
+                required=False,
+                value=pics[i - 1] or None,
+                sources=[("tbl_parts_inventory", f"OverridePicURL{i}"), ("parts_detail", f"override_pic_url_{i}"), ("SKU_catalog", f"PicURL{i}"), ("tbl_parts_detail", f"PicURL{i}")],
+            )
+        )
+
+    return TestListingPayloadResponse(
+        legacy_inventory_id=legacy_inventory_id,
+        sku=sku,
+        legacy_status_code=legacy_status_code,
+        legacy_status_name=legacy_status_name,
+        parts_detail_id=parts_detail_id,
+        mandatory_fields=mandatory,
+        optional_fields=optional,
     )
 
 

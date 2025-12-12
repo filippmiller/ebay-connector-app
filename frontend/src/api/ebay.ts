@@ -310,6 +310,30 @@ export interface TestListingRunResponseDto {
   items_failed: number;
 }
 
+export interface TestListingFieldSourceDto {
+  table: string;
+  column: string;
+}
+
+export interface TestListingPayloadFieldDto {
+  key: string;
+  label: string;
+  required: boolean;
+  value: string | null;
+  missing: boolean;
+  sources: TestListingFieldSourceDto[];
+}
+
+export interface TestListingPayloadResponseDto {
+  legacy_inventory_id: number;
+  sku: string | null;
+  legacy_status_code: string | null;
+  legacy_status_name: string | null;
+  parts_detail_id: number | null;
+  mandatory_fields: TestListingPayloadFieldDto[];
+  optional_fields: TestListingPayloadFieldDto[];
+}
+
 export interface EbayReturnRow {
   return_id: string;
   account_id: string | null;
@@ -742,6 +766,15 @@ export const ebayApi = {
   async getTestListingLogDetail(logId: number): Promise<TestListingLogDetailDto> {
     const response = await apiClient.get<TestListingLogDetailDto>(
       `/api/admin/ebay/test-listing/logs/${logId}`,
+    );
+    return response.data;
+  },
+
+  async getTestListingPayloadPreview(
+    legacyInventoryId: number,
+  ): Promise<TestListingPayloadResponseDto> {
+    const response = await apiClient.get<TestListingPayloadResponseDto>(
+      `/api/admin/ebay/test-listing/payload?legacy_inventory_id=${encodeURIComponent(String(legacyInventoryId))}`,
     );
     return response.data;
   },
