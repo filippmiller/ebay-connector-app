@@ -155,28 +155,34 @@ def build_item_xml(
         if paypal_email_address:
             manual_policies_xml += f"<PayPalEmailAddress>{_xml_text(paypal_email_address)}</PayPalEmailAddress>"
 
-    return (
-        "<Item>"
-        f"<Title>{_xml_text(title)[:80]}</Title>"
-        f"<Description>{_xml_cdata(description_html)}</Description>"
-        f"<PrimaryCategory><CategoryID>{_xml_text(category_id)}</CategoryID></PrimaryCategory>"
-        "<ListingType>FixedPriceItem</ListingType>"
-        f"<ListingDuration>{_xml_text(listing_duration)}</ListingDuration>"
-        f'<StartPrice currencyID="{_xml_text(currency)}">{_xml_text(start_price)}</StartPrice>'
-        f"<Quantity>{int(quantity)}</Quantity>"
-        f"<Currency>{_xml_text(currency)}</Currency>"
-        f"<Country>{_xml_text(country)}</Country>"
-        f"<Location>{_xml_text(location)}</Location>"
-        f"<PostalCode>{_xml_text(postal_code)}</PostalCode>"
-        f"<DispatchTimeMax>{int(dispatch_time_max)}</DispatchTimeMax>"
-        f"<ConditionID>{_xml_text(condition_id)}</ConditionID>"
-        f"<Site>{_xml_text(site)}</Site>"
-        f"{specifics}"
-        (f"<PictureDetails>{pics}</PictureDetails>" if pics else "")
-        f"{seller_profiles_xml}"
-        f"{manual_policies_xml}"
-        "</Item>"
-    )
+    parts: list[str] = [
+        "<Item>",
+        f"<Title>{_xml_text(title)[:80]}</Title>",
+        f"<Description>{_xml_cdata(description_html)}</Description>",
+        f"<PrimaryCategory><CategoryID>{_xml_text(category_id)}</CategoryID></PrimaryCategory>",
+        "<ListingType>FixedPriceItem</ListingType>",
+        f"<ListingDuration>{_xml_text(listing_duration)}</ListingDuration>",
+        f'<StartPrice currencyID="{_xml_text(currency)}">{_xml_text(start_price)}</StartPrice>',
+        f"<Quantity>{int(quantity)}</Quantity>",
+        f"<Currency>{_xml_text(currency)}</Currency>",
+        f"<Country>{_xml_text(country)}</Country>",
+        f"<Location>{_xml_text(location)}</Location>",
+        f"<PostalCode>{_xml_text(postal_code)}</PostalCode>",
+        f"<DispatchTimeMax>{int(dispatch_time_max)}</DispatchTimeMax>",
+        f"<ConditionID>{_xml_text(condition_id)}</ConditionID>",
+        f"<Site>{_xml_text(site)}</Site>",
+        specifics,
+    ]
+
+    if pics:
+        parts.append(f"<PictureDetails>{pics}</PictureDetails>")
+    if seller_profiles_xml:
+        parts.append(seller_profiles_xml)
+    if manual_policies_xml:
+        parts.append(manual_policies_xml)
+
+    parts.append("</Item>")
+    return "".join(parts)
 
 
 async def call_trading_api(
