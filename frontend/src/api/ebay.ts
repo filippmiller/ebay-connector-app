@@ -365,6 +365,8 @@ export interface BinSourcePreviewDto {
   title: string | null;
   description: string | null;
   category_id: string | null;
+  internal_category_id?: string | null;
+  required_specifics?: string[];
   start_price: string | null;
   quantity: number | null;
   condition_id: string | null;
@@ -393,6 +395,9 @@ export interface BinDebugRequestDto {
   // Item specifics
   brand?: string | null;
   mpn?: string | null;
+  item_type?: string | null;
+  compatible_brand?: string | null;
+  condition_id_override?: string | null;
   site_id?: number;
   site_code?: string;
   compatibility_level?: number;
@@ -960,6 +965,12 @@ export const ebayApi = {
   async getBinEbayAccounts(activeOnly: boolean = true): Promise<EbayAccountPickerDto[]> {
     const params = new URLSearchParams({ active_only: String(activeOnly) });
     const response = await apiClient.get<EbayAccountPickerDto[]>(`/api/admin/ebay/bin/accounts?${params.toString()}`);
+    return response.data;
+  },
+
+  async getBinConditions(activeOnly: boolean = true): Promise<any[]> {
+    const params = new URLSearchParams({ active_only: String(activeOnly) });
+    const response = await apiClient.get<any[]>(`/api/admin/ebay/bin/conditions?${params.toString()}`);
     return response.data;
   },
 

@@ -73,6 +73,11 @@ class BinDebugRequest(BaseModel):
     # Item specifics (minimum)
     brand: Optional[str] = Field(None, description="ItemSpecifics Brand (defaults to Unbranded)")
     mpn: Optional[str] = Field(None, description="ItemSpecifics MPN (defaults to tbl_parts_detail.MPN/Part_Number or Does Not Apply)")
+    item_type: Optional[str] = Field(None, description="ItemSpecifics Type (required for some categories)")
+    compatible_brand: Optional[str] = Field(None, description="ItemSpecifics Compatible Brand (required for some categories)")
+
+    # Optional override for condition id (from tbl_parts_condition dropdown)
+    condition_id_override: Optional[str] = None
 
     # Listing + site settings
     site_id: int = Field(0, description="Trading API SiteID header value (default US=0)")
@@ -117,6 +122,8 @@ class BinSourcePreview(BaseModel):
     title: Optional[str]
     description: Optional[str]
     category_id: Optional[str]
+    internal_category_id: Optional[str] = None
+    required_specifics: list[str] = Field(default_factory=list)
     start_price: Optional[str]
     quantity: Optional[int]
     condition_id: Optional[str]
@@ -157,6 +164,26 @@ async def list_ebay_accounts(
         )
         for a in rows
     ]
+
+
+@router.get("/conditions", response_model=list[Dict[str, Any]], dependencies=[Depends(admin_required)])
+async def list_conditions(
+    active_only: bool = Query(True),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+) -> list[Dict[str, Any]]:
+    rows = db.execute(
+        text(
+            """
+            SELECT *
+            FROM public.tbl_parts_condition
+            WHERE (:active_only = FALSE OR COALESCE("Flag", TRUE) = TRUE)
+            ORDER BY "ConditionID" ASC
+            """
+        ),
+        {"active_only": active_only},
+    ).mappings().all()
+    return [dict(r) for r in rows]
 
 
 @router.get("/site-ids", response_model=list[GlobalSiteDto], dependencies=[Depends(admin_required)])
@@ -312,6 +339,67 @@ def _extract_pictures(legacy_inv: dict, tbl_parts_detail: dict) -> list[str]:
     return out
 
 
+def _load_required_specifics(db: Session, *, marketplace_id: str, category_id: Optional[str]) -> list[str]:
+    if not category_id:
+        return []
+    rows = db.execute(
+        text(
+            """
+            SELECT specific_name
+            FROM public.ebay_category_required_specifics
+            WHERE marketplace_id = :marketplace_id
+              AND category_id = :category_id
+              AND is_active = TRUE
+            ORDER BY specific_name ASC
+            """
+        ),
+        {"marketplace_id": marketplace_id, "category_id": str(category_id)},
+    ).all()
+    return [str(r[0]) for r in rows if r and r[0]]
+
+
+def _learn_required_specifics_from_errors(
+    db: Session,
+    *,
+    marketplace_id: str,
+    category_id: Optional[str],
+    parsed: Dict[str, Any],
+) -> list[str]:
+    """Self-learning: when eBay says required specifics are missing, store them per CategoryID."""
+    if not category_id:
+        return []
+    missing: set[str] = set()
+    for e in (parsed.get("errors") or []):
+        code = str(e.get("code") or "")
+        if code != "21919303" and "item specific" not in (str(e.get("short") or "") + str(e.get("long") or "")).lower():
+            continue
+        for p in (e.get("parameters") or []):
+            # eBay provides missing specific name in ErrorParameters ParamID="2"
+            if str(p.get("param_id") or "") == "2" and p.get("value"):
+                missing.add(str(p["value"]).strip())
+    if not missing:
+        return []
+    for name in sorted(missing):
+        try:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO public.ebay_category_required_specifics (marketplace_id, category_id, specific_name)
+                    VALUES (:marketplace_id, :category_id, :name)
+                    ON CONFLICT DO NOTHING
+                    """
+                ),
+                {"marketplace_id": marketplace_id, "category_id": str(category_id), "name": name},
+            )
+        except Exception:
+            pass
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    return sorted(missing)
+
+
 @router.get("/source", response_model=BinSourcePreview, dependencies=[Depends(admin_required)])
 async def get_bin_source_preview(
     legacy_inventory_id: int = Query(..., ge=1),
@@ -337,7 +425,8 @@ async def get_bin_source_preview(
     )
     # tbl_parts_detail.Category is an internal category number; eBay Trading needs the external eBay CategoryID.
     # Prefer ExternalCategoryID when present (e.g. 175676), fallback to internal Category as last resort.
-    category_id = _first_non_empty(tbl_pd.get("ExternalCategoryID"), tbl_pd.get("Category"))
+    internal_category_id = _first_non_empty(tbl_pd.get("Category"))
+    category_id = _first_non_empty(tbl_pd.get("ExternalCategoryID"), internal_category_id)
     start_price = _first_non_empty(legacy_inv.get("OverridePrice"), tbl_pd.get("Price"))
     qty_raw = legacy_inv.get("Quantity")
     quantity = int(qty_raw) if qty_raw is not None else None
@@ -357,6 +446,8 @@ async def get_bin_source_preview(
         }
     )
 
+    required_specifics = _load_required_specifics(db, marketplace_id="EBAY_US", category_id=category_id)
+
     return BinSourcePreview(
         legacy_inventory_id=legacy_inventory_id,
         sku=str(sku),
@@ -364,6 +455,7 @@ async def get_bin_source_preview(
         title=title,
         description=description,
         category_id=category_id,
+        internal_category_id=internal_category_id,
         start_price=start_price,
         quantity=quantity,
         condition_id=condition_id,
@@ -371,6 +463,7 @@ async def get_bin_source_preview(
         condition_row=condition_row,
         picture_urls=pics,
         missing_db_fields=missing_db_fields,
+        required_specifics=required_specifics,
     )
 
 
@@ -406,11 +499,12 @@ async def _call_trading(
         tbl_pd.get("CustomTemplateDescription"),
         tbl_pd.get("ConditionDescription"),
     )
-    category_id = _first_non_empty(tbl_pd.get("ExternalCategoryID"), tbl_pd.get("Category"))
+    internal_category_id = _first_non_empty(tbl_pd.get("Category"))
+    category_id = _first_non_empty(tbl_pd.get("ExternalCategoryID"), internal_category_id)
     start_price = _first_non_empty(legacy_inv.get("OverridePrice"), tbl_pd.get("Price"))
     qty_raw = legacy_inv.get("Quantity")
     quantity = int(qty_raw) if qty_raw is not None else 0
-    condition_id = _first_non_empty(legacy_inv.get("OverrideConditionID"), tbl_pd.get("ConditionID"))
+    condition_id = _first_non_empty(req.condition_id_override, legacy_inv.get("OverrideConditionID"), tbl_pd.get("ConditionID"))
     condition_display_name, _ = _load_condition_meta(db, condition_id)
     pics = _extract_pictures(legacy_inv, tbl_pd)
 
@@ -429,6 +523,18 @@ async def _call_trading(
             "<p><b>Included:</b> Item as pictured only.</p>"
             "<p><b>Not included:</b> Accessories unless shown.</p>"
         )
+
+    required_specifics = _load_required_specifics(db, marketplace_id="EBAY_US", category_id=category_id)
+    # Provide defaults that help pass verify (user can override in UI)
+    compatible_brand = (req.compatible_brand or "").strip()
+    if not compatible_brand:
+        t = (str(title or "") + " " + str(tbl_pd.get("Part") or "")).upper()
+        for b in ["HP", "DELL", "LENOVO", "ACER", "ASUS", "APPLE", "SAMSUNG", "TOSHIBA"]:
+            if f" {b} " in f" {t} ":
+                compatible_brand = b.title() if b != "HP" else "HP"
+                break
+
+    item_type = (req.item_type or "").strip()
 
     precheck = {
         "Item.Title": title,
@@ -449,6 +555,11 @@ async def _call_trading(
         "ItemSpecifics.Brand": brand,
         "ItemSpecifics.MPN": mpn,
     }
+    # Enforce required specifics for the category (learned table)
+    if "Type" in required_specifics:
+        precheck["ItemSpecifics.Type"] = item_type
+    if "Compatible Brand" in required_specifics:
+        precheck["ItemSpecifics.Compatible Brand"] = compatible_brand
     mode = (req.policies_mode or "seller_profiles").strip().lower()
     if mode == "seller_profiles":
         precheck["Item.SellerProfiles.PaymentProfileID"] = req.payment_profile_id
@@ -520,6 +631,8 @@ async def _call_trading(
         picture_urls=pics,
         brand=brand,
         mpn=mpn,
+        item_type=item_type,
+        compatible_brand=compatible_brand,
         policies_mode=mode,
         shipping_profile_id=req.shipping_profile_id,
         payment_profile_id=req.payment_profile_id,
@@ -549,6 +662,12 @@ async def _call_trading(
     )
 
     parsed = parse_trading_response(http_res.response_body_xml)
+    learned = _learn_required_specifics_from_errors(
+        db,
+        marketplace_id="EBAY_US",
+        category_id=category_id,
+        parsed=parsed,
+    )
 
     # Logging into ebay_bin_test_runs. We return explicit status so UI can warn if logging failed.
     log_saved = False
@@ -653,8 +772,11 @@ async def _call_trading(
             "country": req.country,
             "listing_duration": req.listing_duration,
             "category_id": str(category_id),
+            "internal_category_id": internal_category_id,
             "condition_id": str(condition_id) if condition_id is not None else None,
             "condition_display_name": condition_display_name,
+            "required_specifics": required_specifics,
+            "learned_required_specifics": learned,
             "policies_mode": mode,
             "seller_profiles": {
                 "shipping_profile_id": req.shipping_profile_id,

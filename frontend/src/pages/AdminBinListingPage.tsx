@@ -33,6 +33,14 @@ export default function AdminBinListingPage() {
   // Item specifics
   const [brand, setBrand] = useState<string>('Unbranded');
   const [mpn, setMpn] = useState<string>('');
+  const [itemType, setItemType] = useState<string>('');
+  const [compatibleBrand, setCompatibleBrand] = useState<string>('');
+
+  // Condition selector (from tbl_parts_condition)
+  const [conditionsLoading, setConditionsLoading] = useState(false);
+  const [conditionsError, setConditionsError] = useState<string | null>(null);
+  const [conditions, setConditions] = useState<{ ConditionID: number; ConditionDisplayName?: string | null }[]>([]);
+  const [conditionOverride, setConditionOverride] = useState<string>('');
 
   // Business Policies dictionary (extensible: multi-account + marketplace)
   const accountKey = 'default';
@@ -120,6 +128,27 @@ export default function AdminBinListingPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setConditionsLoading(true);
+      setConditionsError(null);
+      try {
+        const rows = await ebayApi.getBinConditions(true);
+        if (cancelled) return;
+        setConditions(rows);
+      } catch (e: any) {
+        if (cancelled) return;
+        setConditionsError(String(e?.response?.data?.detail || e?.message || e));
+      } finally {
+        if (!cancelled) setConditionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       setAccountsLoading(true);
       setAccountsError(null);
       try {
@@ -188,6 +217,15 @@ export default function AdminBinListingPage() {
       setError(null);
       const data = await ebayApi.getBinSourcePreview(parsed);
       setSource(data);
+      // Default condition override to DB value (but allow user override)
+      setConditionOverride(String(data.condition_id || ''));
+      // If required specifics include Compatible Brand, try to infer from title
+      if ((data.required_specifics || []).includes('Compatible Brand')) {
+        const t = String(data.title || '').toUpperCase();
+        if (!compatibleBrand) {
+          if (t.includes(' HP ' ) || t.startsWith('HP ') || t.includes('Genuine HP')) setCompatibleBrand('HP');
+        }
+      }
     } catch (e: any) {
       // eslint-disable-next-line no-console
       console.error('Failed to load BIN source preview', e);
@@ -224,13 +262,21 @@ export default function AdminBinListingPage() {
       ok: has(source?.category_id),
       value: source?.category_id,
     });
+    if (source?.internal_category_id) {
+      items.push({
+        key: 'db.category_internal',
+        label: 'Internal category (tbl_parts_detail.Category)',
+        ok: true,
+        value: source.internal_category_id,
+      });
+    }
     items.push({ key: 'db.price', label: 'Item.StartPrice', ok: has(source?.start_price), value: source?.start_price });
     items.push({ key: 'db.qty', label: 'Item.Quantity', ok: (source?.quantity || 0) > 0, value: source?.quantity });
     items.push({
       key: 'db.condition',
       label: 'Item.ConditionID',
-      ok: has(source?.condition_id),
-      value: source?.condition_id,
+      ok: has(conditionOverride || source?.condition_id),
+      value: conditionOverride || source?.condition_id,
     });
     items.push({
       key: 'db.pics',
@@ -256,6 +302,13 @@ export default function AdminBinListingPage() {
     // Item specifics (soft now, but we mark as mandatory to catch typical failures early)
     items.push({ key: 'spec.brand', label: 'ItemSpecifics.Brand', ok: has(brand), value: brand });
     items.push({ key: 'spec.mpn', label: 'ItemSpecifics.MPN', ok: has(mpn) || has(source?.condition_id), value: mpn || 'Does Not Apply' });
+    const reqSpecs = new Set((source?.required_specifics || []).map((s) => String(s)));
+    if (reqSpecs.has('Type')) {
+      items.push({ key: 'spec.type', label: 'ItemSpecifics.Type (required)', ok: has(itemType), value: itemType });
+    }
+    if (reqSpecs.has('Compatible Brand')) {
+      items.push({ key: 'spec.compat_brand', label: 'ItemSpecifics.Compatible Brand (required)', ok: has(compatibleBrand), value: compatibleBrand });
+    }
 
     if (policiesMode === 'seller_profiles') {
       items.push({
@@ -305,6 +358,9 @@ export default function AdminBinListingPage() {
     shippingCostPaidBy,
     brand,
     mpn,
+    itemType,
+    compatibleBrand,
+    conditionOverride,
   ]);
 
   const canRun = useMemo(() => checklist.every((i) => i.ok), [checklist]);
@@ -329,6 +385,9 @@ export default function AdminBinListingPage() {
       shipping_cost_paid_by_option: policiesMode === 'manual' ? shippingCostPaidBy : undefined,
       brand,
       mpn: mpn || 'Does Not Apply',
+      item_type: itemType || undefined,
+      compatible_brand: compatibleBrand || undefined,
+      condition_id_override: conditionOverride || undefined,
       site_id: Number(siteId),
       site_code: siteCode,
       listing_duration: listingDuration,
@@ -469,7 +528,37 @@ export default function AdminBinListingPage() {
                         placeholder="Leave blank to use Does Not Apply"
                       />
                     </div>
+                    {(source?.required_specifics || []).includes('Type') && (
+                      <div>
+                        <div className="text-gray-700 mb-1">Type *</div>
+                        <input className="border rounded px-2 py-1 text-[11px] w-full" value={itemType} onChange={(e) => setItemType(e.target.value)} placeholder="e.g. Palmrest / Keyboard / Touchpad" />
+                      </div>
+                    )}
+                    {(source?.required_specifics || []).includes('Compatible Brand') && (
+                      <div>
+                        <div className="text-gray-700 mb-1">Compatible Brand *</div>
+                        <input className="border rounded px-2 py-1 text-[11px] w-full" value={compatibleBrand} onChange={(e) => setCompatibleBrand(e.target.value)} placeholder="e.g. HP" />
+                      </div>
+                    )}
                   </div>
+                </div>
+
+                <div className="md:col-span-3">
+                  <div className="text-gray-700 mb-1">Condition (tbl_parts_condition)</div>
+                  <select
+                    className="border rounded px-2 py-1 text-[11px] w-full"
+                    value={conditionOverride}
+                    onChange={(e) => setConditionOverride(e.target.value)}
+                    disabled={conditionsLoading}
+                  >
+                    <option value="">(use SKU default)</option>
+                    {conditions.map((c) => (
+                      <option key={String(c.ConditionID)} value={String(c.ConditionID)}>
+                        {c.ConditionID} — {c.ConditionDisplayName || ''}
+                      </option>
+                    ))}
+                  </select>
+                  {conditionsError && <div className="text-red-600 text-[11px] mt-1">Failed to load conditions: {conditionsError}</div>}
                 </div>
                 <div>
                   <div className="text-gray-700 mb-1">Location *</div>

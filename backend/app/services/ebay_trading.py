@@ -90,9 +90,11 @@ def build_item_xml(
     site: str,
     listing_duration: str,
     picture_urls: list[str],
-    # Item specifics (common required aspects)
+    # Item specifics
     brand: str,
     mpn: str,
+    item_type: Optional[str] = None,
+    compatible_brand: Optional[str] = None,
     # Policies mode
     policies_mode: str,  # "seller_profiles" | "manual"
     # SellerProfiles IDs (preferred)
@@ -113,12 +115,21 @@ def build_item_xml(
     if not pics:
         pics = ""
 
-    specifics = (
-        "<ItemSpecifics>"
-        f"<NameValueList><Name>Brand</Name><Value>{_xml_text(brand)}</Value></NameValueList>"
-        f"<NameValueList><Name>MPN</Name><Value>{_xml_text(mpn)}</Value></NameValueList>"
-        "</ItemSpecifics>"
-    )
+    specifics_parts: list[str] = [
+        "<ItemSpecifics>",
+        f"<NameValueList><Name>Brand</Name><Value>{_xml_text(brand)}</Value></NameValueList>",
+        f"<NameValueList><Name>MPN</Name><Value>{_xml_text(mpn)}</Value></NameValueList>",
+    ]
+    if item_type and str(item_type).strip():
+        specifics_parts.append(
+            f"<NameValueList><Name>Type</Name><Value>{_xml_text(item_type)}</Value></NameValueList>"
+        )
+    if compatible_brand and str(compatible_brand).strip():
+        specifics_parts.append(
+            f"<NameValueList><Name>Compatible Brand</Name><Value>{_xml_text(compatible_brand)}</Value></NameValueList>"
+        )
+    specifics_parts.append("</ItemSpecifics>")
+    specifics = "".join(specifics_parts)
 
     seller_profiles_xml = ""
     manual_policies_xml = ""
@@ -256,12 +267,21 @@ def parse_trading_response(xml_text: str) -> Dict[str, Any]:
         out["item_id"] = item_id
 
     for err in root.findall(".//e:Errors", namespaces=NS):
+        params = []
+        for p in err.findall(".//e:ErrorParameters", namespaces=NS):
+            params.append(
+                {
+                    "param_id": p.findtext("e:ParamID", default=None, namespaces=NS),
+                    "value": p.findtext("e:Value", default=None, namespaces=NS),
+                }
+            )
         entry = {
             "code": err.findtext("e:ErrorCode", default=None, namespaces=NS),
             "severity": err.findtext("e:SeverityCode", default=None, namespaces=NS),
             "short": err.findtext("e:ShortMessage", default=None, namespaces=NS),
             "long": err.findtext("e:LongMessage", default=None, namespaces=NS),
             "classification": err.findtext("e:ErrorClassification", default=None, namespaces=NS),
+            "parameters": params,
         }
         if entry.get("severity") == "Warning":
             out["warnings"].append(entry)
