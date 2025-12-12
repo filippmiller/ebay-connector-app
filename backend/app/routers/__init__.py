@@ -47,6 +47,8 @@ from . import (
     db_compare,
     accounting,
     accounting2,
+    accounting_public,
+    accounting2_public,
     admin_workers,
     admin_ebay_listing_test,
     admin_ebay_bin_listing,

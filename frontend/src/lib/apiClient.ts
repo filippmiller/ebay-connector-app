@@ -15,12 +15,16 @@ const getBaseURL = () => {
   });
   
   const ensureApiPrefix = (url: string) => {
-    // Our backend routers are mounted under /api.
-    // If a full base URL is injected without /api (e.g. Railway URL), requests like
-    // /accounting/bank-statements will 404. Normalize here.
-    const u = (url || '').trim();
+    // Our backend routes are mounted under /api (FastAPI router prefixes).
+    // In some deployments, a full base URL is injected (e.g. Railway) without the /api suffix,
+    // which causes client requests like /accounting/... to 404. Normalize here.
+    const u = (url || '').replace(/\s+/g, '');
     if (!u) return u;
+
+    // If already points to /api, keep as-is
     if (u.endsWith('/api') || u.endsWith('/api/')) return u.replace(/\/$/, '');
+
+    // Otherwise append /api
     return `${u.replace(/\/$/, '')}/api`;
   };
 
@@ -40,13 +44,7 @@ const getBaseURL = () => {
   
   if (import.meta.env.VITE_API_PREFIX) {
     console.warn('[API] ⚠️ VITE_API_PREFIX is set:', import.meta.env.VITE_API_PREFIX);
-    const prefix = String(import.meta.env.VITE_API_PREFIX);
-    // If prefix is a full URL, ensure it includes /api.
-    if (prefix.startsWith('http://') || prefix.startsWith('https://')) {
-      return ensureApiPrefix(prefix);
-    }
-    // Otherwise assume it's a path prefix like "/api".
-    return prefix;
+    return import.meta.env.VITE_API_PREFIX;
   }
   
   // Default: use /api which routes through Cloudflare Pages Function proxy to Railway
