@@ -375,7 +375,8 @@ GRID_DEFAULTS: Dict[str, Dict[str, Any]] = {
             "rec_created",
             "rec_updated",
         ],
-        "sort": {"column": "rec_updated", "direction": "desc"},
+        # Default required: sort by ID DESC.
+        "sort": {"column": "id", "direction": "desc"},
     },
     "active_inventory": {
         "visible_columns": [

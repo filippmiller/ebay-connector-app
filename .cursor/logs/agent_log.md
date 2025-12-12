@@ -99,3 +99,4 @@
 2025-12-11T09:20:00Z - Timesheets: switched ORM mapping to tbl_timesheet to show legacy rows (admin/user flows now read tbl_timesheet with 50-per-page pagination)
 2025-12-11T08:55:00Z - Timesheets: added admin allowlist override (email/username) for role checks; admin list defaults to pageSize=50; frontend admin page shows paginated 50-per-page newest-first with next/prev controls
 2025-12-11T08:35:00Z - Timesheets admin: reverted to initial “fetch all” on first load (pageSize unset) so all rows show immediately for edit/delete
+2025-12-12T16:48:49Z - Fixed SKU grid backend filters/search (cast numeric SKU/Category to text; use Part/Description instead of @property title) and changed sku_catalog default sort to id desc in GRID_DEFAULTS

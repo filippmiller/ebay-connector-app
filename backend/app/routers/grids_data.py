@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, asc, or_
+from sqlalchemy import desc, asc, or_, cast, Text as SA_Text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import text as sa_text
 import enum
@@ -1049,8 +1049,10 @@ def _get_sku_catalog_data(
     query = db.query(SqItem)
 
 
+    # NOTE: SqItem.sku / SqItem.category are Numeric in the legacy SKU_catalog table.
+    # Use CAST(... AS TEXT) so that substring searches (ILIKE) work without 500s.
     if sku:
-        query = query.filter(SqItem.sku.ilike(f"%{sku}%"))
+        query = query.filter(cast(SqItem.sku, SA_Text).ilike(f"%{sku}%"))
     if model:
         # В SKU_catalog нет текстовой колонки "Model", только numeric Model_ID.
         # Для фильтрации по модели используем эвристику: ищем подстроку в Title /
@@ -1058,24 +1060,28 @@ def _get_sku_catalog_data(
         like = f"%{model}%"
         query = query.filter(
             or_(
-                SqItem.title.ilike(like),
+                # "Title" in the UI maps to legacy SKU_catalog.Part.
+                SqItem.part.ilike(like),
                 SqItem.description.ilike(like),
                 SqItem.part.ilike(like),
             )
         )
     if category:
-        query = query.filter(SqItem.category.ilike(f"%{category}%"))
+        query = query.filter(cast(SqItem.category, SA_Text).ilike(f"%{category}%"))
     if part_number:
         query = query.filter(SqItem.part_number.ilike(f"%{part_number}%"))
     if title:
-        query = query.filter(SqItem.title.ilike(f"%{title}%"))
+        like = f"%{title}%"
+        # "Title" is a Python property alias over SqItem.part (not a DB column),
+        # so filter using the real SQLAlchemy column.
+        query = query.filter(or_(SqItem.part.ilike(like), SqItem.description.ilike(like)))
 
     if search:
         like = f"%{search}%"
         query = query.filter(
             or_(
-                SqItem.sku.ilike(like),
-                SqItem.title.ilike(like),
+                cast(SqItem.sku, SA_Text).ilike(like),
+                SqItem.part.ilike(like),
                 SqItem.description.ilike(like),
                 SqItem.part.ilike(like),
                 SqItem.part_number.ilike(like),
