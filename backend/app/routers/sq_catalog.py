@@ -711,10 +711,17 @@ async def create_sq_item(
             )
 
     db.add(item)
-    db.commit()
-    db.refresh(item)
+    try:
+        db.commit()
+        db.refresh(item)
+    except Exception as e:  # pragma: no cover - defensive for prod
+        db.rollback()
+        logger.exception("Failed to create SQ item", exc_info=e)
+        raise HTTPException(status_code=500, detail=f"Failed to create SKU: {e}")
 
-    return SqItemRead.model_validate(item)
+    # IMPORTANT: Return using the same coercion logic as GET /items/{id}
+    # because legacy SKU_catalog columns often store booleans/ids as text/numeric.
+    return await get_sq_item(item.id, db=db, current_user=current_user)
 
 
 @router.put("/items/{item_id}", response_model=SqItemRead)
@@ -767,10 +774,17 @@ async def update_sq_item(
     item.record_updated = now
     item.record_updated_by = username
 
-    db.commit()
-    db.refresh(item)
+    try:
+        db.commit()
+        db.refresh(item)
+    except Exception as e:  # pragma: no cover - defensive for prod
+        db.rollback()
+        logger.exception("Failed to update SQ item id=%s", item_id, exc_info=e)
+        raise HTTPException(status_code=500, detail=f"Failed to update SKU: {e}")
 
-    return SqItemRead.model_validate(item)
+    # IMPORTANT: Return using the same coercion logic as GET /items/{id}
+    # so response serialization never 500s on legacy column types.
+    return await get_sq_item(item_id, db=db, current_user=current_user)
 
 
 @router.post("/items/bulk-delete")
