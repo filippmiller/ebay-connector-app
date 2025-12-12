@@ -50,4 +50,5 @@ from . import (
     admin_workers,
     admin_ebay_listing_test,
     admin_ebay_bin_listing,
+    admin_ebay_business_policies,
 )

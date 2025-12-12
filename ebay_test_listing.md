@@ -371,6 +371,17 @@ We split the tooling into two separate admin screens:
   - Added `ebay_bin_listings_map` mapping table to guarantee `ItemID` retention even if `parts_detail` update fails.
   - Added explicit `log_saved` / `item_id_saved_to_map` flags to responses + UI warnings when something fails to persist.
 
+---
+
+## Iteration 11 — 2025-12-12
+
+### Business Policies: store in DB + dropdowns (no hardcoded IDs)
+- Added `public.ebay_business_policies` (seeded defaults for `EBAY_US`) and `public.ebay_business_policies_defaults` view.
+- Added admin-only endpoints:
+  - `GET /api/admin/ebay/business-policies`
+  - `GET /api/admin/ebay/business-policies/defaults`
+- Updated BIN debug UI to load policies from API and show dropdowns with auto-selected defaults (persisted per user via `localStorage`).
+
 ### Desired UI behavior (Admin → eBay Test Listing)
 
 #### Input

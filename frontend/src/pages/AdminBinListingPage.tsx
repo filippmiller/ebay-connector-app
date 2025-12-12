@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -33,6 +33,19 @@ export default function AdminBinListingPage() {
   // Item specifics
   const [brand, setBrand] = useState<string>('Unbranded');
   const [mpn, setMpn] = useState<string>('');
+
+  // Business Policies dictionary (extensible: multi-account + marketplace)
+  const accountKey = 'default';
+  const marketplaceId = 'EBAY_US';
+  const lsKey = (k: string) => `bin_${k}_${accountKey}_${marketplaceId}`;
+
+  const [policiesLoading, setPoliciesLoading] = useState(false);
+  const [policiesError, setPoliciesError] = useState<string | null>(null);
+  const [policies, setPolicies] = useState<{
+    shipping: { policy_id: string; policy_name: string; is_default: boolean; is_active: boolean }[];
+    payment: { policy_id: string; policy_name: string; is_default: boolean; is_active: boolean }[];
+    return: { policy_id: string; policy_name: string; is_default: boolean; is_active: boolean }[];
+  } | null>(null);
   const [location, setLocation] = useState<string>('');
   const [postalCode, setPostalCode] = useState<string>('');
   const [dispatchTimeMax, setDispatchTimeMax] = useState<string>('1');
@@ -41,6 +54,55 @@ export default function AdminBinListingPage() {
   const [currency, setCurrency] = useState<string>('USD');
   const [country, setCountry] = useState<string>('US');
   const [listingDuration, setListingDuration] = useState<string>('GTC');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setPoliciesLoading(true);
+      setPoliciesError(null);
+      try {
+        const [list, defaults] = await Promise.all([
+          ebayApi.getBusinessPolicies(accountKey, marketplaceId),
+          ebayApi.getBusinessPolicyDefaults(accountKey, marketplaceId),
+        ]);
+        if (cancelled) return;
+        setPolicies(list as any);
+
+        const savedShip = localStorage.getItem(lsKey('policy_shipping'));
+        const savedPay = localStorage.getItem(lsKey('policy_payment'));
+        const savedRet = localStorage.getItem(lsKey('policy_return'));
+
+        const shipId =
+          savedShip ||
+          defaults.shipping_policy_id ||
+          (list.shipping || []).find((p: any) => p.is_default)?.policy_id ||
+          '';
+        const payId =
+          savedPay ||
+          defaults.payment_policy_id ||
+          (list.payment || []).find((p: any) => p.is_default)?.policy_id ||
+          '';
+        const retId =
+          savedRet ||
+          defaults.return_policy_id ||
+          (list.return || []).find((p: any) => p.is_default)?.policy_id ||
+          '';
+
+        setShippingProfileId(shipId);
+        setPaymentProfileId(payId);
+        setReturnProfileId(retId);
+      } catch (e: any) {
+        if (cancelled) return;
+        setPoliciesError(String(e?.response?.data?.detail || e?.message || e));
+      } finally {
+        if (!cancelled) setPoliciesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [runOpen, setRunOpen] = useState(false);
   const [runMode, setRunMode] = useState<RunMode>('VERIFY');
@@ -176,9 +238,9 @@ export default function AdminBinListingPage() {
     const payload: BinDebugRequestDto = {
       legacy_inventory_id: source.legacy_inventory_id,
       policies_mode: policiesMode,
-      shipping_profile_id: Number(shippingProfileId),
-      payment_profile_id: Number(paymentProfileId),
-      return_profile_id: Number(returnProfileId),
+      shipping_profile_id: policiesMode === 'seller_profiles' ? Number(shippingProfileId) : undefined,
+      payment_profile_id: policiesMode === 'seller_profiles' ? Number(paymentProfileId) : undefined,
+      return_profile_id: policiesMode === 'seller_profiles' ? Number(returnProfileId) : undefined,
       shipping_service: policiesMode === 'manual' ? shippingService : undefined,
       shipping_cost: policiesMode === 'manual' ? shippingCost : undefined,
       returns_within_option: policiesMode === 'manual' ? returnsWithin : undefined,
@@ -249,6 +311,8 @@ export default function AdminBinListingPage() {
                 )}
               </div>
               {error && <div className="text-red-600">{String(error)}</div>}
+              {policiesError && <div className="text-red-600">Failed to load Business Policies: {policiesError}</div>}
+              {policiesLoading && <div className="text-[11px] text-gray-600">Loading Business Policies…</div>}
               {source?.condition_id && (
                 <div className="text-[11px] text-gray-600">
                   ConditionID={source.condition_id} • {source.condition_display_name || '—'}
@@ -319,16 +383,61 @@ export default function AdminBinListingPage() {
                 {policiesMode === 'seller_profiles' ? (
                   <>
                     <div>
-                      <div className="text-gray-700 mb-1">ShippingProfileID *</div>
-                      <input className="border rounded px-2 py-1 text-[11px] w-full" value={shippingProfileId} onChange={(e) => setShippingProfileId(e.target.value.replace(/[^0-9]/g, ''))} />
+                      <div className="text-gray-700 mb-1">Shipping policy *</div>
+                      <select
+                        className="border rounded px-2 py-1 text-[11px] w-full"
+                        value={shippingProfileId}
+                        onChange={(e) => {
+                          setShippingProfileId(e.target.value);
+                          localStorage.setItem(lsKey('policy_shipping'), e.target.value);
+                        }}
+                        disabled={policiesLoading}
+                      >
+                        <option value="">Select shipping policy…</option>
+                        {(policies?.shipping || []).filter((p) => p.is_active).map((p) => (
+                          <option key={p.policy_id} value={p.policy_id}>
+                            {p.policy_name} ({p.policy_id})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
-                      <div className="text-gray-700 mb-1">PaymentProfileID *</div>
-                      <input className="border rounded px-2 py-1 text-[11px] w-full" value={paymentProfileId} onChange={(e) => setPaymentProfileId(e.target.value.replace(/[^0-9]/g, ''))} />
+                      <div className="text-gray-700 mb-1">Payment policy *</div>
+                      <select
+                        className="border rounded px-2 py-1 text-[11px] w-full"
+                        value={paymentProfileId}
+                        onChange={(e) => {
+                          setPaymentProfileId(e.target.value);
+                          localStorage.setItem(lsKey('policy_payment'), e.target.value);
+                        }}
+                        disabled={policiesLoading}
+                      >
+                        <option value="">Select payment policy…</option>
+                        {(policies?.payment || []).filter((p) => p.is_active).map((p) => (
+                          <option key={p.policy_id} value={p.policy_id}>
+                            {p.policy_name} ({p.policy_id})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
-                      <div className="text-gray-700 mb-1">ReturnProfileID *</div>
-                      <input className="border rounded px-2 py-1 text-[11px] w-full" value={returnProfileId} onChange={(e) => setReturnProfileId(e.target.value.replace(/[^0-9]/g, ''))} />
+                      <div className="text-gray-700 mb-1">Return policy *</div>
+                      <select
+                        className="border rounded px-2 py-1 text-[11px] w-full"
+                        value={returnProfileId}
+                        onChange={(e) => {
+                          setReturnProfileId(e.target.value);
+                          localStorage.setItem(lsKey('policy_return'), e.target.value);
+                        }}
+                        disabled={policiesLoading}
+                      >
+                        <option value="">Select return policy…</option>
+                        {(policies?.return || []).filter((p) => p.is_active).map((p) => (
+                          <option key={p.policy_id} value={p.policy_id}>
+                            {p.policy_name} ({p.policy_id})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </>
                 ) : (

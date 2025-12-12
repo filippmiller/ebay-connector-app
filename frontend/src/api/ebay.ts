@@ -377,9 +377,9 @@ export interface BinSourcePreviewDto {
 export interface BinDebugRequestDto {
   legacy_inventory_id: number;
   policies_mode?: 'seller_profiles' | 'manual';
-  shipping_profile_id: number;
-  payment_profile_id: number;
-  return_profile_id: number;
+  shipping_profile_id?: number | null;
+  payment_profile_id?: number | null;
+  return_profile_id?: number | null;
   // Manual fallback (optional; used when policies_mode=manual)
   shipping_service?: string | null;
   shipping_cost?: string | null;
@@ -421,6 +421,30 @@ export interface BinDebugResponseDto {
   run_id?: number | null;
   item_id_saved_to_parts_detail: boolean;
   item_id_saved_to_map: boolean;
+}
+
+// Admin → eBay Business Policies DTOs
+export interface EbayBusinessPolicyDto {
+  id: string;
+  policy_type: 'SHIPPING' | 'PAYMENT' | 'RETURN';
+  policy_id: string;
+  policy_name: string;
+  policy_description?: string | null;
+  is_default: boolean;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface EbayBusinessPoliciesResponseDto {
+  shipping: EbayBusinessPolicyDto[];
+  payment: EbayBusinessPolicyDto[];
+  return: EbayBusinessPolicyDto[];
+}
+
+export interface EbayBusinessPoliciesDefaultsDto {
+  shipping_policy_id?: string | null;
+  payment_policy_id?: string | null;
+  return_policy_id?: string | null;
 }
 
 export interface EbayReturnRow {
@@ -893,6 +917,18 @@ export const ebayApi = {
     const response = await apiClient.get<BinSourcePreviewDto>(
       `/api/admin/ebay/bin/source?legacy_inventory_id=${encodeURIComponent(String(legacyInventoryId))}`,
     );
+    return response.data;
+  },
+
+  async getBusinessPolicies(accountKey: string = 'default', marketplaceId: string = 'EBAY_US'): Promise<EbayBusinessPoliciesResponseDto> {
+    const params = new URLSearchParams({ account_key: accountKey, marketplace_id: marketplaceId });
+    const response = await apiClient.get<EbayBusinessPoliciesResponseDto>(`/api/admin/ebay/business-policies?${params.toString()}`);
+    return response.data;
+  },
+
+  async getBusinessPolicyDefaults(accountKey: string = 'default', marketplaceId: string = 'EBAY_US'): Promise<EbayBusinessPoliciesDefaultsDto> {
+    const params = new URLSearchParams({ account_key: accountKey, marketplace_id: marketplaceId });
+    const response = await apiClient.get<EbayBusinessPoliciesDefaultsDto>(`/api/admin/ebay/business-policies/defaults?${params.toString()}`);
     return response.data;
   },
 

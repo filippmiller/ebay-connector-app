@@ -62,6 +62,7 @@ from app.routers import (
     admin_workers,
     admin_ebay_listing_test,
     admin_ebay_bin_listing,
+    admin_ebay_business_policies,
     ai_assistant,  # Phase 1: AI Assistant with analytics
 )
 from app.utils.logger import logger
@@ -174,6 +175,7 @@ app.include_router(db_compare.router)
 app.include_router(admin_workers.router)
 app.include_router(admin_ebay_listing_test.router)
 app.include_router(admin_ebay_bin_listing.router)
+app.include_router(admin_ebay_business_policies.router)
 app.include_router(ai_assistant.router)  # Phase 1: AI Assistant
 
 @app.on_event("startup")
