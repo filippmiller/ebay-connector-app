@@ -28,6 +28,16 @@ const getBaseURL = () => {
     return `${u.replace(/\/$/, '')}/api`;
   };
 
+  const ensureApiPrefix = (url: string) => {
+    // Our backend routers are mounted under /api.
+    // If a full base URL is injected without /api (e.g. Railway URL), requests like
+    // /accounting/bank-statements will 404. Normalize here.
+    const u = (url || '').trim();
+    if (!u) return u;
+    if (u.endsWith('/api') || u.endsWith('/api/')) return u.replace(/\/$/, '');
+    return `${u.replace(/\/$/, '')}/api`;
+  };
+
   if (import.meta.env.VITE_API_BASE_URL) {
     console.error('[API] ❌ VITE_API_BASE_URL is set:', import.meta.env.VITE_API_BASE_URL);
     console.error('[API] ❌ This will bypass Cloudflare proxy!');
