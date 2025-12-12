@@ -447,6 +447,15 @@ export interface EbayBusinessPoliciesDefaultsDto {
   return_policy_id?: string | null;
 }
 
+export interface EbayGlobalSiteDto {
+  site_id: number;
+  global_id?: string | null;
+  site_name?: string | null;
+  territory?: string | null;
+  language?: string | null;
+  active: boolean;
+}
+
 export interface EbayReturnRow {
   return_id: string;
   account_id: string | null;
@@ -929,6 +938,12 @@ export const ebayApi = {
   async getBusinessPolicyDefaults(accountKey: string = 'default', marketplaceId: string = 'EBAY_US'): Promise<EbayBusinessPoliciesDefaultsDto> {
     const params = new URLSearchParams({ account_key: accountKey, marketplace_id: marketplaceId });
     const response = await apiClient.get<EbayBusinessPoliciesDefaultsDto>(`/api/admin/ebay/business-policies/defaults?${params.toString()}`);
+    return response.data;
+  },
+
+  async getBinTradingSiteIds(activeOnly: boolean = true): Promise<EbayGlobalSiteDto[]> {
+    const params = new URLSearchParams({ active_only: String(activeOnly) });
+    const response = await apiClient.get<EbayGlobalSiteDto[]>(`/api/admin/ebay/bin/site-ids?${params.toString()}`);
     return response.data;
   },
 

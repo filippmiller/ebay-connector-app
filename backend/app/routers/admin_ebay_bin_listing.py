@@ -31,6 +31,15 @@ SITE_ID_TO_CODE = {
 }
 
 
+class GlobalSiteDto(BaseModel):
+    site_id: int
+    global_id: Optional[str] = None
+    site_name: Optional[str] = None
+    territory: Optional[str] = None
+    language: Optional[str] = None
+    active: bool = True
+
+
 class BinDebugRequest(BaseModel):
     legacy_inventory_id: int = Field(..., ge=1, description="Legacy tbl_parts_inventory.ID")
 
@@ -109,6 +118,47 @@ class BinSourcePreview(BaseModel):
     condition_row: Optional[Dict[str, Any]] = None
     picture_urls: list[str]
     missing_db_fields: list[str]
+
+
+@router.get("/site-ids", response_model=list[GlobalSiteDto], dependencies=[Depends(admin_required)])
+async def list_global_site_ids(
+    active_only: bool = Query(True),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(admin_required),  # noqa: ARG001
+) -> list[GlobalSiteDto]:
+    """
+    Source of truth for Trading API SiteID selection.
+    Backed by public.tbl_globalsiteid (legacy dictionary).
+    """
+    rows = db.execute(
+        text(
+            """
+            SELECT "SiteID", "GlobalID", "SiteName", "Territory", "Language", COALESCE("Active", TRUE) AS active
+            FROM public.tbl_globalsiteid
+            WHERE (:active_only = FALSE OR COALESCE("Active", TRUE) = TRUE)
+            ORDER BY ("SiteID"::int) ASC
+            """
+        ),
+        {"active_only": active_only},
+    ).mappings().all()
+
+    out: list[GlobalSiteDto] = []
+    for r in rows:
+        try:
+            sid = int(str(r.get("SiteID") or "").strip())
+        except Exception:
+            continue
+        out.append(
+            GlobalSiteDto(
+                site_id=sid,
+                global_id=r.get("GlobalID"),
+                site_name=r.get("SiteName"),
+                territory=r.get("Territory"),
+                language=r.get("Language"),
+                active=bool(r.get("active")),
+            )
+        )
+    return out
 
 
 def _now() -> datetime:

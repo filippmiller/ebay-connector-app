@@ -54,6 +54,11 @@ export default function AdminBinListingPage() {
   const [currency, setCurrency] = useState<string>('USD');
   const [country, setCountry] = useState<string>('US');
   const [listingDuration, setListingDuration] = useState<string>('GTC');
+  const [siteIdsLoading, setSiteIdsLoading] = useState(false);
+  const [siteIdsError, setSiteIdsError] = useState<string | null>(null);
+  const [siteIds, setSiteIds] = useState<
+    { site_id: number; site_name?: string | null; global_id?: string | null; territory?: string | null; active: boolean }[]
+  >([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +107,32 @@ export default function AdminBinListingPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSiteIdsLoading(true);
+      setSiteIdsError(null);
+      try {
+        const rows = await ebayApi.getBinTradingSiteIds(true);
+        if (cancelled) return;
+        setSiteIds(rows);
+        const us = rows.find((r) => r.site_id === 0) || rows[0];
+        if (us) {
+          setSiteId(String(us.site_id));
+          setSiteCode((us.territory || 'US').toUpperCase());
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+        setSiteIdsError(String(e?.response?.data?.detail || e?.message || e));
+      } finally {
+        if (!cancelled) setSiteIdsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [runOpen, setRunOpen] = useState(false);
@@ -165,7 +196,7 @@ export default function AdminBinListingPage() {
       value: source?.picture_urls?.length || 0,
     });
 
-    items.push({ key: 'cfg.site', label: 'Item.Site (US) + X-EBAY-API-SITEID (0)', ok: has(siteId) && has(siteCode) });
+    items.push({ key: 'cfg.site', label: 'Trading SiteID (tbl_GlobalSiteID) + Item.Site', ok: has(siteId) && has(siteCode) });
     items.push({ key: 'cfg.duration', label: 'Item.ListingDuration', ok: has(listingDuration), value: listingDuration });
     items.push({ key: 'cfg.currency', label: 'Item.Currency', ok: has(currency), value: currency });
     items.push({ key: 'cfg.country', label: 'Item.Country', ok: has(country), value: country });
@@ -461,13 +492,32 @@ export default function AdminBinListingPage() {
                   </>
                 )}
 
-                <div>
-                  <div className="text-gray-700 mb-1">SiteID</div>
-                  <input className="border rounded px-2 py-1 text-[11px] w-full" value={siteId} onChange={(e) => setSiteId(e.target.value.replace(/[^0-9]/g, ''))} />
+                <div className="md:col-span-2">
+                  <div className="text-gray-700 mb-1">Trading Site (tbl_GlobalSiteID) *</div>
+                  <select
+                    className="border rounded px-2 py-1 text-[11px] w-full"
+                    value={siteId}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setSiteId(next);
+                      const row = siteIds.find((r) => String(r.site_id) === String(next));
+                      if (row) setSiteCode((row.territory || 'US').toUpperCase());
+                    }}
+                    disabled={siteIdsLoading}
+                  >
+                    {siteIds.length === 0 && <option value="0">0 — eBay United States</option>}
+                    {siteIds.map((r) => (
+                      <option key={r.site_id} value={String(r.site_id)}>
+                        {r.site_id} — {r.site_name || r.global_id || r.territory || 'eBay'} ({(r.territory || '').toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                  {siteIdsError && <div className="text-red-600 text-[11px] mt-1">Failed to load tbl_GlobalSiteID: {siteIdsError}</div>}
+                  {siteIdsLoading && <div className="text-[11px] text-gray-600 mt-1">Loading Site IDs…</div>}
                 </div>
                 <div>
-                  <div className="text-gray-700 mb-1">Item.Site</div>
-                  <input className="border rounded px-2 py-1 text-[11px] w-full" value={siteCode} onChange={(e) => setSiteCode(e.target.value.toUpperCase())} />
+                  <div className="text-gray-700 mb-1">Item.Site (auto)</div>
+                  <input className="border rounded px-2 py-1 text-[11px] w-full bg-gray-50" value={siteCode} readOnly />
                 </div>
                 <div>
                   <div className="text-gray-700 mb-1">ListingDuration</div>

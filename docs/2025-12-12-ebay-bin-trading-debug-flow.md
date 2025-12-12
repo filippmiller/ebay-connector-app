@@ -40,6 +40,14 @@ For each request:
 - `Content-Type`: `text/xml; charset=utf-8`
 - `Accept`: `text/xml`
 
+## Trading SiteID selector (source of truth)
+The BIN Debug UI uses `public.tbl_globalsiteid` (aka `tbl_GlobalSiteID`) as the source of truth for:
+- header `X-EBAY-API-SITEID` (Trading SiteID)
+- XML `Item.Site` (auto-derived from selected row territory; default `0 = eBay United States`)
+
+Endpoint:
+- `GET /api/admin/ebay/bin/site-ids?active_only=true`
+
 ## Canonical “minimal working” BIN XML (schema + namespace)
 All requests are built with:
 - `xmlns="urn:ebay:apis:eBLBaseComponents"`
