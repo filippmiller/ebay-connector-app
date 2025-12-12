@@ -289,7 +289,13 @@ async def get_bin_source_preview(
     parts_detail_id = _resolve_parts_detail_id(db, sku)
 
     title = _first_non_empty(legacy_inv.get("OverrideTitle"), tbl_pd.get("Part"))
-    description = _first_non_empty(legacy_inv.get("OverrideDescription"), tbl_pd.get("Description"))
+    # Description can live in multiple legacy SKU fields; prefer OverrideDescription, then Description, then ConditionDescription.
+    description = _first_non_empty(
+        legacy_inv.get("OverrideDescription"),
+        tbl_pd.get("Description"),
+        tbl_pd.get("CustomTemplateDescription"),
+        tbl_pd.get("ConditionDescription"),
+    )
     category_id = _first_non_empty(tbl_pd.get("Category"))
     start_price = _first_non_empty(legacy_inv.get("OverridePrice"), tbl_pd.get("Price"))
     qty_raw = legacy_inv.get("Quantity")
@@ -353,7 +359,12 @@ async def _call_trading(
 
     # DB → eBay mapping (tbl_parts_detail is source of truth, legacy inventory provides Quantity and overrides)
     title = _first_non_empty(legacy_inv.get("OverrideTitle"), tbl_pd.get("Part"))
-    description = _first_non_empty(legacy_inv.get("OverrideDescription"), tbl_pd.get("Description"))
+    description = _first_non_empty(
+        legacy_inv.get("OverrideDescription"),
+        tbl_pd.get("Description"),
+        tbl_pd.get("CustomTemplateDescription"),
+        tbl_pd.get("ConditionDescription"),
+    )
     category_id = _first_non_empty(tbl_pd.get("Category"))
     start_price = _first_non_empty(legacy_inv.get("OverridePrice"), tbl_pd.get("Price"))
     qty_raw = legacy_inv.get("Quantity")

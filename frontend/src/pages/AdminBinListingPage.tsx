@@ -196,7 +196,12 @@ export default function AdminBinListingPage() {
       value: source?.picture_urls?.length || 0,
     });
 
-    items.push({ key: 'cfg.site', label: 'Trading SiteID (tbl_GlobalSiteID) + Item.Site', ok: has(siteId) && has(siteCode) });
+    items.push({
+      key: 'cfg.site',
+      label: 'Trading SiteID (tbl_GlobalSiteID) + Item.Site',
+      ok: has(siteId) && has(siteCode),
+      value: has(siteId) && has(siteCode) ? `${siteId} / ${siteCode}` : null,
+    });
     items.push({ key: 'cfg.duration', label: 'Item.ListingDuration', ok: has(listingDuration), value: listingDuration });
     items.push({ key: 'cfg.currency', label: 'Item.Currency', ok: has(currency), value: currency });
     items.push({ key: 'cfg.country', label: 'Item.Country', ok: has(country), value: country });
