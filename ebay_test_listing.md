@@ -150,6 +150,63 @@ Also include **field-level provenance**: source tables/columns and relationships
   - `frontend/src/pages/AdminTestListingPage.tsx`
   - `frontend/src/api/ebay.ts` (added DTOs + `getTestListingPayloadPreview`)
 
+---
+
+## Iteration 2 — 2025-12-12
+
+### Change request
+- **Do not use `SKU_catalog` at all** in test-listing payload preview.
+- **Use only `tbl_parts_detail`** as the SKU payload table (plus `tbl_parts_inventory` overrides, `parts_detail` overrides, and dictionaries).
+- In the UI, add an **info (“i”) hover** on every field (mandatory + optional) describing:
+  - what **eBay expects** for that field
+  - how to interpret our internal codes (e.g., `ShippingGroup=4` → “no international”).
+
+### Data flow (updated)
+Prefill precedence (per-field) is now:
+1) `tbl_parts_inventory` override columns (OverrideTitle/OverridePrice/OverrideConditionID/OverridePicURL*)
+2) `parts_detail` override columns (override_title/override_price/override_condition_id/override_pic_url_*)
+3) `tbl_parts_detail` columns (SKU payload for shipping/category/condition/pictures/listing settings/etc.)
+4) dictionaries for labels (shipping group name, condition label, category label, status name)
+
+### Implementation notes (Iteration 2)
+
+#### Backend
+- Updated `GET /api/admin/ebay/test-listing/payload` to **remove all `SKU_catalog` reads**.
+- Primary payload source for SKU-level listing fields is now: `public."tbl_parts_detail"`.
+
+#### Frontend
+- Added an **Info icon** next to each field label in the payload preview.
+- Hovering the icon shows:
+  - a short, human-readable explanation of **what eBay expects**
+  - dynamic interpretation for internal codes when available (e.g. `Shipping group` shows “4: no international”).
+
+---
+
+## Iteration 3 — 2025-12-12
+
+### Change request
+Add **full semantics / metadata** per field so the tooltip can show:
+- What **eBay expects** for the field
+- Our **internal meaning**
+- The **full lookup row(s)** from dictionary tables (when applicable)
+
+### API contract update
+`TestListingPayloadField` now includes an optional `help` object:
+- `help.ebay_expected`: string
+- `help.internal_semantics`: string | null
+- `help.lookup_rows`: object | null (raw rows as JSON; may include arrays)
+
+### Examples of lookup metadata included
+- **Shipping group** (`ShippingGroup`):
+  - `tbl_internalshippinggroups` rows where `ID=<value>` (full row JSON; duplicates may exist)
+  - `sq_shipping_groups` row for `id=<value>` when available
+- **Category** (`Category`):
+  - `tbl_parts_category` row for `CategoryID=<value>`
+- **Condition** (`ConditionID`):
+  - `item_conditions` row for `id=<value>` when available
+- **Pictures**:
+  - `lookup_rows.pic_urls`: list of `{index, url}` for all non-empty image URLs
+
 ### Desired UI behavior (Admin → eBay Test Listing)
 
 #### Input

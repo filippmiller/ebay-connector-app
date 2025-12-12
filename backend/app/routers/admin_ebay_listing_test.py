@@ -94,6 +94,19 @@ class TestListingFieldSource(BaseModel):
     column: str
 
 
+class TestListingFieldHelp(BaseModel):
+    """Human-readable semantics for UI tooltips.
+
+    - ebay_expected: what eBay expects for this field (format/meaning)
+    - internal_semantics: how our internal value should be interpreted
+    - lookup_rows: optional raw lookup rows (dictionaries) used to interpret the value
+    """
+
+    ebay_expected: str
+    internal_semantics: Optional[str] = None
+    lookup_rows: Optional[dict] = None
+
+
 class TestListingPayloadField(BaseModel):
     key: str
     label: str
@@ -101,6 +114,7 @@ class TestListingPayloadField(BaseModel):
     value: Optional[str] = None
     missing: bool
     sources: list[TestListingFieldSource] = Field(default_factory=list)
+    help: Optional[TestListingFieldHelp] = None
 
 
 class TestListingPayloadResponse(BaseModel):
@@ -145,6 +159,7 @@ def _build_field(
     required: bool,
     value: Optional[str],
     sources: list[tuple[str, str]],
+    help: Optional[TestListingFieldHelp] = None,
 ) -> TestListingPayloadField:
     missing = value is None or str(value).strip() == ""
     return TestListingPayloadField(
@@ -154,6 +169,20 @@ def _build_field(
         value=value,
         missing=missing if required else missing,
         sources=[TestListingFieldSource(table=t, column=c) for (t, c) in sources],
+        help=help,
+    )
+
+
+def _make_help(
+    *,
+    ebay_expected: str,
+    internal_semantics: Optional[str] = None,
+    lookup_rows: Optional[dict] = None,
+) -> TestListingFieldHelp:
+    return TestListingFieldHelp(
+        ebay_expected=ebay_expected.strip(),
+        internal_semantics=internal_semantics.strip() if isinstance(internal_semantics, str) else internal_semantics,
+        lookup_rows=lookup_rows,
     )
 
 
@@ -182,8 +211,7 @@ async def get_test_listing_payload_preview(
     then merge data from:
     - tbl_parts_inventory overrides
     - parts_detail overrides (when available)
-    - "SKU_catalog" (SQ edit form payload)
-    - tbl_parts_detail (legacy payload fallback)
+    - tbl_parts_detail (legacy payload table; the primary SKU payload source for this UI)
     - lookup tables (shipping groups, categories, conditions, status name)
     """
 
@@ -234,14 +262,6 @@ async def get_test_listing_payload_preview(
             {"pid": parts_detail_id},
         ).mappings().first()
 
-    # SKU_catalog (mixed-case table)
-    sku_catalog_row = None
-    if sku:
-        sku_catalog_row = db.execute(
-            text('SELECT * FROM public."SKU_catalog" WHERE "SKU" = :sku ORDER BY "ID" DESC LIMIT 1'),
-            {"sku": int(float(sku))},
-        ).mappings().first()
-
     # tbl_parts_detail fallback
     tbl_parts_detail_row = None
     if sku:
@@ -254,35 +274,46 @@ async def get_test_listing_payload_preview(
     shipping_group_code = _first_non_empty(
         inv_row.get("ShippingGroupToChange"),
         (pd_row or {}).get("shipping_group") if isinstance(pd_row, dict) else None,  # defensive
-        (sku_catalog_row or {}).get("ShippingGroup"),
         (tbl_parts_detail_row or {}).get("ShippingGroup"),
     )
 
     shipping_group_name = None
+    shipping_group_lookup_rows: dict = {}
     if shipping_group_code:
         # Try tbl_internalshippinggroups first (legacy)
-        sg = db.execute(
+        sg_rows = db.execute(
             text(
-                'SELECT "Name", "Description" FROM public.tbl_internalshippinggroups WHERE (to_jsonb(tbl_internalshippinggroups)->>\'ID\') = :id LIMIT 1'
+                'SELECT to_jsonb(t) AS row FROM public.tbl_internalshippinggroups t WHERE (to_jsonb(t)->>\'ID\') = :id'
             ),
             {"id": str(int(float(shipping_group_code)))},
-        ).first()
-        if sg and sg[0] is not None:
-            shipping_group_name = str(sg[0])
+        ).fetchall()
+        if sg_rows:
+            shipping_group_lookup_rows["tbl_internalshippinggroups"] = [r[0] for r in sg_rows if r and r[0] is not None]
+            # Prefer the first row name for display
+            try:
+                first = shipping_group_lookup_rows["tbl_internalshippinggroups"][0]
+                if isinstance(first, dict):
+                    name_val = first.get("Name") or first.get("name")
+                    if name_val is not None:
+                        shipping_group_name = str(name_val)
+            except Exception:
+                pass
         else:
             sg2 = db.execute(
-                text("SELECT label FROM public.sq_shipping_groups WHERE id = :id LIMIT 1"),
+                text("SELECT to_jsonb(s) AS row FROM public.sq_shipping_groups s WHERE id = :id LIMIT 1"),
                 {"id": int(float(shipping_group_code))},
             ).first()
             if sg2 and sg2[0] is not None:
-                shipping_group_name = str(sg2[0])
+                shipping_group_lookup_rows["sq_shipping_groups"] = [sg2[0]]
+                if isinstance(sg2[0], dict) and sg2[0].get("label") is not None:
+                    shipping_group_name = str(sg2[0].get("label"))
 
     # Category label
     category_code = _first_non_empty(
-        (sku_catalog_row or {}).get("Category"),
         (tbl_parts_detail_row or {}).get("Category"),
     )
     category_label = None
+    category_lookup_rows: dict = {}
     if category_code:
         cat = db.execute(
             text(
@@ -299,24 +330,38 @@ async def get_test_listing_payload_preview(
             if ebay_name:
                 parts.append(ebay_name)
             category_label = " — ".join(parts) if parts else None
+        # Also capture raw lookup row for tooltip semantics
+        cat_row = db.execute(
+            text('SELECT to_jsonb(c) AS row FROM public."tbl_parts_category" c WHERE "CategoryID" = :cid LIMIT 1'),
+            {"cid": int(float(category_code))},
+        ).first()
+        if cat_row and cat_row[0] is not None:
+            category_lookup_rows["tbl_parts_category"] = [cat_row[0]]
 
     # Condition label
     condition_id = _first_non_empty(
         inv_row.get("OverrideConditionID"),
         (pd_row or {}).get("override_condition_id") if isinstance(pd_row, dict) else None,
-        (sku_catalog_row or {}).get("ConditionID"),
         (tbl_parts_detail_row or {}).get("ConditionID"),
     )
     condition_label = None
+    condition_lookup_rows: dict = {}
     if condition_id:
         cond = db.execute(
-            text("SELECT code, label FROM public.item_conditions WHERE id = :id LIMIT 1"),
+            text("SELECT to_jsonb(c) AS row FROM public.item_conditions c WHERE id = :id LIMIT 1"),
             {"id": int(float(condition_id))},
         ).first()
-        if cond:
-            condition_label = f"{cond[0]} — {cond[1]}" if cond[1] else str(cond[0])
+        if cond and cond[0] is not None:
+            condition_lookup_rows["item_conditions"] = [cond[0]]
+            if isinstance(cond[0], dict):
+                code = cond[0].get("code")
+                label = cond[0].get("label")
+                if code is not None and label:
+                    condition_label = f"{code} — {label}"
+                elif code is not None:
+                    condition_label = str(code)
 
-    # Pictures (prefer inventory overrides, then parts_detail, then SKU_catalog, then tbl_parts_detail)
+    # Pictures (prefer inventory overrides, then parts_detail, then tbl_parts_detail)
     pics: list[str] = []
     for i in range(1, 13):
         legacy_key = f"OverridePicURL{i}"
@@ -325,7 +370,6 @@ async def get_test_listing_payload_preview(
         val = _first_non_empty(
             inv_row.get(legacy_key),
             (pd_row or {}).get(pd_key) if isinstance(pd_row, dict) else None,
-            (sku_catalog_row or {}).get(sku_key),
             (tbl_parts_detail_row or {}).get(sku_key),
         )
         pics.append(val or "")
@@ -336,57 +380,45 @@ async def get_test_listing_payload_preview(
     title = _first_non_empty(
         inv_row.get("OverrideTitle"),
         (pd_row or {}).get("override_title") if isinstance(pd_row, dict) else None,
-        (sku_catalog_row or {}).get("Part"),
         (tbl_parts_detail_row or {}).get("Part"),
     )
     price = _first_non_empty(
         inv_row.get("OverridePrice"),
         (pd_row or {}).get("override_price") if isinstance(pd_row, dict) else None,
         (pd_row or {}).get("price_to_change") if isinstance(pd_row, dict) else None,
-        (sku_catalog_row or {}).get("Price"),
         (tbl_parts_detail_row or {}).get("Price"),
     )
     quantity = _first_non_empty(inv_row.get("Quantity"))
     shipping_type = _first_non_empty(
-        (sku_catalog_row or {}).get("ShippingType"),
         (tbl_parts_detail_row or {}).get("ShippingType"),
     )
     listing_type = _first_non_empty(
-        (sku_catalog_row or {}).get("ListingType"),
         (tbl_parts_detail_row or {}).get("ListingType"),
     )
     listing_duration = _first_non_empty(
-        (sku_catalog_row or {}).get("ListingDuration"),
         (tbl_parts_detail_row or {}).get("ListingDuration"),
     )
     site_id = _first_non_empty(
-        (sku_catalog_row or {}).get("SiteID"),
         (tbl_parts_detail_row or {}).get("SiteID"),
     )
     weight = _first_non_empty(
-        (sku_catalog_row or {}).get("Weight"),
         (tbl_parts_detail_row or {}).get("Weight"),
     )
     unit = _first_non_empty(
-        (sku_catalog_row or {}).get("Unit"),
         (tbl_parts_detail_row or {}).get("Unit"),
     )
     mpn = _first_non_empty(
-        (sku_catalog_row or {}).get("MPN"),
         (tbl_parts_detail_row or {}).get("MPN"),
     )
     upc = _first_non_empty(
-        (sku_catalog_row or {}).get("UPC"),
         (tbl_parts_detail_row or {}).get("UPC"),
     )
     part_number = _first_non_empty(
-        (sku_catalog_row or {}).get("Part_Number"),
         (tbl_parts_detail_row or {}).get("Part_Number"),
     )
     description = _first_non_empty(
         inv_row.get("OverrideDescription"),
         (pd_row or {}).get("override_description") if isinstance(pd_row, dict) else None,
-        (sku_catalog_row or {}).get("Description"),
         (tbl_parts_detail_row or {}).get("Description"),
     )
 
@@ -400,6 +432,21 @@ async def get_test_listing_payload_preview(
             required=True,
             value=str(legacy_inventory_id),
             sources=[("tbl_parts_inventory", "ID")],
+            help=_make_help(
+                ebay_expected="Not sent to eBay. This is an internal key used to load data for preview.",
+                internal_semantics=(
+                    f"Loads tbl_parts_inventory row ID={legacy_inventory_id}. "
+                    f"Resolved legacy status: {legacy_status_name or legacy_status_code or '—'}."
+                ),
+                lookup_rows={
+                    "tbl_parts_inventory": [inv_row],
+                    "tbl_parts_inventorystatus": (
+                        [{"InventoryStatus_ID": int(float(legacy_status_code)), "InventoryStatus_Name": legacy_status_name}]
+                        if legacy_status_code or legacy_status_name
+                        else []
+                    ),
+                },
+            ),
         )
     )
     mandatory.append(
@@ -408,7 +455,15 @@ async def get_test_listing_payload_preview(
             label="SKU",
             required=True,
             value=sku,
-            sources=[("tbl_parts_inventory", "SKU"), ("SKU_catalog", "SKU"), ("tbl_parts_detail", "SKU"), ("parts_detail", "sku")],
+            sources=[("tbl_parts_inventory", "SKU"), ("tbl_parts_detail", "SKU"), ("parts_detail", "sku")],
+            help=_make_help(
+                ebay_expected="A stable SKU / merchant-managed identifier used to find/create inventory items and offers.",
+                internal_semantics="We use the legacy numeric SKU stored on tbl_parts_inventory and tbl_parts_detail.",
+                lookup_rows={
+                    "tbl_parts_detail": [tbl_parts_detail_row] if tbl_parts_detail_row else [],
+                    "parts_detail": [pd_row] if isinstance(pd_row, dict) else [],
+                },
+            ),
         )
     )
     mandatory.append(
@@ -417,7 +472,11 @@ async def get_test_listing_payload_preview(
             label="Title (<=80 chars)",
             required=True,
             value=title,
-            sources=[("tbl_parts_inventory", "OverrideTitle"), ("parts_detail", "override_title"), ("SKU_catalog", "Part"), ("tbl_parts_detail", "Part")],
+            sources=[("tbl_parts_inventory", "OverrideTitle"), ("parts_detail", "override_title"), ("tbl_parts_detail", "Part")],
+            help=_make_help(
+                ebay_expected="A concise item title (often max 80 characters). Must follow eBay title rules for the category.",
+                internal_semantics="We prefill from OverrideTitle → parts_detail.override_title → tbl_parts_detail.Part.",
+            ),
         )
     )
     mandatory.append(
@@ -426,7 +485,11 @@ async def get_test_listing_payload_preview(
             label="Price",
             required=True,
             value=price,
-            sources=[("tbl_parts_inventory", "OverridePrice"), ("parts_detail", "override_price/price_to_change"), ("SKU_catalog", "Price"), ("tbl_parts_detail", "Price")],
+            sources=[("tbl_parts_inventory", "OverridePrice"), ("parts_detail", "override_price/price_to_change"), ("tbl_parts_detail", "Price")],
+            help=_make_help(
+                ebay_expected="Fixed price for Buy It Now listings. Must be a positive number; currency is implied by marketplace/account.",
+                internal_semantics="We prefill from OverridePrice → parts_detail.override_price/price_to_change → tbl_parts_detail.Price.",
+            ),
         )
     )
     mandatory.append(
@@ -436,6 +499,10 @@ async def get_test_listing_payload_preview(
             required=True,
             value=quantity,
             sources=[("tbl_parts_inventory", "Quantity")],
+            help=_make_help(
+                ebay_expected="Offer available quantity (integer).",
+                internal_semantics="For our workflow, parts inventory quantity is usually 1; this comes from tbl_parts_inventory.Quantity.",
+            ),
         )
     )
     mandatory.append(
@@ -444,7 +511,12 @@ async def get_test_listing_payload_preview(
             label="ConditionID",
             required=True,
             value=condition_id,
-            sources=[("tbl_parts_inventory", "OverrideConditionID"), ("parts_detail", "override_condition_id"), ("SKU_catalog", "ConditionID"), ("tbl_parts_detail", "ConditionID")],
+            sources=[("tbl_parts_inventory", "OverrideConditionID"), ("parts_detail", "override_condition_id"), ("tbl_parts_detail", "ConditionID")],
+            help=_make_help(
+                ebay_expected="A valid eBay Condition ID allowed for the selected category (e.g., New/Used/For parts).",
+                internal_semantics="We store ConditionID on tbl_parts_detail and interpret it via item_conditions when possible.",
+                lookup_rows=condition_lookup_rows or None,
+            ),
         )
     )
     mandatory.append(
@@ -453,7 +525,14 @@ async def get_test_listing_payload_preview(
             label="Pictures (at least 1 URL)",
             required=True,
             value=str(len(pics_non_empty)),
-            sources=[("tbl_parts_inventory", "OverridePicURL1..12"), ("parts_detail", "override_pic_url_1..12"), ("SKU_catalog", "PicURL1..12"), ("tbl_parts_detail", "PicURL1..12")],
+            sources=[("tbl_parts_inventory", "OverridePicURL1..12"), ("parts_detail", "override_pic_url_1..12"), ("tbl_parts_detail", "PicURL1..12")],
+            help=_make_help(
+                ebay_expected="At least 1 publicly accessible image URL (HTTPS). Images must meet eBay requirements (no watermarks, adequate resolution, etc.).",
+                internal_semantics="We count non-empty URLs using OverridePicURL* → parts_detail.override_pic_url_* → tbl_parts_detail.PicURL*.",
+                lookup_rows={
+                    "pic_urls": [{"index": i + 1, "url": p} for i, p in enumerate(pics) if p.strip()],
+                },
+            ),
         )
     )
     # Mark pictures missing when none exist
@@ -464,8 +543,19 @@ async def get_test_listing_payload_preview(
             key="shipping_group",
             label="Shipping group",
             required=True,
-            value=_first_non_empty(shipping_group_code, shipping_group_name),
-            sources=[("SKU_catalog", "ShippingGroup"), ("tbl_parts_detail", "ShippingGroup"), ("tbl_internalshippinggroups", "ID/Name"), ("sq_shipping_groups", "id/label")],
+            value=(
+                f"{shipping_group_code}: {shipping_group_name}"
+                if shipping_group_code and shipping_group_name
+                else _first_non_empty(shipping_group_code, shipping_group_name)
+            ),
+            sources=[("tbl_parts_detail", "ShippingGroup"), ("tbl_internalshippinggroups", "ID/Name/Description"), ("sq_shipping_groups", "id/label")],
+            help=_make_help(
+                ebay_expected="Shipping configuration is expressed on eBay via shipping policies/services (not via our internal group id).",
+                internal_semantics=(
+                    "ShippingGroup is our internal preset. Example: “no international” means the offer/policy should disallow international shipping and use domestic services only."
+                ),
+                lookup_rows=shipping_group_lookup_rows or None,
+            ),
         )
     )
     mandatory.append(
@@ -474,7 +564,11 @@ async def get_test_listing_payload_preview(
             label="Shipping type",
             required=True,
             value=shipping_type,
-            sources=[("SKU_catalog", "ShippingType"), ("tbl_parts_detail", "ShippingType")],
+            sources=[("tbl_parts_detail", "ShippingType")],
+            help=_make_help(
+                ebay_expected="Shipping price type: typically Flat (fixed amount) or Calculated (carrier/zone based).",
+                internal_semantics="We store ShippingType on tbl_parts_detail as a hint for which eBay shipping policy/pricing mode to apply.",
+            ),
         )
     )
     mandatory.append(
@@ -483,7 +577,11 @@ async def get_test_listing_payload_preview(
             label="Listing type (must be FixedPriceItem for BIN test)",
             required=True,
             value=listing_type,
-            sources=[("SKU_catalog", "ListingType"), ("tbl_parts_detail", "ListingType")],
+            sources=[("tbl_parts_detail", "ListingType")],
+            help=_make_help(
+                ebay_expected="For our test tool we publish Buy It Now / fixed price only. Expected value: FixedPriceItem.",
+                internal_semantics="ListingType is stored on tbl_parts_detail and should remain FixedPriceItem for this test flow.",
+            ),
         )
     )
     mandatory.append(
@@ -492,7 +590,11 @@ async def get_test_listing_payload_preview(
             label="Listing duration",
             required=True,
             value=listing_duration,
-            sources=[("SKU_catalog", "ListingDuration"), ("tbl_parts_detail", "ListingDuration")],
+            sources=[("tbl_parts_detail", "ListingDuration")],
+            help=_make_help(
+                ebay_expected="Duration for fixed price listings (often GTC = Good 'Til Cancelled, or a fixed number of days depending on policy).",
+                internal_semantics="ListingDuration is stored on tbl_parts_detail (e.g., GTC).",
+            ),
         )
     )
     mandatory.append(
@@ -501,7 +603,11 @@ async def get_test_listing_payload_preview(
             label="Site",
             required=True,
             value=site_id,
-            sources=[("SKU_catalog", "SiteID"), ("tbl_parts_detail", "SiteID")],
+            sources=[("tbl_parts_detail", "SiteID")],
+            help=_make_help(
+                ebay_expected="Marketplace/site identifier (e.g., eBay US). Must match the publishing account marketplace.",
+                internal_semantics="We store SiteID on tbl_parts_detail; for US this is commonly 0.",
+            ),
         )
     )
     mandatory.append(
@@ -510,7 +616,12 @@ async def get_test_listing_payload_preview(
             label="Category (internal or eBay category)",
             required=True,
             value=_first_non_empty(category_code, category_label),
-            sources=[("SKU_catalog", "Category/ExternalCategory*"), ("tbl_parts_detail", "Category/ExternalCategory*"), ("tbl_parts_category", "CategoryID/CategoryDescr/eBayCategoryName")],
+            sources=[("tbl_parts_detail", "Category/ExternalCategory*"), ("tbl_parts_category", "CategoryID/CategoryDescr/eBayCategoryName")],
+            help=_make_help(
+                ebay_expected="A valid eBay category (or a mapping to one). Category drives allowed conditions, required item specifics, and shipping rules.",
+                internal_semantics="We store internal Category (and optional ExternalCategory fields) on tbl_parts_detail; we decode internal Category via tbl_parts_category when available.",
+                lookup_rows=category_lookup_rows or None,
+            ),
         )
     )
 
@@ -520,7 +631,11 @@ async def get_test_listing_payload_preview(
             label="MPN",
             required=False,
             value=mpn,
-            sources=[("SKU_catalog", "MPN"), ("tbl_parts_detail", "MPN")],
+            sources=[("tbl_parts_detail", "MPN")],
+            help=_make_help(
+                ebay_expected="Manufacturer Part Number. Optional in many categories but sometimes required unless “Does not apply” is accepted.",
+                internal_semantics="We store MPN on tbl_parts_detail and pass it as an item identifier when applicable.",
+            ),
         )
     )
     optional.append(
@@ -529,7 +644,11 @@ async def get_test_listing_payload_preview(
             label="Part number",
             required=False,
             value=part_number,
-            sources=[("SKU_catalog", "Part_Number"), ("tbl_parts_detail", "Part_Number")],
+            sources=[("tbl_parts_detail", "Part_Number")],
+            help=_make_help(
+                ebay_expected="Part number / manufacturer part identifier. Category-dependent requirements.",
+                internal_semantics="We store Part_Number on tbl_parts_detail; often same as MPN in our dataset.",
+            ),
         )
     )
     optional.append(
@@ -538,7 +657,11 @@ async def get_test_listing_payload_preview(
             label="UPC",
             required=False,
             value=upc,
-            sources=[("SKU_catalog", "UPC"), ("tbl_parts_detail", "UPC")],
+            sources=[("tbl_parts_detail", "UPC")],
+            help=_make_help(
+                ebay_expected="Product identifier (UPC/EAN/ISBN). Some categories allow “Does not apply”.",
+                internal_semantics="We store UPC on tbl_parts_detail; value “Does not apply” is commonly used when permitted.",
+            ),
         )
     )
     optional.append(
@@ -547,7 +670,11 @@ async def get_test_listing_payload_preview(
             label="Weight",
             required=False,
             value=weight,
-            sources=[("SKU_catalog", "Weight"), ("tbl_parts_detail", "Weight")],
+            sources=[("tbl_parts_detail", "Weight")],
+            help=_make_help(
+                ebay_expected="Package weight used for calculated shipping and label purchase (units must be consistent).",
+                internal_semantics="We store Weight on tbl_parts_detail; unit may be stored separately (Unit).",
+            ),
         )
     )
     optional.append(
@@ -556,7 +683,11 @@ async def get_test_listing_payload_preview(
             label="Weight unit",
             required=False,
             value=unit,
-            sources=[("SKU_catalog", "Unit"), ("tbl_parts_detail", "Unit")],
+            sources=[("tbl_parts_detail", "Unit")],
+            help=_make_help(
+                ebay_expected="Weight unit (e.g., oz/lb/g/kg) consistent with marketplace/policy.",
+                internal_semantics="We store Unit on tbl_parts_detail; if empty, the pipeline must assume a default (commonly oz).",
+            ),
         )
     )
     optional.append(
@@ -565,7 +696,11 @@ async def get_test_listing_payload_preview(
             label="Description (HTML/long)",
             required=False,
             value=description,
-            sources=[("tbl_parts_inventory", "OverrideDescription"), ("parts_detail", "override_description"), ("SKU_catalog", "Description"), ("tbl_parts_detail", "Description")],
+            sources=[("tbl_parts_inventory", "OverrideDescription"), ("parts_detail", "override_description"), ("tbl_parts_detail", "Description")],
+            help=_make_help(
+                ebay_expected="Long item description. Usually required; HTML must be allowed/safe per eBay rules.",
+                internal_semantics="We prefill from OverrideDescription → parts_detail.override_description → tbl_parts_detail.Description.",
+            ),
         )
     )
     optional.append(
@@ -575,6 +710,11 @@ async def get_test_listing_payload_preview(
             required=False,
             value=condition_label,
             sources=[("item_conditions", "id/code/label")],
+            help=_make_help(
+                ebay_expected="Human-readable label for ConditionID.",
+                internal_semantics="Resolved via item_conditions when IDs align in this environment.",
+                lookup_rows=condition_lookup_rows or None,
+            ),
         )
     )
 
@@ -586,7 +726,11 @@ async def get_test_listing_payload_preview(
                 label=f"Picture URL #{i}",
                 required=False,
                 value=pics[i - 1] or None,
-                sources=[("tbl_parts_inventory", f"OverridePicURL{i}"), ("parts_detail", f"override_pic_url_{i}"), ("SKU_catalog", f"PicURL{i}"), ("tbl_parts_detail", f"PicURL{i}")],
+                sources=[("tbl_parts_inventory", f"OverridePicURL{i}"), ("parts_detail", f"override_pic_url_{i}"), ("tbl_parts_detail", f"PicURL{i}")],
+                help=_make_help(
+                    ebay_expected="Image URL (HTTPS). Must be publicly accessible and meet eBay image requirements.",
+                    internal_semantics="We prefill using the same precedence as the pictures count.",
+                ),
             )
         )
 

@@ -315,6 +315,12 @@ export interface TestListingFieldSourceDto {
   column: string;
 }
 
+export interface TestListingFieldHelpDto {
+  ebay_expected: string;
+  internal_semantics?: string | null;
+  lookup_rows?: any | null;
+}
+
 export interface TestListingPayloadFieldDto {
   key: string;
   label: string;
@@ -322,6 +328,7 @@ export interface TestListingPayloadFieldDto {
   value: string | null;
   missing: boolean;
   sources: TestListingFieldSourceDto[];
+  help?: TestListingFieldHelpDto | null;
 }
 
 export interface TestListingPayloadResponseDto {

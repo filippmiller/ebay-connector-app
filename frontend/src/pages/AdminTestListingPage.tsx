@@ -12,6 +12,7 @@ import {
 import { WorkerDebugTerminalModal } from '@/components/WorkerDebugTerminalModal';
 import type { WorkerDebugTrace } from '@/api/ebayListingWorker';
 import { formatDateTimeLocal } from '@/lib/dateUtils';
+import { Info } from 'lucide-react';
 
 const INVENTORY_STATUS_OPTIONS = [
   'PENDING_LISTING',
@@ -104,18 +105,119 @@ const AdminTestListingPage: React.FC = () => {
     }
   };
 
+  const getEbayExpectedHelp = (
+    key: string,
+    fieldValue: string | null | undefined,
+    currentPayload: TestListingPayloadResponseDto | null,
+  ): string | null => {
+    const v = (fieldValue ?? '').toString().trim();
+    const status = currentPayload?.legacy_status_name || currentPayload?.legacy_status_code || '';
+
+    switch (key) {
+      case 'sku':
+        return 'eBay expects a stable SKU/merchant-managed identifier used to find/create inventory items and offers. We use the legacy numeric SKU value.';
+      case 'title':
+        return 'eBay expects a short item title (typically max 80 chars for many flows). Should be clear, keyword-rich, and not contain prohibited text.';
+      case 'price':
+        return 'eBay expects a numeric price for Buy It Now (fixed price). Must be > 0. Currency is determined by marketplace/account settings.';
+      case 'quantity':
+        return 'eBay expects available quantity for the offer. For our parts workflow this is usually 1.';
+      case 'condition_id':
+        return 'eBay expects a valid Condition ID for the selected category (e.g., Used, New, For parts). Our ConditionID comes from internal dictionaries and must match an eBay-accepted condition for that category.';
+      case 'pictures':
+        return 'eBay expects at least 1 image URL (often more recommended). Images must be accessible via HTTPS and meet eBay image requirements (no watermarks, adequate resolution, etc.).';
+      case 'shipping_group': {
+        // Try to extract code + label from value like "4: no international"
+        const code = v.split(':')[0]?.trim() || v;
+        const label = v.includes(':') ? v.split(':').slice(1).join(':').trim() : '';
+        return [
+          'eBay itself does not understand our internal “ShippingGroup” code.',
+          'This code is our internal policy preset that determines what shipping options we will apply when creating/updating the eBay offer/shipping policy.',
+          `Current value: ${v || '—'}`,
+          code ? `- Internal code: ${code}` : null,
+          label ? `- Internal meaning: ${label}` : null,
+          'Example: “no international” means we should configure the eBay offer/policy to disallow international shipping and restrict to domestic services only.',
+        ]
+          .filter(Boolean)
+          .join('\n');
+      }
+      case 'shipping_type':
+        return 'eBay shipping pricing type is typically Flat (fixed amount) or Calculated (based on package/zone). We store this as a hint for which shipping policy/fees to apply.';
+      case 'listing_type':
+        return 'For this test tool we only support Buy It Now / fixed price listings. Expected value: FixedPriceItem.';
+      case 'listing_duration':
+        return "For fixed price items, duration is often GTC (Good 'Til Cancelled) or a fixed number of days depending on marketplace/policy.";
+      case 'site_id':
+        return 'Marketplace/site identifier (e.g. eBay US). This must match the account marketplace we will publish to.';
+      case 'category':
+        return 'eBay requires a category. We store an internal Category (and optional External/eBay category fields) in tbl_parts_detail; it must map to a valid eBay category for publishing.';
+      case 'mpn':
+        return 'Manufacturer Part Number (MPN). Often optional but improves search; required in some categories unless “Does not apply” is allowed.';
+      case 'upc':
+        return 'Product identifier (UPC/EAN/ISBN). Often optional; in some categories you can use “Does not apply”.';
+      case 'part_number':
+        return 'Internal/Manufacturer part number. Used as an item identifier in many categories; may be required depending on category specifics.';
+      case 'weight':
+      case 'unit':
+        return 'Package weight is used for calculated shipping and carrier labels. For flat shipping it may still be needed for internal logistics and label purchase.';
+      case 'description':
+        return 'Long description (HTML/text). eBay requires a description for most categories; HTML must be safe/allowed. Our worker may transform or template this later.';
+      default:
+        // For pic_url_1..12
+        if (key.startsWith('pic_url_')) {
+          return 'Image URL. Must be publicly accessible via HTTPS and meet eBay image requirements.';
+        }
+        if (key === 'legacy_inventory_id') {
+          return `Internal: this is the legacy inventory row id used only to load data. Current legacy status: ${status || '—'}.`;
+        }
+        return null;
+    }
+  };
+
+  const formatHelp = (field: TestListingPayloadFieldDto): string | null => {
+    // Prefer backend-provided help (full semantics + lookup rows)
+    const h = field.help;
+    if (h && h.ebay_expected) {
+      const parts: string[] = [];
+      parts.push(`eBay expects:\n${String(h.ebay_expected).trim()}`);
+      if (h.internal_semantics) {
+        parts.push(`\nOur internal meaning:\n${String(h.internal_semantics).trim()}`);
+      }
+      if (h.lookup_rows) {
+        try {
+          parts.push(`\nLookup metadata:\n${JSON.stringify(h.lookup_rows, null, 2)}`);
+        } catch {
+          parts.push(`\nLookup metadata:\n${String(h.lookup_rows)}`);
+        }
+      }
+      return parts.join('\n');
+    }
+
+    // Fallback to local hardcoded help (older payloads)
+    return getEbayExpectedHelp(field.key, field.value, payload);
+  };
+
   const FieldRow: React.FC<{ field: TestListingPayloadFieldDto }> = ({ field }) => {
     const value = (field.value ?? '').toString();
     const missing = Boolean(field.missing);
     const sourcesText = (field.sources || [])
       .map((s) => `${s.table}.${s.column}`)
       .join(' → ');
+    const ebayHelp = formatHelp(field);
 
     return (
       <div className="flex items-start justify-between gap-3 border-b last:border-b-0 py-1">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-medium text-gray-800">{field.label}</span>
+            {ebayHelp && (
+              <span className="relative inline-flex items-center group">
+                <Info className="h-3.5 w-3.5 text-gray-500" />
+                <span className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute z-20 left-0 top-5 w-[360px] max-w-[80vw] whitespace-pre-wrap rounded border bg-white shadow px-2 py-1 text-[11px] text-gray-800">
+                  {ebayHelp}
+                </span>
+              </span>
+            )}
             {field.required && (
               <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px] font-semibold">
                 REQUIRED
