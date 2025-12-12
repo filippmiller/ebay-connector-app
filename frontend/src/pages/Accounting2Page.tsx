@@ -60,7 +60,9 @@ interface Accounting2StatementUploadResult {
   period_start?: string;
   period_end?: string;
   rows_count?: number;
+  ledger_rows_count?: number;
   message?: string;
+  duplicate?: boolean;
 }
 
 export interface ManualParsedRow {
@@ -73,7 +75,6 @@ export interface ManualParsedRow {
 }
 
 function StatementsTab2() {
-  const navigate = useNavigate();
   const [bankName, setBankName] = React.useState('');
   const [status, setStatus] = React.useState('');
   const [periodFrom, setPeriodFrom] = React.useState('');
@@ -81,9 +82,9 @@ function StatementsTab2() {
   const [selectedIds, setSelectedIds] = React.useState<number[]>([]);
   const [deleting, setDeleting] = React.useState(false);
 
-  const [file, setFile] = React.useState<File | null>(null);
+  const [files, setFiles] = React.useState<File[]>([]);
   const [uploading, setUploading] = React.useState(false);
-  const [uploadResult, setUploadResult] = React.useState<Accounting2StatementUploadResult | null>(null);
+  const [uploadResults, setUploadResults] = React.useState<Accounting2StatementUploadResult[] | null>(null);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
 
   // Manual pasted statement state
@@ -296,28 +297,45 @@ function StatementsTab2() {
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) return;
+    if (!files.length) return;
 
     setUploading(true);
-    setUploadResult(null);
+    setUploadResults(null);
     setUploadError(null);
 
     try {
-      const form = new FormData();
-      form.append('file', file);
+      const results: Accounting2StatementUploadResult[] = [];
 
-      // Новая версия: используем Accounting 2 endpoint (PDF → transaction_spending → staged statement)
-      const response = await api.post<Accounting2StatementUploadResult>('/accounting2/bank-statements/upload', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // Upload sequentially so we can show progress + avoid overloading the API.
+      for (const f of files) {
+        const form = new FormData();
+        form.append('file', f);
 
-      setUploadResult(response.data);
-      setFile(null);
-      // После успешной загрузки обновляем список и открываем предпросмотр
-      await loadStatements();
-      if (response.data.id) {
-        void openPreviewForStatement(response.data.id);
+        const isXlsx = f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls');
+
+        if (isXlsx) {
+          // XLSX flow: import + commit directly to ledger as source_type=manual
+          const resp = await api.post<Accounting2StatementUploadResult>('/accounting2/bank-statements/upload-xlsx', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          results.push(resp.data);
+        } else {
+          // PDF flow: stage into transaction_spending, then preview/approve/commit
+          const resp = await api.post<Accounting2StatementUploadResult>('/accounting2/bank-statements/upload', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          results.push(resp.data);
+
+          // Open preview for the last non-XLSX upload
+          if (resp.data.id) {
+            void openPreviewForStatement(resp.data.id);
+          }
+        }
       }
+
+      setUploadResults(results);
+      setFiles([]);
+      await loadStatements();
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || err?.message || 'Upload failed';
       setUploadError(errorMsg);
@@ -370,48 +388,44 @@ function StatementsTab2() {
             <div>
               <h2 className="text-lg font-semibold">Upload Bank Statement (Accounting 2)</h2>
               <p className="text-sm text-gray-500 mt-1">
-                Загрузите PDF/CSV/XLSX банковского стейтмента. После парсинга вы увидите модальное окно с транзакциями.
+                PDF → preview → approve → commit. XLSX → импортируем сразу в Ledger как <code>manual</code>.
               </p>
             </div>
             <div className="flex items-center gap-4 max-w-xl">
               <Input
                 type="file"
-                accept=".csv,.txt,.pdf,.xlsx,.xls"
+                multiple
+                accept=".pdf,.xlsx,.xls"
                 onChange={(e) => {
-                  setFile(e.target.files?.[0] ?? null);
-                  setUploadResult(null);
+                  const list = Array.from(e.target.files || []);
+                  setFiles(list);
+                  setUploadResults(null);
                   setUploadError(null);
                 }}
               />
-              <Button type="submit" disabled={uploading || !file} className="min-w-[140px]">
-                {uploading ? 'Parsing…' : 'Upload & Parse'}
+              <Button type="submit" disabled={uploading || files.length === 0} className="min-w-[140px]">
+                {uploading ? 'Importing…' : `Upload & Import (${files.length || 0})`}
               </Button>
             </div>
-            {uploadResult && (
+            {uploadResults && (
               <div className="max-w-xl p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-sm">
-                <div className="font-semibold text-emerald-800 mb-1">{uploadResult.message || 'Upload successful'}</div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-emerald-700">
-                  {uploadResult.bank_name && <span><strong>Bank:</strong> {uploadResult.bank_name}</span>}
-                  {uploadResult.account_last4 && <span><strong>Account:</strong> ****{uploadResult.account_last4}</span>}
-                  {uploadResult.currency && <span><strong>Currency:</strong> {uploadResult.currency}</span>}
-                  {uploadResult.rows_count !== undefined && (
-                    <span><strong>Transactions:</strong> {uploadResult.rows_count}</span>
-                  )}
-                  {uploadResult.period_start && uploadResult.period_end && (
-                    <span className="col-span-2">
-                      <strong>Period:</strong> {uploadResult.period_start} – {uploadResult.period_end}
-                    </span>
-                  )}
+                <div className="font-semibold text-emerald-800 mb-2">Import results</div>
+                <div className="flex flex-col gap-2">
+                  {uploadResults.map((r, idx) => (
+                    <div key={idx} className="p-2 bg-white/60 rounded border border-emerald-100">
+                      <div className="font-medium text-emerald-800">
+                        {r.message || 'OK'} {r.duplicate ? '(duplicate)' : ''}
+                      </div>
+                      <div className="text-emerald-700">
+                        {r.bank_name ? `Bank: ${r.bank_name} · ` : ''}
+                        {r.account_last4 ? `Account: ****${r.account_last4} · ` : ''}
+                        {r.period_start && r.period_end ? `Period: ${r.period_start} – ${r.period_end} · ` : ''}
+                        {typeof r.rows_count === 'number' ? `Rows: ${r.rows_count}` : ''}
+                        {typeof r.ledger_rows_count === 'number' ? ` · Ledger: ${r.ledger_rows_count}` : ''}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {uploadResult.id && (
-                  <Button
-                    variant="link"
-                    className="p-0 h-auto mt-2 text-emerald-700"
-                    onClick={() => navigate(`/accounting/bank-statements/${uploadResult.id}`)}
-                  >
-                    View Statement →
-                  </Button>
-                )}
               </div>
             )}
             {uploadError && (

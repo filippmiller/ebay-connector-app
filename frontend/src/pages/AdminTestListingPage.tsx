@@ -254,53 +254,60 @@ const AdminTestListingPage: React.FC = () => {
   const buildPlannedHttpPreview = () => {
     const sku = payload?.sku || '—';
 
-    if (prepareData?.http_offer_lookup || prepareData?.http_publish_planned) {
-      // Real offer-lookup HTTP + planned publish HTTP with resolved offerId
-      return {
-        calls: [
-          {
-            step: 1,
-            purpose: 'Offer lookup (REAL HTTP)',
-            ...(prepareData.http_offer_lookup || {}),
-          },
-          {
-            step: 2,
-            purpose: 'Publish offer (planned)',
-            ...(prepareData.http_publish_planned || {}),
-          },
-        ],
-        resolved: {
-          offer_id: prepareData.offer_id || null,
-          account_label: prepareData.account_label || null,
-        },
-      };
+    const offerLookup = prepareData?.http_offer_lookup || null;
+    const publishPlanned = prepareData?.http_publish_planned || null;
+
+    const lines: string[] = [];
+    lines.push('=== EBAY HTTP TRANSCRIPT (what will be executed when you click LIST) ===');
+    lines.push('');
+
+    if (offerLookup?.request) {
+      const req = offerLookup.request;
+      lines.push(`${req.method || 'GET'} ${req.url || ''}`.trim());
+      lines.push('headers:');
+      lines.push(JSON.stringify(req.headers || {}, null, 2));
+      if (req.body !== undefined && req.body !== null) {
+        lines.push('body:');
+        lines.push(JSON.stringify(req.body, null, 2));
+      }
+      lines.push('');
+      if (offerLookup.response) {
+        lines.push(`HTTP ${offerLookup.response.status_code ?? ''}`.trim());
+        lines.push('headers:');
+        lines.push(JSON.stringify(offerLookup.response.headers || {}, null, 2));
+        lines.push('body:');
+        lines.push(JSON.stringify(offerLookup.response.body ?? null, null, 2));
+      }
+    } else {
+      lines.push(`GET /sell/inventory/v1/offer?sku=${encodeURIComponent(String(sku))}`);
+      lines.push('headers:');
+      lines.push(JSON.stringify({ Authorization: 'Bearer *** (masked)', Accept: 'application/json' }, null, 2));
+      lines.push('');
+      lines.push('HTTP <pending>');
+      lines.push('body:');
+      lines.push('<pending>');
     }
 
-    // Fallback (no prepare yet): show placeholders.
-    return {
-      calls: [
-        {
-          step: 1,
-          purpose: 'Resolve offerId for SKU (placeholder)',
-          request: {
-            method: 'GET',
-            url: `/sell/inventory/v1/offer?sku=${encodeURIComponent(String(sku))}`,
-            headers: { Authorization: 'Bearer *** (masked)', Accept: 'application/json' },
-            body: null,
-          },
-        },
-        {
-          step: 2,
-          purpose: 'Publish offer(s) (placeholder)',
-          request: {
-            method: 'POST',
-            url: '/sell/inventory/v1/bulk_publish_offer',
-            headers: { Authorization: 'Bearer *** (masked)', 'Content-Type': 'application/json' },
-            body: { requests: [{ offerId: `<resolved_from_step_1_for_sku_${sku}>` }] },
-          },
-        },
-      ],
-    };
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+
+    const publishReq = publishPlanned?.request || null;
+    if (publishReq) {
+      lines.push(`${publishReq.method || 'POST'} ${publishReq.url || ''}`.trim());
+      lines.push('headers:');
+      lines.push(JSON.stringify(publishReq.headers || {}, null, 2));
+      lines.push('body:');
+      lines.push(JSON.stringify(publishReq.body ?? null, null, 2));
+    } else {
+      lines.push('POST /sell/inventory/v1/bulk_publish_offer');
+      lines.push('headers:');
+      lines.push(JSON.stringify({ Authorization: 'Bearer *** (masked)', 'Content-Type': 'application/json' }, null, 2));
+      lines.push('body:');
+      lines.push(JSON.stringify({ requests: [{ offerId: `<offerId_resolved_for_sku_${sku}>` }] }, null, 2));
+    }
+
+    return lines.join('\n');
   };
 
   const openPreview = () => {
@@ -428,7 +435,7 @@ const AdminTestListingPage: React.FC = () => {
       <FixedHeader />
       <main className="w-full pt-14 px-4 sm:px-6 lg:px-10 py-4">
         <div className="w-full mx-auto space-y-4">
-          <h1 className="text-xl font-semibold mb-1">eBay Test Listing</h1>
+          <h1 className="text-xl font-semibold mb-1">Legacy Offer Publish Debug</h1>
           <p className="text-xs text-gray-600 max-w-3xl mb-2">
             Интерфейс для тестового листинга через существующий eBay listing worker. Здесь можно включить глубокий
             debug, выбрать статус Inventory для теста и запускать тест-листинг с сохранением полного HTTP-трейса.
@@ -714,7 +721,7 @@ const AdminTestListingPage: React.FC = () => {
                     </div>
                   )}
                   <pre className="p-2 text-[11px] whitespace-pre-wrap break-all">
-                    {JSON.stringify(buildPlannedHttpPreview(), null, 2)}
+                    {buildPlannedHttpPreview()}
                   </pre>
                 </div>
 

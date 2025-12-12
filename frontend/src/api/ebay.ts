@@ -357,6 +357,72 @@ export interface TestListingPrepareResponseDto {
   http_publish_planned?: any | null;
 }
 
+// Admin → eBay BIN (Trading API) debug DTOs
+export interface BinSourcePreviewDto {
+  legacy_inventory_id: number;
+  sku: string;
+  parts_detail_id: number | null;
+  title: string | null;
+  description: string | null;
+  category_id: string | null;
+  start_price: string | null;
+  quantity: number | null;
+  condition_id: string | null;
+  condition_display_name?: string | null;
+  condition_row?: any | null;
+  picture_urls: string[];
+  missing_db_fields: string[];
+}
+
+export interface BinDebugRequestDto {
+  legacy_inventory_id: number;
+  policies_mode?: 'seller_profiles' | 'manual';
+  shipping_profile_id: number;
+  payment_profile_id: number;
+  return_profile_id: number;
+  // Manual fallback (optional; used when policies_mode=manual)
+  shipping_service?: string | null;
+  shipping_cost?: string | null;
+  returns_accepted_option?: string | null;
+  returns_within_option?: string | null;
+  refund_option?: string | null;
+  shipping_cost_paid_by_option?: string | null;
+  payment_methods?: string[] | null;
+  paypal_email_address?: string | null;
+  // Item specifics
+  brand?: string | null;
+  mpn?: string | null;
+  site_id?: number;
+  site_code?: string;
+  compatibility_level?: number;
+  listing_duration?: string;
+  currency?: string;
+  country?: string;
+  location: string;
+  postal_code: string;
+  dispatch_time_max?: number;
+}
+
+export interface BinDebugResponseDto {
+  mode: 'VERIFY' | 'LIST';
+  legacy_inventory_id: number;
+  sku: string;
+  parts_detail_id: number | null;
+  meta: any;
+  request_url: string;
+  request_headers_masked: any;
+  request_body_xml: string;
+  response_http_status: number;
+  response_headers: any;
+  response_body_xml: string;
+  parsed: any;
+  log_saved: boolean;
+  log_error?: string | null;
+  run_id?: number | null;
+  item_id_saved_to_parts_detail: boolean;
+  item_id_saved_to_map: boolean;
+}
+
 export interface EbayReturnRow {
   return_id: string;
   account_id: string | null;
@@ -819,6 +885,24 @@ export const ebayApi = {
       '/api/admin/ebay/test-listing/prepare',
       { legacy_inventory_id: legacyInventoryId },
     );
+    return response.data;
+  },
+
+  // Admin → eBay BIN listing (Trading API)
+  async getBinSourcePreview(legacyInventoryId: number): Promise<BinSourcePreviewDto> {
+    const response = await apiClient.get<BinSourcePreviewDto>(
+      `/api/admin/ebay/bin/source?legacy_inventory_id=${encodeURIComponent(String(legacyInventoryId))}`,
+    );
+    return response.data;
+  },
+
+  async verifyBinListing(payload: BinDebugRequestDto): Promise<BinDebugResponseDto> {
+    const response = await apiClient.post<BinDebugResponseDto>('/api/admin/ebay/bin/verify', payload);
+    return response.data;
+  },
+
+  async listBinListing(payload: BinDebugRequestDto): Promise<BinDebugResponseDto> {
+    const response = await apiClient.post<BinDebugResponseDto>('/api/admin/ebay/bin/list', payload);
     return response.data;
   },
 };

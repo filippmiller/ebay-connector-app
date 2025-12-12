@@ -215,6 +215,36 @@ def _make_help(
     )
 
 
+def _resolve_parts_detail_id_for_legacy_sku(db: Session, sku: str) -> int:
+    """Resolve parts_detail.id for a legacy numeric SKU.
+
+    Primary attempt: `inventory.sku_code` mapping (if present).
+    Fallback: direct lookup in `parts_detail` by sku/override_sku.
+
+    This avoids failures in environments where `inventory.sku_code` is empty.
+    """
+
+    inv2 = db.execute(
+        text("SELECT parts_detail_id FROM public.inventory WHERE sku_code = :sku ORDER BY id ASC LIMIT 1"),
+        {"sku": sku},
+    ).first()
+    if inv2 and inv2[0] is not None:
+        return int(inv2[0])
+
+    # Fallback: find parts_detail row by sku/override_sku (string columns)
+    row = db.execute(
+        text(
+            "SELECT id FROM public.parts_detail "
+            "WHERE sku = :sku OR override_sku = :sku "
+            "ORDER BY id DESC LIMIT 1"
+        ),
+        {"sku": sku},
+    ).first()
+    if not row or row[0] is None:
+        raise HTTPException(status_code=400, detail="no_parts_detail_id_for_sku")
+    return int(row[0])
+
+
 @router.get("/config", response_model=TestListingConfigResponse, dependencies=[Depends(admin_required)])
 async def get_test_listing_config(
     db: Session = Depends(get_db),
@@ -719,16 +749,16 @@ async def get_test_listing_payload_preview(
             ),
         )
     )
-    optional.append(
+    mandatory.append(
         _build_field(
             key="description",
             label="Description (HTML/long)",
-            required=False,
+            required=True,
             value=description,
             sources=[("tbl_parts_inventory", "OverrideDescription"), ("parts_detail", "override_description"), ("tbl_parts_detail", "Description")],
             help=_make_help(
-                ebay_expected="Long item description. Usually required; HTML must be allowed/safe per eBay rules.",
-                internal_semantics="We prefill from OverrideDescription → parts_detail.override_description → tbl_parts_detail.Description.",
+                ebay_expected="Long item description. For most categories and legacy listing flows, a description is required. HTML must be allowed/safe per eBay rules.",
+                internal_semantics="We prefill from OverrideDescription → parts_detail.override_description → tbl_parts_detail.Description. If empty, listing should be blocked in debug UI.",
             ),
         )
     )
@@ -806,16 +836,9 @@ async def list_single_legacy_inventory_id(
     if not sku:
         raise HTTPException(status_code=400, detail="legacy_inventory_missing_sku")
 
-    inv2 = db.execute(
-        text("SELECT parts_detail_id FROM public.inventory WHERE sku_code = :sku ORDER BY id ASC LIMIT 1"),
-        {"sku": sku},
-    ).first()
-    if not inv2 or inv2[0] is None:
-        raise HTTPException(status_code=400, detail="no_parts_detail_id_for_sku")
-
     try:
-        parts_detail_id = int(inv2[0])
-    except Exception:
+        parts_detail_id = _resolve_parts_detail_id_for_legacy_sku(db, sku)
+    except ValueError:
         raise HTTPException(status_code=400, detail="invalid_parts_detail_id")
 
     from app.models_sqlalchemy.models import PartsDetail  # local import to avoid circulars
@@ -860,16 +883,9 @@ async def prepare_test_listing_real_http(
     if not sku:
         raise HTTPException(status_code=400, detail="legacy_inventory_missing_sku")
 
-    inv2 = db.execute(
-        text("SELECT parts_detail_id FROM public.inventory WHERE sku_code = :sku ORDER BY id ASC LIMIT 1"),
-        {"sku": sku},
-    ).first()
-    if not inv2 or inv2[0] is None:
-        raise HTTPException(status_code=400, detail="no_parts_detail_id_for_sku")
-
     try:
-        parts_detail_id = int(inv2[0])
-    except Exception:
+        parts_detail_id = _resolve_parts_detail_id_for_legacy_sku(db, sku)
+    except ValueError:
         raise HTTPException(status_code=400, detail="invalid_parts_detail_id")
 
     from app.models_sqlalchemy.models import PartsDetail  # local import to avoid circulars

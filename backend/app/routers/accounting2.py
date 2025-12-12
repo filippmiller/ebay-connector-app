@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 from datetime import date
 from decimal import Decimal
 import json
+import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Body
 from pydantic import BaseModel
@@ -21,6 +22,7 @@ from app.models_sqlalchemy.models import (
 from app.services.admin_auth import require_admin_user
 from app.services.accounting_parsers.td_bank_parser import parse_pdf_by_bank_code
 from app.services.accounting_parsers.transaction_classifier import classify_transaction
+from app.services.accounting_parsers.xlsx_td_export_parser import parse_td_xlsx_export
 from app.services.supabase_storage import upload_file_to_storage, get_signed_url, delete_file
 from app.utils.logger import logger
 
@@ -278,6 +280,210 @@ async def upload_bank_statement_v2(
         "period_end": meta.statement_period_end.isoformat() if meta.statement_period_end else None,
         "rows_count": total_rows,
         "message": "Statement uploaded and transactions staged for review.",
+    }
+
+
+@router.post("/bank-statements/upload-xlsx")
+async def upload_bank_statement_xlsx_manual(
+    file: UploadFile = File(...),
+    bank_name: str = Form("TD Bank"),
+    bank_code: str = Form("TD"),
+    currency: str = Form("USD"),
+    db: Session = Depends(get_db_sqla),
+    current_user: User = Depends(require_admin_user),
+) -> Dict[str, Any]:
+    """Upload TD-style XLSX export and import directly into ledger as manual transactions.
+
+    Unlike the PDF flow (/upload), this endpoint:
+    - Creates AccountingBankStatement with source_type=MANUAL_XLSX and status='parsed'
+    - Inserts AccountingBankRow rows
+    - Inserts AccountingTransaction rows directly with source_type='manual' and source_id=<statement_id>
+
+    Idempotency: dedupes by SHA256(file_bytes) stored in AccountingBankStatement.file_hash.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="File name is required")
+
+    if not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported for XLSX import")
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    existing_stmt = (
+        db.query(AccountingBankStatement)
+        .filter(AccountingBankStatement.file_hash == file_hash)
+        .order_by(AccountingBankStatement.id.desc())
+        .first()
+    )
+    if existing_stmt:
+        return {
+            "id": existing_stmt.id,
+            "status": existing_stmt.status,
+            "bank_name": existing_stmt.bank_name,
+            "account_last4": existing_stmt.account_last4,
+            "currency": existing_stmt.currency,
+            "period_start": existing_stmt.statement_period_start.isoformat() if existing_stmt.statement_period_start else None,
+            "period_end": existing_stmt.statement_period_end.isoformat() if existing_stmt.statement_period_end else None,
+            "rows_count": None,
+            "message": "This XLSX file was already imported (file_hash match).",
+            "duplicate": True,
+        }
+
+    # Parse
+    try:
+        rows = parse_td_xlsx_export(file_bytes)
+    except Exception as e:
+        logger.error(f"Accounting2 XLSX: failed to parse: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to parse XLSX: {e}")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No transactions found in XLSX")
+
+    period_start = min(r.posting_date for r in rows)
+    period_end = max(r.posting_date for r in rows)
+
+    account_number = next((r.account_number for r in rows if r.account_number), None) or ""
+    account_last4 = account_number[-4:] if len(account_number) >= 4 else (account_number or None)
+
+    statement_hash_key = f"{bank_code}|{account_number}|{period_start.isoformat()}|{period_end.isoformat()}"
+    statement_hash = hashlib.sha256(statement_hash_key.encode()).hexdigest()
+
+    total_credit = sum((r.amount_abs for r in rows if r.direction_ledger == "in"), Decimal("0"))
+    total_debit = sum((r.amount_abs for r in rows if r.direction_ledger == "out"), Decimal("0"))
+
+    stmt = AccountingBankStatement(
+        bank_name=bank_name,
+        bank_code=bank_code,
+        account_last4=account_last4,
+        currency=currency,
+        statement_period_start=period_start,
+        statement_period_end=period_end,
+        opening_balance=None,
+        closing_balance=None,
+        total_credit=total_credit,
+        total_debit=total_debit,
+        status="parsed",
+        file_hash=file_hash,
+        statement_hash=statement_hash,
+        source_type="MANUAL_XLSX",
+        raw_json={
+            "source": "manual_xlsx",
+            "filename": file.filename,
+            "file_hash": file_hash,
+        },
+        created_by_user_id=current_user.id,
+        updated_by_user_id=current_user.id,
+    )
+    db.add(stmt)
+    db.flush()
+
+    statement_id = int(stmt.id)
+
+    inserted_rows = 0
+    inserted_ledger = 0
+
+    CHUNK = 500
+    for i in range(0, len(rows), CHUNK):
+        chunk = rows[i : i + CHUNK]
+
+        bank_rows: list[AccountingBankRow] = []
+        for r in chunk:
+            raw_txn = {
+                "source": "manual_xlsx",
+                "source_file": file.filename,
+                "sheet": r.sheet_name,
+                "excel_row": r.excel_row,
+                "date": r.posting_date.isoformat(),
+                "bank_rtn": r.bank_rtn,
+                "account_number": r.account_number,
+                "transaction_type_raw": r.transaction_type_raw,
+                "description": r.description,
+                "debit": str(r.debit) if r.debit is not None else None,
+                "credit": str(r.credit) if r.credit is not None else None,
+                "signed_amount": str(r.signed_amount),
+                "check_number": r.check_number,
+            }
+
+            bank_rows.append(
+                AccountingBankRow(
+                    bank_statement_id=statement_id,
+                    row_index=r.excel_row,
+                    operation_date=r.posting_date,
+                    posting_date=r.posting_date,
+                    description_raw=r.description or "",
+                    description_clean=r.description or "",
+                    amount=r.signed_amount,
+                    balance_after=None,
+                    currency=currency,
+                    parsed_status="manual_xlsx",
+                    match_status="unmatched",
+                    bank_code=bank_code,
+                    bank_section=None,
+                    bank_subtype=r.transaction_type_raw,
+                    direction=r.direction_bank,
+                    accounting_group=None,
+                    classification=None,
+                    classification_status="UNKNOWN",
+                    check_number=r.check_number,
+                    raw_transaction_json=raw_txn,
+                    created_by_user_id=current_user.id,
+                    updated_by_user_id=current_user.id,
+                )
+            )
+
+        db.add_all(bank_rows)
+        db.flush()
+
+        ledger_txns: list[AccountingTransaction] = []
+        for br, r in zip(bank_rows, chunk, strict=True):
+            storage_id = f"manual_xlsx:{file.filename}:{r.sheet_name}:{r.excel_row}"
+            ledger_txns.append(
+                AccountingTransaction(
+                    date=r.posting_date,
+                    amount=r.amount_abs,
+                    direction=r.direction_ledger,
+                    source_type="manual",
+                    source_id=statement_id,
+                    bank_row_id=br.id,
+                    account_name=(f"{bank_name} ****{account_last4}" if account_last4 else bank_name),
+                    account_id=r.account_number,
+                    counterparty=None,
+                    description=r.description,
+                    expense_category_id=None,
+                    subcategory=r.transaction_type_raw,
+                    storage_id=storage_id,
+                    linked_object_type=None,
+                    linked_object_id=None,
+                    is_personal=False,
+                    is_internal_transfer=False,
+                    created_by_user_id=current_user.id,
+                    updated_by_user_id=current_user.id,
+                )
+            )
+
+        db.add_all(ledger_txns)
+        db.flush()
+
+        inserted_rows += len(bank_rows)
+        inserted_ledger += len(ledger_txns)
+
+    db.commit()
+
+    return {
+        "id": statement_id,
+        "status": stmt.status,
+        "bank_name": stmt.bank_name,
+        "account_last4": stmt.account_last4,
+        "currency": stmt.currency,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "rows_count": inserted_rows,
+        "ledger_rows_count": inserted_ledger,
+        "message": "XLSX imported and committed to ledger as manual transactions.",
     }
 
 

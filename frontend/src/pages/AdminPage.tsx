@@ -38,8 +38,13 @@ export default function AdminPage() {
           </Card>
 
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/test-listing')}>
-            <h2 className="text-lg font-semibold">eBay Test Listing</h2>
-            <p className="text-sm text-gray-600 mt-1">Test-listing UI with full HTTP debug trace</p>
+            <h2 className="text-lg font-semibold">Legacy Offer Publish Debug</h2>
+            <p className="text-sm text-gray-600 mt-1">Offer lookup → bulkPublishOffer (legacy flow; keep separate)</p>
+          </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/bin-listing')}>
+            <h2 className="text-lg font-semibold">eBay BIN Listing Debug (Trading API)</h2>
+            <p className="text-sm text-gray-600 mt-1">VerifyAddFixedPriceItem / AddFixedPriceItem with full XML request/response</p>
           </Card>
 
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/db-explorer')}>

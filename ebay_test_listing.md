@@ -312,6 +312,65 @@ Make the Preview modal feel **real** by showing the **actual HTTP** for the offe
     - Step 1: real offer lookup HTTP request/response
     - Step 2: planned publish HTTP request using the real `offerId`
 
+---
+
+## Iteration 8 — 2025-12-12
+
+### Change request
+- Preview modal must show **one single chunk** representing the **exact eBay HTTP traffic** executed when the user clicks LIST.
+- Do **not** show “step 1 / step 2” in the UI.
+- Ensure **Description** is treated as **Mandatory** in the payload preview so missing descriptions are caught early.
+
+### What we can and cannot send in the publish call
+- Current listing implementation **publishes existing eBay offers**:
+  - The publish request (`bulk_publish_offer`) **only contains `offerId`**.
+  - Title/price/quantity/description are not part of that publish request; they exist on eBay already in the offer/inventory item.
+- To provide a “real feel”, the Preview now shows a single **HTTP transcript** containing:
+  1) the real **offer lookup** request+response (includes those listing fields as returned by eBay)
+  2) the exact **publish request** that will be sent on LIST (with resolved `offerId`)
+
+### Implementation notes
+- `backend/app/routers/admin_ebay_listing_test.py`
+  - Fixed `no_parts_detail_id_for_sku` by adding fallback resolution via `parts_detail` (sku/override_sku) when `inventory.sku_code` is missing.
+  - Moved `description` into **Mandatory** fields.
+- `frontend/src/pages/AdminTestListingPage.tsx`
+  - “Full HTTP call preview” now renders a **single text transcript** (no step labels) instead of a `{calls:[...]}` JSON object.
+
+---
+
+## Iteration 9 — 2025-12-12
+
+### Pivot: BIN listing must be Trading API (XML), not offer publish
+We split the tooling into two separate admin screens:
+- **BIN Listing Debug (Trading API)**: `VerifyAddFixedPriceItem` + `AddFixedPriceItem`
+- **Legacy Offer Publish Debug**: offer lookup + `bulkPublishOffer` (kept separate; not used for DB-driven listing)
+
+### New backend endpoints
+- `GET /api/admin/ebay/bin/source?legacy_inventory_id=...`
+- `POST /api/admin/ebay/bin/verify`
+- `POST /api/admin/ebay/bin/list`
+
+### New documentation
+- `docs/2025-12-12-ebay-bin-trading-debug-flow.md`
+
+---
+
+## Iteration 10 — 2025-12-12
+
+### Hardening for real categories (P0)
+- Added `tbl_parts_condition` integration into BIN source preview:
+  - show `ConditionID + ConditionDisplayName` and expose full condition row metadata.
+- Added **ItemSpecifics** minimums:
+  - Brand (default `Unbranded`)
+  - MPN (default `tbl_parts_detail.MPN/Part_Number` or `Does Not Apply`)
+- Added **Description fallback template** when DB description is empty (prevents guaranteed early failure and lets Verify surface real category requirements).
+- Added **Policies mode** to avoid mixed-mode mystery failures:
+  - canonical: SellerProfiles IDs
+  - fallback: manual ShippingDetails + ReturnPolicy (minimal)
+- Made persistence non-lossy:
+  - Added `ebay_bin_listings_map` mapping table to guarantee `ItemID` retention even if `parts_detail` update fails.
+  - Added explicit `log_saved` / `item_id_saved_to_map` flags to responses + UI warnings when something fails to persist.
+
 ### Desired UI behavior (Admin → eBay Test Listing)
 
 #### Input

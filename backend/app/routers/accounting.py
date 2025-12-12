@@ -423,11 +423,14 @@ async def commit_bank_rows_to_transactions(
             direction = "in" if raw_amount >= 0 else "out"
             amount = abs(raw_amount)
 
+        # Manual uploads (MANUAL_PASTE / MANUAL_XLSX) should be tagged as source_type=manual
+        src_type = "manual" if (stmt.source_type or "").upper().startswith("MANUAL") else "bank_statement"
+
         txn = AccountingTransaction(
             date=r.operation_date or r.posting_date or stmt.statement_period_start or dt.date.today(),
             amount=amount,
             direction=direction,
-            source_type="bank_statement",
+            source_type=src_type,
             source_id=r.bank_statement_id,
             bank_row_id=r.id,
             account_name=(f"{stmt.bank_name} ****{stmt.account_last4}" if stmt.account_last4 else stmt.bank_name),
