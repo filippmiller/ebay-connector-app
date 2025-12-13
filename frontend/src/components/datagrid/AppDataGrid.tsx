@@ -447,6 +447,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
                 value={current}
                 onChange={handleChange}
                 className="border rounded px-1 py-0.5 text-[11px] bg-white max-w-[160px]"
+                aria-label="Transaction flag"
               >
                 <option value="">—</option>
                 {options.map((t) => (
@@ -584,7 +585,6 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
         <div style={{ width: '100%', flex: 1, minHeight: 0, minWidth: 0 }}>
           <AgGridReact
             className="w-full h-full"
-            theme="legacy"
             rowModelType="clientSide"
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}

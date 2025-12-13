@@ -103,5 +103,6 @@
 2025-12-12T17:13:20Z - Fixed 500 on PUT /api/sq/items/<built-in function id>: create/update return via get_sq_item coercion; add rollback+error detail
 2025-12-13T05:54:21.7566667Z - Investigating login 404; updated frontend/src/lib/apiClient.ts to force PROD baseURL "/api" (Cloudflare proxy) to avoid bypassing proxy via VITE_API_BASE_URL/VITE_API_URL
 2025-12-13T06:14:03.4741744Z - Investigating Ledger 2 empty grid; updated frontend/src/index.css to use --ag-foreground-color fallback for AG Grid cell text to prevent invisible white-on-white text
+2025-12-13T06:46:51.9375305Z - Investigating Ledger 2 empty grid; removed invalid AgGridReact theme=\"legacy\" prop in frontend/src/components/datagrid/AppDataGrid.tsx (restore CSS theme rendering); added aria-label for subcategory select
 2025-12-13T06:11:36Z - Audited legacy AddFixedPriceItem (Trading API) vs new BIN Trading debug + publish worker; documented shipping policies/profiles differences and DB write-back parity gaps in diary_cursor_making_addfixedpriceitem_process_flow.md
 2025-12-13T06:32:17Z - Added Ebay Business Policies Center (Admin CRUD) + per-SKU SellerProfiles mapping (ebay_sku_business_policies) wired into SKU create/edit form via /api/sq/dictionaries
