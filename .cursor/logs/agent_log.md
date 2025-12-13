@@ -107,5 +107,6 @@
 2025-12-13T07:03:57.1779458Z - Added AG Grid readiness signal and automatic fallback to simple HTML table in DataGridPage when AG Grid fails to init (prevents blank Ledger 2); added aria-labels to controls
 2025-12-13T07:15:26.2492953Z - Added Playwright debug spec frontend/tests/ledger-grid-debug.spec.ts with manual login pause + DOM metrics capture for Ledger 2 grid investigation
 2025-12-13T07:47:11.4862088Z - Rebuilt DataGridPage/AppDataGrid to use only AG Grid (removed fallback table), switched selection to classic checkbox column + rowSelection=\"multiple\" to avoid version-mismatch blank grid
+2025-12-13T08:19:57.5718902Z - Fix AG Grid theme conflict (#239): set AgGridReact theme=\"legacy\" and removed unsupported colDef.suppressMenu in AppDataGrid
 2025-12-13T06:11:36Z - Audited legacy AddFixedPriceItem (Trading API) vs new BIN Trading debug + publish worker; documented shipping policies/profiles differences and DB write-back parity gaps in diary_cursor_making_addfixedpriceitem_process_flow.md
 2025-12-13T06:32:17Z - Added Ebay Business Policies Center (Admin CRUD) + per-SKU SellerProfiles mapping (ebay_sku_business_policies) wired into SKU create/edit form via /api/sq/dictionaries

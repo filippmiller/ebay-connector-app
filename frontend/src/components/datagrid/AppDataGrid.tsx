@@ -492,7 +492,6 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
         resizable: false,
         sortable: false,
         filter: false,
-        suppressMenu: true,
         suppressMovable: true,
         checkboxSelection: true,
         headerCheckboxSelection: true,
@@ -603,6 +602,9 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
         <div style={{ width: '100%', flex: 1, minHeight: 0, minWidth: 0 }}>
           <AgGridReact
             className="w-full h-full"
+            // Force legacy CSS themes (ag-theme-*) to avoid AG Grid v33+ theming API conflicts.
+            // This resolves console error #239: "Theming API and CSS File Themes are both used".
+            theme="legacy"
             rowModelType="clientSide"
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
