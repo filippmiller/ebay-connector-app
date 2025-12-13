@@ -1,4 +1,4 @@
-import { useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useMemo, useRef, forwardRef, useImperativeHandle, useEffect } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   ModuleRegistry,
@@ -67,6 +67,10 @@ export interface AppDataGridProps {
   gridTheme?: GridThemeConfig | null;
   /** Extra column definitions to append (e.g. action buttons). */
   extraColumns?: ColDef[];
+  /** Explicit row height in pixels (preferred over CSS vars for reliability). */
+  rowHeightPx?: number;
+  /** Explicit header height in pixels (preferred over CSS vars for reliability). */
+  headerHeightPx?: number;
 }
 
 function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): string {
@@ -194,6 +198,8 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   gridKey,
   gridTheme,
   extraColumns,
+  rowHeightPx,
+  headerHeightPx,
 }, ref) => {
   const layoutDebounceRef = useRef<number | null>(null);
   const gridApiRef = useRef<GridApi | null>(null);
@@ -558,6 +564,22 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
     };
   }, [selectionMode]);
 
+  // When row/header sizing changes, force AG Grid to recalc virtualization.
+  useEffect(() => {
+    const api: any = gridApiRef.current as any;
+    if (!api) return;
+    try {
+      api.resetRowHeights?.();
+    } catch {
+      // ignore
+    }
+    try {
+      api.refreshHeader?.();
+    } catch {
+      // ignore
+    }
+  }, [rowHeightPx, headerHeightPx]);
+
   const defaultColDef = useMemo<ColDef>(
     () => ({
       headerClass: 'ui-table-header',
@@ -647,6 +669,8 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
             // This resolves console error #239: "Theming API and CSS File Themes are both used".
             theme="legacy"
             rowModelType="clientSide"
+            rowHeight={typeof rowHeightPx === 'number' ? rowHeightPx : undefined}
+            headerHeight={typeof headerHeightPx === 'number' ? headerHeightPx : undefined}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             rowData={rows}

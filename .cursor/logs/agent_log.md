@@ -119,3 +119,4 @@
 2025-12-13T09:49:22.1276375Z - Fix UI Tweak row/header height sliders: removed .app-grid.grid-density-* overrides of --grid-* vars in index.css (they were overriding :root vars)
 2025-12-13T09:59:20.6779206Z - Finish Grid font size control: add gridFontSizePx to backend payload + seed defaults and docs
 2025-12-13T10:10:05.2990172Z - Add per-grid per-user Appearance modal in Columns panel (live preview + save via grid/preferences theme) and expose AppDataGrid handle methods for live refresh
+2025-12-13T10:16:55.000Z - Fix grid appearance sliders: use AgGridReact rowHeight/headerHeight props and apply cell/header padding via --grid-spacing for reliable live updates

@@ -353,6 +353,18 @@
 
   .app-grid__ag-root .ag-cell {
     line-height: 1.35;
+    /* Ensure spacing slider affects cell padding even in legacy theme CSS. */
+    padding-left: var(--grid-spacing);
+    padding-right: var(--grid-spacing);
+    padding-top: calc(var(--grid-spacing) * 0.5);
+    padding-bottom: calc(var(--grid-spacing) * 0.5);
+  }
+
+  /* Header padding (keep tight like legacy, but configurable). */
+  .app-grid__ag-root .ag-header-cell,
+  .app-grid__ag-root .ag-header-group-cell {
+    padding-left: var(--grid-spacing);
+    padding-right: var(--grid-spacing);
   }
 }
 
