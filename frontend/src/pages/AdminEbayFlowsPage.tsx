@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FixedHeader from '@/components/FixedHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -131,7 +131,7 @@ export default function AdminEbayFlowsPage() {
 
   const edgesPreview = useMemo(() => {
     const edges = detail?.graph?.edges || [];
-    return edges.map((e, idx) => {
+    return edges.map((e) => {
       const from = nodeLabel(e.from);
       const to = nodeLabel(e.to);
       const label = e.label ? ` (${e.label})` : '';
