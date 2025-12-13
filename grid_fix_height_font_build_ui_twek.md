@@ -89,6 +89,8 @@ UI Tweak is applied globally by `UITweakContext` which writes CSS custom propert
 2) **Grid row & header heights**
    - `gridRowHeightPx` → sets `--grid-row-height`
    - `gridHeaderHeightPx` → sets `--grid-header-height`
+3) **Grid font size**
+   - `gridFontSizePx` → sets `--grid-font-size` (and therefore AG Grid `--ag-font-size`)
 
 Also previously added:
 - `gridFontFamily`
@@ -116,6 +118,7 @@ Updated schema (JSON fields):
 - `gridSpacingPx`
 - `gridRowHeightPx`
 - `gridHeaderHeightPx`
+- `gridFontSizePx`
 
 Backend endpoints:
 - `GET /api/ui-tweak` (user)

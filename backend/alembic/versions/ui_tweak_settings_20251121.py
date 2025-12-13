@@ -30,6 +30,7 @@ DEFAULT_SETTINGS = {
     "gridSpacingPx": 4,
     "gridRowHeightPx": 22,
     "gridHeaderHeightPx": 24,
+    "gridFontSizePx": 12,
     "navActiveBg": "#2563eb",
     "navActiveText": "#ffffff",
     "navInactiveBg": "transparent",

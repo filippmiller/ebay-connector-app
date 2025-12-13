@@ -30,6 +30,7 @@ class UiTweakSettingsPayload(BaseModel):
     gridSpacingPx: int = Field(4, ge=0, le=32)
     gridRowHeightPx: int = Field(22, ge=10, le=80)
     gridHeaderHeightPx: int = Field(24, ge=10, le=120)
+    gridFontSizePx: int = Field(12, ge=8, le=24)
 
     navActiveBg: str = "#2563eb"
     navActiveText: str = "#ffffff"
