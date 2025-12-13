@@ -32,6 +32,85 @@ from app.models.sq_item import (
 
 router = APIRouter(prefix="/api/sq", tags=["sq_catalog"])
 
+DEFAULT_POLICY_ACCOUNT_KEY = "default"
+DEFAULT_POLICY_MARKETPLACE_ID = "EBAY_US"
+
+
+def _load_sku_business_policies(db: Session, *, sku_catalog_id: int) -> dict:
+    row = db.execute(
+        text(
+            """
+            SELECT
+              account_key,
+              marketplace_id,
+              shipping_policy_id,
+              payment_policy_id,
+              return_policy_id
+            FROM public.ebay_sku_business_policies
+            WHERE sku_catalog_id = :sku_catalog_id
+              AND account_key = :account_key
+              AND marketplace_id = :marketplace_id
+            LIMIT 1
+            """
+        ),
+        {
+            "sku_catalog_id": int(sku_catalog_id),
+            "account_key": DEFAULT_POLICY_ACCOUNT_KEY,
+            "marketplace_id": DEFAULT_POLICY_MARKETPLACE_ID,
+        },
+    ).mappings().first()
+    if not row:
+        return {
+            "ebay_policy_account_key": DEFAULT_POLICY_ACCOUNT_KEY,
+            "ebay_policy_marketplace_id": DEFAULT_POLICY_MARKETPLACE_ID,
+            "ebay_shipping_policy_id": None,
+            "ebay_payment_policy_id": None,
+            "ebay_return_policy_id": None,
+        }
+    return {
+        "ebay_policy_account_key": str(row.get("account_key") or DEFAULT_POLICY_ACCOUNT_KEY),
+        "ebay_policy_marketplace_id": str(row.get("marketplace_id") or DEFAULT_POLICY_MARKETPLACE_ID),
+        "ebay_shipping_policy_id": row.get("shipping_policy_id"),
+        "ebay_payment_policy_id": row.get("payment_policy_id"),
+        "ebay_return_policy_id": row.get("return_policy_id"),
+    }
+
+
+def _upsert_sku_business_policies(
+    db: Session,
+    *,
+    sku_catalog_id: int,
+    account_key: str,
+    marketplace_id: str,
+    shipping_policy_id: int | None,
+    payment_policy_id: int | None,
+    return_policy_id: int | None,
+) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO public.ebay_sku_business_policies
+              (sku_catalog_id, account_key, marketplace_id, shipping_policy_id, payment_policy_id, return_policy_id)
+            VALUES
+              (:sku_catalog_id, :account_key, :marketplace_id, :shipping_policy_id, :payment_policy_id, :return_policy_id)
+            ON CONFLICT (sku_catalog_id, account_key, marketplace_id)
+            DO UPDATE SET
+              shipping_policy_id = EXCLUDED.shipping_policy_id,
+              payment_policy_id  = EXCLUDED.payment_policy_id,
+              return_policy_id   = EXCLUDED.return_policy_id,
+              updated_at         = NOW()
+            """
+        ),
+        {
+            "sku_catalog_id": int(sku_catalog_id),
+            "account_key": account_key,
+            "marketplace_id": marketplace_id,
+            "shipping_policy_id": shipping_policy_id,
+            "payment_policy_id": payment_policy_id,
+            "return_policy_id": return_policy_id,
+        },
+    )
+
 
 @router.get("/models/search")
 async def search_models(
@@ -517,6 +596,22 @@ async def get_sq_item(
         else:
             data[key] = value
 
+    # Attach per-SKU business policies (Trading SellerProfiles IDs)
+    try:
+        data.update(_load_sku_business_policies(db, sku_catalog_id=int(item.id)))
+    except Exception as exc:
+        # Defensive: never fail SKU read because policies mapping table is missing
+        logger.warning("Failed to load ebay_sku_business_policies for sku_catalog_id=%s: %s", item.id, exc)
+        data.update(
+            {
+                "ebay_policy_account_key": DEFAULT_POLICY_ACCOUNT_KEY,
+                "ebay_policy_marketplace_id": DEFAULT_POLICY_MARKETPLACE_ID,
+                "ebay_shipping_policy_id": None,
+                "ebay_payment_policy_id": None,
+                "ebay_return_policy_id": None,
+            }
+        )
+
     result = SqItemRead.model_validate(data)
     # Log the result dict (excluding huge fields if any) to verify content
     logger.info(f"Returning Item Data: SKU={result.sku}, Title={result.title}, Price={result.price}")
@@ -560,6 +655,22 @@ async def create_sq_item(
     external_category_flag = bool(payload.get("external_category_flag"))
     category = payload.get("category")
     model_id = payload.get("model_id")
+
+    # Optional per-SKU business policy IDs (stored outside SKU_catalog)
+    policy_account_key = str(payload.get("ebay_policy_account_key") or DEFAULT_POLICY_ACCOUNT_KEY).strip() or DEFAULT_POLICY_ACCOUNT_KEY
+    policy_marketplace_id = str(payload.get("ebay_policy_marketplace_id") or DEFAULT_POLICY_MARKETPLACE_ID).strip() or DEFAULT_POLICY_MARKETPLACE_ID
+    try:
+        shipping_policy_id = int(payload["ebay_shipping_policy_id"]) if payload.get("ebay_shipping_policy_id") not in (None, "", "null") else None
+    except Exception:
+        shipping_policy_id = None
+    try:
+        payment_policy_id = int(payload["ebay_payment_policy_id"]) if payload.get("ebay_payment_policy_id") not in (None, "", "null") else None
+    except Exception:
+        payment_policy_id = None
+    try:
+        return_policy_id = int(payload["ebay_return_policy_id"]) if payload.get("ebay_return_policy_id") not in (None, "", "null") else None
+    except Exception:
+        return_policy_id = None
 
     # Canonical mapping: the legacy SKU_catalog table uses the ``Part``
     # column for the short human-friendly title. Ensure we always copy
@@ -612,6 +723,12 @@ async def create_sq_item(
 
     # Patch back the normalised / converted values into payload
     payload = dict(payload)
+    # Remove virtual fields so they don't get set as ad-hoc attributes on SqItem.
+    payload.pop("ebay_policy_account_key", None)
+    payload.pop("ebay_policy_marketplace_id", None)
+    payload.pop("ebay_shipping_policy_id", None)
+    payload.pop("ebay_payment_policy_id", None)
+    payload.pop("ebay_return_policy_id", None)
     payload["title"] = title
     payload["model"] = model
     payload["price"] = price_val
@@ -712,6 +829,16 @@ async def create_sq_item(
 
     db.add(item)
     try:
+        # Persist per-SKU policy mapping in the same transaction.
+        _upsert_sku_business_policies(
+            db,
+            sku_catalog_id=int(item.id),
+            account_key=policy_account_key,
+            marketplace_id=policy_marketplace_id,
+            shipping_policy_id=shipping_policy_id,
+            payment_policy_id=payment_policy_id,
+            return_policy_id=return_policy_id,
+        )
         db.commit()
         db.refresh(item)
     except Exception as e:  # pragma: no cover - defensive for prod
@@ -747,6 +874,22 @@ async def update_sq_item(
 
     data = payload.model_dump(exclude_unset=True)
 
+    # Handle virtual policy mapping fields separately (stored in public.ebay_sku_business_policies)
+    policy_account_key = str(data.pop("ebay_policy_account_key", None) or DEFAULT_POLICY_ACCOUNT_KEY).strip() or DEFAULT_POLICY_ACCOUNT_KEY
+    policy_marketplace_id = str(data.pop("ebay_policy_marketplace_id", None) or DEFAULT_POLICY_MARKETPLACE_ID).strip() or DEFAULT_POLICY_MARKETPLACE_ID
+    try:
+        shipping_policy_id = int(data.pop("ebay_shipping_policy_id")) if "ebay_shipping_policy_id" in data and data.get("ebay_shipping_policy_id") not in (None, "", "null") else None
+    except Exception:
+        shipping_policy_id = None
+    try:
+        payment_policy_id = int(data.pop("ebay_payment_policy_id")) if "ebay_payment_policy_id" in data and data.get("ebay_payment_policy_id") not in (None, "", "null") else None
+    except Exception:
+        payment_policy_id = None
+    try:
+        return_policy_id = int(data.pop("ebay_return_policy_id")) if "ebay_return_policy_id" in data and data.get("ebay_return_policy_id") not in (None, "", "null") else None
+    except Exception:
+        return_policy_id = None
+
     # Same Part/Title semantics as in create_sq_item: if the client
     # sends a non-empty title but leaves part empty/unspecified, treat
     # the title as the canonical Part value on SKU_catalog.
@@ -775,6 +918,15 @@ async def update_sq_item(
     item.record_updated_by = username
 
     try:
+        _upsert_sku_business_policies(
+            db,
+            sku_catalog_id=int(item.id),
+            account_key=policy_account_key,
+            marketplace_id=policy_marketplace_id,
+            shipping_policy_id=shipping_policy_id,
+            payment_policy_id=payment_policy_id,
+            return_policy_id=return_policy_id,
+        )
         db.commit()
         db.refresh(item)
     except Exception as e:  # pragma: no cover - defensive for prod
@@ -804,6 +956,14 @@ async def bulk_delete_sq_items(
 
     # Use SQLAlchemy delete for efficiency
     try:
+        # Clean up per-SKU policy mappings first (best-effort; does not assume FK).
+        try:
+            db.execute(
+                text("DELETE FROM public.ebay_sku_business_policies WHERE sku_catalog_id = ANY(:ids)"),
+                {"ids": ids},
+            )
+        except Exception as exc:
+            logger.warning("Failed to delete ebay_sku_business_policies for ids=%s: %s", ids, exc)
         stmt = (
             SqItem.__table__.delete()
             .where(SqItem.id.in_(ids))
@@ -989,6 +1149,72 @@ async def get_sq_dictionaries(
         {"code": "EBAY-US", "label": "eBay US", "site_id": 0},
     ]
 
+    # ---- EBAY BUSINESS POLICIES (read-only for SKU form) ----
+    policies_rows = []
+    defaults_row = None
+    try:
+        policies_rows = db.execute(
+            text(
+                """
+                SELECT
+                  id::text AS id,
+                  policy_type,
+                  policy_id,
+                  policy_name,
+                  policy_description,
+                  is_default,
+                  is_active,
+                  sort_order
+                FROM public.ebay_business_policies
+                WHERE account_key = :account_key
+                  AND marketplace_id = :marketplace_id
+                ORDER BY policy_type, is_default DESC, sort_order ASC, policy_name ASC
+                """
+            ),
+            {"account_key": DEFAULT_POLICY_ACCOUNT_KEY, "marketplace_id": DEFAULT_POLICY_MARKETPLACE_ID},
+        ).mappings().all()
+
+        defaults_row = db.execute(
+            text(
+                """
+                SELECT shipping_policy_id, payment_policy_id, return_policy_id
+                FROM public.ebay_business_policies_defaults
+                WHERE account_key = :account_key AND marketplace_id = :marketplace_id
+                """
+            ),
+            {"account_key": DEFAULT_POLICY_ACCOUNT_KEY, "marketplace_id": DEFAULT_POLICY_MARKETPLACE_ID},
+        ).first()
+    except Exception as exc:
+        logger.warning("Failed to load ebay_business_policies dictionaries: %s", exc)
+        policies_rows = []
+        defaults_row = None
+
+    policies_out = {"shipping": [], "payment": [], "return": []}
+    for r in (policies_rows or []):
+        pt = str(r.get("policy_type") or "").upper()
+        entry = {
+            "id": str(r.get("id")),
+            "policy_type": pt,
+            "policy_id": str(r.get("policy_id")),
+            "policy_name": str(r.get("policy_name") or ""),
+            "policy_description": r.get("policy_description"),
+            "is_default": bool(r.get("is_default")),
+            "is_active": bool(r.get("is_active")),
+            "sort_order": int(r.get("sort_order") or 0),
+        }
+        if pt == "SHIPPING":
+            policies_out["shipping"].append(entry)
+        elif pt == "PAYMENT":
+            policies_out["payment"].append(entry)
+        elif pt == "RETURN":
+            policies_out["return"].append(entry)
+
+    policies_defaults = {
+        "shipping_policy_id": str(defaults_row[0]) if defaults_row and defaults_row[0] is not None else None,
+        "payment_policy_id": str(defaults_row[1]) if defaults_row and defaults_row[1] is not None else None,
+        "return_policy_id": str(defaults_row[2]) if defaults_row and defaults_row[2] is not None else None,
+    }
+
     return {
         "internal_categories": internal_categories,
         "shipping_groups": shipping_groups,
@@ -1003,4 +1229,6 @@ async def get_sq_dictionaries(
         "listing_types": listing_types,
         "listing_durations": listing_durations,
         "sites": sites,
+        "ebay_business_policies": policies_out,
+        "ebay_business_policy_defaults": policies_defaults,
     }

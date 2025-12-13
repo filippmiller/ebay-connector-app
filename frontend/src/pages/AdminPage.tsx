@@ -47,6 +47,11 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">VerifyAddFixedPriceItem / AddFixedPriceItem with full XML request/response</p>
           </Card>
 
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ebay-business-policies-center')}>
+            <h2 className="text-lg font-semibold">Ebay Business Policies Center</h2>
+            <p className="text-sm text-gray-600 mt-1">Add/edit/delete Shipping/Payment/Return policy IDs (SellerProfiles)</p>
+          </Card>
+
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/db-explorer')}>
             <h2 className="text-lg font-semibold">DB Explorer</h2>
             <p className="text-sm text-gray-600 mt-1">Browse Supabase tables and recent rows (read-only)</p>

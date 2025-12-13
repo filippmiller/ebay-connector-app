@@ -51,6 +51,14 @@ class BusinessPolicyCreateDto(BaseModel):
     is_active: bool = True
 
 
+class BusinessPolicyUpdateDto(BaseModel):
+    policy_name: Optional[str] = None
+    policy_description: Optional[str] = None
+    is_default: Optional[bool] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
 @router.get("", response_model=BusinessPoliciesResponseDto, dependencies=[Depends(admin_required)])
 async def list_business_policies(
     account_key: str = Query("default"),
@@ -199,5 +207,162 @@ async def create_business_policy(
         is_active=bool(row.get("is_active")),
         sort_order=int(row.get("sort_order") or 0),
     )
+
+
+@router.put("/{policy_row_id}", response_model=BusinessPolicyDto, dependencies=[Depends(admin_required)])
+async def update_business_policy(
+    policy_row_id: str,
+    payload: BusinessPolicyUpdateDto,
+    db: Session = Depends(get_db),
+) -> BusinessPolicyDto:
+    """
+    Update editable fields for a policy row.
+
+    Notes:
+    - policy_type and policy_id are treated as immutable identifiers.
+    - If is_default is set to TRUE, we unset the existing default in the same scope/type.
+    """
+    row = db.execute(
+        text(
+            """
+            SELECT
+              id::text AS id,
+              account_key,
+              marketplace_id,
+              policy_type,
+              policy_id,
+              policy_name,
+              policy_description,
+              is_default,
+              is_active,
+              sort_order
+            FROM public.ebay_business_policies
+            WHERE id::text = :id
+            LIMIT 1
+            """
+        ),
+        {"id": policy_row_id},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="policy_not_found")
+
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        # No changes requested; return current row
+        return BusinessPolicyDto(
+            id=str(row["id"]),
+            policy_type=str(row["policy_type"]),
+            policy_id=str(row["policy_id"]),
+            policy_name=str(row["policy_name"]),
+            policy_description=row.get("policy_description"),
+            is_default=bool(row.get("is_default")),
+            is_active=bool(row.get("is_active")),
+            sort_order=int(row.get("sort_order") or 0),
+        )
+
+    try:
+        # If setting as default, unset old default for same scope/type.
+        if data.get("is_default") is True:
+            db.execute(
+                text(
+                    """
+                    UPDATE public.ebay_business_policies
+                    SET is_default = FALSE
+                    WHERE account_key = :account_key
+                      AND marketplace_id = :marketplace_id
+                      AND policy_type = :policy_type
+                      AND is_default = TRUE
+                      AND id::text <> :id
+                    """
+                ),
+                {
+                    "account_key": row["account_key"],
+                    "marketplace_id": row["marketplace_id"],
+                    "policy_type": row["policy_type"],
+                    "id": policy_row_id,
+                },
+            )
+
+        # Patch the row
+        upd_cols: list[str] = []
+        params: dict = {"id": policy_row_id}
+        for key in ("policy_name", "policy_description", "is_default", "sort_order", "is_active"):
+            if key in data:
+                upd_cols.append(f"{key} = :{key}")
+                params[key] = data[key]
+
+        if upd_cols:
+            db.execute(
+                text(
+                    f"""
+                    UPDATE public.ebay_business_policies
+                    SET {", ".join(upd_cols)}
+                    WHERE id::text = :id
+                    """
+                ),
+                params,
+            )
+
+        updated = db.execute(
+            text(
+                """
+                SELECT
+                  id::text AS id,
+                  policy_type,
+                  policy_id,
+                  policy_name,
+                  policy_description,
+                  is_default,
+                  is_active,
+                  sort_order
+                FROM public.ebay_business_policies
+                WHERE id::text = :id
+                LIMIT 1
+                """
+            ),
+            {"id": policy_row_id},
+        ).mappings().first()
+
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"failed_to_update_policy: {exc}")
+
+    if not updated:
+        raise HTTPException(status_code=500, detail="failed_to_update_policy")
+
+    return BusinessPolicyDto(
+        id=str(updated["id"]),
+        policy_type=str(updated["policy_type"]),
+        policy_id=str(updated["policy_id"]),
+        policy_name=str(updated["policy_name"]),
+        policy_description=updated.get("policy_description"),
+        is_default=bool(updated.get("is_default")),
+        is_active=bool(updated.get("is_active")),
+        sort_order=int(updated.get("sort_order") or 0),
+    )
+
+
+@router.delete("/{policy_row_id}", response_model=dict, dependencies=[Depends(admin_required)])
+async def delete_business_policy(
+    policy_row_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete a policy row by id."""
+    try:
+        res = db.execute(
+            text(
+                """
+                DELETE FROM public.ebay_business_policies
+                WHERE id::text = :id
+                """
+            ),
+            {"id": policy_row_id},
+        )
+        db.commit()
+        return {"deleted": int(res.rowcount or 0)}
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"failed_to_delete_policy: {exc}")
 
 

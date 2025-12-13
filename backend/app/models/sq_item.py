@@ -96,6 +96,14 @@ class SqItemBase(BaseModel):
     warehouse_id: Optional[int] = None
     storage_alias: Optional[str] = None
 
+    # eBay Business Policies (Trading SellerProfiles IDs) stored per SKU in
+    # public.ebay_sku_business_policies (not in SKU_catalog).
+    ebay_policy_account_key: Optional[str] = None
+    ebay_policy_marketplace_id: Optional[str] = None
+    ebay_shipping_policy_id: Optional[str | int | Decimal] = None
+    ebay_payment_policy_id: Optional[str | int | Decimal] = None
+    ebay_return_policy_id: Optional[str | int | Decimal] = None
+
     class Config:
         from_attributes = True
 

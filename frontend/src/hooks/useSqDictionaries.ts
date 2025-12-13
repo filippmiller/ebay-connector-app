@@ -36,6 +36,29 @@ export interface SiteDto {
   site_id: number;
 }
 
+export interface EbayBusinessPolicyDto {
+  id: string;
+  policy_type: 'SHIPPING' | 'PAYMENT' | 'RETURN';
+  policy_id: string;
+  policy_name: string;
+  policy_description?: string | null;
+  is_default: boolean;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface EbayBusinessPoliciesResponseDto {
+  shipping: EbayBusinessPolicyDto[];
+  payment: EbayBusinessPolicyDto[];
+  return: EbayBusinessPolicyDto[];
+}
+
+export interface EbayBusinessPoliciesDefaultsDto {
+  shipping_policy_id?: string | null;
+  payment_policy_id?: string | null;
+  return_policy_id?: string | null;
+}
+
 export interface DictionariesResponse {
   internal_categories: InternalCategoryDto[];
   shipping_groups: ShippingGroupDto[];
@@ -43,6 +66,8 @@ export interface DictionariesResponse {
   listing_types: ListingTypeDto[];
   listing_durations: ListingDurationDto[];
   sites: SiteDto[];
+  ebay_business_policies: EbayBusinessPoliciesResponseDto;
+  ebay_business_policy_defaults: EbayBusinessPoliciesDefaultsDto;
 }
 
 export interface UseSqDictionariesResult {

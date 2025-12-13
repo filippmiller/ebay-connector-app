@@ -56,6 +56,12 @@ interface SkuFormState {
   shippingGroupCode: string;
   shippingType: 'Flat' | 'Calculated';
   domesticOnly: boolean;
+  // eBay Business Policies (Trading SellerProfiles IDs) – stored per SKU
+  ebayPolicyAccountKey: string;
+  ebayPolicyMarketplaceId: string;
+  ebayShippingPolicyId: string;
+  ebayPaymentPolicyId: string;
+  ebayReturnPolicyId: string;
   // Identifiers & condition
   upc: string;
   upcDoesNotApply: boolean;
@@ -100,6 +106,11 @@ const EMPTY_FORM: SkuFormState = {
   shippingGroupCode: '',
   shippingType: 'Flat',
   domesticOnly: false,
+  ebayPolicyAccountKey: 'default',
+  ebayPolicyMarketplaceId: 'EBAY_US',
+  ebayShippingPolicyId: '',
+  ebayPaymentPolicyId: '',
+  ebayReturnPolicyId: '',
   upc: '',
   upcDoesNotApply: false,
   partNumber: '',
@@ -283,6 +294,11 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
           shippingGroupCode: item.shipping_group != null ? String(item.shipping_group) : '',
           shippingType: (item.shipping_type as 'Flat' | 'Calculated') || 'Flat',
           domesticOnly: Boolean(item.domestic_only_flag),
+          ebayPolicyAccountKey: item.ebay_policy_account_key != null ? String(item.ebay_policy_account_key) : 'default',
+          ebayPolicyMarketplaceId: item.ebay_policy_marketplace_id != null ? String(item.ebay_policy_marketplace_id) : 'EBAY_US',
+          ebayShippingPolicyId: item.ebay_shipping_policy_id != null ? String(item.ebay_shipping_policy_id) : '',
+          ebayPaymentPolicyId: item.ebay_payment_policy_id != null ? String(item.ebay_payment_policy_id) : '',
+          ebayReturnPolicyId: item.ebay_return_policy_id != null ? String(item.ebay_return_policy_id) : '',
           upc: item.upc === 'Does not apply' ? '' : item.upc || '',
           upcDoesNotApply: item.upc === 'Does not apply',
           partNumber: item.part_number || '',
@@ -340,6 +356,11 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
       siteId:
         prev.siteId ||
         (dictionaries.sites.length ? String(dictionaries.sites[0].site_id ?? '') : prev.siteId),
+      ebayPolicyAccountKey: prev.ebayPolicyAccountKey || 'default',
+      ebayPolicyMarketplaceId: prev.ebayPolicyMarketplaceId || 'EBAY_US',
+      ebayShippingPolicyId: prev.ebayShippingPolicyId || (dictionaries.ebay_business_policy_defaults?.shipping_policy_id || ''),
+      ebayPaymentPolicyId: prev.ebayPaymentPolicyId || (dictionaries.ebay_business_policy_defaults?.payment_policy_id || ''),
+      ebayReturnPolicyId: prev.ebayReturnPolicyId || (dictionaries.ebay_business_policy_defaults?.return_policy_id || ''),
     }));
   }, [open, mode, dictionaries, defaultUsedConditionId]);
 
@@ -493,6 +514,11 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
       shipping_group: form.shippingGroupCode.trim(),
       shipping_type: form.shippingType,
       domestic_only_flag: form.domesticOnly || undefined,
+      ebay_policy_account_key: form.ebayPolicyAccountKey || 'default',
+      ebay_policy_marketplace_id: form.ebayPolicyMarketplaceId || 'EBAY_US',
+      ebay_shipping_policy_id: form.ebayShippingPolicyId ? Number(form.ebayShippingPolicyId) : null,
+      ebay_payment_policy_id: form.ebayPaymentPolicyId ? Number(form.ebayPaymentPolicyId) : null,
+      ebay_return_policy_id: form.ebayReturnPolicyId ? Number(form.ebayReturnPolicyId) : null,
       upc: form.upcDoesNotApply ? 'Does not apply' : form.upc.trim() || null,
       part_number: form.partNumber.trim() || null,
       part: form.part.trim() || null,
@@ -841,6 +867,84 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   />
                   <span className="text-xs">Domestic only shipping</span>
                 </div>
+              </div>
+            </section>
+
+            {/* eBay Business Policies (SellerProfiles) */}
+            <section className="border rounded-md p-2 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="ui-section-title">eBay Business Policies (SellerProfiles)</h3>
+                <span className="text-[11px] text-gray-500">
+                  Stored per SKU; used by Trading API listing (Verify/AddFixedPriceItem).
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Shipping policy</label>
+                  <Select
+                    value={form.ebayShippingPolicyId}
+                    onValueChange={(value) => handleChange('ebayShippingPolicyId', value)}
+                  >
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="(use defaults / none)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">(none)</SelectItem>
+                      {(dictionaries?.ebay_business_policies?.shipping || [])
+                        .filter((p) => p.is_active)
+                        .map((p) => (
+                          <SelectItem key={p.id} value={String(p.policy_id)}>
+                            {p.policy_name} ({p.policy_id})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Payment policy</label>
+                  <Select
+                    value={form.ebayPaymentPolicyId}
+                    onValueChange={(value) => handleChange('ebayPaymentPolicyId', value)}
+                  >
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="(use defaults / none)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">(none)</SelectItem>
+                      {(dictionaries?.ebay_business_policies?.payment || [])
+                        .filter((p) => p.is_active)
+                        .map((p) => (
+                          <SelectItem key={p.id} value={String(p.policy_id)}>
+                            {p.policy_name} ({p.policy_id})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Return policy</label>
+                  <Select
+                    value={form.ebayReturnPolicyId}
+                    onValueChange={(value) => handleChange('ebayReturnPolicyId', value)}
+                  >
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="(use defaults / none)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">(none)</SelectItem>
+                      {(dictionaries?.ebay_business_policies?.return || [])
+                        .filter((p) => p.is_active)
+                        .map((p) => (
+                          <SelectItem key={p.id} value={String(p.policy_id)}>
+                            {p.policy_name} ({p.policy_id})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="text-[11px] text-gray-600">
+                Defaults are loaded from Supabase (`ebay_business_policies_defaults`). Manage policies in Admin → Ebay Business Policies Center.
               </div>
             </section>
 

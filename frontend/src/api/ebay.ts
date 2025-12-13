@@ -1,4 +1,4 @@
-﻿import { apiClient } from './client';
+import { apiClient } from './client';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
 
 export interface AdminEbayEvent {
@@ -451,6 +451,26 @@ export interface EbayBusinessPoliciesDefaultsDto {
   shipping_policy_id?: string | null;
   payment_policy_id?: string | null;
   return_policy_id?: string | null;
+}
+
+export interface EbayBusinessPolicyCreateDto {
+  account_key: string;
+  marketplace_id: string;
+  policy_type: 'SHIPPING' | 'PAYMENT' | 'RETURN';
+  policy_id: number;
+  policy_name: string;
+  policy_description?: string | null;
+  is_default?: boolean;
+  sort_order?: number;
+  is_active?: boolean;
+}
+
+export interface EbayBusinessPolicyUpdateDto {
+  policy_name?: string;
+  policy_description?: string | null;
+  is_default?: boolean;
+  sort_order?: number;
+  is_active?: boolean;
 }
 
 export interface EbayGlobalSiteDto {
@@ -953,6 +973,21 @@ export const ebayApi = {
   async getBusinessPolicyDefaults(accountKey: string = 'default', marketplaceId: string = 'EBAY_US'): Promise<EbayBusinessPoliciesDefaultsDto> {
     const params = new URLSearchParams({ account_key: accountKey, marketplace_id: marketplaceId });
     const response = await apiClient.get<EbayBusinessPoliciesDefaultsDto>(`/api/admin/ebay/business-policies/defaults?${params.toString()}`);
+    return response.data;
+  },
+
+  async createBusinessPolicy(payload: EbayBusinessPolicyCreateDto): Promise<EbayBusinessPolicyDto> {
+    const response = await apiClient.post<EbayBusinessPolicyDto>(`/api/admin/ebay/business-policies`, payload);
+    return response.data;
+  },
+
+  async updateBusinessPolicy(id: string, payload: EbayBusinessPolicyUpdateDto): Promise<EbayBusinessPolicyDto> {
+    const response = await apiClient.put<EbayBusinessPolicyDto>(`/api/admin/ebay/business-policies/${encodeURIComponent(id)}`, payload);
+    return response.data;
+  },
+
+  async deleteBusinessPolicy(id: string): Promise<{ deleted: number }> {
+    const response = await apiClient.delete<{ deleted: number }>(`/api/admin/ebay/business-policies/${encodeURIComponent(id)}`);
     return response.data;
   },
 
