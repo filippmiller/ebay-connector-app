@@ -320,22 +320,26 @@ def generate_auto_flows() -> List[Dict[str, Any]]:
             }
         )
 
-    # Legacy flow (explicitly documented even though it is not implemented in this repo)
+    # AssignStoragesForSoldItems worker (NEW implementation, 1-в-1 with legacy logic)
     flows.append(
         {
-            "flow_key": "legacy_assign_storages_for_sold_items",
-            "title": "Legacy: assign storages for sold items (tbl_ebay_seller_info_detail → tbl_parts_inventory SOLD)",
-            "summary": "Matches sold ItemID rows to oldest available inventory rows and marks inventory as SOLD (StatusSKU=5, JustSoldFlag=1).",
-            "category": "legacy",
+            "flow_key": "worker_assign_storages_for_sold_items",
+            "title": "Assign storages for sold items (tbl_ebay_seller_info_detail → tbl_parts_inventory SOLD)",
+            "summary": "Matches sold ItemID rows to oldest available inventory rows using ROW_NUMBER() and marks inventory as SOLD (StatusSKU=5, JustSoldFlag=1). Legacy-compatible process.",
+            "category": "sold",
             "keywords": [
-                "legacy",
                 "sold",
+                "assign_storages",
                 "tbl_ebay_seller_info_detail",
                 "tbl_parts_inventory",
                 "tbl_parts_inventory_detail",
                 "statussku",
                 "justsoldflag",
                 "oldest",
+                "row_number",
+                "storageid",
+                "storagealiasid",
+                "partsinvdetail_id",
             ],
             "graph": {
                 "nodes": {
@@ -345,38 +349,51 @@ def generate_auto_flows() -> List[Dict[str, Any]]:
                         "table": "tbl_ebay_seller_info_detail",
                         "reads": True,
                         "writes": True,
-                        "notes": "Queue of sold items awaiting storage assignment (StorageID is NULL).",
+                        "notes": "Queue of sold items awaiting storage assignment (StorageID IS NULL, ItemID exists in tbl_parts_inventory, PartsInvDetail_ID <> -1).",
                     },
-                    "job:legacy:jobAssignStoragesForSoldItems.php": {
-                        "type": "external_job",
-                        "label": "jobAssignStoragesForSoldItems.php",
-                        "notes": "Legacy MSSQL job. Uses ROW_NUMBER() partitioned by ItemID and orders by ID ASC for oldest-first matching.",
+                    "db:public.tbl_ebay_seller_info": {
+                        "type": "db_table",
+                        "label": "tbl_ebay_seller_info",
+                        "table": "tbl_ebay_seller_info",
+                        "reads": True,
+                        "notes": "Source for EbayID (SellerID) via SellerInfo_ID.",
+                    },
+                    "app:worker:AssignStoragesForSoldItemsWorker": {
+                        "type": "worker",
+                        "label": "AssignStoragesForSoldItemsWorker",
+                        "api_family": "assign_storages_for_sold_items",
+                        "file": "backend/app/services/ebay_workers/assign_storages_for_sold_items_worker.py",
+                        "entrypoints": [
+                            {"type": "endpoint", "method": "POST", "path": "/ebay/workers/run?api=assign_storages_for_sold_items", "notes": "Manual worker run"},
+                        ],
                     },
                     "db:public.tbl_parts_inventory": {
                         "type": "db_table",
                         "label": "tbl_parts_inventory",
                         "table": "tbl_parts_inventory",
+                        "reads": True,
                         "writes": True,
-                        "notes": "Sets StatusSKU=5, JustSoldFlag=1, StatusUpdated fields.",
+                        "notes": "Sets StatusSKU=5, JustSoldFlag=1, StatusUpdated=NOW(), StatusUpdatedBy='system', JustSoldFlag_created/updated=NOW().",
                     },
                     "db:public.tbl_parts_inventory_detail": {
                         "type": "db_table",
                         "label": "tbl_parts_inventory_detail",
                         "table": "tbl_parts_inventory_detail",
                         "reads": True,
-                        "notes": "Oldest rule uses ID ASC for pairing duplicates.",
+                        "notes": "Oldest rule uses ID ASC for pairing duplicates (ROW_NUMBER() PARTITION BY ItemID ORDER BY ID ASC).",
                     },
                 },
                 "edges": [
-                    {"from": "db:public.tbl_ebay_seller_info_detail", "to": "job:legacy:jobAssignStoragesForSoldItems.php", "label": "select sold items"},
-                    {"from": "job:legacy:jobAssignStoragesForSoldItems.php", "to": "db:public.tbl_parts_inventory_detail", "label": "match oldest inventory rows"},
-                    {"from": "job:legacy:jobAssignStoragesForSoldItems.php", "to": "db:public.tbl_ebay_seller_info_detail", "label": "update StorageID/StorageAliasID/PartsInvDetail_ID"},
-                    {"from": "job:legacy:jobAssignStoragesForSoldItems.php", "to": "db:public.tbl_parts_inventory", "label": "mark SOLD"},
+                    {"from": "db:public.tbl_ebay_seller_info_detail", "to": "app:worker:AssignStoragesForSoldItemsWorker", "label": "select sold items (StorageID IS NULL)"},
+                    {"from": "db:public.tbl_ebay_seller_info", "to": "app:worker:AssignStoragesForSoldItemsWorker", "label": "read EbayID via SellerInfo_ID"},
+                    {"from": "app:worker:AssignStoragesForSoldItemsWorker", "to": "db:public.tbl_parts_inventory_detail", "label": "match oldest inventory rows (ROW_NUMBER by ItemID, ID ASC)"},
+                    {"from": "app:worker:AssignStoragesForSoldItemsWorker", "to": "db:public.tbl_ebay_seller_info_detail", "label": "update StorageID/StorageAliasID/PartsInvDetail_ID"},
+                    {"from": "app:worker:AssignStoragesForSoldItemsWorker", "to": "db:public.tbl_parts_inventory", "label": "mark SOLD (StatusSKU=5, JustSoldFlag=1)"},
                 ],
             },
             "source": {
-                "mode": "manual_seed",
-                "notes": "Kept for cutover parity with legacy system; implementation in new backend planned.",
+                "mode": "auto",
+                "notes": "New implementation matching legacy jobAssignStoragesForSoldItems.php logic exactly (ROW_NUMBER oldest-first matching).",
             },
         }
     )
