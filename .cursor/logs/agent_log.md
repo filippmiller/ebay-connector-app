@@ -113,3 +113,5 @@
 2025-12-13T08:31:49.7497939Z - Update AG Grid selection config: migrate to rowSelection object API (remove deprecated props/checkbox colDef) on branch cursor/rowselection-object-api
 2025-12-13T08:47:37.7785248Z - Merged cursor/rowselection-object-api into main (fast-forward) and preparing push to origin/main
 2025-12-13T08:59:13.7159162Z - Fix Ledger 2 blank AG Grid by giving container a definite height (h-[60vh] min-h-[360px]) in Accounting2Page
+2025-12-13T09:15:05.6623601Z - Start grid styling unification: inspect UITweakContext, DataGridPage, index.css AG vars; plan reusable grid wrapper + legacy defaults
+2025-12-13T09:21:46.3761823Z - Implement reusable GridSection wrapper + legacy-like global grid defaults; wire grid density to UI Tweak; add grid font family/weights controls in AdminUITweakPage

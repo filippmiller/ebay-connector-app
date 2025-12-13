@@ -46,6 +46,7 @@ export default function AdminUITweakPage() {
                 value={settings.fontScale}
                 onChange={(e) => handleNumberChange('fontScale', e.target.value)}
                 className="w-full"
+                aria-label="Global font / UI scale"
               />
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span>Smaller</span>
@@ -64,6 +65,7 @@ export default function AdminUITweakPage() {
                 value={settings.navScale}
                 onChange={(e) => handleNumberChange('navScale', e.target.value)}
                 className="w-full"
+                aria-label="Top navigation size"
               />
               <div className="flex items-center justify-between text-xs text-gray-600">
                 <span>Current</span>
@@ -78,11 +80,78 @@ export default function AdminUITweakPage() {
                 className="border rounded px-2 py-1 text-sm bg-white"
                 value={settings.gridDensity}
                 onChange={(e) => update({ gridDensity: e.target.value as any })}
+                aria-label="Grid density"
               >
                 <option value="compact">Compact</option>
                 <option value="normal">Normal</option>
                 <option value="comfortable">Comfortable</option>
               </select>
+              <div className="text-[11px] text-gray-500">
+                Controls row height, header height, padding (spacing) and base grid font size.
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-gray-600">Grid font family</label>
+              <select
+                className="border rounded px-2 py-1 text-sm bg-white w-full"
+                value={settings.gridFontFamily}
+                onChange={(e) => update({ gridFontFamily: e.target.value })}
+                aria-label="Grid font family"
+              >
+                <option value={'"Tahoma","Segoe UI",Arial,sans-serif'}>Tahoma / Segoe UI (Legacy-like)</option>
+                <option value={'"Segoe UI",system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif'}>
+                  System UI
+                </option>
+                <option value={'"IBM Plex Sans",system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif'}>
+                  IBM Plex Sans
+                </option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-gray-600">Grid header weight</label>
+                <select
+                  className="border rounded px-2 py-1 text-sm bg-white w-full"
+                  value={settings.typography?.fontWeight?.tableHeader || 'bold'}
+                  onChange={(e) =>
+                    update({
+                      typography: {
+                        ...settings.typography,
+                        fontWeight: { ...(settings.typography?.fontWeight || {}), tableHeader: e.target.value as any },
+                      },
+                    })
+                  }
+                  aria-label="Grid header font weight"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="medium">Medium</option>
+                  <option value="semibold">Semibold</option>
+                  <option value="bold">Bold</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-gray-600">Grid cell weight</label>
+                <select
+                  className="border rounded px-2 py-1 text-sm bg-white w-full"
+                  value={settings.typography?.fontWeight?.tableCell || 'medium'}
+                  onChange={(e) =>
+                    update({
+                      typography: {
+                        ...settings.typography,
+                        fontWeight: { ...(settings.typography?.fontWeight || {}), tableCell: e.target.value as any },
+                      },
+                    })
+                  }
+                  aria-label="Grid cell font weight"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="medium">Medium</option>
+                  <option value="semibold">Semibold</option>
+                  <option value="bold">Bold</option>
+                </select>
+              </div>
             </div>
           </Card>
 
@@ -97,6 +166,7 @@ export default function AdminUITweakPage() {
                     className="h-8 w-10 rounded border border-gray-200 p-0"
                     value={normalizeColorForPicker(settings.navActiveBg)}
                     onChange={(e) => update({ navActiveBg: e.target.value })}
+                    aria-label="Nav active background color"
                   />
                   <Input
                     type="text"
@@ -114,6 +184,7 @@ export default function AdminUITweakPage() {
                     className="h-8 w-10 rounded border border-gray-200 p-0"
                     value={normalizeColorForPicker(settings.navActiveText)}
                     onChange={(e) => update({ navActiveText: e.target.value })}
+                    aria-label="Nav active text color"
                   />
                   <Input
                     type="text"
@@ -131,6 +202,7 @@ export default function AdminUITweakPage() {
                     className="h-8 w-10 rounded border border-gray-200 p-0"
                     value={normalizeColorForPicker(settings.navInactiveBg)}
                     onChange={(e) => update({ navInactiveBg: e.target.value })}
+                    aria-label="Nav inactive background color"
                   />
                   <Input
                     type="text"
@@ -148,6 +220,7 @@ export default function AdminUITweakPage() {
                     className="h-8 w-10 rounded border border-gray-200 p-0"
                     value={normalizeColorForPicker(settings.navInactiveText)}
                     onChange={(e) => update({ navInactiveText: e.target.value })}
+                    aria-label="Nav inactive text color"
                   />
                   <Input
                     type="text"
@@ -181,6 +254,7 @@ export default function AdminUITweakPage() {
                   className="h-8 w-10 rounded border border-gray-200 p-0"
                   value={normalizeColorForPicker(settings.gridTheme.headerBg)}
                   onChange={(e) => update({ gridTheme: { ...settings.gridTheme, headerBg: e.target.value } })}
+                  aria-label="Grid header background color"
                 />
                 <Input
                   type="text"
@@ -198,6 +272,7 @@ export default function AdminUITweakPage() {
                   className="h-8 w-10 rounded border border-gray-200 p-0"
                   value={normalizeColorForPicker(settings.gridTheme.headerText)}
                   onChange={(e) => update({ gridTheme: { ...settings.gridTheme, headerText: e.target.value } })}
+                  aria-label="Grid header text color"
                 />
                 <Input
                   type="text"
@@ -215,6 +290,7 @@ export default function AdminUITweakPage() {
                   className="h-8 w-10 rounded border border-gray-200 p-0"
                   value={normalizeColorForPicker(settings.gridTheme.rowBg)}
                   onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowBg: e.target.value } })}
+                  aria-label="Grid row background color"
                 />
                 <Input
                   type="text"
@@ -232,6 +308,7 @@ export default function AdminUITweakPage() {
                   className="h-8 w-10 rounded border border-gray-200 p-0"
                   value={normalizeColorForPicker(settings.gridTheme.rowAltBg)}
                   onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowAltBg: e.target.value } })}
+                  aria-label="Grid alternate row background color"
                 />
                 <Input
                   type="text"
@@ -249,6 +326,7 @@ export default function AdminUITweakPage() {
                   className="h-8 w-10 rounded border border-gray-200 p-0"
                   value={normalizeColorForPicker(settings.gridTheme.rowHoverBg)}
                   onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowHoverBg: e.target.value } })}
+                  aria-label="Grid row hover background color"
                 />
                 <Input
                   type="text"
@@ -266,6 +344,7 @@ export default function AdminUITweakPage() {
                   className="h-8 w-10 rounded border border-gray-200 p-0"
                   value={normalizeColorForPicker(settings.gridTheme.rowSelectedBg)}
                   onChange={(e) => update({ gridTheme: { ...settings.gridTheme, rowSelectedBg: e.target.value } })}
+                  aria-label="Grid selected row background color"
                 />
                 <Input
                   type="text"

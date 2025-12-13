@@ -57,6 +57,8 @@ export interface UITweakSettings {
   navScale: number; // e.g. 0.8 – 2.0
   /** Optional global grid density preset mapped to CSS vars. */
   gridDensity: GridDensityPreset;
+  /** Default font family for data grids (AG Grid + legacy tables). */
+  gridFontFamily: string;
   /** Colors for top nav active/inactive states (CSS color strings). */
   navActiveBg: string;
   navActiveText: string;
@@ -87,8 +89,9 @@ const DEFAULT_TYPOGRAPHY: UiTypographySettings = {
     pageTitle: 'bold',
     sectionTitle: 'semibold',
     fieldLabel: 'medium',
-    tableHeader: 'medium',
-    tableCell: 'normal',
+    // Legacy-like grids: darker and slightly heavier text.
+    tableHeader: 'bold',
+    tableCell: 'medium',
     buttonText: 'medium',
   },
   microLabelUppercase: false,
@@ -114,7 +117,7 @@ const DEFAULT_CONTROLS: UiControlSizeSettings = {
 
 const DEFAULT_GRID_THEME: UiGridThemeSettings = {
   headerBg: '#f3f4f6', // gray-100
-  headerText: '#4b5563', // gray-600
+  headerText: '#111827', // gray-900 (legacy-like)
   rowBg: '#ffffff',
   rowAltBg: '#f9fafb', // gray-50
   rowHoverBg: '#eef2ff', // indigo-50
@@ -124,7 +127,10 @@ const DEFAULT_GRID_THEME: UiGridThemeSettings = {
 export const DEFAULT_UI_TWEAK: UITweakSettings = {
   fontScale: 1,
   navScale: 1,
-  gridDensity: 'normal',
+  // Default to legacy-like dense grids.
+  gridDensity: 'compact',
+  // Legacy (Windows/table) feel: crisp system font.
+  gridFontFamily: '"Tahoma","Segoe UI",Arial,sans-serif',
   navActiveBg: '#2563eb', // blue-600
   navActiveText: '#ffffff',
   navInactiveBg: 'transparent',
@@ -216,18 +222,24 @@ function applySettingsToDocument(settings: UITweakSettings) {
   // Map grid density to base CSS custom properties used by .app-grid.
   // These values are chosen to roughly match the existing density presets.
   if (settings.gridDensity === 'compact') {
-    root.style.setProperty('--grid-row-height', '24px');
-    root.style.setProperty('--grid-header-height', '26px');
-    root.style.setProperty('--grid-font-size', '11px');
+    // Legacy-like dense tables
+    root.style.setProperty('--grid-row-height', '22px');
+    root.style.setProperty('--grid-header-height', '24px');
+    root.style.setProperty('--grid-font-size', '12px');
+    root.style.setProperty('--grid-spacing', '4px');
   } else if (settings.gridDensity === 'comfortable') {
     root.style.setProperty('--grid-row-height', '40px');
     root.style.setProperty('--grid-header-height', '40px');
     root.style.setProperty('--grid-font-size', '14px');
+    root.style.setProperty('--grid-spacing', '10px');
   } else {
     root.style.setProperty('--grid-row-height', '32px');
     root.style.setProperty('--grid-header-height', '32px');
     root.style.setProperty('--grid-font-size', '13px');
+    root.style.setProperty('--grid-spacing', '6px');
   }
+
+  root.style.setProperty('--grid-font-family', settings.gridFontFamily || '"Tahoma","Segoe UI",Arial,sans-serif');
 
   // Grid theme colors
   const g = settings.gridTheme;

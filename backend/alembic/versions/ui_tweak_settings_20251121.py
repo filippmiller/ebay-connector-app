@@ -25,7 +25,8 @@ TABLE_NAME = "ui_tweak_settings"
 DEFAULT_SETTINGS = {
     "fontScale": 1.0,
     "navScale": 1.0,
-    "gridDensity": "normal",
+    "gridDensity": "compact",
+    "gridFontFamily": '"Tahoma","Segoe UI",Arial,sans-serif',
     "navActiveBg": "#2563eb",
     "navActiveText": "#ffffff",
     "navInactiveBg": "transparent",

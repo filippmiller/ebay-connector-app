@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import api from '@/lib/apiClient';
 import { DataGridPage } from '@/components/DataGridPage';
 import { parseManualRawText, saveManualStatementImpl } from './Accounting2ManualHelpers';
+import { GridSection } from '@/components/datagrid/GridSection';
 
 const TD_SUMMARY_FIELD_CONFIG: { key: string; label: string }[] = [
   { key: 'beginning_balance', label: 'Beginning balance (Начальный баланс)' },
@@ -1472,9 +1473,7 @@ function LedgerTab2() {
         </div>
       </Card>
 
-      {/* AG Grid requires a container with a definite height (not just min-height) to render.
-          Without this, the grid can initialize (no console errors) but remain visually empty. */}
-      <div className="h-[60vh] min-h-[360px] overflow-hidden border rounded bg-white">
+      <GridSection mode="fixed">
         <DataGridPage
           gridKey="ledger_transactions"
           title="Ledger 2"
@@ -1482,7 +1481,7 @@ function LedgerTab2() {
           selectionMode="multiRow"
           onSelectionChange={(rows) => setSelectedIds(rows.map((r: any) => r.id))}
         />
-      </div>
+      </GridSection>
 
       {stmtModalOpen && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

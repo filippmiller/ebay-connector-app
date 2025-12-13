@@ -64,6 +64,8 @@
     --grid-row-height: 32px;
     --grid-header-height: 32px;
     --grid-font-size: 13px;
+    --grid-spacing: 6px;
+    --grid-font-family: "Tahoma","Segoe UI",Arial,sans-serif;
     --grid-header-bg: #f3f4f6;
     /* gray-100 */
     --grid-header-text-color: #4b5563;
@@ -128,13 +130,24 @@
 
   .app-grid__ag-root {
     font-size: var(--grid-font-size);
-    /* Force denser, darker legacy-like typography across all AG grids */
+    font-family: var(--grid-font-family);
+
+    /* Wire global grid vars into AG Grid theme params (CSS variables).
+       This is the central place where we control density/typography/colors
+       for ALL AG grids, and it is driven by UI Tweak settings. */
+    --ag-font-family: var(--grid-font-family);
     --ag-font-size: var(--grid-font-size);
-    --ag-row-height: 28px;
-    --ag-header-height: 30px;
-    --ag-foreground-color: #111827;
-    --ag-header-foreground-color: #111827;
-    --ag-secondary-foreground-color: #111827;
+    --ag-font-weight: var(--ui-font-weight-table-cell);
+    --ag-header-font-weight: var(--ui-font-weight-table-header);
+
+    --ag-spacing: var(--grid-spacing);
+    --ag-row-height: var(--grid-row-height);
+    --ag-header-height: var(--grid-header-height);
+
+    --ag-foreground-color: var(--ui-color-text-primary);
+    --ag-secondary-foreground-color: var(--ui-color-text-secondary);
+    --ag-header-foreground-color: var(--grid-header-text-color);
+    --ag-background-color: var(--grid-row-bg);
   }
 
   /* Legacy semantic cell styling (shared across all grids using AppDataGrid). */
@@ -214,21 +227,24 @@
   }
 
   .app-grid.grid-density-compact {
-    --grid-row-height: 24px;
-    --grid-header-height: 26px;
-    --grid-font-size: 11px;
+    --grid-row-height: 22px;
+    --grid-header-height: 24px;
+    --grid-font-size: 12px;
+    --grid-spacing: 4px;
   }
 
   .app-grid.grid-density-normal {
     --grid-row-height: 28px;
     --grid-header-height: 30px;
     --grid-font-size: 12px;
+    --grid-spacing: 6px;
   }
 
   .app-grid.grid-density-comfortable {
     --grid-row-height: 34px;
     --grid-header-height: 34px;
     --grid-font-size: 13px;
+    --grid-spacing: 10px;
   }
 
   .app-grid.grid-theme-default {

@@ -5,6 +5,7 @@ import api from '@/lib/apiClient';
 import { useGridPreferences } from '@/hooks/useGridPreferences';
 import { AppDataGrid, type AppDataGridHandle } from '@/components/datagrid/AppDataGrid';
 import { useToast } from '@/hooks/use-toast';
+import { useUITweak } from '@/contexts/UITweakContext';
 
 export interface GridColumnMeta {
   name: string;
@@ -80,6 +81,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   const { toast } = useToast();
 
   const gridPrefs = useGridPreferences(gridKey);
+  const { settings: uiTweak } = useUITweak();
 
   // Helper to stringify extraParams for memoization
   const extraParamsKey = useMemo(() => {
@@ -322,13 +324,12 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   };
 
   const gridTitle = title || gridKey;
-  const density = gridPrefs.theme?.density || 'normal';
   const colorScheme = gridPrefs.theme?.colorScheme || 'default';
   const buttonLayout = gridPrefs.theme?.buttonLayout || 'right';
   const currentSort = gridPrefs.columns?.sort || null;
 
-  // Theme styling
-  const legacyBodyPreset = gridPrefs.theme?.fontSize || 'medium';
+  // Theme styling (global defaults come from UI Tweak; per-grid theme still supported where needed)
+  const legacyBodyPreset = gridPrefs.theme?.fontSize || 'small';
   const bodyLevelFromPreset = legacyBodyPreset === 'small' ? 3 : legacyBodyPreset === 'large' ? 8 : 5;
   const bodyFontSizeLevel = typeof gridPrefs.theme?.bodyFontSizeLevel === 'number' ? gridPrefs.theme.bodyFontSizeLevel : bodyLevelFromPreset;
   const clampedBodyLevel = Math.min(10, Math.max(1, bodyFontSizeLevel));
@@ -336,7 +337,10 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   const gridBackgroundColor = gridPrefs.theme?.backgroundColor as string | undefined;
 
   return (
-    <div className={`flex flex-col h-full app-grid grid-density-${density} grid-theme-${colorScheme}`} style={{ fontSize: bodyFontSizePx, backgroundColor: gridBackgroundColor || undefined }}>
+    <div
+      className={`flex flex-col h-full app-grid grid-density-${uiTweak.gridDensity} grid-theme-${colorScheme}`}
+      style={{ fontSize: bodyFontSizePx, backgroundColor: gridBackgroundColor || undefined }}
+    >
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-3">
         <div className="flex items-center gap-3">
           {!hideTitle && (

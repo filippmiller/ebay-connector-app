@@ -26,6 +26,7 @@ class UiTweakSettingsPayload(BaseModel):
     fontScale: float = Field(1.0, ge=0.5, le=3.0)
     navScale: float = Field(1.0, ge=0.5, le=3.0)
     gridDensity: str = Field("normal", pattern="^(compact|normal|comfortable)$")
+    gridFontFamily: str = '"Tahoma","Segoe UI",Arial,sans-serif'
 
     navActiveBg: str = "#2563eb"
     navActiveText: str = "#ffffff"

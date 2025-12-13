@@ -53,11 +53,11 @@ INSERT INTO public.ui_tweak_settings (settings)
 SELECT jsonb_build_object(
     'fontScale', 1.0,
     'navScale', 1.0,
-    'gridDensity', 'normal',
+    'gridDensity', 'compact',
+    'gridFontFamily', '"Tahoma","Segoe UI",Arial,sans-serif',
     'navActiveBg', '#2563eb',
     'navActiveText', '#ffffff',
     'navInactiveBg', 'transparent',
     'navInactiveText', '#374151'
 )
 WHERE NOT EXISTS (SELECT 1 FROM public.ui_tweak_settings);
-
