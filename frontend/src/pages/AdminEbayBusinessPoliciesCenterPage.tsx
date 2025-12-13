@@ -22,6 +22,9 @@ export default function AdminEbayBusinessPoliciesCenterPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [policies, setPolicies] = useState<{ shipping: EbayBusinessPolicyDto[]; payment: EbayBusinessPolicyDto[]; return: EbayBusinessPolicyDto[] } | null>(null);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
+  const [deactivateMissing, setDeactivateMissing] = useState(false);
 
   const [createType, setCreateType] = useState<'SHIPPING' | 'PAYMENT' | 'RETURN'>('SHIPPING');
   const [createPolicyId, setCreatePolicyId] = useState('');
@@ -48,6 +51,45 @@ export default function AdminEbayBusinessPoliciesCenterPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const rows = await ebayApi.getBinEbayAccounts(true);
+        if (cancelled) return;
+        setAccounts(rows || []);
+      } catch {
+        // ignore
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSyncFromEbay = async () => {
+    if (!selectedAccountId) {
+      setError('Select eBay account to sync from');
+      return;
+    }
+    try {
+      setLoading(true);
+      setError(null);
+      await ebayApi.syncBusinessPoliciesFromEbay({
+        account_id: selectedAccountId,
+        account_key: accountKey,
+        marketplace_id: marketplaceId,
+        deactivate_missing: deactivateMissing,
+      });
+      await load();
+    } catch (e: any) {
+      setError(String(e?.response?.data?.detail || e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCreate = async () => {
     const policyIdNum = Number(createPolicyId);
@@ -140,6 +182,31 @@ export default function AdminEbayBusinessPoliciesCenterPage() {
 
           <Card className="p-3">
             <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[260px]">
+                <div className="text-xs text-gray-700 mb-1">Sync source eBay account</div>
+                <select
+                  className="border rounded px-2 py-1 text-sm h-8 w-full"
+                  value={selectedAccountId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedAccountId(id);
+                    const a = (accounts || []).find((x) => String(x.id) === String(id));
+                    if (a) {
+                      // Recommended: use account.id as account_key so mappings are per-account.
+                      setAccountKey(String(a.id));
+                      setMarketplaceId(String(a.marketplace_id || 'EBAY_US'));
+                    }
+                  }}
+                  aria-label="eBay account"
+                >
+                  <option value="">Select account…</option>
+                  {(accounts || []).map((a) => (
+                    <option key={String(a.id)} value={String(a.id)}>
+                      {(a.username || a.house_name || a.id) + (a.marketplace_id ? ` • ${a.marketplace_id}` : '')}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <div className="text-xs text-gray-700 mb-1">account_key</div>
                 <Input className="h-8 text-sm w-48" value={accountKey} onChange={(e) => setAccountKey(e.target.value)} />
@@ -148,8 +215,15 @@ export default function AdminEbayBusinessPoliciesCenterPage() {
                 <div className="text-xs text-gray-700 mb-1">marketplace_id</div>
                 <Input className="h-8 text-sm w-40" value={marketplaceId} onChange={(e) => setMarketplaceId(e.target.value)} />
               </div>
+              <label className="text-xs flex items-center gap-2 h-8 mb-[2px]">
+                <input type="checkbox" checked={deactivateMissing} onChange={(e) => setDeactivateMissing(e.target.checked)} />
+                deactivate missing
+              </label>
               <Button size="sm" onClick={() => void load()} disabled={loading}>
                 {loading ? 'Loading…' : 'Reload'}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void handleSyncFromEbay()} disabled={loading}>
+                Sync from eBay
               </Button>
             </div>
             {error && <div className="mt-2 text-sm text-red-600">{error}</div>}

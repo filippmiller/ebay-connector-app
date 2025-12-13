@@ -122,4 +122,5 @@
 2025-12-13T10:16:55.000Z - Fix grid appearance sliders: use AgGridReact rowHeight/headerHeight props and apply cell/header padding via --grid-spacing for reliable live updates
 2025-12-13T12:40:50.592Z - Added Admin eBay Flow Catalog: Supabase ebay_flow_catalog table + backend regenerate/search endpoints + frontend Admin page (/admin/ebay-flows)
 2025-12-13T12:50:21Z - Implemented ShippingGroup→BusinessPolicy mapping layer: Supabase ebay_shipping_group_policy_mappings + backend admin CRUD + UI page (/admin/ebay-policy-mappings) + SKU form auto-apply based on mapping
+2025-12-13T13:26:00Z - Bundled upgrades: seed/coverage/bulk-apply for shipping-group mappings; sync Business Policies from eBay account API; auto-resolve SellerProfiles IDs in BIN Trading debug from SKU/mapping/defaults
 2025-12-13T12:55:10Z - Extended eBay Flow Catalog generator with BIN Trading debug + Business Policies Center + Policy Mappings flows (auto_seed entries)

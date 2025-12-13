@@ -562,9 +562,164 @@ async def _call_trading(
         precheck["ItemSpecifics.Compatible Brand"] = compatible_brand
     mode = (req.policies_mode or "seller_profiles").strip().lower()
     if mode == "seller_profiles":
-        precheck["Item.SellerProfiles.PaymentProfileID"] = req.payment_profile_id
-        precheck["Item.SellerProfiles.ReturnProfileID"] = req.return_profile_id
-        precheck["Item.SellerProfiles.ShippingProfileID"] = req.shipping_profile_id
+        # Auto-resolve SellerProfiles IDs (SKU mapping -> ShippingGroup mapping -> defaults)
+        policy_account_key = (req.account_id or "default").strip() or "default"
+        policy_marketplace_id = "EBAY_US"
+        if req.account_id:
+            acc_row = db.query(EbayAccount).filter(EbayAccount.id == req.account_id).first()
+            if acc_row and acc_row.marketplace_id:
+                policy_marketplace_id = str(acc_row.marketplace_id).strip() or "EBAY_US"
+
+        def _to_bool_or_none(v: Any) -> Optional[bool]:
+            if v is None:
+                return None
+            if isinstance(v, bool):
+                return v
+            try:
+                return bool(int(v))
+            except Exception:
+                s = str(v).strip().lower()
+                if s in {"true", "t", "yes", "y", "1"}:
+                    return True
+                if s in {"false", "f", "no", "n", "0"}:
+                    return False
+            return None
+
+        shipping_profile_id = req.shipping_profile_id
+        payment_profile_id = req.payment_profile_id
+        return_profile_id = req.return_profile_id
+
+        # 1) Per-SKU explicit mapping (SKU_catalog -> ebay_sku_business_policies)
+        if not (shipping_profile_id and payment_profile_id and return_profile_id):
+            sku_catalog_id = None
+            try:
+                sku_num = int(float(str(sku)))
+                sku_catalog_id = db.execute(
+                    text('SELECT "ID" FROM public."SKU_catalog" WHERE "SKU" = :sku LIMIT 1'),
+                    {"sku": sku_num},
+                ).scalar()
+            except Exception:
+                sku_catalog_id = None
+
+            if sku_catalog_id:
+                sku_map = db.execute(
+                    text(
+                        """
+                        SELECT shipping_policy_id, payment_policy_id, return_policy_id
+                        FROM public.ebay_sku_business_policies
+                        WHERE sku_catalog_id = :sku_catalog_id
+                          AND account_key = :account_key
+                          AND marketplace_id = :marketplace_id
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "sku_catalog_id": int(sku_catalog_id),
+                        "account_key": policy_account_key,
+                        "marketplace_id": policy_marketplace_id,
+                    },
+                ).mappings().first()
+                if sku_map:
+                    shipping_profile_id = shipping_profile_id or (int(sku_map.get("shipping_policy_id")) if sku_map.get("shipping_policy_id") else None)
+                    payment_profile_id = payment_profile_id or (int(sku_map.get("payment_policy_id")) if sku_map.get("payment_policy_id") else None)
+                    return_profile_id = return_profile_id or (int(sku_map.get("return_policy_id")) if sku_map.get("return_policy_id") else None)
+
+        # 2) Legacy ShippingGroup mapping (tbl_parts_detail -> ebay_shipping_group_policy_mappings)
+        if not (shipping_profile_id and payment_profile_id and return_profile_id):
+            try:
+                ship_group_id = int(tbl_pd.get("ShippingGroup") or 0)
+            except Exception:
+                ship_group_id = 0
+            ship_type = str(tbl_pd.get("ShippingType") or "Flat").strip() or "Flat"
+            dom_flag = _to_bool_or_none(tbl_pd.get("DomesticOnlyFlag"))
+
+            if ship_group_id > 0:
+                # exact domestic flag match first
+                exact = db.execute(
+                    text(
+                        """
+                        SELECT shipping_policy_id, payment_policy_id, return_policy_id
+                        FROM public.ebay_shipping_group_policy_mappings
+                        WHERE account_key = :account_key
+                          AND marketplace_id = :marketplace_id
+                          AND is_active = TRUE
+                          AND shipping_group_id = :shipping_group_id
+                          AND shipping_type = :shipping_type
+                          AND domestic_only_flag IS NOT DISTINCT FROM :domestic_only_flag
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "account_key": policy_account_key,
+                        "marketplace_id": policy_marketplace_id,
+                        "shipping_group_id": ship_group_id,
+                        "shipping_type": ship_type,
+                        "domestic_only_flag": dom_flag,
+                    },
+                ).mappings().first()
+                any_dom = None
+                if not exact:
+                    any_dom = db.execute(
+                        text(
+                            """
+                            SELECT shipping_policy_id, payment_policy_id, return_policy_id
+                            FROM public.ebay_shipping_group_policy_mappings
+                            WHERE account_key = :account_key
+                              AND marketplace_id = :marketplace_id
+                              AND is_active = TRUE
+                              AND shipping_group_id = :shipping_group_id
+                              AND shipping_type = :shipping_type
+                              AND domestic_only_flag IS NULL
+                            ORDER BY id DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {
+                            "account_key": policy_account_key,
+                            "marketplace_id": policy_marketplace_id,
+                            "shipping_group_id": ship_group_id,
+                            "shipping_type": ship_type,
+                        },
+                    ).mappings().first()
+
+                chosen = exact or any_dom
+                if chosen:
+                    shipping_profile_id = shipping_profile_id or (int(chosen.get("shipping_policy_id")) if chosen.get("shipping_policy_id") else None)
+                    payment_profile_id = payment_profile_id or (int(chosen.get("payment_policy_id")) if chosen.get("payment_policy_id") else None)
+                    return_profile_id = return_profile_id or (int(chosen.get("return_policy_id")) if chosen.get("return_policy_id") else None)
+
+        # 3) Defaults (ebay_business_policies_defaults)
+        if not (shipping_profile_id and payment_profile_id and return_profile_id):
+            defaults = db.execute(
+                text(
+                    """
+                    SELECT shipping_policy_id, payment_policy_id, return_policy_id
+                    FROM public.ebay_business_policies_defaults
+                    WHERE account_key = :account_key AND marketplace_id = :marketplace_id
+                    """
+                ),
+                {"account_key": policy_account_key, "marketplace_id": policy_marketplace_id},
+            ).first()
+            if not defaults:
+                defaults = db.execute(
+                    text(
+                        """
+                        SELECT shipping_policy_id, payment_policy_id, return_policy_id
+                        FROM public.ebay_business_policies_defaults
+                        WHERE account_key = 'default' AND marketplace_id = :marketplace_id
+                        """
+                    ),
+                    {"marketplace_id": policy_marketplace_id},
+                ).first()
+            if defaults:
+                shipping_profile_id = shipping_profile_id or (int(defaults[0]) if defaults[0] is not None else None)
+                payment_profile_id = payment_profile_id or (int(defaults[1]) if defaults[1] is not None else None)
+                return_profile_id = return_profile_id or (int(defaults[2]) if defaults[2] is not None else None)
+
+        precheck["Item.SellerProfiles.PaymentProfileID"] = payment_profile_id
+        precheck["Item.SellerProfiles.ReturnProfileID"] = return_profile_id
+        precheck["Item.SellerProfiles.ShippingProfileID"] = shipping_profile_id
     else:
         precheck["Item.ShippingDetails.ShippingService"] = req.shipping_service or "USPSGroundAdvantage"
         precheck["Item.ReturnPolicy.ReturnsAcceptedOption"] = req.returns_accepted_option or "ReturnsAccepted"
@@ -634,9 +789,9 @@ async def _call_trading(
         item_type=item_type,
         compatible_brand=compatible_brand,
         policies_mode=mode,
-        shipping_profile_id=req.shipping_profile_id,
-        payment_profile_id=req.payment_profile_id,
-        return_profile_id=req.return_profile_id,
+        shipping_profile_id=precheck.get("Item.SellerProfiles.ShippingProfileID"),
+        payment_profile_id=precheck.get("Item.SellerProfiles.PaymentProfileID"),
+        return_profile_id=precheck.get("Item.SellerProfiles.ReturnProfileID"),
         shipping_service=req.shipping_service,
         shipping_cost=req.shipping_cost,
         returns_accepted_option=req.returns_accepted_option,

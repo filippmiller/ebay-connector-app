@@ -473,6 +473,13 @@ export interface EbayBusinessPolicyUpdateDto {
   is_active?: boolean;
 }
 
+export interface EbayBusinessPoliciesSyncRequestDto {
+  account_id: string;
+  account_key?: string | null;
+  marketplace_id?: string | null;
+  deactivate_missing?: boolean;
+}
+
 export interface EbayShippingGroupPolicyMappingRow {
   id: string;
   account_key: string;
@@ -502,6 +509,15 @@ export interface EbayShippingGroupPolicyMappingUpsertDto {
   payment_policy_id?: number | null;
   return_policy_id?: number | null;
   is_active?: boolean;
+  notes?: string | null;
+}
+
+export interface EbayShippingGroupPolicyMappingSeedRequestDto {
+  account_key: string;
+  marketplace_id: string;
+  include_domestic_variants?: boolean;
+  include_shipping_types?: Array<'Flat' | 'Calculated'>;
+  activate_seeded?: boolean;
   notes?: string | null;
 }
 
@@ -1023,6 +1039,11 @@ export const ebayApi = {
     return response.data;
   },
 
+  async syncBusinessPoliciesFromEbay(payload: EbayBusinessPoliciesSyncRequestDto): Promise<any> {
+    const response = await apiClient.post(`/api/admin/ebay/business-policies/sync-from-ebay`, payload);
+    return response.data;
+  },
+
   // Admin → Policy mappings (legacy ShippingGroup -> SellerProfiles IDs)
   async listShippingGroupPolicyMappings(accountKey: string = 'default', marketplaceId: string = 'EBAY_US'): Promise<EbayShippingGroupPolicyMappingListResponse> {
     const params = new URLSearchParams({ account_key: accountKey, marketplace_id: marketplaceId });
@@ -1037,6 +1058,33 @@ export const ebayApi = {
 
   async deleteShippingGroupPolicyMapping(id: string): Promise<{ deleted: number }> {
     const response = await apiClient.delete<{ deleted: number }>(`/api/admin/ebay/policy-mappings/shipping-groups/${encodeURIComponent(id)}`);
+    return response.data;
+  },
+
+  async seedShippingGroupPolicyMappings(payload: EbayShippingGroupPolicyMappingSeedRequestDto): Promise<any> {
+    const response = await apiClient.post(`/api/admin/ebay/policy-mappings/shipping-groups/seed`, payload);
+    return response.data;
+  },
+
+  async getShippingGroupPolicyMappingsCoverage(accountKey: string = 'default', marketplaceId: string = 'EBAY_US'): Promise<any> {
+    const params = new URLSearchParams({ account_key: accountKey, marketplace_id: marketplaceId });
+    const response = await apiClient.get(`/api/admin/ebay/policy-mappings/shipping-groups/coverage?${params.toString()}`);
+    return response.data;
+  },
+
+  async applyShippingGroupMappingsToSkus(payload: { account_key: string; marketplace_id: string; only_missing?: boolean; limit?: number }): Promise<any> {
+    const response = await apiClient.post(`/api/admin/ebay/policy-mappings/shipping-groups/apply-to-skus`, payload);
+    return response.data;
+  },
+
+  async listSkusMissingPolicyMapping(accountKey: string = 'default', marketplaceId: string = 'EBAY_US', limit: number = 200, offset: number = 0): Promise<any> {
+    const params = new URLSearchParams({
+      account_key: accountKey,
+      marketplace_id: marketplaceId,
+      limit: String(limit),
+      offset: String(offset),
+    });
+    const response = await apiClient.get(`/api/admin/ebay/policy-mappings/skus/missing?${params.toString()}`);
     return response.data;
   },
 

@@ -17,6 +17,7 @@ export default function AdminEbayPolicyMappingsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [rows, setRows] = useState<EbayShippingGroupPolicyMappingRow[]>([]);
+  const [coverage, setCoverage] = useState<any>(null);
 
   // Create/upsert form
   const [shippingGroupId, setShippingGroupId] = useState('');
@@ -38,6 +39,12 @@ export default function AdminEbayPolicyMappingsPage() {
       setError(null);
       const resp = await ebayApi.listShippingGroupPolicyMappings(accountKey, marketplaceId);
       setRows(resp.rows || []);
+      try {
+        const cov = await ebayApi.getShippingGroupPolicyMappingsCoverage(accountKey, marketplaceId);
+        setCoverage(cov);
+      } catch {
+        setCoverage(null);
+      }
     } catch (e: any) {
       setError(String(e?.response?.data?.detail || e?.message || e));
     } finally {
@@ -98,6 +105,46 @@ export default function AdminEbayPolicyMappingsPage() {
     }
   };
 
+  const handleSeed = async () => {
+    if (!confirm('Seed mapping keys for ALL active shipping groups? (Idempotent)')) return;
+    try {
+      setLoading(true);
+      setError(null);
+      await ebayApi.seedShippingGroupPolicyMappings({
+        account_key: accountKey,
+        marketplace_id: marketplaceId,
+        include_domestic_variants: true,
+        include_shipping_types: ['Flat', 'Calculated'],
+        activate_seeded: true,
+        notes: 'seeded',
+      });
+      await load();
+    } catch (e: any) {
+      setError(String(e?.response?.data?.detail || e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApplyToSkus = async () => {
+    if (!confirm('Bulk apply mappings to SKU policies now? (Writes ebay_sku_business_policies)')) return;
+    try {
+      setLoading(true);
+      setError(null);
+      await ebayApi.applyShippingGroupMappingsToSkus({
+        account_key: accountKey,
+        marketplace_id: marketplaceId,
+        only_missing: true,
+        limit: 5000,
+      });
+      await load();
+    } catch (e: any) {
+      setError(String(e?.response?.data?.detail || e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const shippingPolicyOptions = (businessPolicies?.shipping || []).filter((p) => p.is_active);
   const paymentPolicyOptions = (businessPolicies?.payment || []).filter((p) => p.is_active);
   const returnPolicyOptions = (businessPolicies?.return || []).filter((p) => p.is_active);
@@ -126,8 +173,20 @@ export default function AdminEbayPolicyMappingsPage() {
               <Button size="sm" onClick={() => void load()} disabled={loading}>
                 {loading ? 'Loading…' : 'Reload'}
               </Button>
+              <Button size="sm" variant="outline" onClick={() => void handleSeed()} disabled={loading}>
+                Seed keys
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void handleApplyToSkus()} disabled={loading}>
+                Apply to SKUs
+              </Button>
             </div>
             {error && <div className="mt-2 text-sm text-red-600">{error}</div>}
+            {coverage && (
+              <div className="mt-2 text-xs text-gray-600">
+                Coverage: {coverage.covered_combinations}/{coverage.expected_combinations} covered • missing:{' '}
+                {Array.isArray(coverage.missing) ? coverage.missing.length : '—'}
+              </div>
+            )}
           </Card>
 
           <Card className="p-3">
