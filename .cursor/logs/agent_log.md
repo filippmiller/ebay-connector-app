@@ -125,3 +125,4 @@
 2025-12-13T12:50:21Z - Implemented ShippingGroup→BusinessPolicy mapping layer: Supabase ebay_shipping_group_policy_mappings + backend admin CRUD + UI page (/admin/ebay-policy-mappings) + SKU form auto-apply based on mapping
 2025-12-13T13:26:00Z - Bundled upgrades: seed/coverage/bulk-apply for shipping-group mappings; sync Business Policies from eBay account API; auto-resolve SellerProfiles IDs in BIN Trading debug from SKU/mapping/defaults
 2025-12-13T12:55:10Z - Extended eBay Flow Catalog generator with BIN Trading debug + Business Policies Center + Policy Mappings flows (auto_seed entries)
+2025-12-13T14:15:39.084Z - Created AssignStoragesForSoldItemsWorker: ROW_NUMBER() oldest-first matching (1-в-1 legacy), updates tbl_ebay_seller_info_detail + tbl_parts_inventory (StatusSKU=5, JustSoldFlag=1), wired into /ebay/workers/run endpoint
