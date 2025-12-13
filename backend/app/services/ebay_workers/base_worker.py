@@ -1,0 +1,374 @@
+from __future__ import annotations
+
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Any, Dict, Literal
+
+from sqlalchemy.orm import Session
+
+from app.models_sqlalchemy.models import EbayAccount, EbayToken
+from app.models_sqlalchemy import SessionLocal
+from app.services.ebay_account_service import ebay_account_service
+from app.utils.logger import logger
+
+from .state import get_or_create_sync_state, mark_sync_run_result, compute_sync_window
+from .runs import start_run, complete_run, fail_run
+from .logger import log_start, log_page, log_done, log_error
+from .notifications import create_worker_run_notification
+
+
+class BaseWorker:
+    def __init__(
+        self,
+        api_family: str,
+        overlap_minutes: Optional[int] = 30,
+        initial_backfill_days: int = 90,
+        limit: int = 200,
+    ):
+        self.api_family = api_family
+        self.overlap_minutes = overlap_minutes
+        self.initial_backfill_days = initial_backfill_days
+        self.limit = limit
+        # Track how this worker was triggered for logging
+        self._triggered_by: Literal["manual", "scheduler", "unknown"] = "unknown"
+
+    def _now_utc(self) -> datetime:
+        return datetime.now(timezone.utc)
+    
+    def _get_decrypted_token(self, token: EbayToken, account_id: str) -> Optional[str]:
+        """
+        Helper to safely get decrypted access token from EbayToken object.
+        
+        This ensures we never pass ENC:v1:... tokens to execute_sync().
+        Returns None if token is encrypted or missing.
+        """
+        access_token = token.access_token
+        if not access_token:
+            logger.error(f"[{self.api_family}_worker] No access token in token object for account {account_id}")
+            return None
+        
+        # CRITICAL: Token must NOT be encrypted
+        if access_token.startswith("ENC:"):
+            logger.error(
+                f"[{self.api_family}_worker] ⚠️ TOKEN STILL ENCRYPTED in execute_sync! "
+                f"account={account_id} token_prefix={access_token[:20]}. "
+                f"This should never happen - BaseWorker.run_for_account() should have fixed this."
+            )
+            return None
+        
+        return access_token
+
+    async def execute_sync(
+        self,
+        db: Session,
+        account: EbayAccount,
+        token: EbayToken,
+        run_id: str,
+        sync_run_id: str,
+        window_from: Optional[str],
+        window_to: Optional[str],
+    ) -> Dict[str, Any]:
+        """
+        Execute the actual sync logic.
+        Must return a dictionary with:
+        - total_fetched (int)
+        - total_stored (int)
+        - sync_run_id (str, optional)
+        - any other stats
+        """
+        raise NotImplementedError
+
+    async def run_for_account(
+        self,
+        ebay_account_id: str,
+        triggered_by: Literal["manual", "scheduler", "unknown"] = "unknown",
+    ) -> Optional[str]:
+        """Run the worker for a specific eBay account.
+        
+        Args:
+            ebay_account_id: UUID of the eBay account
+            triggered_by: How this run was triggered ("manual", "scheduler", or "unknown")
+        
+        Returns:
+            Run ID if started successfully, None if skipped
+        """
+        from app.utils.build_info import get_build_number
+        build_number = get_build_number()
+        
+        logger.info(
+            f"[{self.api_family}_worker] run_for_account START: account_id={ebay_account_id} "
+            f"triggered_by={triggered_by} BUILD={build_number}"
+        )
+        
+        self._triggered_by = triggered_by
+        db: Session = SessionLocal()
+        try:
+            account: Optional[EbayAccount] = ebay_account_service.get_account(db, ebay_account_id)
+            if not account or not account.is_active:
+                logger.warning(
+                    f"[{self.api_family}_worker] account {ebay_account_id} not found or inactive BUILD={build_number}"
+                )
+                return None
+
+            # CRITICAL: Use the unified token fetcher - single source of truth
+            # This guarantees we always get a decrypted token (v^1.1#...), never ENC:v1:...
+            from app.services.ebay_token_fetcher import fetch_active_ebay_token
+            
+            logger.info(
+                f"HELLO FROM WORKER! [{self.api_family}_worker] Calling fetch_active_ebay_token: account_id={ebay_account_id} "
+                f"triggered_by={triggered_by} BUILD={build_number}"
+            )
+            
+            decrypted_access_token = await fetch_active_ebay_token(
+                db,
+                ebay_account_id,
+                triggered_by=triggered_by,
+                api_family=self.api_family,
+            )
+            
+            logger.info(
+                f"[{self.api_family}_worker] fetch_active_ebay_token returned: account_id={ebay_account_id} "
+                f"token_received={'YES' if decrypted_access_token else 'NO'} "
+                f"token_prefix={decrypted_access_token[:20] if decrypted_access_token else 'None'}... "
+                f"BUILD={build_number}"
+            )
+            
+            if not decrypted_access_token:
+                logger.warning(
+                    f"{self.api_family} worker: failed to fetch decrypted token for account {ebay_account_id}"
+                )
+                return None
+            
+            # Get the token object for backward compatibility with execute_sync signature
+            # But we'll override its _access_token to ensure token.access_token returns the decrypted value
+            token: Optional[EbayToken] = ebay_account_service.get_token(db, ebay_account_id)
+            if not token:
+                logger.warning(f"{self.api_family} worker: no token object for account {ebay_account_id}")
+                return None
+            
+            # CRITICAL: Override the token object's _access_token with the decrypted value
+            # This ensures that when execute_sync() accesses token.access_token, it gets the decrypted token
+            # We bypass the property setter and set the internal field directly
+            # The property getter will return this value as-is since it doesn't start with ENC:
+            token._access_token = decrypted_access_token
+            
+            logger.info(
+                f"[{self.api_family}_worker] Token override: account_id={ebay_account_id} "
+                f"decrypted_token_prefix={decrypted_access_token[:20] if decrypted_access_token else 'None'}... "
+                f"BUILD={build_number}"
+            )
+            
+            # Verify that token.access_token now returns the decrypted value
+            verified_token = token.access_token
+            if verified_token != decrypted_access_token:
+                logger.error(
+                    f"[{self.api_family}_worker] ⚠️ Token property mismatch after override! "
+                    f"account={ebay_account_id} "
+                    f"decrypted_access_token starts with: {decrypted_access_token[:15] if decrypted_access_token else 'None'}... "
+                    f"token.access_token starts with: {verified_token[:15] if verified_token else 'None'}... "
+                    f"BUILD={build_number}"
+                )
+                # Force it again
+                token._access_token = decrypted_access_token
+            
+            # Final validation - token must NOT be encrypted
+            final_check = token.access_token
+            if final_check and final_check.startswith("ENC:"):
+                logger.error(
+                    f"[{self.api_family}_worker] ⚠️⚠️⚠️ TOKEN STILL ENCRYPTED AFTER ALL FIXES! "
+                    f"account={ebay_account_id} token_prefix={final_check[:20]}. "
+                    f"This should never happen - crypto.decrypt() may be broken or SECRET_KEY mismatch. "
+                    f"BUILD={build_number}"
+                )
+                return None
+            
+            logger.info(
+                f"[{self.api_family}_worker] Token validation PASSED: account_id={ebay_account_id} "
+                f"token_prefix={final_check[:20] if final_check else 'None'}... BUILD={build_number}"
+            )
+
+            ebay_user_id = account.ebay_user_id or "unknown"
+
+            state = get_or_create_sync_state(
+                db,
+                ebay_account_id=ebay_account_id,
+                ebay_user_id=ebay_user_id,
+                api_family=self.api_family,
+            )
+
+            if not state.enabled:
+                logger.info(f"{self.api_family} worker: sync disabled for account={ebay_account_id}")
+                return None
+
+            run = start_run(
+                db,
+                ebay_account_id=ebay_account_id,
+                ebay_user_id=ebay_user_id,
+                api_family=self.api_family,
+            )
+            if not run:
+                # Another fresh run is already in progress
+                return None
+
+            run_id = run.id
+            sync_run_id = f"worker_{self.api_family}_{run_id}"
+
+            # Window calculation
+            from_iso = None
+            to_iso = None
+
+            # DIAGNOSTIC: Log cursor value from state
+            logger.info(
+                f"[{self.api_family}_worker] DIAGNOSTIC state: account={ebay_account_id} "
+                f"cursor_value={state.cursor_value!r} triggered_by={triggered_by} "
+                f"overlap_minutes={self.overlap_minutes} initial_backfill_days={self.initial_backfill_days}"
+            )
+
+            # If overlap_minutes is None, it means full sync (no window)
+            if self.overlap_minutes is not None:
+                window_from, window_to = compute_sync_window(
+                    state,
+                    overlap_minutes=self.overlap_minutes,
+                    initial_backfill_days=self.initial_backfill_days,
+                )
+
+                # DIAGNOSTIC: Log window BEFORE cap
+                window_seconds = (window_to - window_from).total_seconds()
+                logger.info(
+                    f"[{self.api_family}_worker] DIAGNOSTIC window BEFORE cap: "
+                    f"from={window_from.isoformat()} to={window_to.isoformat()} "
+                    f"duration_seconds={window_seconds} triggered_by={triggered_by}"
+                )
+
+                MAX_WINDOW_HOURS = 24
+                if (window_to - window_from).total_seconds() > (MAX_WINDOW_HOURS * 3600):
+                    logger.info(
+                        f"[{self.api_family}_worker] DIAGNOSTIC applying 24h cap: "
+                        f"old_to={window_to.isoformat()} new_to={(window_from + timedelta(hours=MAX_WINDOW_HOURS)).isoformat()}"
+                    )
+                    window_to = window_from + timedelta(hours=MAX_WINDOW_HOURS)
+
+                # Format timestamps as proper UTC ISO8601 strings ending with "Z".
+                from_iso = window_from.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                to_iso = window_to.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+                # DIAGNOSTIC: Log final window values
+                logger.info(
+                    f"[{self.api_family}_worker] DIAGNOSTIC window AFTER cap: "
+                    f"from_iso={from_iso} to_iso={to_iso} triggered_by={triggered_by}"
+                )
+
+            log_start(
+                db,
+                run_id=run_id,
+                ebay_account_id=ebay_account_id,
+                ebay_user_id=ebay_user_id,
+                api_family=self.api_family,
+                window_from=from_iso,
+                window_to=to_iso,
+                limit=self.limit,
+            )
+
+            total_fetched = 0
+            total_stored = 0
+            start_time = time.time()
+
+            try:
+                # CRITICAL: At this point, token._access_token has been set to the decrypted value
+                # from token_result.access_token. The property token.access_token will now return
+                # the decrypted token (crypto.decrypt() returns values that don't start with ENC: as-is)
+                stats = await self.execute_sync(
+                    db, account, token, run_id, sync_run_id, from_iso, to_iso
+                )
+
+                total_fetched = int(stats.get("total_fetched", stats.get("fetched", 0)))
+                total_stored = int(stats.get("total_stored", stats.get("stored", stats.get("created", 0) + stats.get("updated", 0))))
+                sync_run_id = str(stats.get("sync_run_id", stats.get("run_id", sync_run_id)))
+
+                duration_ms = int((time.time() - start_time) * 1000)
+
+                # Log page (assuming single page for worker level log)
+                log_page(
+                    db,
+                    run_id=run_id,
+                    ebay_account_id=ebay_account_id,
+                    ebay_user_id=ebay_user_id,
+                    api_family=self.api_family,
+                    page=1,
+                    fetched=total_fetched,
+                    stored=total_stored,
+                    offset=0,
+                )
+
+                log_done(
+                    db,
+                    run_id=run_id,
+                    ebay_account_id=ebay_account_id,
+                    ebay_user_id=ebay_user_id,
+                    api_family=self.api_family,
+                    total_fetched=total_fetched,
+                    total_stored=total_stored,
+                    duration_ms=duration_ms,
+                )
+
+                # Update cursor
+                new_cursor = to_iso if to_iso else self._now_utc().isoformat()
+                mark_sync_run_result(db, state, cursor_value=new_cursor, error=None)
+
+                summary = {
+                    "total_fetched": total_fetched,
+                    "total_stored": total_stored,
+                    "duration_ms": duration_ms,
+                    "window_from": from_iso,
+                    "window_to": to_iso,
+                    "sync_run_id": sync_run_id,
+                }
+                summary.update(stats)
+
+                complete_run(db, run, summary=summary)
+
+                create_worker_run_notification(
+                    db,
+                    account=account,
+                    api_family=self.api_family,
+                    run_status="completed",
+                    summary=summary,
+                )
+
+                return run_id
+
+            except Exception as exc:
+                duration_ms = int((time.time() - start_time) * 1000)
+                msg = str(exc)
+                log_error(
+                    db,
+                    run_id=run_id,
+                    ebay_account_id=ebay_account_id,
+                    ebay_user_id=ebay_user_id,
+                    api_family=self.api_family,
+                    message=msg,
+                    stage=f"{self.api_family}_worker",
+                )
+                mark_sync_run_result(db, state, cursor_value=None, error=msg)
+                error_summary = {
+                    "total_fetched": total_fetched,
+                    "total_stored": total_stored,
+                    "duration_ms": duration_ms,
+                    "window_from": from_iso,
+                    "window_to": to_iso,
+                    "sync_run_id": sync_run_id,
+                    "error_message": msg,
+                }
+                fail_run(db, run, error_message=msg, summary=error_summary)
+                create_worker_run_notification(
+                    db,
+                    account=account,
+                    api_family=self.api_family,
+                    run_status="error",
+                    summary=error_summary,
+                )
+                logger.error(f"{self.api_family} worker for account={ebay_account_id} failed: {msg}")
+                return run_id
+
+        finally:
+            db.close()

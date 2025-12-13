@@ -16,6 +16,7 @@ bash backend/start.sh
 
 1. `RUN_MIGRATIONS=1` (или `0` для временного отключения миграций при диагностике)
 2. `PYTHONUNBUFFERED=1` (уже установлен в start.sh, но можно добавить явно)
+3. `NIXPACKS_PREBUILD=bash scripts/install_msodbc18.sh` — установка Microsoft ODBC Driver 18 для MSSQL (msodbcsql18)
 
 ## Проверка после деплоя
 

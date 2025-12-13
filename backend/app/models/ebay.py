@@ -17,6 +17,10 @@ class EbayTokenResponse(BaseModel):
     refresh_token: Optional[str] = None
     expires_in: int
     token_type: str
+    # Raw space-separated scopes string returned by eBay token endpoint
+    scope: Optional[str] = None
+    # Optional refresh token TTL (seconds) when provided by eBay
+    refresh_token_expires_in: Optional[int] = None
 
 
 class EbayConnectionStatus(BaseModel):

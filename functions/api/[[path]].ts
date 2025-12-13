@@ -1,5 +1,6 @@
 interface Env {
   API_PUBLIC_BASE_URL: string;
+  API_PUBLIC_EBROWSER_BASE_URL?: string;
 }
 
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
@@ -24,7 +25,8 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     });
   }
   
-  const apiBase = env.API_PUBLIC_BASE_URL;
+  // Allow a dedicated base URL for eBrowser to avoid clashes with other consumers.
+  const apiBase = env.API_PUBLIC_EBROWSER_BASE_URL || env.API_PUBLIC_BASE_URL;
   
   if (!apiBase) {
     console.error('[CF Proxy] API_PUBLIC_BASE_URL not configured!');
@@ -46,8 +48,18 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const upstream = new URL(apiBase);
   
-  const strippedPath = url.pathname.replace(/^\/api/, '') || '/';
-  upstream.pathname = strippedPath;
+  // Build path carefully: keep incoming /api prefix (proxy must not strip it) and avoid double slashes when API_PUBLIC_BASE_URL already ends with /api.
+  const incomingPath = url.pathname || '/';
+  const basePath = upstream.pathname.endsWith('/')
+    ? upstream.pathname.slice(0, -1)
+    : upstream.pathname;
+  const safeIncoming = incomingPath.startsWith('/') ? incomingPath : `/${incomingPath}`;
+  // If incoming path was stripped of /api (seen in prod logs), enforce /api prefix.
+  const normalizedIncoming = safeIncoming.startsWith('/api/')
+    ? safeIncoming
+    : `/api${safeIncoming}`;
+  const combinedPath = `${basePath}${normalizedIncoming}`.replace(/\/{2,}/g, '/');
+  upstream.pathname = combinedPath;
   upstream.search = url.search;
   
   const headers = new Headers(request.headers);
@@ -116,7 +128,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       error: error.message,
       errorName: error.name,
       apiBase: apiBase,
-      path: strippedPath
+      path: preservedPath
     };
     
     console.error('[CF Proxy] Error proxying request:', errorDetails);

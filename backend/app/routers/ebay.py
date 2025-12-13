@@ -1,14 +1,45 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
+from sqlalchemy.orm import Session
+
 from app.models.ebay import EbayAuthRequest, EbayAuthCallback, EbayConnectionStatus
 from app.services.auth import get_current_active_user, get_user_from_header_or_query
 from app.services.ebay import ebay_service
 from app.services.ebay_connect_logger import ebay_connect_logger
 from app.models.user import User
 from app.utils.logger import logger, ebay_logger
+from app.models_sqlalchemy import get_db
+from app.services.ebay_account_service import ebay_account_service
 
 router = APIRouter(prefix="/ebay", tags=["ebay"])
+
+# Certain eBay scopes require a special approval process and will cause
+# `invalid_scope` errors if we include them in a regular user-consent
+# authorization URL. We keep them in the catalog for documentation, but
+# always strip them from live OAuth flows.
+FORBIDDEN_USER_CONSENT_SCOPES = {
+    "https://api.ebay.com/oauth/api_scope/buy.offer.auction",
+}
+
+
+def _sanitize_requested_scopes(scopes: List[str]) -> List[str]:
+    """Remove forbidden scopes from the requested set.
+
+    This is applied to both client-provided scope lists and the default
+    catalog-backed scope set used when the client omits scopes.
+    """
+    if not scopes:
+        return []
+
+    cleaned = [s for s in scopes if s not in FORBIDDEN_USER_CONSENT_SCOPES]
+    if len(cleaned) != len(scopes):
+        removed = sorted(set(scopes) - set(cleaned))
+        logger.info(
+            "Filtering forbidden user-consent scopes from eBay auth request: %s",
+            ", ".join(removed),
+        )
+    return cleaned
 
 
 @router.post("/auth/start")
@@ -20,11 +51,18 @@ async def start_ebay_auth(
     purpose: str = Query('BOTH', description="Account purpose: BUYER, SELLER, or BOTH"),
     current_user: User = Depends(get_current_active_user)
 ):
+    """Start eBay OAuth flow.
+
+    If client does not explicitly pass scopes, we default to **all active user-consent scopes**
+    from ebay_scope_definitions (grant_type in ['user', 'both']).
+    """
     logger.info(f"Starting eBay OAuth for user: {current_user.email} in {environment} mode, house_name: {house_name}")
     
     from app.config import settings
     import json
     import uuid
+    from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayScopeDefinition
     
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = environment
@@ -41,11 +79,36 @@ async def start_ebay_auth(
             "environment": environment
         }
         state = json.dumps(state_data)
+
+        # Determine effective scopes: prefer client-provided, otherwise all active user scopes from catalog
+        effective_scopes = auth_request.scopes or []
+        if not effective_scopes:
+            db_session = next(get_db())
+            try:
+                rows = (
+                    db_session.query(EbayScopeDefinition)
+                    .filter(
+                        EbayScopeDefinition.is_active == True,  # noqa: E712
+                        EbayScopeDefinition.grant_type.in_(["user", "both"]),
+                    )
+                    .order_by(EbayScopeDefinition.scope)
+                    .all()
+                )
+                effective_scopes = [r.scope for r in rows] if rows else []
+            except Exception as e:
+                logger.error(f"Failed to load ebay_scope_definitions: {e}")
+                # fall back to whatever client sent (empty → EbayService will apply its own defaults)
+                effective_scopes = auth_request.scopes or []
+            finally:
+                db_session.close()
+
+        # In all cases, remove scopes that are not allowed in regular user-consent flows
+        effective_scopes = _sanitize_requested_scopes(effective_scopes)
         
         auth_url = ebay_service.get_authorization_url(
             redirect_uri=redirect_uri,
             state=state,
-            scopes=auth_request.scopes,
+            scopes=effective_scopes,
             environment=environment
         )
 
@@ -200,11 +263,51 @@ async def ebay_auth_callback(
                 token_response.expires_in,
                 refresh_token_expires_in=getattr(token_response, 'refresh_token_expires_in', None)
             )
-            
-            scopes = token_response.scope.split() if hasattr(token_response, 'scope') and token_response.scope else []
+
+            # Determine final scopes: prefer token_response.scope; fallback to last start_auth if missing
+            scopes: List[str] = []
+
+            # 1) Preferred: scopes returned directly from eBay token endpoint
+            if getattr(token_response, "scope", None):
+                scopes = [s for s in token_response.scope.split() if s]
+
+            # 2) Fallback: recover scopes from the most recent start_auth connect log
+            if not scopes:
+                try:
+                    recent_logs = ebay_connect_logger.get_logs(current_user.id, environment, limit=50)
+                    for log in recent_logs:
+                        if log.get("action") != "start_auth":
+                            continue
+
+                        req = log.get("request") or {}
+                        headers = req.get("headers") or {}
+                        scope_str: str = ""
+
+                        # Prefer explicit scope header we stored
+                        if isinstance(headers, dict):
+                            scope_str = headers.get("scope") or ""
+
+                        # Fallback: parse scope from the logged URL
+                        if not scope_str:
+                            from urllib.parse import urlparse, parse_qs
+                            url = req.get("url") or ""
+                            try:
+                                parsed = urlparse(url)
+                                q = parse_qs(parsed.query)
+                                scope_str = q.get("scope", [""])[0]
+                            except Exception:
+                                scope_str = ""
+
+                        scopes = [s for s in (scope_str or "").split(" ") if s]
+                        if scopes:
+                            break
+                except Exception:
+                    logger.error("Failed to reconstruct scopes from connect logs", exc_info=True)
+
+            # 3) Persist scopes for this eBay account if we managed to derive them
             if scopes:
                 ebay_account_service.save_authorizations(db, account.id, scopes)
-            
+
             ebay_service.save_user_tokens(current_user.id, token_response, environment=environment)
             
             logger.info(f"Successfully connected eBay account: {account.id} ({house_name})")
@@ -219,7 +322,9 @@ async def ebay_auth_callback(
                         "house_name": house_name,
                         "ebay_user_id": ebay_user_id,
                         "username": username,
-                        "expires_in": token_response.expires_in
+                        "expires_in": token_response.expires_in,
+                        "final_scopes": scopes,
+                        "final_scope_count": len(scopes),
                     }
                 }
             )
@@ -248,61 +353,208 @@ async def ebay_auth_callback(
         settings.EBAY_ENVIRONMENT = original_env
 
 
+@router.get("/scopes")
+async def get_ebay_scopes(current_user: User = Depends(get_current_active_user)):
+    """Return all active eBay scopes available for user-consent flows.
+
+    We expose only scopes with grant_type in ['user', 'both'] and is_active = true.
+    Description is returned but is for internal/admin use; UI may ignore it.
+    """
+    from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayScopeDefinition
+
+    db_session = next(get_db())
+    try:
+        rows = (
+            db_session.query(EbayScopeDefinition)
+            .filter(
+                EbayScopeDefinition.is_active == True,  # noqa: E712
+                EbayScopeDefinition.grant_type.in_(["user", "both"]),
+            )
+            .order_by(EbayScopeDefinition.scope)
+            .all()
+        )
+        scopes = [
+            {
+                "scope": r.scope,
+                "grant_type": r.grant_type,
+                "description": r.description,
+            }
+            for r in rows
+        ]
+        return {"scopes": scopes}
+    finally:
+        db_session.close()
+
+
+@router.get("/scopes/health")
+async def get_ebay_scopes_health(current_user: User = Depends(get_current_active_user)):
+    """Simple healthcheck for ebay_scope_definitions.
+
+    Returns count of active user-consent scopes and a sample subset so we can
+    verify that the catalog table exists and is populated.
+    """
+    from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayScopeDefinition
+
+    db_session = next(get_db())
+    try:
+        total = (
+            db_session.query(EbayScopeDefinition)
+            .filter(
+                EbayScopeDefinition.is_active == True,  # noqa: E712
+                EbayScopeDefinition.grant_type.in_(["user", "both"]),
+            )
+            .count()
+        )
+        sample_rows = (
+            db_session.query(EbayScopeDefinition)
+            .filter(
+                EbayScopeDefinition.is_active == True,  # noqa: E712
+                EbayScopeDefinition.grant_type.in_(["user", "both"]),
+            )
+            .order_by(EbayScopeDefinition.scope)
+            .limit(5)
+            .all()
+        )
+        sample = [
+            {
+                "scope": r.scope,
+                "grant_type": r.grant_type,
+                "description": r.description,
+            }
+            for r in sample_rows
+        ]
+        return {
+            "ok": True,
+            "total_active_user_scopes": total,
+            "sample": sample,
+        }
+    finally:
+        db_session.close()
+
+
 @router.get("/status", response_model=EbayConnectionStatus)
 async def get_ebay_status(current_user: User = Depends(get_current_active_user)):
-    return EbayConnectionStatus(
-        connected=current_user.ebay_connected,
-        user_id=current_user.id if current_user.ebay_connected else None,
-        expires_at=current_user.ebay_token_expires_at
-    )
+    """Connection status based on eBay accounts + account-level tokens.
+
+    A user is considered connected if any active eBay account has a non-expired
+    access token in ebay_tokens. This ignores legacy user.ebay_connected flags.
+    """
+    from app.models_sqlalchemy import get_db
+    from app.services.ebay_account_service import ebay_account_service
+
+    db_session = next(get_db())
+    try:
+        accounts_with_status = ebay_account_service.get_accounts_with_status(db_session, current_user.id)
+        # Treat statuses 'healthy' and 'expiring_soon' as connected
+        connected_accounts = [a for a in accounts_with_status if a.status in ("healthy", "expiring_soon")]
+        if not connected_accounts:
+            return EbayConnectionStatus(connected=False, user_id=current_user.id, expires_at=None, scopes=[])
+
+        # Compute the latest token expiry among connected accounts
+        from datetime import datetime
+        expires_at_values = [
+            a.token.expires_at for a in connected_accounts
+            if a.token and a.token.expires_at is not None
+        ]
+        latest_expiry = max(expires_at_values) if expires_at_values else None
+
+        return EbayConnectionStatus(
+            connected=True,
+            user_id=current_user.id,
+            expires_at=latest_expiry,
+            scopes=None,
+        )
+    finally:
+        db_session.close()
 
 
 @router.get("/token-info")
 async def get_token_info(
     environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
+    account_id: Optional[str] = Query(None, description="Specific eBay account ID to inspect (optional)"),
     current_user: User = Depends(get_current_active_user)
 ):
+    """Get full token information for current user (for debugging).
+
+    Uses eBay account-level tokens rather than legacy user fields. If account_id
+    is not provided, the most recently connected active account is used.
     """
-    Get full token information for current user (for debugging).
-    Returns unmasked token and all related data.
-    """
-    from app.utils.ebay_token_helper import get_user_ebay_token, is_user_ebay_connected, get_user_ebay_token_expires_at
-    
-    env = environment or current_user.ebay_environment or "sandbox"
-    
-    if not is_user_ebay_connected(current_user, env):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"User is not connected to eBay ({env})"
-        )
-    
-    access_token = get_user_ebay_token(current_user, env)
-    token_expires_at = get_user_ebay_token_expires_at(current_user, env)
-    
-    # Get scopes and account info from database
-    user_scopes = []
-    ebay_user_id = None
-    ebay_username = None
+    from datetime import datetime, timezone
     from app.services.ebay_account_service import ebay_account_service
     from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayToken, EbayAuthorization
+
+    env = environment or current_user.ebay_environment or "sandbox"
+
     db_session = next(get_db())
+    access_token = None
+    token_expires_at = None
+    user_scopes: list[str] = []
+    ebay_user_id = None
+    ebay_username = None
     try:
         accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
-        if accounts:
-            account = accounts[0]
-            ebay_user_id = account.ebay_user_id
-            ebay_username = account.username
-            
-            from app.models_sqlalchemy.models import EbayAuthorization
-            auths = db_session.query(EbayAuthorization).filter(
-                EbayAuthorization.ebay_account_id == account.id
-            ).all()
-            user_scopes = [auth.scope for auth in auths] if auths else []
+        if not accounts:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User has no eBay accounts ({env})",
+            )
+
+        # Pick account: specific ID if provided, otherwise most recently connected
+        selected_account = None
+        if account_id:
+            for acc in accounts:
+                if acc.id == account_id:
+                    selected_account = acc
+                    break
+            if not selected_account:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found for user")
+        else:
+            selected_account = accounts[0]
+
+        ebay_user_id = selected_account.ebay_user_id
+        ebay_username = selected_account.username
+
+        # Latest token for this account
+        token_row = (
+            db_session.query(EbayToken)
+            .filter(EbayToken.ebay_account_id == selected_account.id)
+            .order_by(EbayToken.updated_at.desc())
+            .first()
+        )
+        if not token_row or not token_row.access_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active token for selected eBay account",
+            )
+
+        access_token = token_row.access_token
+        token_expires_at = token_row.expires_at
+
+        # Basic check: consider token inactive if expires_at in past
+        if token_expires_at:
+            from app.services.ebay_account_service import ebay_account_service as svc
+            token_expires_at_utc = svc._to_utc(token_expires_at)
+            if token_expires_at_utc < datetime.now(timezone.utc):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Token for selected eBay account has expired",
+                )
+
+        auths = db_session.query(EbayAuthorization).filter(
+            EbayAuthorization.ebay_account_id == selected_account.id
+        ).all()
+        user_scopes = [s for auth in auths for s in (auth.scopes or [])] if auths else []
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting account info: {e}")
+        logger.error(f"Error getting account token info: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to load token info")
     finally:
         db_session.close()
-    
+
     # Get token info
     from app.utils.token_utils import extract_token_info, format_scopes_for_display
     token_info = extract_token_info(access_token) if access_token else {}
@@ -311,14 +563,14 @@ async def get_token_info(
         "user_email": current_user.email,
         "user_id": current_user.id,
         "ebay_environment": env,
-        "token_full": access_token,  # UNMASKED TOKEN
+        "token_full": access_token,  # UNMASKED TOKEN (dev/debug); production UI uses admin endpoints
         "token_length": len(access_token) if access_token else 0,
         "token_version": token_info.get("version"),
         "token_expires_at": token_expires_at.isoformat() if token_expires_at else None,
         "scopes": user_scopes,
         "scopes_display": format_scopes_for_display(user_scopes),
         "scopes_count": len(user_scopes),
-        "ebay_connected": is_user_ebay_connected(current_user, env),
+        "ebay_connected": bool(access_token),
         "ebay_user_id": ebay_user_id,
         "ebay_username": ebay_username
     }
@@ -479,20 +731,20 @@ async def sync_all_orders(
         "status": "started",
         "message": f"Orders sync started in background ({env})"
     }
-
-
-async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
-    """Background task to run orders sync with error handling"""
+ 
+ 
+async def _run_orders_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str) -> None:
+    """Background task to run orders sync with error handling."""
     from app.config import settings
-    
+
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
-    
+
     try:
         # Pass run_id to sync_all_orders so it uses the same run_id for events
         await ebay_service.sync_all_orders(user_id, access_token, run_id=run_id)
-    except Exception as e:
-        logger.error(f"Background orders sync failed for run_id {run_id}: {str(e)}")
+    except Exception as e:  # noqa: BLE001
+        logger.error("Background orders sync failed for run_id %s: %s", run_id, str(e))
     finally:
         settings.EBAY_ENVIRONMENT = original_env
 
@@ -577,17 +829,87 @@ async def sync_all_transactions(
 
 
 async def _run_transactions_sync(user_id: str, access_token: str, ebay_environment: str, run_id: str):
+    """Background task to run transactions sync using the same cursor logic as workers.
+ 
+    This endpoint now:
+    - Locates the primary active eBay account for the org (most recently connected).
+    - Uses EbaySyncState + compute_sync_window to derive a [cursor-30m, now] window.
+    - Calls EbayService.sync_all_transactions with that window.
+    - Advances the cursor on success, or records last_error on failure.
+    """
     from app.config import settings
-    
+    from app.models_sqlalchemy import get_db
+    from app.services.ebay_workers.state import (
+        get_or_create_sync_state,
+        compute_sync_window,
+        mark_sync_run_result,
+    )
+    from app.services.ebay_workers.transactions_worker import (
+        OVERLAP_MINUTES_DEFAULT,
+        INITIAL_BACKFILL_DAYS_DEFAULT,
+    )
+ 
     original_env = settings.EBAY_ENVIRONMENT
     settings.EBAY_ENVIRONMENT = ebay_environment
-    
+ 
+    db_session = next(get_db())
     try:
-        # Pass run_id to sync_all_transactions so it uses the same run_id for events
-        await ebay_service.sync_all_transactions(user_id, access_token, run_id=run_id)
-    except Exception as e:
-        logger.error(f"Background transactions sync failed for run_id {run_id}: {str(e)}")
+        # Pick the most recently connected active eBay account for this org.
+        accounts = ebay_account_service.get_accounts_by_org(db_session, org_id=user_id, active_only=True)
+        if not accounts:
+            logger.warning(
+                "Transactions sync: no active eBay accounts found for org_id=%s; skipping manual sync",
+                user_id,
+            )
+            return
+ 
+        account = accounts[0]
+        ebay_account_id = account.id
+        ebay_user_id = account.ebay_user_id or "unknown"
+ 
+        # Ensure we have a sync state row and compute the incremental window
+        state = get_or_create_sync_state(
+            db_session,
+            ebay_account_id=ebay_account_id,
+            ebay_user_id=ebay_user_id,
+            api_family="transactions",
+        )
+ 
+        window_from, window_to = compute_sync_window(
+            state,
+            overlap_minutes=OVERLAP_MINUTES_DEFAULT,
+            initial_backfill_days=INITIAL_BACKFILL_DAYS_DEFAULT,
+        )
+ 
+        from_iso = window_from.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        to_iso = window_to.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+ 
+        try:
+            # Pass run_id so SyncEventLogger in sync_all_transactions uses the
+            # same stream the UI is already listening to.
+            await ebay_service.sync_all_transactions(
+                user_id,
+                access_token,
+                run_id=run_id,
+                ebay_account_id=ebay_account_id,
+                ebay_user_id=ebay_user_id,
+                window_from=from_iso,
+                window_to=to_iso,
+            )
+            # On success, advance cursor to window_to
+            mark_sync_run_result(db_session, state, cursor_value=to_iso, error=None)
+        except Exception as e:
+            # Record the error on the sync state but keep the previous cursor.
+            mark_sync_run_result(db_session, state, cursor_value=None, error=str(e))
+            logger.error(
+                "Background transactions sync failed for run_id %s, account_id=%s: %s",
+                run_id,
+                ebay_account_id,
+                str(e),
+            )
+        
     finally:
+        db_session.close()
         settings.EBAY_ENVIRONMENT = original_env
 
 
@@ -648,6 +970,210 @@ async def _run_disputes_sync(user_id: str, access_token: str, ebay_environment: 
         logger.error(f"Background disputes sync failed for run_id {run_id}: {str(e)}")
     finally:
         settings.EBAY_ENVIRONMENT = original_env
+
+
+@router.get("/returns")
+async def get_returns(
+    account_id: str = Query(..., description="eBay account id"),
+    state: Optional[str] = Query(None, description="Filter by return_state"),
+    date_from: Optional[str] = Query(None, description="Filter by creation_date from (ISO8601)"),
+    date_to: Optional[str] = Query(None, description="Filter by creation_date to (ISO8601)"),
+    limit: int = Query(100, ge=1, le=500, description="Number of returns to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return normalized Post-Order returns for a specific eBay account.
+
+    This is a thin read-only API over the `ebay_returns` table populated by the
+    Returns worker. It supports basic filtering by state and creation date
+    range, and returns a stable subset of columns suitable for grid views.
+    """
+    from app.models_sqlalchemy.models import EbayAccount, EbayReturn
+
+    account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
+    if not account or account.org_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    query = db.query(EbayReturn).filter(EbayReturn.ebay_account_id == account_id)
+
+    if state:
+        query = query.filter(EbayReturn.return_state == state)
+
+    if date_from:
+        try:
+            from dateutil import parser as _parser  # type: ignore[import]
+            dt_from = _parser.isoparse(date_from)
+            query = query.filter(EbayReturn.creation_date >= dt_from)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_from format")
+
+    if date_to:
+        try:
+            from dateutil import parser as _parser  # type: ignore[import]
+            dt_to = _parser.isoparse(date_to)
+            query = query.filter(EbayReturn.creation_date <= dt_to)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_to format")
+
+    total = query.count()
+
+    rows = (
+        query.order_by(EbayReturn.creation_date.desc().nullslast())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "return_id": r.return_id,
+                "account_id": r.ebay_account_id,
+                "ebay_user_id": r.ebay_user_id,
+                "order_id": r.order_id,
+                "item_id": r.item_id,
+                "transaction_id": r.transaction_id,
+                "return_state": r.return_state,
+                "return_type": r.return_type,
+                "reason": r.reason,
+                "buyer_username": r.buyer_username,
+                "seller_username": r.seller_username,
+                "total_amount_value": float(r.total_amount_value) if r.total_amount_value is not None else None,
+                "total_amount_currency": r.total_amount_currency,
+                "creation_date": r.creation_date.isoformat() if r.creation_date else None,
+                "last_modified_date": r.last_modified_date.isoformat() if r.last_modified_date else None,
+                "closed_date": r.closed_date.isoformat() if r.closed_date else None,
+            }
+        )
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/returns/detail")
+async def get_return_detail(
+    account_id: str = Query(..., description="eBay account id"),
+    return_id: str = Query(..., description="Post-Order return id"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return a single ebay_returns row plus decoded raw payload and messages.
+
+    This powers the Returns detail modal. Messages are derived from the
+    Post-Order payload:
+
+    * Initial buyer comment – ``summary.creationInfo.comments.content``.
+    * History notes – ``detail.responseHistory[*].notes`` with author/activity.
+    """
+    from app.models_sqlalchemy.models import EbayAccount, EbayReturn
+    import json
+    from datetime import datetime as dt_type
+
+    account: EbayAccount | None = ebay_account_service.get_account(db, account_id)
+    if not account or account.org_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    row: EbayReturn | None = (
+        db.query(EbayReturn)
+        .filter(EbayReturn.ebay_account_id == account_id, EbayReturn.return_id == return_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Return not found")
+
+    # Decode raw_json best-effort.
+    raw: Dict[str, Any]
+    try:
+        raw = json.loads(row.raw_json or "{}")
+        if not isinstance(raw, dict):
+            raw = {"raw": raw}
+    except Exception:
+        raw = {}
+
+    summary = raw.get("summary") or {}
+    detail = raw.get("detail") or {}
+
+    messages: List[Dict[str, Any]] = []
+
+    # 1) Initial buyer comment from creationInfo.comments.content
+    try:
+        comments = (
+            summary.get("creationInfo")
+            or {}
+        ).get("comments") or {}
+        comment_text = comments.get("content")
+        creation_info = summary.get("creationInfo") or {}
+        creation_dt = creation_info.get("creationDate") or {}
+        creation_val = creation_dt.get("value") if isinstance(creation_dt, dict) else creation_dt
+        if comment_text:
+            messages.append(
+                {
+                    "kind": "initial_comment",
+                    "author": "BUYER",
+                    "activity": "BUYER_CREATE_RETURN",
+                    "text": comment_text,
+                    "created_at": creation_val,
+                }
+            )
+    except Exception:
+        # Best-effort – ignore extraction failures.
+        pass
+
+    # 2) responseHistory[*].notes
+    try:
+        history = detail.get("responseHistory") or []
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            text = entry.get("notes") or ""
+            if not text:
+                continue
+            c_raw = entry.get("creationDate") or {}
+            c_val = c_raw.get("value") if isinstance(c_raw, dict) else c_raw
+            messages.append(
+                {
+                    "kind": "history",
+                    "author": entry.get("author"),
+                    "activity": entry.get("activity"),
+                    "from_state": entry.get("fromState"),
+                    "to_state": entry.get("toState"),
+                    "text": text,
+                    "created_at": c_val,
+                }
+            )
+    except Exception:
+        pass
+
+    row_payload = {
+        "return_id": row.return_id,
+        "account_id": row.ebay_account_id,
+        "ebay_user_id": row.ebay_user_id,
+        "order_id": row.order_id,
+        "item_id": row.item_id,
+        "transaction_id": row.transaction_id,
+        "return_state": row.return_state,
+        "return_type": row.return_type,
+        "reason": row.reason,
+        "buyer_username": row.buyer_username,
+        "seller_username": row.seller_username,
+        "total_amount_value": float(row.total_amount_value) if row.total_amount_value is not None else None,
+        "total_amount_currency": row.total_amount_currency,
+        "creation_date": row.creation_date.isoformat() if isinstance(row.creation_date, dt_type) else (row.creation_date.isoformat() if row.creation_date else None),
+        "last_modified_date": row.last_modified_date.isoformat() if isinstance(row.last_modified_date, dt_type) else (row.last_modified_date.isoformat() if row.last_modified_date else None),
+        "closed_date": row.closed_date.isoformat() if isinstance(row.closed_date, dt_type) else (row.closed_date.isoformat() if row.closed_date else None),
+    }
+
+    return {
+        "row": row_payload,
+        "messages": messages,
+        "raw": raw,
+    }
 
 
 @router.get("/disputes")
@@ -1043,6 +1569,66 @@ async def export_sync_logs(
     )
 
 
+@router.get("/debug/templates")
+async def get_debug_templates(current_user: User = Depends(get_current_active_user)):
+    """Return predefined templates for the debugger."""
+    templates = {
+        "identity": {
+            "name": "Identity API - Get User Info",
+            "description": "Get current user identity (username, user_id)",
+            "method": "GET",
+            "path": "/identity/v1/oauth2/userinfo",
+            "params": {},
+        },
+        "orders": {
+            "name": "Orders API - Get Orders",
+            "description": "Fetch recent orders",
+            "method": "GET",
+            "path": "/sell/fulfillment/v1/order",
+            # For now we rely on eBay's default time window and only control pagination
+            # via limit. Filtering by date/status can be added once the API behavior
+            # is fully confirmed in production.
+            "params": {"limit": "1"},
+        },
+        "transactions": {
+            "name": "Transactions API - Get Transactions",
+            "description": "Fetch recent transactions",
+            "method": "GET",
+            "path": "/sell/finances/v1/transaction",
+            "params": {"limit": "1"},
+        },
+        "inventory": {
+            "name": "Inventory API - Get Inventory Items",
+            "description": "Fetch inventory items",
+            "method": "GET",
+            "path": "/sell/inventory/v1/inventory_item",
+            "params": {"limit": "1"},
+        },
+        "offers": {
+            "name": "Offers API - Get Offers",
+            "description": "Fetch active offers",
+            "method": "GET",
+            "path": "/sell/inventory/v1/offer",
+            "params": {"limit": "1"},
+        },
+        "disputes": {
+            "name": "Disputes API - Get Payment Disputes",
+            "description": "Fetch payment disputes",
+            "method": "GET",
+            "path": "/sell/fulfillment/v1/payment_dispute",
+            "params": {"limit": "1"},
+        },
+        "messages": {
+            "name": "Messages API - Get My Messages (Trading)",
+            "description": "Fetch messages via Trading GetMyMessages",
+            "method": "POST",
+            "path": "/ws/api.dll",
+            "params": {},
+        },
+    }
+    return {"templates": templates}
+
+
 @router.post("/debug")
 async def debug_ebay_api(
     method: str = Query("GET", description="HTTP method"),
@@ -1052,6 +1638,7 @@ async def debug_ebay_api(
     body: Optional[str] = Query(None, description="Request body (JSON string)"),
     template: Optional[str] = Query(None, description="Use predefined template (identity, orders, transactions, etc.)"),
     environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
+    account_id: Optional[str] = Query(None, description="Specific eBay account ID to use for the call (optional)"),
     current_user: User = Depends(get_current_active_user)
 ):
     """Debug eBay API requests - make a test request and return full response."""
@@ -1062,36 +1649,52 @@ async def debug_ebay_api(
     
     env = environment or current_user.ebay_environment or "sandbox"
     
-    if not is_user_ebay_connected(current_user, env):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"User is not connected to eBay ({env})"
-        )
-    
     debugger = EbayAPIDebugger(current_user.id, raw_mode=False, save_history=False)
-    
-    # Load user token (override environment explicitly)
-    if not debugger.load_user_token(env_override=env):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to load user token"
-        )
-    
-    # Get user scopes from account
-    user_scopes = []
+
+    # Load account-level token for selected account (no legacy user fields)
+    user_scopes: list[str] = []
     from app.services.ebay_account_service import ebay_account_service
     from app.models_sqlalchemy import get_db
+    from app.models_sqlalchemy.models import EbayToken, EbayAuthorization
     db_session = next(get_db())
     try:
         accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
-        if accounts:
-            from app.models_sqlalchemy.models import EbayAuthorization
-            auths = db_session.query(EbayAuthorization).filter(
-                EbayAuthorization.ebay_account_id == accounts[0].id
-            ).all()
-            user_scopes = [auth.scope for auth in auths] if auths else []
-    except:
-        pass
+        if not accounts:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active eBay account")
+
+        # Pick specific account if provided, otherwise first
+        if account_id:
+            active_account = None
+            for acc in accounts:
+                if acc.id == account_id:
+                    active_account = acc
+                    break
+            if not active_account:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found for user")
+        else:
+            active_account = accounts[0]
+        token_row = (
+            db_session.query(EbayToken)
+            .filter(EbayToken.ebay_account_id == active_account.id)
+            .order_by(EbayToken.updated_at.desc())
+            .first()
+        )
+        if not token_row or not token_row.access_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to load user token")
+        # Set debugger context
+        debugger.access_token = token_row.access_token
+        debugger.user = type("U", (), {"email": current_user.email, "id": current_user.id, "ebay_environment": env})
+        debugger.base_url = "https://api.sandbox.ebay.com" if env == "sandbox" else "https://api.ebay.com"
+        # Scopes from authorizations (flatten JSONB array)
+        auths = db_session.query(EbayAuthorization).filter(
+            EbayAuthorization.ebay_account_id == active_account.id
+        ).all()
+        user_scopes = [s for auth in auths for s in (auth.scopes or [])] if auths else []
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading account token: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to load user token")
     finally:
         db_session.close()
     
@@ -1133,6 +1736,12 @@ async def debug_ebay_api(
     
     # Build URL
     base_url = debugger.base_url
+    # Finances API (transactions) lives on apiz.ebay.com / apiz.sandbox.ebay.com
+    if api_name == "transactions":
+        if env == "sandbox":
+            base_url = "https://apiz.sandbox.ebay.com"
+        else:
+            base_url = "https://apiz.ebay.com"
     if path.startswith('/'):
         url = f"{base_url}{path}"
     elif path.startswith('http'):
@@ -1151,12 +1760,45 @@ async def debug_ebay_api(
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
+    # Merge any extra headers from the UI/template (e.g. X-EBAY-C-MARKETPLACE-ID)
     if headers_dict:
         request_headers.update(headers_dict)
+
+    # Trading API XML calls use X-EBAY-API-IAF-TOKEN instead of JSON Bearer
+    if template in ("messages", "seller_transactions"):
+        # Do not send Authorization: Bearer for Trading
+        request_headers.pop("Authorization", None)
+        request_headers["Content-Type"] = "text/xml"
+        if template == "messages":
+            request_headers["X-EBAY-API-CALL-NAME"] = "GetMyMessages"
+        else:
+            request_headers["X-EBAY-API-CALL-NAME"] = "GetSellerTransactions"
+        request_headers["X-EBAY-API-SITEID"] = "0"
+        request_headers["X-EBAY-API-COMPATIBILITY-LEVEL"] = "967"
+        # Use the same OAuth user token as IAF token for Trading
+        request_headers["X-EBAY-API-IAF-TOKEN"] = debugger.access_token
+
+    # Mask token for logs AFTER all header mutations so logs show the full set
+    masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in request_headers.items()}
     
     # Make request
     start_time = time.time()
     try:
+        # Log request to terminal (no secrets)
+        try:
+            ebay_connect_logger.log_event(
+                user_id=current_user.id,
+                environment=env,
+                action="debug_request",
+                request={
+                    "method": method,
+                    "url": url,
+                    "headers": masked_headers_for_log,
+                    "body": body_str
+                }
+            )
+        except Exception:
+            pass
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
             if method.upper() == "GET":
@@ -1182,6 +1824,27 @@ async def debug_ebay_api(
                 response_body = response.json()
             except:
                 response_body = response.text
+            
+            # Log response to terminal (no secrets)
+            try:
+                ebay_connect_logger.log_event(
+                    user_id=current_user.id,
+                    environment=env,
+                    action="debug_response",
+                    request={
+                        "method": method,
+                        "url": url,
+                        "headers": masked_headers_for_log,
+                        "body": body_str
+                    },
+                    response={
+                        "status": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": (response_body if isinstance(response_body, dict) else (response_body[:5000] if isinstance(response_body, str) else str(response_body)))
+                    }
+                )
+            except Exception:
+                pass
             
             # Get eBay headers
             ebay_headers = {k: v for k, v in response.headers.items() 
@@ -1245,6 +1908,197 @@ async def debug_ebay_api(
         )
 
 
+@router.post("/debug/raw")
+async def debug_ebay_api_raw(
+    raw: dict,
+    environment: str = Query(None, description="eBay environment: sandbox or production (default: user's current environment)"),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Accept a raw HTTP request (as pasted text) and execute it as-is.
+    The raw payload must be a JSON object: { "raw": "METHOD URL\nHeader: value\n\nbody" }
+    """
+    import re
+    import time
+    import httpx
+
+    env = environment or current_user.ebay_environment or "sandbox"
+
+    # Extract raw text
+    raw_text = raw.get("raw") if isinstance(raw, dict) else None
+    if not raw_text or not isinstance(raw_text, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="raw string is required")
+
+    # Parse request
+    lines = raw_text.splitlines()
+    if not lines:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty raw request")
+
+    # First line: METHOD URL
+    first = lines[0].strip()
+    m = re.match(r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(.+)$", first, re.IGNORECASE)
+    if not m:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="First line must be 'METHOD URL'")
+    method = m.group(1).upper()
+    url = m.group(2).strip()
+
+    # Headers until blank line
+    headers: dict[str, str] = {}
+    body_lines: list[str] = []
+    in_body = False
+    for line in lines[1:]:
+        if not in_body:
+            if line.strip() == "":
+                in_body = True
+                continue
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers[k.strip()] = v.strip()
+        else:
+            body_lines.append(line)
+
+    body_str = "\n".join(body_lines) if body_lines else None
+
+    # Derive token and scopes (for context only)
+    auth_header = next((v for k, v in headers.items() if k.lower() == "authorization"), None)
+    token_in_header = None
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token_in_header = auth_header[len("Bearer "):] if auth_header.startswith("Bearer ") else auth_header[len("bearer "):]
+
+    # Load account-level scopes for visibility
+    user_scopes = []
+    try:
+        from app.services.ebay_account_service import ebay_account_service
+        from app.models_sqlalchemy import get_db
+        from app.models_sqlalchemy.models import EbayAuthorization, EbayAccount
+        db_session = next(get_db())
+        accounts = ebay_account_service.get_accounts_by_org(db_session, current_user.id)
+        if accounts:
+            active_account = accounts[0]
+            auths = db_session.query(EbayAuthorization).filter(
+                EbayAuthorization.ebay_account_id == active_account.id
+            ).all()
+            user_scopes = [a.scope for a in auths] if auths else []
+    except Exception:
+        pass
+
+    # Log request (mask Authorization)
+    masked_headers_for_log = {k: ("Bearer ***" if k.lower()=="authorization" else v) for k,v in headers.items()}
+    try:
+        ebay_connect_logger.log_event(
+            user_id=current_user.id,
+            environment=env,
+            action="debug_raw_request",
+            request={
+                "method": method,
+                "url": url,
+                "headers": masked_headers_for_log,
+                "body": body_str
+            }
+        )
+    except Exception:
+        pass
+
+    start_time = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            req_kwargs = {"headers": headers}
+            if method in ("POST", "PUT", "PATCH"):
+                req_kwargs["content"] = body_str or ""
+            if method == "GET":
+                resp = await client.get(url, **req_kwargs)
+            elif method == "POST":
+                resp = await client.post(url, **req_kwargs)
+            elif method == "PUT":
+                resp = await client.put(url, **req_kwargs)
+            elif method == "DELETE":
+                resp = await client.delete(url, **req_kwargs)
+            elif method == "PATCH":
+                resp = await client.patch(url, **req_kwargs)
+            elif method == "HEAD":
+                resp = await client.head(url, **req_kwargs)
+            elif method == "OPTIONS":
+                resp = await client.options(url, **req_kwargs)
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported method: {method}")
+
+        response_time_ms = (time.time() - start_time) * 1000
+        try:
+            resp_body = resp.json()
+        except Exception:
+            resp_body = resp.text
+
+        # Log response
+        try:
+            ebay_connect_logger.log_event(
+                user_id=current_user.id,
+                environment=env,
+                action="debug_raw_response",
+                request={
+                    "method": method,
+                    "url": url,
+                    "headers": masked_headers_for_log,
+                    "body": body_str
+                },
+                response={
+                    "status": resp.status_code,
+                    "headers": dict(resp.headers),
+                    "body": (resp_body if isinstance(resp_body, dict) else (resp_body[:5000] if isinstance(resp_body, str) else str(resp_body)))
+                }
+            )
+        except Exception:
+            pass
+
+        ebay_headers = {k: v for k, v in resp.headers.items() if k.lower().startswith("x-ebay")}
+
+        # Build request_context enriched for Raw Mode
+        from app.utils.token_utils import mask_token, format_scopes_for_display, extract_token_info
+        token_masked = mask_token(token_in_header) if token_in_header else None
+        token_version = None
+        try:
+            if token_in_header:
+                token_version = extract_token_info(token_in_header).get("version")
+        except Exception:
+            pass
+
+        return {
+            "request_context": {
+                "user_email": current_user.email,
+                "user_id": current_user.id[:8] + "..." if len(current_user.id) > 8 else current_user.id,
+                "environment": env,
+                "token": (token_masked or ""),
+                "token_full": token_in_header,
+                "token_version": token_version,
+                "scopes": user_scopes,
+                "scopes_display": format_scopes_for_display(user_scopes),
+                "scopes_full": user_scopes,
+            },
+            "request": {
+                "method": method,
+                "url": url,
+                "url_full": url,
+                "headers": masked_headers_for_log,
+                "headers_full": headers,
+                "params": {},
+                "body": body_str,
+                "curl_command": f"curl -X {method} '{url}' " + " ".join([f"-H '{k}: {v}'" for k,v in headers.items()]) + (f" -d '{body_str}'" if body_str else "")
+            },
+            "response": {
+                "status_code": resp.status_code,
+                "status_text": resp.reason_phrase,
+                "headers": dict(resp.headers),
+                "ebay_headers": ebay_headers,
+                "body": resp_body,
+                "response_time_ms": round(response_time_ms, 2)
+            },
+            "success": 200 <= resp.status_code < 300
+        }
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Upstream error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in raw debug endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error: {str(e)}")
+
+
 @router.get("/debug/templates")
 async def get_debug_templates(
     current_user: User = Depends(get_current_active_user)
@@ -1255,7 +2109,7 @@ async def get_debug_templates(
     debugger = EbayAPIDebugger(current_user.id)
     templates = {}
     
-    for template_name in ["identity", "orders", "transactions", "inventory", "offers", "disputes", "messages"]:
+    for template_name in ["identity", "orders", "transactions", "inventory", "offers", "disputes", "messages", "seller_transactions"]:
         template = debugger.get_template(template_name)
         if template:
             templates[template_name] = {

@@ -257,8 +257,14 @@ class EbayDatabase:
         
         return count
     
-    def upsert_transaction(self, user_id: str, transaction_data: Dict[str, Any]) -> bool:
-        """Insert or update a transaction"""
+    def upsert_transaction(
+        self,
+        user_id: str,
+        transaction_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a transaction (SQLite legacy path, ignores eBay context)."""
         conn = self._get_connection()
         cursor = conn.cursor()
         
@@ -354,8 +360,14 @@ class EbayDatabase:
         return [dict(row) for row in rows]
 
 
-    def upsert_dispute(self, user_id: str, dispute_data: Dict[str, Any]) -> bool:
-        """Insert or update a dispute"""
+    def upsert_dispute(
+        self,
+        user_id: str,
+        dispute_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update a dispute (SQLite legacy path, ignores eBay context)."""
         conn = self._get_connection()
         cursor = conn.cursor()
         
@@ -394,8 +406,14 @@ class EbayDatabase:
             conn.close()
             return False
     
-    def upsert_offer(self, user_id: str, offer_data: Dict[str, Any]) -> bool:
-        """Insert or update an offer"""
+    def upsert_offer(
+        self,
+        user_id: str,
+        offer_data: Dict[str, Any],
+        ebay_account_id: Optional[str] = None,
+        ebay_user_id: Optional[str] = None,
+    ) -> bool:
+        """Insert or update an offer (SQLite legacy path, ignores eBay context)."""
         conn = self._get_connection()
         cursor = conn.cursor()
         

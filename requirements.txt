@@ -1,0 +1,25 @@
+# Backend runtime dependencies mirrored from backend/pyproject.toml
+fastapi[standard]==0.119.0
+psycopg[binary]==3.2.10
+python-jose==3.5.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.20
+pydantic-settings==2.11.0
+httpx==0.28.1
+python-dotenv==1.1.1
+argon2-cffi==25.1.0
+SQLAlchemy==2.0.44
+psycopg2-binary==2.9.11
+alembic==1.17.0
+uvicorn==0.32.0
+python-dateutil==2.9.0.post0
+sqlalchemy-pytds==1.0.2
+beautifulsoup4==4.12.3
+cryptography==43.0.0
+openpyxl==3.1.5
+loguru>=0.7.2
+supabase>=2.10.0
+openai>=1.55.0
+numpy>=1.26.0
+opencv-python-headless>=4.10.0.84
+pillow>=10.4.0

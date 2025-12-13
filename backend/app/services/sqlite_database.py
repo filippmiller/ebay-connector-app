@@ -221,6 +221,8 @@ class SQLiteDatabase:
             username=row['username'],
             hashed_password=row['hashed_password'],
             role=UserRole(row['role']),
+            is_active=True,
+            must_change_password=False,
             created_at=datetime.fromisoformat(row['created_at']),
             ebay_connected=bool(row['ebay_connected']),
             ebay_access_token=row['ebay_access_token'],
@@ -238,10 +240,13 @@ class SQLiteDatabase:
         request: Optional[Dict] = None,
         response: Optional[Dict] = None,
         error: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> None:
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
+            # Note: 'source' column might not exist in SQLite schema yet, so we ignore it for now
+            # to prevent crashes in local dev if migration hasn't run.
             cursor.execute('''
                 INSERT INTO ebay_connect_logs (
                     id, user_id, environment, action,
@@ -280,7 +285,7 @@ class SQLiteDatabase:
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            query = 'SELECT * FROM ebay_connect_logs WHERE user_id = ?'
+            query = 'SELECT * FROM ebay_connect_logs WHERE (user_id = ? OR user_id IS NULL)'
             params = [user_id]
             if environment:
                 query += ' AND environment = ?'

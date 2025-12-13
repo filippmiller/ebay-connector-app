@@ -1,6 +1,15 @@
 import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from "axios";
 
 const getBaseURL = () => {
+  // Production builds must use the relative /api path so that Cloudflare Pages Functions
+  // proxy can normalize mixed backend prefixes (/auth/* vs /api/*). If VITE_API_BASE_URL
+  // or VITE_API_URL are set in Cloudflare, they will bypass the proxy and break auth
+  // (e.g. POST https://railway.app/api/auth/login -> 404).
+  if (import.meta.env.PROD) {
+    console.log("[API] ✅ PROD build: using /api (Cloudflare proxy)");
+    return "/api";
+  }
+
   // NEVER use Fly.dev or devinapps.com - we use Railway backend via Cloudflare proxy
   // Only check environment variables, otherwise use /api (Cloudflare Pages proxy)
   
@@ -14,18 +23,32 @@ const getBaseURL = () => {
     DEV: import.meta.env.DEV
   });
   
+  const ensureApiPrefix = (url: string) => {
+    // Our backend routes are mounted under /api (FastAPI router prefixes).
+    // In some deployments, a full base URL is injected (e.g. Railway) without the /api suffix,
+    // which causes client requests like /accounting/... to 404. Normalize here.
+    const u = (url || '').replace(/\s+/g, '');
+    if (!u) return u;
+
+    // If already points to /api, keep as-is
+    if (u.endsWith('/api') || u.endsWith('/api/')) return u.replace(/\/$/, '');
+
+    // Otherwise append /api
+    return `${u.replace(/\/$/, '')}/api`;
+  };
+
   if (import.meta.env.VITE_API_BASE_URL) {
     console.error('[API] ❌ VITE_API_BASE_URL is set:', import.meta.env.VITE_API_BASE_URL);
     console.error('[API] ❌ This will bypass Cloudflare proxy!');
     console.error('[API] ❌ DELETE this variable in Cloudflare Pages → Settings → Environment Variables');
-    return import.meta.env.VITE_API_BASE_URL;
+    return ensureApiPrefix(import.meta.env.VITE_API_BASE_URL);
   }
   
   if (import.meta.env.VITE_API_URL) {
     console.error('[API] ❌ VITE_API_URL is set:', import.meta.env.VITE_API_URL);
     console.error('[API] ❌ This will bypass Cloudflare proxy!');
     console.error('[API] ❌ DELETE this variable in Cloudflare Pages → Settings → Environment Variables');
-    return import.meta.env.VITE_API_URL;
+    return ensureApiPrefix(import.meta.env.VITE_API_URL);
   }
   
   if (import.meta.env.VITE_API_PREFIX) {

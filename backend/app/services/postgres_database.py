@@ -1,3 +1,4 @@
+from sqlalchemy import or_
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
@@ -22,9 +23,12 @@ class PostgresDatabase:
                 username=user_data.username,
                 hashed_password=hashed_password,
                 role=user_data.role.value,
+                is_active=True,
+                must_change_password=False,
                 created_at=created_at,
                 updated_at=created_at,
                 ebay_connected=False,
+                worker_notifications_enabled=True,
                 ebay_environment='sandbox'
             )
             db.add(db_user)
@@ -119,6 +123,8 @@ class PostgresDatabase:
             hashed_password=db_user.hashed_password,
             role=UserRole(db_user.role.value if hasattr(db_user.role, 'value') else db_user.role),
             is_active=getattr(db_user, 'is_active', True),
+            worker_notifications_enabled=getattr(db_user, 'worker_notifications_enabled', True),
+            must_change_password=getattr(db_user, 'must_change_password', False),
             created_at=db_user.created_at,
             ebay_connected=db_user.ebay_connected or False,
             ebay_access_token=db_user.ebay_access_token,
@@ -139,6 +145,7 @@ class PostgresDatabase:
         request: Optional[Dict[str, Any]] = None,
         response: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> None:
         db: Session = next(get_db())
         try:
@@ -147,6 +154,7 @@ class PostgresDatabase:
                 user_id=user_id,
                 environment=environment or 'sandbox',
                 action=action,
+                source=source,
                 request_method=(request or {}).get('method'),
                 request_url=(request or {}).get('url'),
                 request_headers=(request or {}).get('headers'),
@@ -173,7 +181,9 @@ class PostgresDatabase:
     ) -> List[Dict[str, Any]]:
         db: Session = next(get_db())
         try:
-            query = db.query(EbayConnectLog).filter(EbayConnectLog.user_id == user_id)
+            query = db.query(EbayConnectLog).filter(
+                or_(EbayConnectLog.user_id == user_id, EbayConnectLog.user_id.is_(None))
+            )
             if environment:
                 query = query.filter(EbayConnectLog.environment == environment)
 
@@ -191,6 +201,7 @@ class PostgresDatabase:
                     "user_id": log.user_id,
                     "environment": log.environment,
                     "action": log.action,
+                    "source": getattr(log, "source", None),
                     "request": {
                         "method": log.request_method,
                         "url": log.request_url,

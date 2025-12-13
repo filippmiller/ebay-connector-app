@@ -260,6 +260,24 @@ Headers:
 
 ---
 
+## Обновление 2025-11-26 – Buy Offer / Sniper
+
+> Историческая заметка: изначальный анализ ниже был сосредоточен на `sell.*` и `trading` scope.
+> После внедрения Sniper-модуля и Buy Offer API нам понадобились дополнительные buy-* scope.
+
+- В каталог `ebay_scope_definitions` добавлен scope
+  `https://api.ebay.com/oauth/api_scope/buy.offer.auction` с `grant_type = 'user'` и `is_active = true`.
+- Теперь **все новые токены**, полученные через стандартный `/ebay/auth/start`, содержат как минимум:
+  - базовый scope `https://api.ebay.com/oauth/api_scope`;
+  - scope `https://api.ebay.com/oauth/api_scope/buy.offer.auction` для работы Buy Offer Sniper (place_proxy_bid + getBidding).
+- Если вы переподключаете аккаунт в продакшене и хотите использовать Sniper, убедитесь, что:
+  - миграции Alembic, создающие/обновляющие `ebay_scope_definitions`, применены;
+  - вы заново проходите OAuth flow, чтобы аккаунт получил токен с расширенным набором scope.
+
+Остальной текст документа по-прежнему актуален как базовый разбор проблем с токенами и endpoint-ами.
+
+---
+
 ## ❓ Вопросы для уточнения
 
 1. **Где хранится текущий токен?** Нужно проверить его формат и scope
@@ -269,4 +287,3 @@ Headers:
 ---
 
 **Вывод:** Проблема точно в токене и неправильных endpoint/форматах. После исправления кода и получения нового токена все должно заработать.
-
