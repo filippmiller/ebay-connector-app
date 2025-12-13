@@ -22,6 +22,16 @@ export default function AdminUITweakPage() {
     }
   };
 
+  const applyGridDensityPreset = (preset: 'compact' | 'normal' | 'comfortable') => {
+    const map = {
+      compact: { gridSpacingPx: 4, gridRowHeightPx: 22, gridHeaderHeightPx: 24 },
+      normal: { gridSpacingPx: 6, gridRowHeightPx: 28, gridHeaderHeightPx: 30 },
+      comfortable: { gridSpacingPx: 10, gridRowHeightPx: 34, gridHeaderHeightPx: 34 },
+    } as const;
+    const d = map[preset];
+    update({ gridDensity: preset as any, ...d } as any);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <FixedHeader />
@@ -79,7 +89,7 @@ export default function AdminUITweakPage() {
               <select
                 className="border rounded px-2 py-1 text-sm bg-white"
                 value={settings.gridDensity}
-                onChange={(e) => update({ gridDensity: e.target.value as any })}
+                onChange={(e) => applyGridDensityPreset(e.target.value as any)}
                 aria-label="Grid density"
               >
                 <option value="compact">Compact</option>
@@ -88,6 +98,63 @@ export default function AdminUITweakPage() {
               </select>
               <div className="text-[11px] text-gray-500">
                 Controls row height, header height, padding (spacing) and base grid font size.
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-gray-600">Grid padding (spacing)</label>
+              <input
+                type="range"
+                min={2}
+                max={14}
+                step={1}
+                value={settings.gridSpacingPx}
+                onChange={(e) => update({ gridSpacingPx: Number(e.target.value) } as any)}
+                className="w-full"
+                aria-label="Grid padding (spacing)"
+              />
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <span>Tight</span>
+                <span className="font-mono">{settings.gridSpacingPx}px</span>
+                <span>Loose</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-gray-600">Grid row & header heights</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-gray-600">
+                    <span>Row height</span>
+                    <span className="font-mono">{settings.gridRowHeightPx}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={18}
+                    max={44}
+                    step={1}
+                    value={settings.gridRowHeightPx}
+                    onChange={(e) => update({ gridRowHeightPx: Number(e.target.value) } as any)}
+                    className="w-full"
+                    aria-label="Grid row height"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-gray-600">
+                    <span>Header height</span>
+                    <span className="font-mono">{settings.gridHeaderHeightPx}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={18}
+                    max={52}
+                    step={1}
+                    value={settings.gridHeaderHeightPx}
+                    onChange={(e) => update({ gridHeaderHeightPx: Number(e.target.value) } as any)}
+                    className="w-full"
+                    aria-label="Grid header height"
+                  />
+                </div>
               </div>
             </div>
 

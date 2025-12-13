@@ -115,3 +115,4 @@
 2025-12-13T08:59:13.7159162Z - Fix Ledger 2 blank AG Grid by giving container a definite height (h-[60vh] min-h-[360px]) in Accounting2Page
 2025-12-13T09:15:05.6623601Z - Start grid styling unification: inspect UITweakContext, DataGridPage, index.css AG vars; plan reusable grid wrapper + legacy defaults
 2025-12-13T09:21:46.3761823Z - Implement reusable GridSection wrapper + legacy-like global grid defaults; wire grid density to UI Tweak; add grid font family/weights controls in AdminUITweakPage
+2025-12-13T09:34:25.2225181Z - Add UI Tweak controls for grid spacing + row/header heights; persist via ui_tweak JSON defaults and apply to CSS vars

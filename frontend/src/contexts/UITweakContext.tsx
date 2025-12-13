@@ -59,6 +59,12 @@ export interface UITweakSettings {
   gridDensity: GridDensityPreset;
   /** Default font family for data grids (AG Grid + legacy tables). */
   gridFontFamily: string;
+  /** Grid spacing/padding base in px (maps to AG Grid `--ag-spacing`). */
+  gridSpacingPx: number;
+  /** Grid row height in px (maps to AG Grid `--ag-row-height`). */
+  gridRowHeightPx: number;
+  /** Grid header height in px (maps to AG Grid `--ag-header-height`). */
+  gridHeaderHeightPx: number;
   /** Colors for top nav active/inactive states (CSS color strings). */
   navActiveBg: string;
   navActiveText: string;
@@ -131,6 +137,10 @@ export const DEFAULT_UI_TWEAK: UITweakSettings = {
   gridDensity: 'compact',
   // Legacy (Windows/table) feel: crisp system font.
   gridFontFamily: '"Tahoma","Segoe UI",Arial,sans-serif',
+  // Legacy-like defaults (can be overridden in Admin UI Tweak).
+  gridSpacingPx: 4,
+  gridRowHeightPx: 22,
+  gridHeaderHeightPx: 24,
   navActiveBg: '#2563eb', // blue-600
   navActiveText: '#ffffff',
   navInactiveBg: 'transparent',
@@ -219,27 +229,19 @@ function applySettingsToDocument(settings: UITweakSettings) {
   // Controls size
   root.style.setProperty('--ui-scale-button-input', String(settings.controls.buttonAndInputScale));
 
-  // Map grid density to base CSS custom properties used by .app-grid.
-  // These values are chosen to roughly match the existing density presets.
+  // Map grid density to base grid font-size only (spacing/heights are explicit controls).
   if (settings.gridDensity === 'compact') {
-    // Legacy-like dense tables
-    root.style.setProperty('--grid-row-height', '22px');
-    root.style.setProperty('--grid-header-height', '24px');
     root.style.setProperty('--grid-font-size', '12px');
-    root.style.setProperty('--grid-spacing', '4px');
   } else if (settings.gridDensity === 'comfortable') {
-    root.style.setProperty('--grid-row-height', '40px');
-    root.style.setProperty('--grid-header-height', '40px');
-    root.style.setProperty('--grid-font-size', '14px');
-    root.style.setProperty('--grid-spacing', '10px');
-  } else {
-    root.style.setProperty('--grid-row-height', '32px');
-    root.style.setProperty('--grid-header-height', '32px');
     root.style.setProperty('--grid-font-size', '13px');
-    root.style.setProperty('--grid-spacing', '6px');
+  } else {
+    root.style.setProperty('--grid-font-size', '12px');
   }
 
   root.style.setProperty('--grid-font-family', settings.gridFontFamily || '"Tahoma","Segoe UI",Arial,sans-serif');
+  root.style.setProperty('--grid-spacing', `${settings.gridSpacingPx || 4}px`);
+  root.style.setProperty('--grid-row-height', `${settings.gridRowHeightPx || 22}px`);
+  root.style.setProperty('--grid-header-height', `${settings.gridHeaderHeightPx || 24}px`);
 
   // Grid theme colors
   const g = settings.gridTheme;
