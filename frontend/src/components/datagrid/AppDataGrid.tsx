@@ -63,6 +63,8 @@ export interface AppDataGridProps {
   gridTheme?: GridThemeConfig | null;
   /** Extra column definitions to append (e.g. action buttons). */
   extraColumns?: ColDef[];
+  /** Notifies parent when AG Grid API becomes available. */
+  onGridReadyStateChange?: (ready: boolean) => void;
 }
 
 function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): string {
@@ -190,6 +192,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   gridKey,
   gridTheme,
   extraColumns,
+  onGridReadyStateChange,
 }, ref) => {
   const layoutDebounceRef = useRef<number | null>(null);
   const gridApiRef = useRef<GridApi | null>(null);
@@ -610,6 +613,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
             animateRows
             onGridReady={(params) => {
               gridApiRef.current = params.api as GridApi;
+              onGridReadyStateChange?.(true);
             }}
             onSelectionChanged={(event) => {
               if (onSelectionChange && event.api) {
