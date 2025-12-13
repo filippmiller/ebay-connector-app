@@ -481,23 +481,6 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       return colDef;
     });
 
-    // Selection checkbox column (classic AG Grid API).
-    // This avoids using the newer rowSelection object API which can differ by version.
-    if (selectionMode === 'multiRow') {
-      defs.unshift({
-        colId: '__select__',
-        headerName: '',
-        width: 42,
-        pinned: 'left',
-        resizable: false,
-        sortable: false,
-        filter: false,
-        suppressMovable: true,
-        checkboxSelection: true,
-        headerCheckboxSelection: true,
-      } as ColDef);
-    }
-
     if (extraColumns && extraColumns.length) {
       const extraMap = new Map(extraColumns.map(c => [c.colId, c]));
       // Replace existing columns if they are defined in extraColumns
@@ -516,6 +499,25 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
     }
     return defs;
   }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme, extraColumns, selectionMode]);
+
+  const rowSelection = useMemo(() => {
+    if (selectionMode === 'multiRow') {
+      // v32+ object API (avoids deprecated 'multiple', rowMultiSelectWithClick, checkboxSelection, headerCheckboxSelection, etc.)
+      return {
+        mode: 'multiRow',
+        checkboxes: true,
+        headerCheckbox: true,
+        enableSelectionWithoutKeys: true,
+        enableClickSelection: true,
+      };
+    }
+    return {
+      mode: 'singleRow',
+      // we don't need checkboxes for single-row selection; allow click selection instead
+      checkboxes: false,
+      enableClickSelection: true,
+    };
+  }, [selectionMode]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
@@ -619,9 +621,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
               const values = keys.map(k => params.data?.[k]).join('-');
               return `row-${values || 'unknown'}`;
             }}
-            rowSelection={selectionMode === 'multiRow' ? 'multiple' : 'single'}
-            rowMultiSelectWithClick={selectionMode === 'multiRow'}
-            suppressRowClickSelection={selectionMode === 'multiRow'}
+            rowSelection={rowSelection as any}
             suppressMultiSort
             suppressScrollOnNewData
             suppressAggFuncInHeader
