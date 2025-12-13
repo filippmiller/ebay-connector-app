@@ -224,7 +224,7 @@ async def create_rule(
     }
 
 
-@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_200_OK)
 async def delete_rule(
     rule_id: int,
     db: Session = Depends(get_db_sqla),
@@ -236,7 +236,7 @@ async def delete_rule(
     
     db.delete(rule)
     db.commit()
-    return None
+    return {"deleted": 1}
 
 
 
@@ -455,7 +455,7 @@ async def commit_bank_rows_to_transactions(
     }
 
 
-@router.delete("/bank-statements/{statement_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/bank-statements/{statement_id}", status_code=status.HTTP_200_OK)
 async def delete_bank_statement(
     statement_id: int,
     db: Session = Depends(get_db_sqla),

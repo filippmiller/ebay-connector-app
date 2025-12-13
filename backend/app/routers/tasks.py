@@ -701,12 +701,12 @@ async def set_task_important(
     return await get_task(task.id, current_user=current_user, db=db)
 
 
-@tasks_router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+@tasks_router.delete("/{task_id}", status_code=status.HTTP_200_OK)
 async def delete_task(
     task_id: str,
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
-) -> None:
+) -> dict:
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task or task.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
@@ -718,6 +718,7 @@ async def delete_task(
 
     task.deleted_at = datetime.now(timezone.utc)
     db.commit()
+    return {"deleted": 1}
 
 
 # ---- Notifications endpoints ----

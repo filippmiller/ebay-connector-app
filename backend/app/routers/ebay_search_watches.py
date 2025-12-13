@@ -185,16 +185,16 @@ async def update_watch(
     return watch
 
 
-@router.delete("/{watch_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{watch_id}", status_code=status.HTTP_200_OK)
 async def delete_watch(
     watch_id: str,
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db),
-) -> None:
+) -> dict:
     watch: Optional[EbaySearchWatch] = db.query(EbaySearchWatch).filter(EbaySearchWatch.id == watch_id).one_or_none()
     if not watch:
         # Idempotent delete
-        return None
+        return {"deleted": 0}
 
     _ensure_owner(watch, current_user)
 
@@ -202,7 +202,7 @@ async def delete_watch(
     db.commit()
 
     logger.info("[watch] deleted ebay_search_watch id=%s user_id=%s", watch.id, current_user.id)
-    return None
+    return {"deleted": 1}
 
 
 @router.post("/{watch_id}/run-once", response_model=List[RunOnceListing])

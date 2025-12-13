@@ -68,6 +68,16 @@ export interface DictionariesResponse {
   sites: SiteDto[];
   ebay_business_policies: EbayBusinessPoliciesResponseDto;
   ebay_business_policy_defaults: EbayBusinessPoliciesDefaultsDto;
+  ebay_shipping_group_policy_mappings: Array<{
+    id: string;
+    shipping_group_id: number;
+    shipping_type: string;
+    domestic_only_flag?: boolean | null;
+    shipping_policy_id?: string | null;
+    payment_policy_id?: string | null;
+    return_policy_id?: string | null;
+    notes?: string | null;
+  }>;
 }
 
 export interface UseSqDictionariesResult {

@@ -161,12 +161,12 @@ async def get_grid_preferences(
     )
 
 
-@router.delete("/preferences", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/preferences", status_code=status.HTTP_200_OK)
 async def delete_grid_preferences(
     grid_key: str = Query(..., description="Unique grid key (e.g. transactions, orders, offers)"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
-) -> None:
+) -> dict:
     """Delete a user's preferences for a grid, reverting to GRID_DEFAULTS on next fetch."""
 
     allowed_cols = _allowed_columns_for_grid(grid_key)
@@ -179,11 +179,12 @@ async def delete_grid_preferences(
         .first()
     )
     if not layout:
-        return
+        return {"deleted": 0}
 
     db.delete(layout)
     db.commit()
     logger.info("grid_preferences.delete user_id=%s grid_key=%s", current_user.id, grid_key)
+    return {"deleted": 1}
 
 
 @router.post("/preferences", response_model=GridPreferencesResponse)

@@ -206,6 +206,8 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<SkuFormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // When true, auto-apply eBay policy IDs based on ShippingGroup/Type/DomesticOnly mapping.
+  const [policiesAuto, setPoliciesAuto] = useState(true);
 
   // Model search state – search is triggered explicitly on Enter, not live
   // on every keystroke.
@@ -235,6 +237,7 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
     if (!open) return;
 
     setErrors({});
+    setPoliciesAuto(true);
 
     if (mode === 'create') {
       setForm((prev) => ({
@@ -363,6 +366,45 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
       ebayReturnPolicyId: prev.ebayReturnPolicyId || (dictionaries.ebay_business_policy_defaults?.return_policy_id || ''),
     }));
   }, [open, mode, dictionaries, defaultUsedConditionId]);
+
+  // Auto-apply policy IDs based on shipping group policy mappings.
+  useEffect(() => {
+    if (!open) return;
+    if (!policiesAuto) return;
+    if (!dictionaries) return;
+
+    const sg = Number(form.shippingGroupCode);
+    if (!Number.isFinite(sg) || sg <= 0) return;
+
+    const st = form.shippingType || 'Flat';
+    const dom = form.domesticOnly ? true : false;
+
+    const mappings = dictionaries.ebay_shipping_group_policy_mappings || [];
+
+    // Prefer exact domestic flag match, otherwise allow \"any\" (null) match.
+    const exact = mappings.find(
+      (m) =>
+        Number(m.shipping_group_id) === sg &&
+        String(m.shipping_type) === st &&
+        (m.domestic_only_flag === dom),
+    );
+    const any = mappings.find(
+      (m) =>
+        Number(m.shipping_group_id) === sg &&
+        String(m.shipping_type) === st &&
+        (m.domestic_only_flag == null),
+    );
+
+    const selected = exact || any;
+    if (!selected) return;
+
+    setForm((prev) => ({
+      ...prev,
+      ebayShippingPolicyId: selected.shipping_policy_id != null ? String(selected.shipping_policy_id) : prev.ebayShippingPolicyId,
+      ebayPaymentPolicyId: selected.payment_policy_id != null ? String(selected.payment_policy_id) : prev.ebayPaymentPolicyId,
+      ebayReturnPolicyId: selected.return_policy_id != null ? String(selected.return_policy_id) : prev.ebayReturnPolicyId,
+    }));
+  }, [open, policiesAuto, dictionaries, form.shippingGroupCode, form.shippingType, form.domesticOnly]);
 
   const handleChange = (field: keyof SkuFormState, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -883,7 +925,10 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   <label className="text-sm font-medium mb-1 block">Shipping policy</label>
                   <Select
                     value={form.ebayShippingPolicyId}
-                    onValueChange={(value) => handleChange('ebayShippingPolicyId', value)}
+                    onValueChange={(value) => {
+                      setPoliciesAuto(false);
+                      handleChange('ebayShippingPolicyId', value);
+                    }}
                   >
                     <SelectTrigger className="h-8 text-sm">
                       <SelectValue placeholder="(use defaults / none)" />
@@ -904,7 +949,10 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   <label className="text-sm font-medium mb-1 block">Payment policy</label>
                   <Select
                     value={form.ebayPaymentPolicyId}
-                    onValueChange={(value) => handleChange('ebayPaymentPolicyId', value)}
+                    onValueChange={(value) => {
+                      setPoliciesAuto(false);
+                      handleChange('ebayPaymentPolicyId', value);
+                    }}
                   >
                     <SelectTrigger className="h-8 text-sm">
                       <SelectValue placeholder="(use defaults / none)" />
@@ -925,7 +973,10 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
                   <label className="text-sm font-medium mb-1 block">Return policy</label>
                   <Select
                     value={form.ebayReturnPolicyId}
-                    onValueChange={(value) => handleChange('ebayReturnPolicyId', value)}
+                    onValueChange={(value) => {
+                      setPoliciesAuto(false);
+                      handleChange('ebayReturnPolicyId', value);
+                    }}
                   >
                     <SelectTrigger className="h-8 text-sm">
                       <SelectValue placeholder="(use defaults / none)" />
@@ -945,6 +996,18 @@ export function SkuFormModal({ open, mode, skuId, onSaved, onClose }: SkuFormMod
               </div>
               <div className="text-[11px] text-gray-600">
                 Defaults are loaded from Supabase (`ebay_business_policies_defaults`). Manage policies in Admin → Ebay Business Policies Center.
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-gray-600">
+                <span>Auto-apply mapping: {policiesAuto ? 'ON' : 'OFF (manual override)'}</span>
+                {!policiesAuto && (
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded border text-[11px] bg-white hover:bg-gray-50"
+                    onClick={() => setPoliciesAuto(true)}
+                  >
+                    Re-enable auto
+                  </button>
+                )}
               </div>
             </section>
 

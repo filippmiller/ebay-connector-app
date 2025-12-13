@@ -37,6 +37,11 @@ export default function AdminPage() {
             <p className="text-sm text-gray-600 mt-1">Configure and run background eBay sync jobs</p>
           </Card>
 
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ebay-flows')}>
+            <h2 className="text-lg font-semibold">eBay Flow Catalog</h2>
+            <p className="text-sm text-gray-600 mt-1">Searchable map: eBay calls → endpoints/workers → DB tables</p>
+          </Card>
+
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/test-listing')}>
             <h2 className="text-lg font-semibold">Legacy Offer Publish Debug</h2>
             <p className="text-sm text-gray-600 mt-1">Offer lookup → bulkPublishOffer (legacy flow; keep separate)</p>
@@ -50,6 +55,11 @@ export default function AdminPage() {
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ebay-business-policies-center')}>
             <h2 className="text-lg font-semibold">Ebay Business Policies Center</h2>
             <p className="text-sm text-gray-600 mt-1">Add/edit/delete Shipping/Payment/Return policy IDs (SellerProfiles)</p>
+          </Card>
+
+          <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/ebay-policy-mappings')}>
+            <h2 className="text-lg font-semibold">eBay Policy Mappings</h2>
+            <p className="text-sm text-gray-600 mt-1">Map ShippingGroup/ShippingType/DomesticOnly → policy IDs</p>
           </Card>
 
           <Card className="p-4 hover:shadow-lg cursor-pointer" onClick={() => navigate('/admin/db-explorer')}>

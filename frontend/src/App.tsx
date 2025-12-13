@@ -35,6 +35,8 @@ import AdminBinListingPage from './pages/AdminBinListingPage';
 import AdminDataMigrationPage from './pages/AdminDataMigrationPage';
 import AdminTestComputerAnalyticsGraphPage from './pages/AdminTestComputerAnalyticsGraphPage';
 import AdminEbayBusinessPoliciesCenterPage from './pages/AdminEbayBusinessPoliciesCenterPage';
+import AdminEbayFlowsPage from './pages/AdminEbayFlowsPage';
+import AdminEbayPolicyMappingsPage from './pages/AdminEbayPolicyMappingsPage';
 import MyTimesheetPage from './pages/MyTimesheetPage';
 import AdminTimesheetsPage from './pages/AdminTimesheetsPage';
 import TasksPage from './pages/TasksPage';
@@ -150,6 +152,7 @@ function App() {
           <Route path="/offers" element={<ProtectedRoute><OffersPageV2 /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
           <Route path="/admin/integrations" element={<ProtectedRoute><AdminIntegrationsPage /></ProtectedRoute>} />
+          <Route path="/admin/ebay-flows" element={<ProtectedRoute><AdminEbayFlowsPage /></ProtectedRoute>} />
           <Route path="/admin/users" element={<ProtectedRoute><AdminUsersPage /></ProtectedRoute>} />
           <Route path="/admin/ui-tweak" element={<ProtectedRoute><AdminUITweakPage /></ProtectedRoute>} />
           <Route path="/admin/security" element={<ProtectedRoute><SecurityCenterPage /></ProtectedRoute>} />
@@ -170,6 +173,7 @@ function App() {
           <Route path="/admin/bin-listing" element={<ProtectedRoute><AdminBinListingPage /></ProtectedRoute>} />
           <Route path="/admin/test-listing" element={<ProtectedRoute><AdminTestListingPage /></ProtectedRoute>} />
           <Route path="/admin/ebay-business-policies-center" element={<ProtectedRoute><AdminEbayBusinessPoliciesCenterPage /></ProtectedRoute>} />
+          <Route path="/admin/ebay-policy-mappings" element={<ProtectedRoute><AdminEbayPolicyMappingsPage /></ProtectedRoute>} />
           <Route path="/admin/test-computer-analytics" element={<ProtectedRoute><AdminTestComputerAnalyticsPage /></ProtectedRoute>} />
           <Route path="/admin/test-computer-analytics-graph" element={<ProtectedRoute><AdminTestComputerAnalyticsGraphPage /></ProtectedRoute>} />
           <Route

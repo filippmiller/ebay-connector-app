@@ -120,3 +120,6 @@
 2025-12-13T09:59:20.6779206Z - Finish Grid font size control: add gridFontSizePx to backend payload + seed defaults and docs
 2025-12-13T10:10:05.2990172Z - Add per-grid per-user Appearance modal in Columns panel (live preview + save via grid/preferences theme) and expose AppDataGrid handle methods for live refresh
 2025-12-13T10:16:55.000Z - Fix grid appearance sliders: use AgGridReact rowHeight/headerHeight props and apply cell/header padding via --grid-spacing for reliable live updates
+2025-12-13T12:40:50.592Z - Added Admin eBay Flow Catalog: Supabase ebay_flow_catalog table + backend regenerate/search endpoints + frontend Admin page (/admin/ebay-flows)
+2025-12-13T12:50:21Z - Implemented ShippingGroup→BusinessPolicy mapping layer: Supabase ebay_shipping_group_policy_mappings + backend admin CRUD + UI page (/admin/ebay-policy-mappings) + SKU form auto-apply based on mapping
+2025-12-13T12:55:10Z - Extended eBay Flow Catalog generator with BIN Trading debug + Business Policies Center + Policy Mappings flows (auto_seed entries)

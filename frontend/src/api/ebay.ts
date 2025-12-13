@@ -473,6 +473,38 @@ export interface EbayBusinessPolicyUpdateDto {
   is_active?: boolean;
 }
 
+export interface EbayShippingGroupPolicyMappingRow {
+  id: string;
+  account_key: string;
+  marketplace_id: string;
+  shipping_group_id: number;
+  shipping_type: string;
+  domestic_only_flag?: boolean | null;
+  shipping_policy_id?: string | null;
+  payment_policy_id?: string | null;
+  return_policy_id?: string | null;
+  is_active: boolean;
+  notes?: string | null;
+}
+
+export interface EbayShippingGroupPolicyMappingListResponse {
+  rows: EbayShippingGroupPolicyMappingRow[];
+  total: number;
+}
+
+export interface EbayShippingGroupPolicyMappingUpsertDto {
+  account_key: string;
+  marketplace_id: string;
+  shipping_group_id: number;
+  shipping_type: 'Flat' | 'Calculated';
+  domestic_only_flag?: boolean | null;
+  shipping_policy_id?: number | null;
+  payment_policy_id?: number | null;
+  return_policy_id?: number | null;
+  is_active?: boolean;
+  notes?: string | null;
+}
+
 export interface EbayGlobalSiteDto {
   site_id: number;
   global_id?: string | null;
@@ -988,6 +1020,23 @@ export const ebayApi = {
 
   async deleteBusinessPolicy(id: string): Promise<{ deleted: number }> {
     const response = await apiClient.delete<{ deleted: number }>(`/api/admin/ebay/business-policies/${encodeURIComponent(id)}`);
+    return response.data;
+  },
+
+  // Admin → Policy mappings (legacy ShippingGroup -> SellerProfiles IDs)
+  async listShippingGroupPolicyMappings(accountKey: string = 'default', marketplaceId: string = 'EBAY_US'): Promise<EbayShippingGroupPolicyMappingListResponse> {
+    const params = new URLSearchParams({ account_key: accountKey, marketplace_id: marketplaceId });
+    const response = await apiClient.get<EbayShippingGroupPolicyMappingListResponse>(`/api/admin/ebay/policy-mappings/shipping-groups?${params.toString()}`);
+    return response.data;
+  },
+
+  async upsertShippingGroupPolicyMapping(payload: EbayShippingGroupPolicyMappingUpsertDto): Promise<EbayShippingGroupPolicyMappingRow> {
+    const response = await apiClient.post<EbayShippingGroupPolicyMappingRow>(`/api/admin/ebay/policy-mappings/shipping-groups`, payload);
+    return response.data;
+  },
+
+  async deleteShippingGroupPolicyMapping(id: string): Promise<{ deleted: number }> {
+    const response = await apiClient.delete<{ deleted: number }>(`/api/admin/ebay/policy-mappings/shipping-groups/${encodeURIComponent(id)}`);
     return response.data;
   },
 

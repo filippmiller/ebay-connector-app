@@ -1215,6 +1215,50 @@ async def get_sq_dictionaries(
         "return_policy_id": str(defaults_row[2]) if defaults_row and defaults_row[2] is not None else None,
     }
 
+    # ---- SHIPPING GROUP POLICY MAPPINGS (for auto-wiring SKU -> policies) ----
+    mappings_rows = []
+    try:
+        mappings_rows = db.execute(
+            text(
+                """
+                SELECT
+                  id::text AS id,
+                  shipping_group_id,
+                  shipping_type,
+                  domestic_only_flag,
+                  shipping_policy_id,
+                  payment_policy_id,
+                  return_policy_id,
+                  is_active,
+                  notes
+                FROM public.ebay_shipping_group_policy_mappings
+                WHERE account_key = :account_key
+                  AND marketplace_id = :marketplace_id
+                  AND is_active = TRUE
+                ORDER BY shipping_group_id ASC, shipping_type ASC, domestic_only_flag NULLS FIRST, id DESC
+                """
+            ),
+            {"account_key": DEFAULT_POLICY_ACCOUNT_KEY, "marketplace_id": DEFAULT_POLICY_MARKETPLACE_ID},
+        ).mappings().all()
+    except Exception as exc:
+        logger.warning("Failed to load ebay_shipping_group_policy_mappings dictionaries: %s", exc)
+        mappings_rows = []
+
+    shipping_group_policy_mappings = []
+    for r in mappings_rows:
+        shipping_group_policy_mappings.append(
+            {
+                "id": str(r.get("id")),
+                "shipping_group_id": int(r.get("shipping_group_id") or 0),
+                "shipping_type": str(r.get("shipping_type") or ""),
+                "domestic_only_flag": r.get("domestic_only_flag"),
+                "shipping_policy_id": str(r.get("shipping_policy_id")) if r.get("shipping_policy_id") is not None else None,
+                "payment_policy_id": str(r.get("payment_policy_id")) if r.get("payment_policy_id") is not None else None,
+                "return_policy_id": str(r.get("return_policy_id")) if r.get("return_policy_id") is not None else None,
+                "notes": r.get("notes"),
+            }
+        )
+
     return {
         "internal_categories": internal_categories,
         "shipping_groups": shipping_groups,
@@ -1231,4 +1275,5 @@ async def get_sq_dictionaries(
         "sites": sites,
         "ebay_business_policies": policies_out,
         "ebay_business_policy_defaults": policies_defaults,
+        "ebay_shipping_group_policy_mappings": shipping_group_policy_mappings,
     }
