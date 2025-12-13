@@ -75,9 +75,6 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [styleColumn, setStyleColumn] = useState<string | null>(null);
-  const [agReady, setAgReady] = useState(false);
-  const [forceTable, setForceTable] = useState(false);
-  const [tableSelectedIds, setTableSelectedIds] = useState<Set<string>>(new Set());
 
   const gridRef = React.useRef<AppDataGridHandle | null>(null);
   const { toast } = useToast();
@@ -97,29 +94,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   // Reset pagination when key/filters/search change
   useEffect(() => {
     setOffset(0);
-    setAgReady(false);
-    setForceTable(false);
-    setTableSelectedIds(new Set());
   }, [gridKey, extraParamsKey, search]);
-
-  // If AG Grid doesn't become ready shortly after we have columns, fall back to a plain table.
-  useEffect(() => {
-    if (gridPrefs.loading) return;
-    if (columns.length === 0) return;
-    if (agReady) return;
-    const t = window.setTimeout(() => {
-      if (!agReady) setForceTable(true);
-    }, 1500);
-    return () => window.clearTimeout(t);
-  }, [agReady, columns.length, gridPrefs.loading]);
-
-  const renderCell = (value: any) => {
-    if (value === null || value === undefined) return '';
-    if (typeof value === 'object') {
-      try { return JSON.stringify(value); } catch { return String(value); }
-    }
-    return String(value);
-  };
 
   // Map of column meta by name
   const availableColumnsMap = useMemo(() => {
@@ -469,90 +444,6 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
           <div className="p-4 text-sm text-gray-500">No columns configured.</div>
         ) : columns.length === 0 ? (
           <div className="p-4 text-sm text-gray-500">Initializing columns…</div>
-        ) : forceTable ? (
-          <div className="flex-1 min-h-0 flex flex-col">
-            <div className="px-3 py-2 text-[11px] text-amber-700 bg-amber-50 border-b">
-              Grid fallback mode enabled (AG Grid not ready). Data is shown in a simple table to avoid blank screens.
-            </div>
-            <div className="flex-1 min-h-0 overflow-auto">
-              <table className="min-w-full text-xs">
-                <thead className="bg-gray-50 sticky top-0 z-10">
-                  <tr>
-                    {selectionMode === 'multiRow' && (
-                      <th className="px-2 py-2 w-8 text-center">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all rows"
-                          checked={rows.length > 0 && tableSelectedIds.size === rows.length}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            const next = checked ? new Set(rows.map((r) => String(r.id ?? JSON.stringify(r)))) : new Set<string>();
-                            setTableSelectedIds(next);
-                            if (onSelectionChange) {
-                              const selected = checked ? rows : [];
-                              onSelectionChange(selected);
-                            }
-                          }}
-                        />
-                      </th>
-                    )}
-                    {columns.map((c) => (
-                      <th key={c.name} className="px-2 py-2 text-left ui-table-header whitespace-nowrap">
-                        {c.label || c.name}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, idx) => {
-                    const rowKey = String(r.id ?? `row-${idx}`);
-                    const isSelected = tableSelectedIds.has(rowKey);
-                    return (
-                      <tr
-                        key={rowKey}
-                        className={`border-t hover:bg-gray-50 ${isSelected ? 'bg-blue-50' : ''}`}
-                        onClick={() => {
-                          if (!onRowClick) return;
-                          onRowClick(r);
-                        }}
-                      >
-                        {selectionMode === 'multiRow' && (
-                          <td className="px-2 py-1 text-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              aria-label="Select row"
-                              checked={isSelected}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setTableSelectedIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (checked) next.add(rowKey);
-                                  else next.delete(rowKey);
-                                  if (onSelectionChange) {
-                                    const selectedRows = rows.filter((x, j) => {
-                                      const k = String(x.id ?? `row-${j}`);
-                                      return next.has(k);
-                                    });
-                                    onSelectionChange(selectedRows);
-                                  }
-                                  return next;
-                                });
-                              }}
-                            />
-                          </td>
-                        )}
-                        {columns.map((c) => (
-                          <td key={c.name} className="px-2 py-1 ui-table-cell whitespace-nowrap">
-                            {renderCell((r as any)?.[c.name])}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
         ) : (
           <AppDataGrid
             columns={columns}
@@ -568,7 +459,6 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
             onSortChange={handleSortChangeFromGrid}
             gridKey={gridKey}
             gridTheme={gridPrefs.theme || null}
-            onGridReadyStateChange={setAgReady}
           />
         )}
       </div>

@@ -63,8 +63,6 @@ export interface AppDataGridProps {
   gridTheme?: GridThemeConfig | null;
   /** Extra column definitions to append (e.g. action buttons). */
   extraColumns?: ColDef[];
-  /** Notifies parent when AG Grid API becomes available. */
-  onGridReadyStateChange?: (ready: boolean) => void;
 }
 
 function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): string {
@@ -192,7 +190,6 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
   gridKey,
   gridTheme,
   extraColumns,
-  onGridReadyStateChange,
 }, ref) => {
   const layoutDebounceRef = useRef<number | null>(null);
   const gridApiRef = useRef<GridApi | null>(null);
@@ -484,6 +481,24 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       return colDef;
     });
 
+    // Selection checkbox column (classic AG Grid API).
+    // This avoids using the newer rowSelection object API which can differ by version.
+    if (selectionMode === 'multiRow') {
+      defs.unshift({
+        colId: '__select__',
+        headerName: '',
+        width: 42,
+        pinned: 'left',
+        resizable: false,
+        sortable: false,
+        filter: false,
+        suppressMenu: true,
+        suppressMovable: true,
+        checkboxSelection: true,
+        headerCheckboxSelection: true,
+      } as ColDef);
+    }
+
     if (extraColumns && extraColumns.length) {
       const extraMap = new Map(extraColumns.map(c => [c.colId, c]));
       // Replace existing columns if they are defined in extraColumns
@@ -501,7 +516,7 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       return mergedDefs;
     }
     return defs;
-  }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme, extraColumns]);
+  }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme, extraColumns, selectionMode]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
@@ -600,20 +615,17 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
               // Fallback: use a hash of the first few fields to create a stable ID
               const keys = Object.keys(params.data || {}).slice(0, 3);
               const values = keys.map(k => params.data?.[k]).join('-');
-              return `row-${values}` || `row-${Math.random()}`;
+              return `row-${values || 'unknown'}`;
             }}
-            rowSelection={{
-              mode: selectionMode,
-              checkboxes: selectionMode === 'multiRow',
-              headerCheckbox: selectionMode === 'multiRow',
-            }}
+            rowSelection={selectionMode === 'multiRow' ? 'multiple' : 'single'}
+            rowMultiSelectWithClick={selectionMode === 'multiRow'}
+            suppressRowClickSelection={selectionMode === 'multiRow'}
             suppressMultiSort
             suppressScrollOnNewData
             suppressAggFuncInHeader
             animateRows
             onGridReady={(params) => {
               gridApiRef.current = params.api as GridApi;
-              onGridReadyStateChange?.(true);
             }}
             onSelectionChanged={(event) => {
               if (onSelectionChange && event.api) {
