@@ -73,6 +73,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
+  const [showAppearancePanel, setShowAppearancePanel] = useState(false);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [styleColumn, setStyleColumn] = useState<string | null>(null);
@@ -336,10 +337,100 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
   const bodyFontSizePx = 10 + clampedBodyLevel;
   const gridBackgroundColor = gridPrefs.theme?.backgroundColor as string | undefined;
 
+  type GridAppearance = {
+    gridSpacingPx: number;
+    gridRowHeightPx: number;
+    gridHeaderHeightPx: number;
+    gridFontSizePx: number;
+    gridFontFamily: string;
+  };
+
+  const effectiveAppearance = useMemo<GridAppearance>(() => {
+    const t = gridPrefs.theme || {};
+    const spacing = typeof (t as any).gridSpacingPx === 'number' ? (t as any).gridSpacingPx : uiTweak.gridSpacingPx;
+    const rowH = typeof (t as any).gridRowHeightPx === 'number' ? (t as any).gridRowHeightPx : uiTweak.gridRowHeightPx;
+    const headerH = typeof (t as any).gridHeaderHeightPx === 'number' ? (t as any).gridHeaderHeightPx : uiTweak.gridHeaderHeightPx;
+    const fontSize = typeof (t as any).gridFontSizePx === 'number' ? (t as any).gridFontSizePx : uiTweak.gridFontSizePx;
+    const fontFamily = typeof (t as any).gridFontFamily === 'string' ? (t as any).gridFontFamily : uiTweak.gridFontFamily;
+    return {
+      gridSpacingPx: spacing,
+      gridRowHeightPx: rowH,
+      gridHeaderHeightPx: headerH,
+      gridFontSizePx: fontSize,
+      gridFontFamily: fontFamily,
+    };
+  }, [
+    gridPrefs.theme,
+    uiTweak.gridSpacingPx,
+    uiTweak.gridRowHeightPx,
+    uiTweak.gridHeaderHeightPx,
+    uiTweak.gridFontSizePx,
+    uiTweak.gridFontFamily,
+  ]);
+
+  const [appearanceDraft, setAppearanceDraft] = useState<GridAppearance | null>(null);
+  const appliedAppearance = appearanceDraft || effectiveAppearance;
+
+  const gridStyle: React.CSSProperties = useMemo(() => {
+    const style: any = {
+      fontSize: bodyFontSizePx,
+      backgroundColor: gridBackgroundColor || undefined,
+      // Per-grid CSS vars (override global UI Tweak when saved)
+      '--grid-spacing': `${appliedAppearance.gridSpacingPx}px`,
+      '--grid-row-height': `${appliedAppearance.gridRowHeightPx}px`,
+      '--grid-header-height': `${appliedAppearance.gridHeaderHeightPx}px`,
+      '--grid-font-size': `${appliedAppearance.gridFontSizePx}px`,
+      '--grid-font-family': appliedAppearance.gridFontFamily,
+    };
+    return style;
+  }, [appliedAppearance, bodyFontSizePx, gridBackgroundColor]);
+
+  const openAppearance = () => {
+    setAppearanceDraft(effectiveAppearance);
+    setShowAppearancePanel(true);
+    // Ensure grid recalculates immediately.
+    gridRef.current?.refreshSizing?.();
+  };
+
+  const closeAppearance = () => {
+    setShowAppearancePanel(false);
+    setAppearanceDraft(null);
+    // Re-apply effective appearance after closing without saving.
+    gridRef.current?.refreshSizing?.();
+  };
+
+  const updateAppearanceDraft = (partial: Partial<GridAppearance>) => {
+    setAppearanceDraft((prev) => {
+      const next = { ...(prev || effectiveAppearance), ...partial };
+      // Live refresh: AG Grid may need resetRowHeights/refreshHeader when CSS vars change.
+      window.setTimeout(() => gridRef.current?.refreshSizing?.(), 0);
+      return next;
+    });
+  };
+
+  const saveAppearance = async () => {
+    if (!appearanceDraft) return;
+    gridPrefs.setTheme({
+      gridSpacingPx: appearanceDraft.gridSpacingPx,
+      gridRowHeightPx: appearanceDraft.gridRowHeightPx,
+      gridHeaderHeightPx: appearanceDraft.gridHeaderHeightPx,
+      gridFontSizePx: appearanceDraft.gridFontSizePx,
+      gridFontFamily: appearanceDraft.gridFontFamily,
+    } as any);
+    await gridPrefs.save();
+    toast({
+      title: `Saved appearance for ${title || gridKey}`,
+      description: 'Per-grid appearance saved for this user.',
+    });
+    setShowAppearancePanel(false);
+    setAppearanceDraft(null);
+    gridRef.current?.refreshSizing?.();
+  };
+
   return (
     <div
       className={`flex flex-col h-full app-grid grid-density-${uiTweak.gridDensity} grid-theme-${colorScheme}`}
-      style={{ fontSize: bodyFontSizePx, backgroundColor: gridBackgroundColor || undefined }}
+      style={gridStyle}
     >
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-3">
         <div className="flex items-center gap-3">
@@ -450,6 +541,7 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
           <div className="p-4 text-sm text-gray-500">Initializing columns…</div>
         ) : (
           <AppDataGrid
+            ref={gridRef}
             columns={columns}
             rows={rows ?? []}
             columnMetaByName={availableColumnsMap}
@@ -700,8 +792,111 @@ export const DataGridPage: React.FC<DataGridPageProps> = ({
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <button className="px-2 py-1 border rounded bg-gray-100" onClick={handleResetToDefaults}>Reset to defaults</button>
+                  <button className="px-2 py-1 border rounded bg-white" onClick={openAppearance}>Appearance…</button>
                   <button className="px-2 py-1 border rounded bg-blue-500 text-white" onClick={handleSaveColumns}>Save</button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAppearancePanel && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded shadow-lg w-full max-w-md max-h-[80vh] flex flex-col">
+            <div className="px-4 py-2 border-b flex items-center justify-between">
+              <div className="font-semibold text-sm">Grid appearance ({gridKey})</div>
+              <button className="text-xs text-gray-500" onClick={closeAppearance}>Close</button>
+            </div>
+            <div className="p-4 flex-1 overflow-auto text-xs space-y-4">
+              <div className="space-y-2">
+                <label className="block text-[11px] text-gray-600">Padding / spacing</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={16}
+                  step={1}
+                  value={appliedAppearance.gridSpacingPx}
+                  onChange={(e) => updateAppearanceDraft({ gridSpacingPx: Number(e.target.value) })}
+                  className="w-full"
+                  aria-label="Grid spacing"
+                />
+                <div className="flex items-center justify-between text-[11px] text-gray-600">
+                  <span>0</span>
+                  <span className="font-mono">{appliedAppearance.gridSpacingPx}px</span>
+                  <span>16</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="block text-[11px] text-gray-600">Row height</label>
+                  <input
+                    type="range"
+                    min={18}
+                    max={60}
+                    step={1}
+                    value={appliedAppearance.gridRowHeightPx}
+                    onChange={(e) => updateAppearanceDraft({ gridRowHeightPx: Number(e.target.value) })}
+                    className="w-full"
+                    aria-label="Grid row height"
+                  />
+                  <div className="text-[11px] text-gray-600 font-mono">{appliedAppearance.gridRowHeightPx}px</div>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[11px] text-gray-600">Header height</label>
+                  <input
+                    type="range"
+                    min={18}
+                    max={80}
+                    step={1}
+                    value={appliedAppearance.gridHeaderHeightPx}
+                    onChange={(e) => updateAppearanceDraft({ gridHeaderHeightPx: Number(e.target.value) })}
+                    className="w-full"
+                    aria-label="Grid header height"
+                  />
+                  <div className="text-[11px] text-gray-600 font-mono">{appliedAppearance.gridHeaderHeightPx}px</div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-[11px] text-gray-600">Font size</label>
+                <input
+                  type="range"
+                  min={8}
+                  max={22}
+                  step={1}
+                  value={appliedAppearance.gridFontSizePx}
+                  onChange={(e) => updateAppearanceDraft({ gridFontSizePx: Number(e.target.value) })}
+                  className="w-full"
+                  aria-label="Grid font size"
+                />
+                <div className="flex items-center justify-between text-[11px] text-gray-600">
+                  <span>8</span>
+                  <span className="font-mono">{appliedAppearance.gridFontSizePx}px</span>
+                  <span>22</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-[11px] text-gray-600">Font family</label>
+                <select
+                  className="border rounded px-2 py-1 text-[11px] bg-white w-full"
+                  value={appliedAppearance.gridFontFamily}
+                  onChange={(e) => updateAppearanceDraft({ gridFontFamily: e.target.value })}
+                  aria-label="Grid font family"
+                >
+                  <option value={'"Tahoma","Segoe UI",Arial,sans-serif'}>Tahoma / Segoe UI (Legacy-like)</option>
+                  <option value={'"Segoe UI",system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif'}>System UI</option>
+                  <option value={'"IBM Plex Sans",system-ui,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif'}>IBM Plex Sans</option>
+                </select>
+              </div>
+            </div>
+            <div className="px-4 py-3 border-t flex items-center justify-between">
+              <div className="text-[11px] text-gray-500">Live preview. Save stores per-grid for this user.</div>
+              <div className="flex items-center gap-2">
+                <button className="px-2 py-1 border rounded bg-white" onClick={closeAppearance}>Cancel</button>
+                <button className="px-2 py-1 border rounded bg-blue-600 text-white" onClick={saveAppearance}>Save</button>
               </div>
             </div>
           </div>

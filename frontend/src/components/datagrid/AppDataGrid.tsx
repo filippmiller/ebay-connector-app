@@ -40,6 +40,10 @@ export type AppDataGridHandle = {
    * or null when the grid API is not yet ready.
    */
   getCurrentLayout: () => GridLayoutSnapshot | null;
+  /** Apply quick filter text (used by DataGridPage search box). */
+  setQuickFilter: (text: string) => void;
+  /** Refresh grid sizing after CSS var changes (row/header heights, spacing). */
+  refreshSizing: () => void;
 };
 
 export interface AppDataGridProps {
@@ -201,6 +205,41 @@ export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
       const model = (api as any).getColumnState?.() as ColumnState[] | undefined;
       if (!model) return null;
       return extractLayout(model);
+    },
+    setQuickFilter: (text: string) => {
+      const api: any = gridApiRef.current as any;
+      if (!api) return;
+      try {
+        // v32+ prefers setGridOption
+        if (typeof api.setGridOption === 'function') {
+          api.setGridOption('quickFilterText', text);
+          return;
+        }
+        if (typeof api.setQuickFilter === 'function') {
+          api.setQuickFilter(text);
+        }
+      } catch {
+        // ignore
+      }
+    },
+    refreshSizing: () => {
+      const api: any = gridApiRef.current as any;
+      if (!api) return;
+      try {
+        api.resetRowHeights?.();
+      } catch {
+        // ignore
+      }
+      try {
+        api.refreshHeader?.();
+      } catch {
+        // ignore
+      }
+      try {
+        api.redrawRows?.();
+      } catch {
+        // ignore
+      }
     },
   }), []);
   const columnDefs = useMemo<ColDef[]>(() => {

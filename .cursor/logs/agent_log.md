@@ -118,3 +118,4 @@
 2025-12-13T09:34:25.2225181Z - Add UI Tweak controls for grid spacing + row/header heights; persist via ui_tweak JSON defaults and apply to CSS vars
 2025-12-13T09:49:22.1276375Z - Fix UI Tweak row/header height sliders: removed .app-grid.grid-density-* overrides of --grid-* vars in index.css (they were overriding :root vars)
 2025-12-13T09:59:20.6779206Z - Finish Grid font size control: add gridFontSizePx to backend payload + seed defaults and docs
+2025-12-13T10:10:05.2990172Z - Add per-grid per-user Appearance modal in Columns panel (live preview + save via grid/preferences theme) and expose AppDataGrid handle methods for live refresh

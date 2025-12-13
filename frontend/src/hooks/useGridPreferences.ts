@@ -38,6 +38,12 @@ export interface GridThemeConfig {
   headerTextColor?: string;
   /** Optional per-column style overrides keyed by column name. */
   columnStyles?: Record<string, ColumnStyle>;
+  /** Optional per-grid appearance overrides (per user, per grid). */
+  gridSpacingPx?: number;
+  gridRowHeightPx?: number;
+  gridHeaderHeightPx?: number;
+  gridFontSizePx?: number;
+  gridFontFamily?: string;
   // Allow forward-compatible flags without tightening the type too much
   [key: string]: unknown;
 }
