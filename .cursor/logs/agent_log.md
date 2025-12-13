@@ -116,3 +116,4 @@
 2025-12-13T09:15:05.6623601Z - Start grid styling unification: inspect UITweakContext, DataGridPage, index.css AG vars; plan reusable grid wrapper + legacy defaults
 2025-12-13T09:21:46.3761823Z - Implement reusable GridSection wrapper + legacy-like global grid defaults; wire grid density to UI Tweak; add grid font family/weights controls in AdminUITweakPage
 2025-12-13T09:34:25.2225181Z - Add UI Tweak controls for grid spacing + row/header heights; persist via ui_tweak JSON defaults and apply to CSS vars
+2025-12-13T09:49:22.1276375Z - Fix UI Tweak row/header height sliders: removed .app-grid.grid-density-* overrides of --grid-* vars in index.css (they were overriding :root vars)

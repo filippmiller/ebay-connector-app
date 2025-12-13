@@ -65,6 +65,8 @@ export interface UITweakSettings {
   gridRowHeightPx: number;
   /** Grid header height in px (maps to AG Grid `--ag-header-height`). */
   gridHeaderHeightPx: number;
+  /** Grid font size in px (maps to AG Grid `--ag-font-size`). */
+  gridFontSizePx: number;
   /** Colors for top nav active/inactive states (CSS color strings). */
   navActiveBg: string;
   navActiveText: string;
@@ -141,6 +143,7 @@ export const DEFAULT_UI_TWEAK: UITweakSettings = {
   gridSpacingPx: 4,
   gridRowHeightPx: 22,
   gridHeaderHeightPx: 24,
+  gridFontSizePx: 12,
   navActiveBg: '#2563eb', // blue-600
   navActiveText: '#ffffff',
   navInactiveBg: 'transparent',
@@ -229,19 +232,11 @@ function applySettingsToDocument(settings: UITweakSettings) {
   // Controls size
   root.style.setProperty('--ui-scale-button-input', String(settings.controls.buttonAndInputScale));
 
-  // Map grid density to base grid font-size only (spacing/heights are explicit controls).
-  if (settings.gridDensity === 'compact') {
-    root.style.setProperty('--grid-font-size', '12px');
-  } else if (settings.gridDensity === 'comfortable') {
-    root.style.setProperty('--grid-font-size', '13px');
-  } else {
-    root.style.setProperty('--grid-font-size', '12px');
-  }
-
   root.style.setProperty('--grid-font-family', settings.gridFontFamily || '"Tahoma","Segoe UI",Arial,sans-serif');
   root.style.setProperty('--grid-spacing', `${settings.gridSpacingPx || 4}px`);
   root.style.setProperty('--grid-row-height', `${settings.gridRowHeightPx || 22}px`);
   root.style.setProperty('--grid-header-height', `${settings.gridHeaderHeightPx || 24}px`);
+  root.style.setProperty('--grid-font-size', `${settings.gridFontSizePx || 12}px`);
 
   // Grid theme colors
   const g = settings.gridTheme;

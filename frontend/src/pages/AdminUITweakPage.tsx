@@ -24,9 +24,9 @@ export default function AdminUITweakPage() {
 
   const applyGridDensityPreset = (preset: 'compact' | 'normal' | 'comfortable') => {
     const map = {
-      compact: { gridSpacingPx: 4, gridRowHeightPx: 22, gridHeaderHeightPx: 24 },
-      normal: { gridSpacingPx: 6, gridRowHeightPx: 28, gridHeaderHeightPx: 30 },
-      comfortable: { gridSpacingPx: 10, gridRowHeightPx: 34, gridHeaderHeightPx: 34 },
+      compact: { gridSpacingPx: 4, gridRowHeightPx: 22, gridHeaderHeightPx: 24, gridFontSizePx: 12 },
+      normal: { gridSpacingPx: 6, gridRowHeightPx: 28, gridHeaderHeightPx: 30, gridFontSizePx: 12 },
+      comfortable: { gridSpacingPx: 10, gridRowHeightPx: 34, gridHeaderHeightPx: 34, gridFontSizePx: 13 },
     } as const;
     const d = map[preset];
     update({ gridDensity: preset as any, ...d } as any);
@@ -117,6 +117,25 @@ export default function AdminUITweakPage() {
                 <span>Tight</span>
                 <span className="font-mono">{settings.gridSpacingPx}px</span>
                 <span>Loose</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-gray-600">Grid font size</label>
+              <input
+                type="range"
+                min={10}
+                max={18}
+                step={1}
+                value={settings.gridFontSizePx}
+                onChange={(e) => update({ gridFontSizePx: Number(e.target.value) } as any)}
+                className="w-full"
+                aria-label="Grid font size"
+              />
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <span>Small</span>
+                <span className="font-mono">{settings.gridFontSizePx}px</span>
+                <span>Large</span>
               </div>
             </div>
 

@@ -226,26 +226,11 @@
     background-color: var(--grid-row-hover-bg);
   }
 
-  .app-grid.grid-density-compact {
-    --grid-row-height: 22px;
-    --grid-header-height: 24px;
-    --grid-font-size: 12px;
-    --grid-spacing: 4px;
-  }
-
-  .app-grid.grid-density-normal {
-    --grid-row-height: 28px;
-    --grid-header-height: 30px;
-    --grid-font-size: 12px;
-    --grid-spacing: 6px;
-  }
-
-  .app-grid.grid-density-comfortable {
-    --grid-row-height: 34px;
-    --grid-header-height: 34px;
-    --grid-font-size: 13px;
-    --grid-spacing: 10px;
-  }
+  /* Density presets are now applied in Admin UI Tweak by setting CSS vars on :root.
+     Do not override --grid-* vars here, otherwise UI Tweak sliders won't work. */
+  .app-grid.grid-density-compact { }
+  .app-grid.grid-density-normal { }
+  .app-grid.grid-density-comfortable { }
 
   .app-grid.grid-theme-default {
     --grid-header-bg: #f3f4f6;
