@@ -1,6 +1,15 @@
 import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from "axios";
 
 const getBaseURL = () => {
+  // Production builds must use the relative /api path so that Cloudflare Pages Functions
+  // proxy can normalize mixed backend prefixes (/auth/* vs /api/*). If VITE_API_BASE_URL
+  // or VITE_API_URL are set in Cloudflare, they will bypass the proxy and break auth
+  // (e.g. POST https://railway.app/api/auth/login -> 404).
+  if (import.meta.env.PROD) {
+    console.log("[API] ✅ PROD build: using /api (Cloudflare proxy)");
+    return "/api";
+  }
+
   // NEVER use Fly.dev or devinapps.com - we use Railway backend via Cloudflare proxy
   // Only check environment variables, otherwise use /api (Cloudflare Pages proxy)
   

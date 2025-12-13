@@ -101,3 +101,4 @@
 2025-12-11T08:35:00Z - Timesheets admin: reverted to initial “fetch all” on first load (pageSize unset) so all rows show immediately for edit/delete
 2025-12-12T16:48:49Z - Fixed SKU grid backend filters/search (cast numeric SKU/Category to text; use Part/Description instead of @property title) and changed sku_catalog default sort to id desc in GRID_DEFAULTS
 2025-12-12T17:13:20Z - Fixed 500 on PUT /api/sq/items/<built-in function id>: create/update return via get_sq_item coercion; add rollback+error detail
+2025-12-13T05:54:21.7566667Z - Investigating login 404; updated frontend/src/lib/apiClient.ts to force PROD baseURL "/api" (Cloudflare proxy) to avoid bypassing proxy via VITE_API_BASE_URL/VITE_API_URL
