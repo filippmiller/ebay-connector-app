@@ -343,7 +343,11 @@
     -ms-user-select: text;
     user-select: text;
     font-size: var(--grid-font-size);
-    color: var(--ui-color-text-primary);
+    /* Use AG Grid's own foreground color as the primary source of truth.
+       Some UI-tweak presets can accidentally set --ui-color-text-primary to a
+       low-contrast value (e.g. white on white), which makes grids look "empty"
+       even though rows are present. */
+    color: var(--ag-foreground-color, var(--ui-color-text-primary));
   }
 
   .app-grid__ag-root .ag-cell {
