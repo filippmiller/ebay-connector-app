@@ -1472,7 +1472,9 @@ function LedgerTab2() {
         </div>
       </Card>
 
-      <div className="flex-1 min-h-0 overflow-hidden border rounded bg-white">
+      {/* AG Grid requires a container with a definite height (not just min-height) to render.
+          Without this, the grid can initialize (no console errors) but remain visually empty. */}
+      <div className="h-[60vh] min-h-[360px] overflow-hidden border rounded bg-white">
         <DataGridPage
           gridKey="ledger_transactions"
           title="Ledger 2"
