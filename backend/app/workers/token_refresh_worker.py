@@ -1,110 +1,89 @@
 """
-Token Refresh Worker
-Runs every 10 minutes to check for tokens expiring within 5 minutes and refreshes them.
+Token Refresh Worker (API Proxy Mode)
+
+This worker acts as a scheduler that delegates the actual token refresh work
+to the main Web App via an internal API endpoint.
+
+WHY: The worker was unable to decrypt tokens due to environment configuration
+issues. The Web App can successfully decrypt tokens, so we proxy through it.
 """
 import asyncio
-from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
-
-from app.database import get_db
-from app.services.ebay_account_service import ebay_account_service
-from app.services.ebay import ebay_service
+import httpx
+import os
+from datetime import datetime, timezone
 from app.utils.logger import logger
+
+WORKER_INTERVAL_SECONDS = 600  # 10 minutes
 
 
 async def refresh_expiring_tokens():
     """
-    Check for tokens expiring within 5 minutes and refresh them.
-    This should be called every 10 minutes.
+    Trigger token refresh by calling the Web App's internal endpoint.
+    The Web App handles all the decryption and eBay API calls.
     """
-    logger.info("Starting token refresh worker...")
+    logger.info("[token-refresh-worker] Triggering refresh via Web App API...")
     
-    db = next(get_db())
-    try:
-        accounts = ebay_account_service.get_accounts_needing_refresh(db, threshold_minutes=5)
-        
-        if not accounts:
-            logger.info("No accounts need token refresh")
-            return {
-                "status": "completed",
-                "accounts_checked": 0,
-                "accounts_refreshed": 0,
-                "errors": []
-            }
-        
-        logger.info(f"Found {len(accounts)} accounts needing token refresh")
-        
-        refreshed_count = 0
-        errors = []
-        
-        for account in accounts:
-            try:
-                token = ebay_account_service.get_token(db, account.id)
-                
-                if not token or not token.refresh_token:
-                    logger.warning(f"Account {account.id} ({account.house_name}) has no refresh token")
-                    errors.append({
-                        "account_id": account.id,
-                        "house_name": account.house_name,
-                        "error": "No refresh token available"
-                    })
-                    continue
-                
-                logger.info(f"Refreshing token for account {account.id} ({account.house_name})")
-                
-                new_token_data = await ebay_service.refresh_access_token(token.refresh_token)
-                
-                # Defensive log: type and public attributes only (no secrets)
-                try:
-                    attrs = [a for a in dir(new_token_data) if not a.startswith('_')]
-                    logger.info("Token refresh response: type=%s, attrs=%s, has_refresh=%s", type(new_token_data).__name__, attrs, bool(getattr(new_token_data, 'refresh_token', None)))
-                except Exception:
-                    logger.debug("Could not introspect token refresh response")
-                
-                ebay_account_service.save_tokens(
-                    db,
-                    account.id,
-                    new_token_data.access_token,
-                    getattr(new_token_data, 'refresh_token', None) or token.refresh_token,
-                    new_token_data.expires_in
-                )
-                
-                refreshed_count += 1
-                logger.info(f"Successfully refreshed token for account {account.id} ({account.house_name})")
-                
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Failed to refresh token for account {account.id} ({account.house_name}): {error_msg}")
-                
-                if token:
-                    token.refresh_error = error_msg
-                    db.commit()
-                
-                errors.append({
-                    "account_id": account.id,
-                    "house_name": account.house_name,
-                    "error": error_msg
-                })
-        
-        logger.info(f"Token refresh worker completed: {refreshed_count}/{len(accounts)} accounts refreshed")
-        
-        return {
-            "status": "completed",
-            "accounts_checked": len(accounts),
-            "accounts_refreshed": refreshed_count,
-            "errors": errors,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Token refresh worker failed: {str(e)}")
+    # Get environment configuration
+    web_app_url = os.getenv("WEB_APP_URL", "").rstrip("/")
+    internal_api_key = os.getenv("INTERNAL_API_KEY", "")
+    
+    if not web_app_url:
+        error_msg = "WEB_APP_URL not configured"
+        logger.error(f"[token-refresh-worker] {error_msg}")
         return {
             "status": "error",
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat()
+            "error": error_msg,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-    finally:
-        db.close()
+    
+    if not internal_api_key:
+        error_msg = "INTERNAL_API_KEY not configured"
+        logger.error(f"[token-refresh-worker] {error_msg}")
+        return {
+            "status": "error",
+            "error": error_msg,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    
+    endpoint = f"{web_app_url}/api/admin/internal/refresh-tokens"
+    
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                endpoint,
+                json={"internal_api_key": internal_api_key},
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(
+                    "[token-refresh-worker] SUCCESS: refreshed=%s failed=%s",
+                    data.get("refreshed_count", 0),
+                    data.get("failed_count", 0),
+                )
+                return {
+                    "status": "completed",
+                    "refreshed_count": data.get("refreshed_count", 0),
+                    "failed_count": data.get("failed_count", 0),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            else:
+                error_msg = f"HTTP {response.status_code}: {response.text}"
+                logger.error(f"[token-refresh-worker] API call failed: {error_msg}")
+                return {
+                    "status": "error",
+                    "error": error_msg,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"[token-refresh-worker] Exception: {error_msg}", exc_info=True)
+        return {
+            "status": "error",
+            "error": error_msg,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
 
 async def run_token_refresh_worker_loop():
@@ -112,7 +91,7 @@ async def run_token_refresh_worker_loop():
     Run the token refresh worker in a loop every 10 minutes.
     This is the main entry point for the background worker.
     """
-    logger.info("Token refresh worker loop started")
+    logger.info("Token refresh worker loop started (API Proxy Mode)")
     
     while True:
         try:
@@ -121,7 +100,7 @@ async def run_token_refresh_worker_loop():
         except Exception as e:
             logger.error(f"Token refresh worker loop error: {str(e)}")
         
-        await asyncio.sleep(600)
+        await asyncio.sleep(WORKER_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

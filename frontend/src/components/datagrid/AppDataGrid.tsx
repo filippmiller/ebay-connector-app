@@ -1,0 +1,723 @@
+import { useMemo, useRef, forwardRef, useImperativeHandle, useEffect } from 'react';
+import { AgGridReact } from 'ag-grid-react';
+import {
+  ModuleRegistry,
+  AllCommunityModule,
+} from 'ag-grid-community';
+import type {
+  ColDef,
+  ColumnState,
+  CellClassRules,
+  CellStyle,
+  GridApi,
+  ICellRendererParams,
+  CellStyleFunc,
+} from 'ag-grid-community';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
+
+// Register AG Grid modules
+ModuleRegistry.registerModules([AllCommunityModule]);
+import type { GridColumnMeta } from '@/components/DataGridPage';
+import api from '@/lib/apiClient';
+
+import type { GridThemeConfig, ColumnStyle } from '@/hooks/useGridPreferences';
+
+export interface AppDataGridColumnState {
+  name: string;
+  label: string;
+  width: number;
+}
+
+export type GridLayoutSnapshot = {
+  order: string[];
+  widths: Record<string, number>;
+};
+
+export type AppDataGridHandle = {
+  /**
+   * Returns the current column order and widths as reported by AG Grid,
+   * or null when the grid API is not yet ready.
+   */
+  getCurrentLayout: () => GridLayoutSnapshot | null;
+  /** Apply quick filter text (used by DataGridPage search box). */
+  setQuickFilter: (text: string) => void;
+  /** Refresh grid sizing after CSS var changes (row/header heights, spacing). */
+  refreshSizing: () => void;
+};
+
+export interface AppDataGridProps {
+  columns: AppDataGridColumnState[];
+  rows: Record<string, any>[];
+  columnMetaByName: Record<string, GridColumnMeta>;
+  loading?: boolean;
+  onRowClick?: (row: Record<string, any>) => void;
+  onLayoutChange?: (state: { order: string[]; widths: Record<string, number> }) => void;
+  /** Server-side sort config; drives header sort indicators. */
+  sortConfig?: { column: string; direction: 'asc' | 'desc' } | null;
+  /** Callback when sort model changes via header clicks. */
+  onSortChange?: (sort: { column: string; direction: 'asc' | 'desc' } | null) => void;
+  /** Checkbox selection mode: 'singleRow' or 'multiRow'. Default is 'singleRow'. */
+  selectionMode?: 'singleRow' | 'multiRow';
+  /** Callback when selection changes. */
+  onSelectionChange?: (selectedRows: Record<string, any>[]) => void;
+  /** Optional grid key used for targeted debug logging (e.g. finances_fees). */
+  gridKey?: string;
+  /** Per-grid theme configuration coming from /api/grid/preferences. */
+  gridTheme?: GridThemeConfig | null;
+  /** Extra column definitions to append (e.g. action buttons). */
+  extraColumns?: ColDef[];
+  /** Explicit row height in pixels (preferred over CSS vars for reliability). */
+  rowHeightPx?: number;
+  /** Explicit header height in pixels (preferred over CSS vars for reliability). */
+  headerHeightPx?: number;
+}
+
+function formatCellValue(raw: any, type: GridColumnMeta['type'] | undefined): string {
+  if (raw === null || raw === undefined) return '';
+
+  const t = type || 'string';
+
+  if (t === 'datetime') {
+    try {
+      return new Date(raw).toLocaleString();
+    } catch {
+      return String(raw);
+    }
+  }
+
+  if (t === 'money' || t === 'number') {
+    return String(raw);
+  }
+
+  if (typeof raw === 'object') {
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return String(raw);
+    }
+  }
+
+  return String(raw);
+}
+
+type LedgerTag = {
+  code: string;
+  label: string;
+};
+
+function ledgerTagColor(code: string): string {
+  // Deterministic soft color based on code hash; used for tiny dot indicator.
+  if (!code) return '#d1d5db'; // gray-300 fallback
+  let hash = 0;
+  for (let i = 0; i < code.length; i += 1) {
+    // simple 32-bit hash
+    hash = (hash * 31 + code.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 55%)`;
+}
+
+const ledgerTagsCache: {
+  loaded: boolean;
+  loading: boolean;
+  items: LedgerTag[];
+} = {
+  loaded: false,
+  loading: false,
+  items: [],
+};
+
+async function ensureLedgerTagsLoaded(refresh: () => void) {
+  if (ledgerTagsCache.loaded || ledgerTagsCache.loading) return;
+  ledgerTagsCache.loading = true;
+  try {
+    const { data } = await api.get<{ id: number; code: string; label: string }[]>('/accounting/tags', {
+      params: { include_inactive: false },
+    });
+    ledgerTagsCache.items = (data || []).map((t) => ({ code: t.code, label: t.label }));
+    ledgerTagsCache.loaded = true;
+    refresh();
+  } catch {
+    // ignore; just leave cache empty
+  } finally {
+    ledgerTagsCache.loading = false;
+  }
+}
+
+function coerceNumeric(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/[^0-9+\-.,]/g, '').replace(',', '.');
+    const n = Number.parseFloat(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function extractLayout(columnStates: ColumnState[]): { order: string[]; widths: Record<string, number> } {
+  const order: string[] = [];
+  const widths: Record<string, number> = {};
+
+  columnStates.forEach((col: ColumnState) => {
+    const id = (col.colId as string) || '';
+    if (!id) return;
+
+    // Filter out AG Grid's internal columns (checkbox selection, etc.)
+    if (id.startsWith('ag-Grid-')) {
+      return;
+    }
+
+    order.push(id);
+    if (typeof col.width === 'number' && Number.isFinite(col.width)) {
+      // Normalise to an integer pixel width. AG Grid can emit fractional widths,
+      // but the backend expects Dict[str, int] in columns.widths.
+      const rounded = Math.round(col.width);
+      // Clamp to a sane range to avoid pathological values.
+      const clamped = Math.min(4000, Math.max(40, rounded));
+      widths[id] = clamped;
+    }
+  });
+
+  return { order, widths };
+}
+
+export const AppDataGrid = forwardRef<AppDataGridHandle, AppDataGridProps>(({
+  columns,
+  rows,
+  columnMetaByName,
+  loading,
+  onRowClick,
+  onLayoutChange,
+  sortConfig,
+  onSortChange,
+  selectionMode = 'singleRow',
+  onSelectionChange,
+  gridKey,
+  gridTheme,
+  extraColumns,
+  rowHeightPx,
+  headerHeightPx,
+}, ref) => {
+  const layoutDebounceRef = useRef<number | null>(null);
+  const gridApiRef = useRef<GridApi | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    getCurrentLayout: () => {
+      const api = gridApiRef.current;
+      if (!api) return null;
+      const model = (api as any).getColumnState?.() as ColumnState[] | undefined;
+      if (!model) return null;
+      return extractLayout(model);
+    },
+    setQuickFilter: (text: string) => {
+      const api: any = gridApiRef.current as any;
+      if (!api) return;
+      try {
+        // v32+ prefers setGridOption
+        if (typeof api.setGridOption === 'function') {
+          api.setGridOption('quickFilterText', text);
+          return;
+        }
+        if (typeof api.setQuickFilter === 'function') {
+          api.setQuickFilter(text);
+        }
+      } catch {
+        // ignore
+      }
+    },
+    refreshSizing: () => {
+      const api: any = gridApiRef.current as any;
+      if (!api) return;
+      try {
+        api.resetRowHeights?.();
+      } catch {
+        // ignore
+      }
+      try {
+        api.refreshHeader?.();
+      } catch {
+        // ignore
+      }
+      try {
+        api.redrawRows?.();
+      } catch {
+        // ignore
+      }
+    },
+  }), []);
+  const columnDefs = useMemo<ColDef[]>(() => {
+    if (!columns || columns.length === 0) {
+      return [];
+    }
+
+    const columnStyles: Record<string, ColumnStyle> | undefined = gridTheme?.columnStyles as
+      | Record<string, ColumnStyle>
+      | undefined;
+
+    const defs = columns.map((col) => {
+      const meta = columnMetaByName[col.name];
+      const type = meta?.type;
+      const lowerName = col.name.toLowerCase();
+
+      const cellClasses: string[] = ['ui-table-cell'];
+      const cellClassRules: CellClassRules = {};
+
+      // Right-align numeric and money columns
+      if (type === 'number' || type === 'money') {
+        cellClasses.push('ag-legacy-number');
+      }
+
+      // Money columns: color positive/negative amounts
+      if (type === 'money') {
+        cellClasses.push('ag-legacy-price');
+        cellClassRules['ag-legacy-price-positive'] = (params) => {
+          const n = coerceNumeric(params.value);
+          return n !== null && n > 0;
+        };
+        cellClassRules['ag-legacy-price-negative'] = (params) => {
+          const n = coerceNumeric(params.value);
+          return n !== null && n < 0;
+        };
+      }
+
+      // ID / key style: SKU, ItemID, eBayID, generic *id
+      if (
+        lowerName === 'id' ||
+        lowerName.includes('sku') ||
+        lowerName.endsWith('_id') ||
+        lowerName.endsWith('id') ||
+        lowerName.includes('ebayid') ||
+        lowerName.includes('ebay_id')
+      ) {
+        cellClasses.push('ag-legacy-id-link');
+      }
+
+      // Status-style coloring based on common keywords
+      if (lowerName.includes('status')) {
+        cellClassRules['ag-legacy-status-error'] = (params) => {
+          if (typeof params.value !== 'string') return false;
+          const v = params.value.toLowerCase();
+          return (
+            v.includes('await') ||
+            v.includes('error') ||
+            v.includes('fail') ||
+            v.includes('hold') ||
+            v.includes('inactive') ||
+            v.includes('cancel') ||
+            v.includes('blocked')
+          );
+        };
+        cellClassRules['ag-legacy-status-ok'] = (params) => {
+          if (typeof params.value !== 'string') return false;
+          const v = params.value.toLowerCase();
+          return (
+            v.includes('active') ||
+            v.includes('checked') ||
+            v.includes('ok') ||
+            v.includes('complete') ||
+            v.includes('resolved') ||
+            v.includes('success') ||
+            v.includes('parsed') ||
+            v.includes('uploaded')
+          );
+        };
+        cellClassRules['ag-legacy-status-warning'] = (params) => {
+          if (typeof params.value !== 'string') return false;
+          const v = params.value.toLowerCase();
+          return (
+            v.includes('processing') ||
+            v.includes('pending') ||
+            v.includes('wait') ||
+            v.includes('review')
+          );
+        };
+      }
+
+      const colDef: ColDef = {
+        colId: col.name, // Explicit colId for AG Grid
+        field: col.name, // Field name must match row data keys
+        headerName: meta?.label || col.label || col.name,
+        width: col.width,
+        resizable: true, // Enable resizing
+        sortable: meta?.sortable !== false, // Enable header click sorting when allowed
+        filter: false,
+        valueFormatter: (params) => formatCellValue(params.value, type),
+        // Ensure column is visible
+        hide: false,
+        cellClass: cellClasses,
+      };
+
+      // Apply optional per-column style overrides (font size / weight / color).
+      const styleOverride = columnStyles?.[col.name];
+      if (styleOverride) {
+        const fontSizePx =
+          typeof styleOverride.fontSizeLevel === 'number'
+            ? 10 + Math.min(10, Math.max(1, styleOverride.fontSizeLevel))
+            : undefined;
+        const styleFn: CellStyleFunc<any, any, any> = () => {
+          const base: CellStyle = {};
+          if (fontSizePx) (base as any).fontSize = `${fontSizePx}px`;
+          if (styleOverride.fontWeight) (base as any).fontWeight = styleOverride.fontWeight;
+          if (styleOverride.textColor) (base as any).color = styleOverride.textColor;
+          return base;
+        };
+        colDef.cellStyle = styleFn;
+      }
+
+      // Special case: inventory StatusSKU should render with dynamic color from lookup.
+      if (gridKey === 'inventory' && col.name === 'StatusSKU') {
+        colDef.valueFormatter = undefined;
+        colDef.cellRenderer = (params: ICellRendererParams) => {
+          const raw = params.value;
+          const color = (params.data as any)?.StatusSKU_color as string | undefined;
+          const value = formatCellValue(raw, type);
+          if (!value) return '';
+          return (
+            <span style={color ? { color } : undefined}>
+              {value}
+            </span>
+          );
+        };
+      }
+
+      // Special case: make sniper_snipes.item_id clickable to open the eBay page.
+      if (gridKey === 'sniper_snipes' && col.name === 'item_id') {
+        colDef.valueFormatter = undefined;
+        colDef.cellRenderer = (params: ICellRendererParams) => {
+          const raw = params.value;
+          const value = formatCellValue(raw, type);
+          if (!value) return '';
+          const href = `https://www.ebay.com/itm/${encodeURIComponent(value)}`;
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-blue-600 hover:underline"
+            >
+              {value}
+            </a>
+          );
+        };
+      }
+
+      // Special case: ledger_transactions.subcategory used as flag/tag code with dropdown editor.
+      if (gridKey === 'ledger_transactions' && col.name === 'subcategory') {
+        colDef.valueFormatter = undefined;
+        colDef.cellRenderer = (params: ICellRendererParams) => {
+          const row = params.data as any;
+          const rowId = row?.id;
+          const current = (params.value as string) || '';
+
+          // Kick off tag load on first render; refresh grid when done.
+          if (!ledgerTagsCache.loaded && !ledgerTagsCache.loading && params.api) {
+            void ensureLedgerTagsLoaded(() => {
+              try {
+                params.api!.refreshCells({ force: true, columns: [col.name] });
+              } catch {
+                // ignore
+              }
+            });
+          }
+
+          if (!rowId) {
+            return formatCellValue(current, type);
+          }
+
+          const options = ledgerTagsCache.items;
+
+          const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+            const value = e.target.value || null;
+            try {
+              await api.put(`/accounting/transactions/${rowId}`, {
+                flag_code: value,
+              });
+              // Update cell value so UI matches backend without full reload.
+              params.node.setDataValue(col.name, value);
+            } catch (err: any) {
+              // eslint-disable-next-line no-alert
+              alert(err?.response?.data?.detail || err?.message || 'Failed to update flag');
+            }
+          };
+
+          const handleQuickAdd = async (e: React.MouseEvent<HTMLButtonElement>) => {
+            e.stopPropagation();
+            const code = window.prompt('New flag code (short):');
+            if (!code) return;
+            const trimmedCode = code.trim();
+            if (!trimmedCode) return;
+            const labelInput = window.prompt('New flag label (optional, for display):', trimmedCode);
+            if (labelInput === null) return;
+            const trimmedLabel = labelInput.trim() || trimmedCode;
+            try {
+              const payload = { code: trimmedCode, label: trimmedLabel };
+              const { data } = await api.post('/accounting/tags', payload);
+              const createdCode: string = data?.code ?? trimmedCode;
+              const createdLabel: string = data?.label ?? trimmedLabel;
+              ledgerTagsCache.items = [
+                ...ledgerTagsCache.items,
+                { code: createdCode, label: createdLabel },
+              ];
+              ledgerTagsCache.loaded = true;
+              // Select the newly created flag for this row.
+              await api.put(`/accounting/transactions/${rowId}`, {
+                flag_code: createdCode,
+              });
+              params.node.setDataValue(col.name, createdCode);
+              try {
+                params.api!.refreshCells({ force: true, columns: [col.name] });
+              } catch {
+                // ignore
+              }
+            } catch (err: any) {
+              // eslint-disable-next-line no-alert
+              alert(err?.response?.data?.detail || err?.message || 'Failed to create flag');
+            }
+          };
+
+          const selectedTag = options.find((t) => t.code === current);
+          const dotColor = selectedTag ? ledgerTagColor(selectedTag.code) : ledgerTagColor('');
+
+          return (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <span
+                className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                style={{ backgroundColor: dotColor }}
+              />
+              <select
+                value={current}
+                onChange={handleChange}
+                className="border rounded px-1 py-0.5 text-[11px] bg-white max-w-[160px]"
+                aria-label="Transaction flag"
+              >
+                <option value="">—</option>
+                {options.map((t) => (
+                  <option key={t.code} value={t.code}>
+                    {t.code} — {t.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="border border-gray-300 rounded px-1 text-[10px] leading-none bg-white hover:bg-gray-50"
+                title="Add new flag"
+                onClick={handleQuickAdd}
+              >
+                +
+              </button>
+            </div>
+          );
+        };
+      }
+
+      if (Object.keys(cellClassRules).length > 0) {
+        colDef.cellClassRules = cellClassRules;
+      }
+
+      // Mark current sort column for header indicators.
+      if (sortConfig && sortConfig.column === col.name) {
+        (colDef as any).sort = sortConfig.direction;
+      }
+
+      return colDef;
+    });
+
+    if (extraColumns && extraColumns.length) {
+      const extraMap = new Map(extraColumns.map(c => [c.colId, c]));
+      // Replace existing columns if they are defined in extraColumns
+      const mergedDefs = defs.map(col => {
+        if (col.colId && extraMap.has(col.colId)) {
+          const extra = extraMap.get(col.colId)!;
+          extraMap.delete(col.colId);
+          // Merge generic props, but let extra overwrite
+          return { ...col, ...extra };
+        }
+        return col;
+      });
+      // Append remaining extra columns
+      mergedDefs.push(...Array.from(extraMap.values()));
+      return mergedDefs;
+    }
+    return defs;
+  }, [columns, columnMetaByName, gridKey, sortConfig, gridTheme, extraColumns, selectionMode]);
+
+  const rowSelection = useMemo(() => {
+    if (selectionMode === 'multiRow') {
+      // v32+ object API (avoids deprecated 'multiple', rowMultiSelectWithClick, checkboxSelection, headerCheckboxSelection, etc.)
+      return {
+        mode: 'multiRow',
+        checkboxes: true,
+        headerCheckbox: true,
+        enableSelectionWithoutKeys: true,
+        enableClickSelection: true,
+      };
+    }
+    return {
+      mode: 'singleRow',
+      // we don't need checkboxes for single-row selection; allow click selection instead
+      checkboxes: false,
+      enableClickSelection: true,
+    };
+  }, [selectionMode]);
+
+  // When row/header sizing changes, force AG Grid to recalc virtualization.
+  useEffect(() => {
+    const api: any = gridApiRef.current as any;
+    if (!api) return;
+    try {
+      api.resetRowHeights?.();
+    } catch {
+      // ignore
+    }
+    try {
+      api.refreshHeader?.();
+    } catch {
+      // ignore
+    }
+  }, [rowHeightPx, headerHeightPx]);
+
+  const defaultColDef = useMemo<ColDef>(
+    () => ({
+      headerClass: 'ui-table-header',
+      sortable: false,
+    }),
+    [],
+  );
+
+  const handleColumnEvent = (event: any) => {
+    if (!onLayoutChange || !event.api) return;
+
+    if (layoutDebounceRef.current !== null) {
+      window.clearTimeout(layoutDebounceRef.current);
+    }
+
+    layoutDebounceRef.current = window.setTimeout(() => {
+      const model = (event.api as any).getColumnState?.() as ColumnState[] | undefined;
+      if (!model) return;
+      const { order, widths } = extractLayout(model);
+      if (gridKey === 'finances_fees') {
+        // Temporary targeted debug for width persistence investigation
+        // eslint-disable-next-line no-console
+        console.log('[AppDataGrid] finances_fees layout changed:', { order, widths });
+      }
+      onLayoutChange({ order, widths });
+    }, 500);
+  };
+
+  const handleSortChanged = (event: any) => {
+    if (!onSortChange || !event.api) return;
+    const model = event.api.getSortModel?.() as { colId: string; sort: 'asc' | 'desc' }[] | undefined;
+    if (!model || model.length === 0) {
+      onSortChange(null);
+      return;
+    }
+    const first = model[0];
+    if (!first.colId || !first.sort) {
+      onSortChange(null);
+      return;
+    }
+    onSortChange({ column: first.colId, direction: first.sort });
+  };
+
+  // Debug logging (remove in production)
+  if (process.env.NODE_ENV === 'development') {
+    if (columnDefs.length === 0 && columns.length > 0) {
+      console.warn('[AppDataGrid] columnDefs is empty but columns prop has', columns.length, 'items');
+    }
+    console.log(`[AppDataGrid] ${gridKey || 'unknown'}: rows type=${Array.isArray(rows) ? 'array' : typeof rows}, rows.length=${rows?.length || 0}, columnDefs.length=${columnDefs.length}`);
+    if (!Array.isArray(rows)) {
+      console.error('[AppDataGrid] rows prop is not an array!', rows);
+    }
+    if (rows && rows.length > 0) {
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: First row:`, rows[0]);
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: First row keys:`, Object.keys(rows[0]));
+    }
+    if (columnDefs.length > 0) {
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: Column defs:`, columnDefs.slice(0, 3));
+      console.log(`[AppDataGrid] ${gridKey || 'unknown'}: Column fields:`, columnDefs.map(d => d.field));
+    }
+    if (rows && rows.length > 0 && columnDefs.length > 0) {
+      const firstRowKeys = Object.keys(rows[0] || {});
+      const columnFields = columnDefs.map((d) => d.field).filter((f): f is string => !!f);
+      const missingFields = columnFields.filter((f) => !firstRowKeys.includes(f));
+      if (missingFields.length > 0) {
+        console.warn('[AppDataGrid] Column fields not in row data:', missingFields);
+        console.warn('[AppDataGrid] Row data keys:', firstRowKeys.slice(0, 10));
+        console.warn('[AppDataGrid] Column fields:', columnFields.slice(0, 10));
+      }
+    }
+  }
+
+  return (
+    <div
+      className="w-full h-full app-grid__ag-root ag-theme-quartz"
+      style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: '200px' }}
+    >
+      {columnDefs.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }} className="text-sm text-gray-500">
+          No columns configured
+        </div>
+      ) : (
+        <div style={{ width: '100%', flex: 1, minHeight: 0, minWidth: 0 }}>
+          <AgGridReact
+            className="w-full h-full"
+            // Force legacy CSS themes (ag-theme-*) to avoid AG Grid v33+ theming API conflicts.
+            // This resolves console error #239: "Theming API and CSS File Themes are both used".
+            theme="legacy"
+            rowModelType="clientSide"
+            rowHeight={typeof rowHeightPx === 'number' ? rowHeightPx : undefined}
+            headerHeight={typeof headerHeightPx === 'number' ? headerHeightPx : undefined}
+            columnDefs={columnDefs}
+            defaultColDef={defaultColDef}
+            rowData={rows}
+            getRowId={(params) => {
+              // Use 'id' field if available, otherwise generate a stable ID from data
+              if (params.data?.id != null) {
+                return String(params.data.id);
+              }
+              // Fallback: use a hash of the first few fields to create a stable ID
+              const keys = Object.keys(params.data || {}).slice(0, 3);
+              const values = keys.map(k => params.data?.[k]).join('-');
+              return `row-${values || 'unknown'}`;
+            }}
+            rowSelection={rowSelection as any}
+            suppressMultiSort
+            suppressScrollOnNewData
+            suppressAggFuncInHeader
+            animateRows
+            onGridReady={(params) => {
+              gridApiRef.current = params.api as GridApi;
+            }}
+            onSelectionChanged={(event) => {
+              if (onSelectionChange && event.api) {
+                onSelectionChange(event.api.getSelectedRows());
+              }
+            }}
+            onColumnResized={handleColumnEvent}
+            onColumnMoved={handleColumnEvent}
+            onColumnVisible={handleColumnEvent}
+            onSortChanged={handleSortChanged}
+            onRowClicked={
+              onRowClick
+                ? (event) => {
+                  if (event.data) {
+                    onRowClick(event.data as Record<string, any>);
+                  }
+                }
+                : undefined
+            }
+          />
+        </div>
+      )}
+      {loading && rows.length === 0 && columnDefs.length > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500 bg-white/60 z-10">
+          Loading data…
+        </div>
+      )}
+    </div>
+  );
+});

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy import func, or_
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from app.database import get_db
 from app.db_models import Message
@@ -27,51 +28,147 @@ class MessageResponse(BaseModel):
     is_flagged: bool
     is_archived: bool
     direction: str
-    message_date: datetime
+    # NOTE: Stored values in ebay_messages.message_date may be DATE or TEXT in
+    # some environments. The frontend treats this as a string and parses it via
+    # new Date(message_date), so we expose it as str here to avoid strict
+    # datetime parsing errors from Pydantic when legacy rows are loaded.
+    message_date: str
     order_id: Optional[str]
     listing_id: Optional[str]
+    bucket: Optional[str] = None
+    parsed_body: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
+
+
+class MessagesListResponse(BaseModel):
+    items: List[MessageResponse]
+    total: int
+    counts: Dict[str, int]
 
 class MessageUpdate(BaseModel):
     is_read: Optional[bool] = None
     is_flagged: Optional[bool] = None
     is_archived: Optional[bool] = None
 
-@router.get("/", response_model=List[MessageResponse])
+def _classify_bucket(msg: Message) -> str:
+    """Classify a message into one of the Gmail-like buckets.
+
+    OFFERS, CASES & DISPUTES, EBAY MESSAGES, OTHER.
+    """
+    mt = (msg.message_type or "").upper()
+    subj = (msg.subject or "").lower()
+    raw = (msg.raw_data or "").lower() if hasattr(msg, "raw_data") else ""
+    sender = (msg.sender_username or "").lower()
+
+    # OFFERS
+    if mt in {"OFFER", "BEST_OFFER", "COUNTER_OFFER"} or "offer" in subj or "offer" in raw:
+        return "offers"
+
+    # CASES & DISPUTES
+    if mt in {"CASE", "INQUIRY", "RETURN", "CANCELLATION", "CANCEL_REQUEST", "UNPAID_ITEM"}:
+        return "cases"
+    if any(k in subj for k in ["case", "dispute"]) or (
+        ("opened" in subj or "closed" in subj) and "ebay" in sender
+    ):
+        return "cases"
+
+    # EBAY MESSAGES
+    if "ebay" in sender or mt == "EBAY_MESSAGE":
+        return "ebay"
+
+    return "other"
+
+
+@router.get("/", response_model=MessagesListResponse)
 async def get_messages(
     folder: str = Query("inbox", regex="^(inbox|sent|flagged|archived)$"),
     unread_only: bool = False,
     search: Optional[str] = None,
+    bucket: Optional[str] = Query("all", regex="^(all|offers|cases|ebay)$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Message).filter(Message.user_id == current_user.id)
-    
+    base_query = db.query(Message).filter(Message.user_id == current_user.id)
+
+    # Folder filter
+    # Inbox: show all incoming messages regardless of archived flag so that
+    # badge counts and list contents line up. "Archived" can still be used to
+    # focus on archived messages only.
     if folder == "inbox":
-        query = query.filter(Message.direction == "INCOMING", Message.is_archived == False)
+        base_query = base_query.filter(Message.direction == "INCOMING")
     elif folder == "sent":
-        query = query.filter(Message.direction == "OUTGOING")
+        base_query = base_query.filter(Message.direction == "OUTGOING")
     elif folder == "flagged":
-        query = query.filter(Message.is_flagged == True)
+        base_query = base_query.filter(Message.is_flagged == True)
     elif folder == "archived":
-        query = query.filter(Message.is_archived == True)
-    
+        base_query = base_query.filter(Message.is_archived == True)
+
+    # Unread filter
     if unread_only:
-        query = query.filter(Message.is_read == False)
-    
+        base_query = base_query.filter(Message.is_read == False)
+
+    # Search filter
     if search:
-        query = query.filter(
-            (Message.subject.contains(search)) |
-            (Message.body.contains(search)) |
-            (Message.sender_username.contains(search))
+        like = f"%{search}%"
+        base_query = base_query.filter(
+            or_(
+                Message.subject.ilike(like),
+                Message.body.ilike(like),
+                Message.sender_username.ilike(like),
+            )
         )
-    
-    messages = query.order_by(Message.message_date.desc()).offset(skip).limit(limit).all()
-    return messages
+
+    # For now, compute bucket classification in Python for current page and counts.
+    # Fetch a superset (without bucket restriction) for counts, then page.
+    all_msgs = base_query.order_by(Message.message_date.desc()).all()
+
+    counts = {"all": 0, "offers": 0, "cases": 0, "ebay": 0}
+    classified: List[Message] = []
+    for m in all_msgs:
+        b = _classify_bucket(m)
+        counts["all"] += 1
+        if b in counts:
+            counts[b] += 1
+        classified.append(m)
+
+    # Apply bucket filter in-memory
+    if bucket and bucket != "all":
+        classified = [m for m in classified if _classify_bucket(m) == bucket]
+
+    total = len(classified)
+    page_items = classified[skip : skip + limit]
+
+    # Attach bucket to each response object
+    items: List[MessageResponse] = []
+    for m in page_items:
+        b = _classify_bucket(m)
+        items.append(
+            MessageResponse(
+                id=m.id,
+                message_id=m.message_id,
+                thread_id=m.thread_id,
+                sender_username=m.sender_username,
+                recipient_username=m.recipient_username,
+                subject=m.subject,
+                body=m.body or "",
+                message_type=m.message_type,
+                is_read=m.is_read,
+                is_flagged=m.is_flagged,
+                is_archived=m.is_archived,
+                direction=m.direction,
+                message_date=m.message_date,
+                order_id=m.order_id,
+                listing_id=m.listing_id,
+                bucket=b,
+                parsed_body=getattr(m, "parsed_body", None),
+            )
+        )
+
+    return MessagesListResponse(items=items, total=total, counts=counts)
 
 @router.get("/{message_id}", response_model=MessageResponse)
 async def get_message(
@@ -125,22 +222,20 @@ async def get_message_stats(
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    from sqlalchemy import func
-    
     unread_count = db.query(func.count(Message.id)).filter(
         Message.user_id == current_user.id,
         Message.is_read == False,
         Message.direction == "INCOMING"
     ).scalar()
-    
+
     flagged_count = db.query(func.count(Message.id)).filter(
         Message.user_id == current_user.id,
         Message.is_flagged == True
     ).scalar()
-    
+
     return {
         "unread_count": unread_count,
-        "flagged_count": flagged_count
+        "flagged_count": flagged_count,
     }
 
 @router.post("/sync", status_code=202)
@@ -193,6 +288,7 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
     try:
         from app.config import settings
         import asyncio
+        from app.services.message_parser import parse_ebay_message_html
         
         event_logger.log_start(f"Starting Messages sync from eBay ({settings.EBAY_ENVIRONMENT})")
         event_logger.log_info(f"API Configuration: Trading API (XML), message headers limit=200, bodies batch=10")
@@ -441,6 +537,20 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                             except Exception as e:
                                 logger.warning(f"Failed to parse date {receive_date_str}: {e}")
                         
+                        body_html = msg.get("text", "") or ""
+                        parsed_body = None
+                        try:
+                            if body_html:
+                                parsed = parse_ebay_message_html(
+                                    body_html,
+                                    our_account_username=recipient or "seller",
+                                )
+                                parsed_body = parsed.dict(exclude_none=True)
+                        except Exception as parse_err:
+                            logger.warning(
+                                f"Failed to parse eBay message body for {message_id}: {parse_err}"
+                            )
+
                         message = Message(
                             user_id=user_id,
                             message_id=message_id,
@@ -448,7 +558,7 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                             sender_username=sender,
                             recipient_username=recipient,
                             subject=msg.get("subject", ""),
-                            body=msg.get("text", ""),
+                            body=body_html,
                             message_type="MEMBER_MESSAGE",
                             is_read=msg.get("read", False),
                             is_flagged=msg.get("flagged", False),
@@ -457,7 +567,8 @@ async def _run_messages_sync(user_id: str, access_token: str, dry_run: bool, run
                             message_date=message_date,
                             order_id=None,
                             listing_id=msg.get("itemid"),
-                            raw_data=str(msg)
+                            raw_data=str(msg),
+                            parsed_body=parsed_body,
                         )
                         db.add(message)
                         folder_stored += 1

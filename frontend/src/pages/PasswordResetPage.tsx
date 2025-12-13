@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { authApi } from '../api/auth';
+// NOTE: Public password reset is disabled; this page is not used in routing.
+// Keeping the component around for now but without calling authApi.
+// import { authApi } from '../api/auth';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -8,7 +10,7 @@ import { Label } from '../components/ui/label';
 import { Alert, AlertDescription } from '../components/ui/alert';
 
 export const PasswordResetPage: React.FC = () => {
-  const [step, setStep] = useState<'request' | 'confirm'>('request');
+  const [step] = useState<'request' | 'confirm'>('request');
   const [email, setEmail] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -24,12 +26,8 @@ export const PasswordResetPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const response = await authApi.requestPasswordReset(email);
-      setMessage(response.message);
-      if (response.reset_token) {
-        setResetToken(response.reset_token);
-        setStep('confirm');
-      }
+      // Public password reset is disabled; this logic is kept only as a placeholder.
+      setMessage('Password reset is managed by administrators. Please contact an admin.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to request password reset');
     } finally {
@@ -55,11 +53,8 @@ export const PasswordResetPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const response = await authApi.resetPassword(email, resetToken, newPassword);
-      setMessage(response.message);
-      setTimeout(() => {
-        window.location.href = '/login';
-      }, 2000);
+      // Public password reset is disabled; this logic is kept only as a placeholder.
+      setMessage('Password reset is managed by administrators. Please contact an admin.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reset password');
     } finally {

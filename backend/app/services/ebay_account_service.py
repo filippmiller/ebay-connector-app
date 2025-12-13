@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -17,6 +17,21 @@ from app.utils.logger import logger
 
 class EbayAccountService:
     
+    @staticmethod
+    def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+        """Normalize a datetime to timezone-aware UTC.
+
+        We store/expose datetimes in UTC, but depending on the DB/driver configuration
+        they may come back as offset-naive or offset-aware. This helper ensures
+        we can safely do arithmetic/comparisons without "can't subtract offset-naive
+        and offset-aware datetimes" errors.
+        """
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     def create_account(
         self, 
         db: Session, 
@@ -38,8 +53,8 @@ class EbayAccountService:
             existing.marketplace_id = account_data.marketplace_id
             existing.site_id = account_data.site_id
             existing.is_active = True
-            existing.connected_at = datetime.utcnow()
-            existing.updated_at = datetime.utcnow()
+            existing.connected_at = datetime.now(timezone.utc)
+            existing.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(existing)
             logger.info(f"Updated existing eBay account: {existing.id} ({account_data.house_name})")
@@ -55,7 +70,7 @@ class EbayAccountService:
             purpose=account_data.purpose,
             marketplace_id=account_data.marketplace_id,
             site_id=account_data.site_id,
-            connected_at=datetime.utcnow(),
+            connected_at=datetime.now(timezone.utc),
             is_active=True
         )
         db.add(account)
@@ -78,6 +93,8 @@ class EbayAccountService:
         query = db.query(EbayAccount).filter(EbayAccount.org_id == org_id)
         if active_only:
             query = query.filter(EbayAccount.is_active == True)
+        # Prefer most recently connected accounts first
+        query = query.order_by(EbayAccount.connected_at.desc(), EbayAccount.updated_at.desc())
         return query.all()
     
     def update_account(
@@ -98,7 +115,7 @@ class EbayAccountService:
         if updates.purpose is not None:
             account.purpose = updates.purpose
         
-        account.updated_at = datetime.utcnow()
+        account.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(account)
         logger.info(f"Updated eBay account: {account_id}")
@@ -111,10 +128,18 @@ class EbayAccountService:
         access_token: str,
         refresh_token: Optional[str],
         expires_in: int,
+        *,
+        refresh_token_expires_in: Optional[int] = None,
         token_type: str = "Bearer"
     ) -> EbayToken:
-        """Save or update tokens for an account"""
-        expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        """Save or update tokens for an account, including optional refresh token expiry.
+
+        We always persist UTC timestamps; they may be returned by SQLAlchemy as
+        offset-aware or naive, so downstream code must normalize via _to_utc.
+        """
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=expires_in)
+        refresh_expires_at = (now + timedelta(seconds=refresh_token_expires_in)) if refresh_token_expires_in else None
         
         existing_token = db.query(EbayToken).filter(
             EbayToken.ebay_account_id == account_id
@@ -126,24 +151,34 @@ class EbayAccountService:
                 existing_token.refresh_token = refresh_token
             existing_token.token_type = token_type
             existing_token.expires_at = expires_at
-            existing_token.last_refreshed_at = datetime.utcnow()
+            existing_token.last_refreshed_at = now
+            if refresh_expires_at:
+                # Only set if provided by eBay
+                if hasattr(existing_token, 'refresh_expires_at'):
+                    existing_token.refresh_expires_at = refresh_expires_at
             existing_token.refresh_error = None
-            existing_token.updated_at = datetime.utcnow()
+            existing_token.updated_at = now
             db.commit()
             db.refresh(existing_token)
             logger.info(f"Updated tokens for account: {account_id}")
             return existing_token
         
-        token_id = str(uuid.uuid4())
-        token = EbayToken(
-            id=token_id,
+        token_kwargs = dict(
+            id=str(uuid.uuid4()),
             ebay_account_id=account_id,
             access_token=access_token,
             refresh_token=refresh_token,
             token_type=token_type,
             expires_at=expires_at,
-            last_refreshed_at=datetime.utcnow()
+            last_refreshed_at=now,
         )
+        if refresh_expires_at is not None:
+            # Only set if ORM model has the column
+            try:
+                token_kwargs['refresh_expires_at'] = refresh_expires_at
+            except Exception:
+                pass
+        token = EbayToken(**token_kwargs)
         db.add(token)
         db.commit()
         db.refresh(token)
@@ -169,7 +204,7 @@ class EbayAccountService:
         
         if existing_auth:
             existing_auth.scopes = scopes
-            existing_auth.updated_at = datetime.utcnow()
+            existing_auth.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(existing_auth)
             return existing_auth
@@ -201,7 +236,9 @@ class EbayAccountService:
             expires_in_seconds = None
             
             if token and token.expires_at:
-                expires_in_seconds = int((token.expires_at - datetime.utcnow()).total_seconds())
+                expires_at_utc = self._to_utc(token.expires_at)
+                now_utc = datetime.now(timezone.utc)
+                expires_in_seconds = int((expires_at_utc - now_utc).total_seconds())
             
             last_health = db.query(EbayHealthEvent).filter(
                 EbayHealthEvent.ebay_account_id == account.id
@@ -247,8 +284,9 @@ class EbayAccountService:
         if not token.expires_at:
             return "unknown"
         
-        now = datetime.utcnow()
-        time_until_expiry = token.expires_at - now
+        expires_at_utc = self._to_utc(token.expires_at)
+        now_utc = datetime.now(timezone.utc)
+        time_until_expiry = expires_at_utc - now_utc
         
         if time_until_expiry.total_seconds() < 0:
             return "expired"
@@ -258,32 +296,48 @@ class EbayAccountService:
             return "healthy"
     
     def get_accounts_needing_refresh(
-        self, 
-        db: Session, 
-        threshold_minutes: int = 5
+        self,
+        db: Session,
+        threshold_minutes: int = 15,
+        max_age_minutes: int = 60,
     ) -> List[EbayAccount]:
-        """Get accounts whose tokens need refresh"""
-        threshold = datetime.utcnow() + timedelta(minutes=threshold_minutes)
-        
-        tokens = db.query(EbayToken).filter(
-            or_(
-                EbayToken.expires_at <= threshold,
-                EbayToken.expires_at == None
-            )
-        ).all()
-        
+        """Get accounts whose tokens should be refreshed.
+
+        An account is a candidate when **either** of the following is true:
+
+        - The access token is close to expiry (``expires_at`` is null or within
+          ``threshold_minutes`` from now), OR
+        - The token has not been refreshed for at least ``max_age_minutes``
+          (``last_refreshed_at`` is null or older than that window).
+        """
+        now_utc = datetime.now(timezone.utc)
+        expiry_threshold = now_utc + timedelta(minutes=threshold_minutes)
+        max_age_cutoff = now_utc - timedelta(minutes=max_age_minutes)
+
+        close_to_expiry = or_(
+            EbayToken.expires_at.is_(None),
+            EbayToken.expires_at <= expiry_threshold,
+        )
+
+        too_old = or_(
+            EbayToken.last_refreshed_at.is_(None),
+            EbayToken.last_refreshed_at <= max_age_cutoff,
+        )
+
+        tokens = db.query(EbayToken).filter(or_(close_to_expiry, too_old)).all()
+
         account_ids = [t.ebay_account_id for t in tokens]
-        
+
         if not account_ids:
             return []
-        
+
         accounts = db.query(EbayAccount).filter(
             and_(
                 EbayAccount.id.in_(account_ids),
-                EbayAccount.is_active == True
+                EbayAccount.is_active == True,
             )
         ).all()
-        
+
         return accounts
     
     def record_health_check(
@@ -302,7 +356,7 @@ class EbayAccountService:
         event = EbayHealthEvent(
             id=event_id,
             ebay_account_id=account_id,
-            checked_at=datetime.utcnow(),
+            checked_at=datetime.now(timezone.utc),
             is_healthy=is_healthy,
             http_status=http_status,
             ack=ack,

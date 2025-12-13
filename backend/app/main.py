@@ -5,7 +5,70 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import auth, ebay, orders, messages, offers, migration, buying, inventory, transactions, financials, admin, offers_v2, inventory_v2, ebay_accounts
+from app.routers import (
+    auth,
+    ebay,
+    orders,
+    messages,
+    offers,
+    migration,
+    buying,
+    inventory,
+    transactions,
+    financials,
+    admin,
+    offers_v2,
+    inventory_v2,
+    ebay_accounts,
+    ebay_workers,
+    admin_db,
+    grid_layouts,
+    orders_api,
+    grids_data,
+    admin_mssql,
+    ai_messages,
+    timesheets,
+    grid_preferences,
+    admin_migration,
+    admin_db_migration_console,
+    tasks,
+    listing,
+    sq_catalog,
+    ebay_notifications,
+    shipping,
+    shipping_bulk,
+    ui_tweak,
+    security_center,
+    admin_users,
+    sniper,
+    ebay_listing_debug,
+    admin,
+    accounting,
+    accounting2,
+    accounting_public,
+    accounting2_public,
+    admin_ai,
+    admin_ai_rules_ext,
+    admin_monitoring,
+    admin_actions,
+    admin_ai_overview,
+    integrations,
+    admin_ai_integrations,
+    ai_speech,
+    ebay_browse,
+    ebay_search_watches,
+    inventory_offers,
+    cv_camera,  # Computer Vision camera module
+    cv_brain,   # Computer Vision brain module
+    db_compare,
+    admin_workers,
+    admin_ebay_listing_test,
+    admin_ebay_bin_listing,
+    admin_ebay_business_policies,
+    admin_ebay_policy_mappings,
+    admin_ebay_flow_catalog,
+    ai_assistant,  # Phase 1: AI Assistant with analytics
+)
 from app.utils.logger import logger
 import os
 import asyncio
@@ -64,8 +127,14 @@ async def request_logger(request: Request, call_next):
 app.include_router(auth.router)
 app.include_router(ebay.router)
 app.include_router(ebay_accounts.router)
+app.include_router(ebay_workers.router)
+app.include_router(ebay_notifications.router)
+app.include_router(ebay_listing_debug.router)
 app.include_router(orders.router)
+app.include_router(orders_api.router)
 app.include_router(messages.router)
+app.include_router(ai_messages.router)
+app.include_router(timesheets.router)
 app.include_router(offers.router)
 app.include_router(migration.router)
 app.include_router(buying.router)
@@ -73,11 +142,59 @@ app.include_router(inventory.router)
 app.include_router(transactions.router)
 app.include_router(financials.router)
 app.include_router(admin.router)
+app.include_router(admin_db.router)
+app.include_router(admin_mssql.router)
+app.include_router(admin_migration.router)
+app.include_router(admin_db_migration_console.router)
+app.include_router(grid_layouts.router)
+app.include_router(grids_data.router)
 app.include_router(offers_v2.router)
 app.include_router(inventory_v2.router)
+app.include_router(grid_preferences.router)
+app.include_router(tasks.router)
+app.include_router(listing.router)
+app.include_router(sq_catalog.router)
+app.include_router(shipping.router)
+app.include_router(shipping_bulk.router)
+app.include_router(ui_tweak.router)
+app.include_router(security_center.router)
+app.include_router(admin_users.router)
+app.include_router(sniper.router)
+app.include_router(accounting.router)
+app.include_router(accounting2.router)
+# Compatibility aliases: allow /accounting/* and /accounting2/* in addition to /api/accounting*.
+app.include_router(accounting_public.router)
+app.include_router(accounting2_public.router)
+app.include_router(admin_ai.router)
+app.include_router(admin_ai_rules_ext.router)
+app.include_router(admin_monitoring.router)
+app.include_router(admin_actions.router)
+app.include_router(admin_ai_overview.router)
+app.include_router(integrations.router)
+app.include_router(admin_ai_integrations.router)
+app.include_router(ai_speech.router)
+app.include_router(ebay_browse.router)
+app.include_router(ebay_search_watches.router)
+app.include_router(inventory_offers.router)
+app.include_router(cv_camera.router)  # Computer Vision camera module
+app.include_router(cv_brain.router)   # Computer Vision brain module
+app.include_router(db_compare.router)
+app.include_router(admin_workers.router)
+app.include_router(admin_ebay_listing_test.router)
+app.include_router(admin_ebay_bin_listing.router)
+app.include_router(admin_ebay_business_policies.router)
+app.include_router(admin_ebay_policy_mappings.router)
+app.include_router(admin_ebay_flow_catalog.router)
+app.include_router(ai_assistant.router)  # Phase 1: AI Assistant
 
 @app.on_event("startup")
 async def startup_event():
+    # Log build number for deployment tracking
+    from app.utils.build_info import get_build_number
+    build_number = get_build_number()
+    logger.info("=" * 60)
+    logger.info(f"🚀 Application starting - BUILD_NUMBER: {build_number}")
+    logger.info("=" * 60)
     logger.info("eBay Connector API starting up...")
     
     from app.config import settings
@@ -153,13 +270,49 @@ async def startup_event():
     if start_workers:
         logger.info("🔄 Starting background workers...")
         try:
-            from app.workers import run_token_refresh_worker_loop, run_health_check_worker_loop
+            from app.workers import (
+                run_token_refresh_worker_loop,
+                run_health_check_worker_loop,
+                run_ebay_workers_loop,
+                run_tasks_reminder_worker_loop,
+                run_sniper_loop,
+                run_monitoring_loop,
+                run_auto_offer_buy_loop,
+                run_db_migration_workers_loop,
+            )
             
             asyncio.create_task(run_token_refresh_worker_loop())
             logger.info("✅ Token refresh worker started (runs every 10 minutes)")
             
             asyncio.create_task(run_health_check_worker_loop())
             logger.info("✅ Health check worker started (runs every 15 minutes)")
+
+            # eBay data workers loop – runs every 5 minutes and triggers all
+            # enabled workers (orders, transactions, offers, messages, cases,
+            # finances, active inventory) for all active accounts.
+            asyncio.create_task(run_ebay_workers_loop())
+            logger.info("✅ eBay workers loop started (runs every 5 minutes)")
+
+            # Tasks & reminders worker – fires due reminders and snoozed reminders.
+            asyncio.create_task(run_tasks_reminder_worker_loop())
+            logger.info("✅ Tasks & reminders worker started (runs every 60 seconds)")
+
+            asyncio.create_task(run_sniper_loop())
+            logger.info("✅ Sniper executor worker started (runs every %s seconds)", 5)
+
+            asyncio.create_task(run_monitoring_loop())
+            logger.info("✅ eBay monitoring worker started (runs every %s seconds)", 60)
+
+            asyncio.create_task(run_auto_offer_buy_loop())
+            logger.info("✅ Auto-offer / Auto-buy planner worker started (runs every %s seconds)", 120)
+
+            # DB migration workers: incremental MSSQL→Supabase sync for selected tables.
+            asyncio.create_task(run_db_migration_workers_loop())
+            logger.info("✅ DB migration worker loop started (runs every %s seconds)", 60)
+
+            # eBay search watch worker – polls Browse API for user-defined rules.
+            asyncio.create_task(run_search_watch_loop())
+            logger.info("✅ eBay search watch worker started (runs every %s seconds)", 60)
             
         except Exception as e:
             logger.error(f"⚠️  Failed to start background workers: {e}")

@@ -5,25 +5,35 @@ import { ebayApi } from '../api/ebay';
 import api from '../lib/apiClient';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
+import { Input } from '../components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SyncTerminal } from '../components/SyncTerminal';
 import { EbayDebugger } from '../components/EbayDebugger';
 import type { EbayConnectionStatus, EbayLog, EbayConnectLog } from '../types';
-import { Link as LinkIcon, Unlink, Loader2 } from 'lucide-react';
+import { Link as LinkIcon, Loader2, Copy } from 'lucide-react';
 import FixedHeader from '@/components/FixedHeader';
 
+// Fallback-only default scopes used when /ebay/scopes fails.
+// In normal flows, we always prefer the catalog from GET /ebay/scopes.
 const DEFAULT_SCOPES = [
   'https://api.ebay.com/oauth/api_scope',
-  'https://api.ebay.com/oauth/api_scope/sell.account',
-  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
-  'https://api.ebay.com/oauth/api_scope/sell.finances',
-  'https://api.ebay.com/oauth/api_scope/sell.inventory',
+  'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
 ];
+
+// Scopes that require special eBay approval and must not be requested in
+// regular user-consent flows (they cause `invalid_scope` errors).
+const FORBIDDEN_REQUEST_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope/buy.offer.auction',
+];
+
+const sanitizeScopes = (scopes: string[]): string[] =>
+  scopes.filter((s) => !FORBIDDEN_REQUEST_SCOPES.includes(s));
 
 export const EbayConnectionPage: React.FC = () => {
   const navigate = useNavigate();
@@ -32,10 +42,8 @@ export const EbayConnectionPage: React.FC = () => {
   const [logs, setLogs] = useState<EbayLog[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [environment, setEnvironment] = useState<'sandbox' | 'production'>(() => {
-    const saved = localStorage.getItem('ebay_environment');
-    return (saved === 'production' ? 'production' : 'sandbox') as 'sandbox' | 'production';
-  });
+  // For now operate only against production environment on this page
+  const [environment] = useState<'sandbox' | 'production'>('production');
   
   const [syncing, setSyncing] = useState(false);
   const [syncingTransactions, setSyncingTransactions] = useState(false);
@@ -55,6 +63,72 @@ export const EbayConnectionPage: React.FC = () => {
   const [connectLogs, setConnectLogs] = useState<EbayConnectLog[]>([]);
   const [connectLogLoading, setConnectLogLoading] = useState(false);
   const [connectLogError, setConnectLogError] = useState('');
+  // Connection Terminal UX
+  const [connWrap, setConnWrap] = useState<boolean>(false);
+  const [connectSearch, setConnectSearch] = useState<string>('');
+  const [terminalSearch, setTerminalSearch] = useState<string>('');
+
+  // Available scopes loaded from backend catalog
+  const [availableScopes, setAvailableScopes] = useState<string[]>([]);
+
+  // eBay accounts overview
+  type EbayAccountWithToken = {
+    id: string;
+    org_id: string;
+    ebay_user_id: string;
+    username: string | null;
+    house_name: string;
+    purpose: string;
+    marketplace_id?: string | null;
+    site_id?: number | null;
+    connected_at: string;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+    token?: {
+      id: string;
+      ebay_account_id: string;
+      expires_at?: string | null;
+      last_refreshed_at?: string | null;
+      refresh_error?: string | null;
+    } | null;
+    status: string;
+    expires_in_seconds?: number | null;
+    last_health_check?: string | null;
+    health_status?: string | null;
+  };
+  const [accounts, setAccounts] = useState<EbayAccountWithToken[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState('');
+  const [selectedConnectAccountId, setSelectedConnectAccountId] = useState<string | null>(null);
+
+  // Account detail modal state (token + scopes)
+  const [accountDetailOpen, setAccountDetailOpen] = useState(false);
+  const [accountDetailLoading, setAccountDetailLoading] = useState(false);
+  const [accountDetailError, setAccountDetailError] = useState('');
+  const [selectedAccount, setSelectedAccount] = useState<EbayAccountWithToken | null>(null);
+  const [accountScopes, setAccountScopes] = useState<string[]>([]);
+  const [accountTokenInfo, setAccountTokenInfo] = useState<any | null>(null);
+
+  // Pre-flight modal state
+  const [preflightOpen, setPreflightOpen] = useState(false);
+  const [preflightUrl, setPreflightUrl] = useState<string>('');
+  const [, setPreflightScopes] = useState<string[]>([]);
+  const [extraScopesInput, setExtraScopesInput] = useState<string>('');
+  const [preflightSubmitting, setPreflightSubmitting] = useState(false);
+
+  // Derived scope previews for the pre-flight modal
+  const rawBaseScopes = (availableScopes.length ? availableScopes : DEFAULT_SCOPES);
+  const baseScopes = sanitizeScopes(rawBaseScopes);
+  const extraScopesRaw = (extraScopesInput || '').trim().split(/\s+/).filter(Boolean);
+  const extraScopes = sanitizeScopes(extraScopesRaw);
+  const finalScopesPreview = Array.from(new Set([...baseScopes, ...extraScopes]));
+  const forbiddenInPreview = rawBaseScopes
+    .concat(extraScopesRaw)
+    .filter((s) => FORBIDDEN_REQUEST_SCOPES.includes(s));
+
+  // Compact: collapse Connection Request Preview details by default
+  const [showRequestPreview, setShowRequestPreview] = useState(false);
 
   useEffect(() => {
     if (user?.role !== 'admin') {
@@ -63,6 +137,8 @@ export const EbayConnectionPage: React.FC = () => {
     }
     loadConnectionStatus();
     loadLogs();
+    loadAvailableScopes();
+    loadAccounts();
     const interval = setInterval(loadLogs, 3000);
     return () => {
       clearInterval(interval);
@@ -94,6 +170,33 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  const loadAvailableScopes = async () => {
+    try {
+      const res = await ebayApi.getAvailableScopes();
+      const scopes = (res.scopes || []).map((s) => s.scope);
+      setAvailableScopes(scopes);
+    } catch (err) {
+      console.error('Failed to load available eBay scopes:', err);
+    }
+  };
+
+  const loadAccounts = async () => {
+    try {
+      setAccountsLoading(true);
+      setAccountsError('');
+      const data = await ebayApi.getAccounts(true);
+      setAccounts(data || []);
+      if (!selectedConnectAccountId && data && data.length > 0) {
+        setSelectedConnectAccountId(data[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load eBay accounts:', err);
+      setAccountsError('Failed to load eBay accounts');
+    } finally {
+      setAccountsLoading(false);
+    }
+  };
+
   const loadConnectLogs = async (env: 'sandbox' | 'production') => {
     try {
       setConnectLogLoading(true);
@@ -108,15 +211,77 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  // Export helpers for Connection Terminal
+  const exportConnectLogs = (format: 'json' | 'ndjson' | 'txt') => {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filenameBase = `connect_logs_${environment}_${ts}`;
+
+    let blob: Blob;
+    if (format === 'json') {
+      blob = new Blob([JSON.stringify({ logs: connectLogs }, null, 2)], { type: 'application/json' });
+      triggerDownload(`${filenameBase}.json`, blob);
+      return;
+    }
+    if (format === 'ndjson') {
+      const nd = connectLogs.map(l => JSON.stringify(l)).join('\n');
+      blob = new Blob([nd], { type: 'application/x-ndjson' });
+      triggerDownload(`${filenameBase}.ndjson`, blob);
+      return;
+    }
+    // txt (pretty)
+    const txt = connectLogs.map(l => {
+      const lines: string[] = [];
+      lines.push(`[${new Date(l.created_at).toISOString()}] ${l.environment} • ${l.action}`);
+      if (l.request) {
+        lines.push(`→ ${l.request.method || ''} ${l.request.url || ''}`);
+        if (l.request.headers) lines.push(`headers: ${JSON.stringify(l.request.headers)}`);
+        if (l.request.body) lines.push(`body: ${typeof l.request.body === 'string' ? l.request.body : JSON.stringify(l.request.body)}`);
+      }
+      if (l.response) {
+        lines.push(`← status: ${l.response.status ?? ''}`);
+        if (l.response.headers) lines.push(`resp-headers: ${JSON.stringify(l.response.headers)}`);
+        if (typeof l.response.body !== 'undefined') lines.push(`resp-body: ${typeof l.response.body === 'string' ? l.response.body : JSON.stringify(l.response.body)}`);
+      }
+      if (l.error) lines.push(`error: ${l.error}`);
+      return lines.join('\n');
+    }).join('\n\n');
+    blob = new Blob([txt], { type: 'text/plain' });
+    triggerDownload(`${filenameBase}.txt`, blob);
+  };
+
+  const triggerDownload = (filename: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const handleConnectEbay = async () => {
     setError('');
     setLoading(true);
 
     try {
       const redirectUri = `${window.location.origin}/ebay/callback`;
-      localStorage.setItem('ebay_oauth_environment', environment);
-      const response = await ebayApi.startAuth(redirectUri, environment);
-      window.location.href = response.authorization_url;
+      // For now always initiate auth in production
+      const env: 'sandbox' | 'production' = 'production';
+      localStorage.setItem('ebay_oauth_environment', env);
+
+      const selectedAcc = accounts.find((a) => a.id === selectedConnectAccountId) || null;
+      const houseName = selectedAcc?.house_name || selectedAcc?.username || undefined;
+
+      const response = await ebayApi.startAuth(redirectUri, env, undefined, houseName);
+      setPreflightUrl(response.authorization_url);
+      // Parse scopes from URL for display
+      try {
+        const u = new URL(response.authorization_url);
+        const scopeStr = (u.searchParams.get('scope') || '').trim();
+        setPreflightScopes(scopeStr ? scopeStr.split(' ') : []);
+      } catch {}
+      setPreflightOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start eBay authorization');
       setLoading(false);
@@ -315,6 +480,26 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  const getAccountStatusDot = (status: string) => {
+    switch (status) {
+      case 'healthy':
+        return 'bg-green-500';
+      case 'expiring_soon':
+        return 'bg-yellow-400';
+      case 'expired':
+      case 'error':
+        return 'bg-red-500';
+      default:
+        return 'bg-gray-400';
+    }
+  };
+
+  const maskToken = (token: string | undefined | null) => {
+    if (!token) return '';
+    if (token.length <= 12) return token;
+    return `${token.slice(0, 6)}…${token.slice(-4)}`;
+  };
+
   const formatTimestamp = (timestamp: string) => {
     try {
       return new Date(timestamp).toLocaleString(undefined, { hour12: false });
@@ -323,19 +508,56 @@ export const EbayConnectionPage: React.FC = () => {
     }
   };
 
+  const openAccountDetail = async (acc: EbayAccountWithToken) => {
+    setSelectedAccount(acc);
+    setAccountDetailOpen(true);
+    setAccountDetailLoading(true);
+    setAccountDetailError('');
+    setAccountScopes([]);
+    setAccountTokenInfo(null);
+    try {
+      // Load scopes for this account
+      const authRes = await api.get(`/ebay-accounts/${acc.id}/authorizations`);
+      const scopes: string[] = Array.from(
+        new Set(
+          (authRes.data || []).flatMap((a: any) => Array.isArray(a.scopes) ? a.scopes : []),
+        ),
+      );
+      setAccountScopes(scopes);
+    } catch (e: any) {
+      setAccountDetailError(e?.response?.data?.detail || 'Failed to load account scopes');
+    }
+
+    try {
+      // Load token info (masked token, expiry, etc.)
+      const params = new URLSearchParams({ environment });
+      params.set('account_id', acc.id);
+      const tokenRes = await api.get(`/ebay/token-info?${params.toString()}`);
+      setAccountTokenInfo(tokenRes.data);
+    } catch (e: any) {
+      // Do not block modal if token-info fails; surface message if nothing else loaded
+      if (!accountDetailError) {
+        setAccountDetailError(e?.response?.data?.detail || 'Failed to load token info');
+      }
+    } finally {
+      setAccountDetailLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <FixedHeader />
-      <main className="w-full pt-16 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-6">eBay Connection Management</h1>
+      <main className="w-full pt-16 px-4 sm:px-6 lg:px-10 py-8">
+        <div className="w-full mx-auto">
+          <h1 className="text-4xl font-bold mb-8 tracking-tight">eBay Connection Management</h1>
 
           <Tabs defaultValue="connection" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="connection">eBay Connection</TabsTrigger>
-              <TabsTrigger value="sync">Sync Data</TabsTrigger>
-              <TabsTrigger value="debugger">🔧 API Debugger</TabsTrigger>
-              <TabsTrigger value="terminal">Connection Terminal</TabsTrigger>
+            <TabsList className="flex flex-wrap gap-2 bg-white rounded-lg shadow-sm px-2 py-1">
+              <TabsTrigger value="connection" className="text-sm px-3 py-1">eBay Connection</TabsTrigger>
+              <TabsTrigger value="accounts" className="text-sm px-3 py-1">eBay Accounts</TabsTrigger>
+              <TabsTrigger value="sync" className="text-sm px-3 py-1">Sync Data</TabsTrigger>
+              <TabsTrigger value="debugger" className="text-sm px-3 py-1">🔧 API Debugger</TabsTrigger>
+              <TabsTrigger value="terminal" className="text-sm px-3 py-1">Connection Terminal</TabsTrigger>
             </TabsList>
 
             <TabsContent value="connection" className="space-y-4">
@@ -346,119 +568,105 @@ export const EbayConnectionPage: React.FC = () => {
               )}
 
               <Card>
-                <CardHeader>
-                  <CardTitle>eBay Connection Status</CardTitle>
-                  <CardDescription>
-                    Manage your eBay API connection
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border">
-                    <div className="flex items-center gap-3">
-                      <Label htmlFor="env-switch" className="font-medium">
-                        Environment:
-                      </Label>
-                      <Badge variant={environment === 'sandbox' ? 'default' : 'destructive'}>
-                        {environment === 'sandbox' ? 'Sandbox (Testing)' : 'Production (Live)'}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Label htmlFor="env-switch" className="text-sm text-gray-600">
-                        Sandbox
-                      </Label>
-                      <Switch
-                        id="env-switch"
-                        checked={environment === 'production'}
-                        onCheckedChange={(checked) => {
-                          const newEnv = checked ? 'production' : 'sandbox';
-                          setEnvironment(newEnv);
-                          localStorage.setItem('ebay_environment', newEnv);
-                        }}
-                        disabled={connectionStatus?.connected}
-                      />
-                      <Label htmlFor="env-switch" className="text-sm text-gray-600">
-                        Production
-                      </Label>
-                    </div>
+                <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <CardTitle className="text-xl">eBay Connection</CardTitle>
+                    <CardDescription className="text-sm text-gray-600">
+                      Select an eBay account and start a new OAuth connect flow.
+                    </CardDescription>
                   </div>
-
-                  {connectionStatus?.connected && (
-                    <Alert>
-                      <AlertDescription>
-                        Disconnect to change environment. Currently using: <strong>{environment}</strong>
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
-                  <div className="flex items-center gap-4">
-                    <div>
-                      <span className="text-sm text-gray-600">Status: </span>
-                      {connectionStatus?.connected ? (
-                        <Badge className="bg-green-100 text-green-800">
-                          <LinkIcon className="w-3 h-3 mr-1" />
+                  <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+                    <Badge variant="destructive">Production (Live)</Badge>
+                    {connectionStatus?.connected && (
+                      <>
+                        <Badge className="bg-green-100 text-green-800 flex items-center gap-1">
+                          <LinkIcon className="w-3 h-3" />
                           Connected
                         </Badge>
-                      ) : (
-                        <Badge variant="secondary">
-                          <Unlink className="w-3 h-3 mr-1" />
-                          Not Connected
-                        </Badge>
-                      )}
-                    </div>
-                    {connectionStatus?.connected && connectionStatus?.expires_at && (
-                      <div className="text-sm text-gray-600">
-                        Expires: {new Date(connectionStatus.expires_at).toLocaleString()}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-4 flex gap-3">
-                    {connectionStatus?.connected ? (
-                      <>
+                        {connectionStatus.expires_at && (
+                          <span className="text-gray-600">
+                            Expires: {new Date(connectionStatus.expires_at).toLocaleString()}
+                          </span>
+                        )}
                         <Button 
                           onClick={() => navigate('/ebay/test')}
                           disabled={loading}
+                          size="sm"
                         >
-                          Test eBay API
+                          Test API
                         </Button>
                         <Button 
                           variant="destructive" 
                           onClick={handleDisconnect}
                           disabled={loading}
+                          size="sm"
                         >
-                          {loading ? 'Disconnecting...' : 'Disconnect from eBay'}
+                          {loading ? 'Disconnecting…' : 'Disconnect'}
                         </Button>
                       </>
-                    ) : (
-                      <Button 
-                        onClick={handleConnectEbay}
-                        disabled={loading}
-                      >
-                        {loading ? 'Connecting...' : 'Connect to eBay'}
-                      </Button>
                     )}
                   </div>
-
-                  <div className="pt-4 border-t">
-                    <h3 className="text-sm font-medium mb-2">About eBay OAuth</h3>
-                    <p className="text-sm text-gray-600">
-                      To connect to eBay, you need to provide your eBay API credentials 
-                      (Client ID, Client Secret, and Redirect URI) in the backend configuration.
-                      Once configured, clicking "Connect to eBay" will redirect you to eBay's 
-                      authorization page where you can grant access to your eBay account.
-                    </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex-1">
+                      <Label className="text-xs font-medium text-gray-700">eBay account to (re)connect</Label>
+                      {accountsLoading ? (
+                        <div className="text-xs text-gray-500 mt-1">Loading accounts…</div>
+                      ) : accounts.length > 0 ? (
+                        <Select
+                          value={selectedConnectAccountId || accounts[0]?.id}
+                          onValueChange={(val) => setSelectedConnectAccountId(val)}
+                        >
+                          <SelectTrigger className="mt-1 h-8 text-xs w-full sm:w-72">
+                            <SelectValue placeholder="Select eBay account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {accounts.map((acc) => (
+                              <SelectItem key={acc.id} value={acc.id}>
+                                {acc.house_name || acc.username || acc.id} ({acc.ebay_user_id})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <p className="text-xs text-gray-500 mt-1">
+                          No eBay accounts yet. Connecting will create a new account from the eBay user you log in with.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-end sm:items-center gap-2">
+                      <Button 
+                        onClick={handleConnectEbay}
+                        disabled={loading || (accounts.length > 0 && !selectedConnectAccountId)}
+                        size="sm"
+                      >
+                        {loading ? 'Connecting…' : 'Connect to eBay'}
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader>
-                  <CardTitle>Connection Request Preview</CardTitle>
-                  <CardDescription>
-                    Preview of the authorization request that will be sent to eBay for the selected environment.
-                  </CardDescription>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl">Connection Request Preview</CardTitle>
+                    <CardDescription className="text-sm text-gray-600">
+                      Preview of the authorization request that will be sent to eBay for the selected environment.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setShowRequestPreview((v) => !v)}
+                  >
+                    {showRequestPreview ? 'Hide details' : 'Show details'}
+                  </Button>
                 </CardHeader>
-                <CardContent>
+                {showRequestPreview && (
+                <CardContent className="pt-2">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <h4 className="text-sm font-semibold">Environment</h4>
@@ -484,14 +692,14 @@ export const EbayConnectionPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-4">
-                    <h4 className="text-sm font-semibold mb-2">Query Parameters</h4>
-                    <ScrollArea className="h-32 rounded border bg-gray-50 p-3 text-xs font-mono">
+                    <div className="mt-3">
+                      <h4 className="text-sm font-semibold mb-2">Query Parameters</h4>
+                      <ScrollArea className="h-24 rounded border bg-gray-50 p-3 text-xs font-mono">
                       {Array.from(
                         new URLSearchParams({
                           response_type: 'code',
                           redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
-                          scope: DEFAULT_SCOPES.join(' '),
+                          scope: baseScopes.join(' '),
                           state: 'generated server-side',
                         }).entries()
                       ).map(([key, value]) => (
@@ -500,39 +708,317 @@ export const EbayConnectionPage: React.FC = () => {
                         </div>
                       ))}
                     </ScrollArea>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Actual state and scope values are generated on the server and recorded in the terminal below.
-                    </p>
+                    <div className="mt-3">
+                      <h4 className="text-sm font-semibold mb-2">Raw Authorization URL</h4>
+                      <div className="p-2 bg-gray-50 border rounded font-mono text-xs whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+                        {(() => {
+                          const base = environment === 'production' ? 'https://auth.ebay.com/oauth2/authorize' : 'https://auth.sandbox.ebay.com/oauth2/authorize';
+                          const qs = new URLSearchParams({
+                            response_type: 'code',
+                            redirect_uri: typeof window !== 'undefined' ? `${window.location.origin}/ebay/callback` : '/ebay/callback',
+                            scope: baseScopes.join(' '),
+                            state: 'generated server-side',
+                            client_id: 'configured server-side'
+                          }).toString();
+                          return `GET ${base}?${qs}`;
+                        })()}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2">Actual values (client_id/state) задаются сервером и логируются в “Connection Terminal”.</p>
+                    </div>
                   </div>
                 </CardContent>
+                )}
               </Card>
 
+              {/* Pre-flight Authorization Modal */}
+              <Dialog
+                open={preflightOpen}
+                onOpenChange={(o)=> { setPreflightOpen(o); if (!o) { setLoading(false); setPreflightSubmitting(false); } }}
+              >
+                <DialogContent className="max-w-4xl w-full max-h-[80vh] flex flex-col">
+                  <DialogHeader>
+                    <DialogTitle>Review eBay Authorization Request</DialogTitle>
+                  </DialogHeader>
+
+                  {/* Scrollable main content */}
+                  <div className="flex-1 overflow-y-auto space-y-4 text-sm">
+                    {/* Request overview */}
+                    <div className="border rounded-lg bg-white p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div>
+                          <h3 className="text-sm font-semibold mb-1">Request overview</h3>
+                          <p className="text-xs text-gray-500">
+                            This is the authorization request that will be sent to eBay. Sensitive values
+                            such as <code className="font-mono">client_id</code> and <code className="font-mono">state</code> are configured on the server.
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={async () => {
+                            try {
+                              if (preflightUrl) {
+                                await navigator.clipboard.writeText(preflightUrl);
+                              }
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          title="Copy full URL"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+
+                      {/* Pretty query param view */}
+                      <ScrollArea className="max-h-32 rounded border bg-gray-50 p-3 text-xs font-mono">
+                        {(() => {
+                          try {
+                            const urlObj = preflightUrl ? new URL(preflightUrl) : null;
+                            const authBase = environment === 'production'
+                              ? 'https://auth.ebay.com/oauth2/authorize'
+                              : 'https://auth.sandbox.ebay.com/oauth2/authorize';
+                            const entries = urlObj ? Array.from(urlObj.searchParams.entries()) : [];
+                            const params: Record<string, string> = {};
+                            for (const [k, v] of entries) params[k] = v;
+
+                            const scopeCount = finalScopesPreview.length;
+                            const safeClientId = params.client_id ? '******** (configured server-side)' : 'configured server-side';
+                            const redirect = params.redirect_uri || '(configured server-side)';
+                            const statePreview = params.state && params.state.length > 80
+                              ? `${params.state.slice(0, 80)}…`
+                              : (params.state || '(generated server-side)');
+
+                            return (
+                              <div className="space-y-1">
+                                <div className="font-semibold text-gray-800 mb-1">
+                                  GET {authBase}
+                                </div>
+                                {params.response_type && (
+                                  <div>response_type: <span className="text-gray-900">{params.response_type}</span></div>
+                                )}
+                                <div>client_id: <span className="text-gray-900">{safeClientId}</span></div>
+                                <div>redirect_uri: <span className="text-gray-900 break-all">{redirect}</span></div>
+                                <div>
+                                  scope: <span className="text-gray-900">{scopeCount} scopes</span>{' '}
+                                  <span className="text-gray-500">(see sections below)</span>
+                                </div>
+                                <div>
+                                  state: <span className="text-gray-900 break-all">{statePreview}</span>
+                                </div>
+                              </div>
+                            );
+                          } catch {
+                            return (
+                              <div className="space-y-1">
+                                <div className="font-semibold text-gray-800 mb-1">
+                                  GET
+                                </div>
+                                <div className="break-all">{preflightUrl || '(no URL parsed)'}</div>
+                              </div>
+                            );
+                          }
+                        })()}
+                      </ScrollArea>
+                    </div>
+
+                    {/* Scopes hierarchy */}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {/* Base scopes from catalog */}
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Base scopes from catalog</h3>
+                        <p className="text-xs text-gray-500">
+                          These scopes come from the catalog returned by <code className="font-mono">/ebay/scopes</code> and
+                          form the base of every seller connection.
+                        </p>
+                        <ScrollArea className="max-h-40 rounded border p-2 bg-slate-50">
+                          <div className="flex flex-wrap gap-1">
+                            {baseScopes.length > 0 ? (
+                              baseScopes.map((s) => (
+                                <span
+                                  key={s}
+                                  className="text-xs px-2 py-0.5 rounded border bg-white break-all"
+                                >
+                                  {s}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-gray-500">No base scopes available.</span>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </div>
+
+                      {/* Additional scopes input */}
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Additional scopes (optional)</h3>
+                        <p className="text-xs text-gray-500">
+                          Paste extra scopes here (space-separated). We’ll merge them with the base catalog
+                          scopes before redirecting to eBay.
+                        </p>
+                        <textarea
+                          className="w-full border rounded p-2 font-mono text-xs max-h-24"
+                          rows={3}
+                          placeholder="https://api.ebay.com/oauth/api_scope/some.new.scope https://..."
+                          value={extraScopesInput}
+                          onChange={(e)=> setExtraScopesInput(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Final scope set preview */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-sm font-semibold">Final scope set to be requested</h3>
+                        <span className="text-xs text-gray-600">
+                          Final scope set: <span className="font-semibold">{finalScopesPreview.length}</span>{' '}
+                          scopes will be requested.
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        This is the exact union of the base catalog scopes and any additional scopes you
+                        entered above, after removing scopes that eBay will not grant without special approval.
+                        It is what will be sent when you proceed to eBay.
+                      </p>
+                      {forbiddenInPreview.length > 0 && (
+                        <p className="text-xs text-amber-700">
+                          The following scopes are present in the catalog but will <span className="font-semibold">not</span>{' '}
+                          be requested automatically: {forbiddenInPreview.join(', ')}.
+                        </p>
+                      )}
+                      <ScrollArea className="max-h-40 rounded border p-2 bg-slate-100">
+                        <div className="flex flex-wrap gap-1">
+                          {finalScopesPreview.length > 0 ? (
+                            finalScopesPreview.map((s) => (
+                              <span
+                                key={s}
+                                className="text-xs px-2 py-0.5 rounded border bg-white break-all"
+                              >
+                                {s}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-gray-500">No scopes would be requested.</span>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </div>
+
+                  {/* Sticky footer */}
+                  <DialogFooter className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t pt-3">
+                    <div className="text-xs text-gray-500 sm:mr-4">
+                      We’ll open eBay with the final scope set shown above. You can review or copy the
+                      request details before proceeding.
+                    </div>
+                    <div className="flex gap-2 justify-end w-full sm:w-auto">
+                      <Button
+                        variant="outline"
+                        onClick={()=> { setPreflightOpen(false); setLoading(false); setPreflightSubmitting(false); }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={preflightSubmitting}
+                        onClick={async ()=> {
+                          try {
+                            setPreflightSubmitting(true);
+                            const redirectUri = `${window.location.origin}/ebay/callback`;
+                            const union = Array.from(new Set(baseScopes));
+                            const { data } = await api.post(
+                              `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+                              { scopes: union },
+                            );
+                            setPreflightOpen(false);
+                            window.location.assign(data.authorization_url);
+                          } catch (e) {
+                            setLoading(false);
+                            setPreflightSubmitting(false);
+                          }
+                        }}
+                      >
+                        Request all my scopes
+                      </Button>
+                      <Button
+                        disabled={preflightSubmitting}
+                        onClick={async ()=> {
+                          try {
+                            setPreflightSubmitting(true);
+                            const redirectUri = `${window.location.origin}/ebay/callback`;
+                            const union = finalScopesPreview;
+                            const { data } = await api.post(
+                              `/ebay/auth/start?redirect_uri=${encodeURIComponent(redirectUri)}&environment=${environment}`,
+                              { scopes: union },
+                            );
+                            setPreflightOpen(false);
+                            window.location.assign(data.authorization_url);
+                          } catch (e) {
+                            setLoading(false);
+                            setPreflightSubmitting(false);
+                          }
+                        }}
+                      >
+                        {preflightSubmitting ? 'Redirecting…' : 'Proceed to eBay'}
+                      </Button>
+                    </div>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
               <Card>
-                <CardHeader>
+                  <CardHeader>
                   <CardTitle>Connection Terminal</CardTitle>
                   <CardDescription>
                     Real-time history of connect requests and responses. Data is stored in the database for diagnostics.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {connectLogError && (
-                    <Alert variant="destructive" className="mb-3">
-                      <AlertDescription>{connectLogError}</AlertDescription>
-                    </Alert>
-                  )}
+                  <div className="flex items-center justify-between mb-2">
+                    {connectLogError ? (
+                      <Alert variant="destructive" className="mr-3">
+                        <AlertDescription>{connectLogError}</AlertDescription>
+                      </Alert>
+                    ) : (
+                      <div className="text-sm text-gray-600" />
+                    )}
+                    <div className="flex items-center gap-2">
+                        <Input
+                          placeholder="Search logs"
+                          value={connectSearch}
+                          onChange={(e) => setConnectSearch(e.target.value)}
+                          className="h-8 w-40 text-xs bg-gray-800 text-gray-100 border-gray-700 mr-2"
+                        />
+                        <Button size="sm" variant="outline" onClick={() => exportConnectLogs('json')}>Save JSON</Button>
+                      <Button size="sm" variant="outline" onClick={() => exportConnectLogs('ndjson')}>Save NDJSON</Button>
+                      <Button size="sm" variant="outline" onClick={() => exportConnectLogs('txt')}>Save TXT</Button>
+                      <Button size="sm" variant="outline" onClick={() => setConnWrap(w => !w)}>{connWrap ? 'Disable wrap' : 'Wrap lines'}</Button>
+                    </div>
+                  </div>
                   {connectLogLoading && (
                     <div className="flex items-center text-sm text-gray-600 mb-2">
                       <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading connection logs...
                     </div>
                   )}
-                  <ScrollArea className="h-80 rounded border bg-gray-900 p-4 text-xs font-mono">
+                  <div className="min-h-[60vh] max-h-[80vh] rounded border bg-gray-950 p-4 text-sm font-mono overflow-auto">
                     {connectLogs.length === 0 ? (
                       <div className="text-gray-400">
                         No connection events yet. Click "Connect to eBay" to generate logs.
                       </div>
                     ) : (
-                      connectLogs.map((log) => (
-                        <div key={log.id} className="border-b border-gray-800 pb-4 mb-4 last:border-0 last:pb-0 last:mb-0">
+                      connectLogs
+                        .filter((log) => {
+                          if (!connectSearch.trim()) return true;
+                          const q = connectSearch.toLowerCase();
+                          try {
+                            return JSON.stringify(log).toLowerCase().includes(q);
+                          } catch {
+                            return false;
+                          }
+                        })
+                        .map((log) => (
+                        <div key={log.id} className="border-b border-gray-800 pb-4 mb-4 last:border-0 last:pb-0 last:mb-0 text-white">
                           <div className="flex flex-wrap items-center justify-between text-gray-400">
                             <span>[{new Date(log.created_at).toLocaleString()}]</span>
                             <span>{log.environment === 'sandbox' ? '🧪 Sandbox' : '🚀 Production'} • {log.action}</span>
@@ -540,18 +1026,14 @@ export const EbayConnectionPage: React.FC = () => {
                           {log.request && (
                             <div className="mt-2">
                               <div className="text-green-400 font-semibold">→ REQUEST</div>
-                              <div className="text-green-200 mt-1">
-                                {log.request.method} {log.request.url}
-                              </div>
+                              <pre className={`mt-1 text-green-200 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} overflow-x-auto`}>
+                                {`${log.request.method || ''} ${log.request.url || ''}`}
+                              </pre>
                               {log.request.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100">
-                                  {JSON.stringify(log.request.headers, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{JSON.stringify(log.request.headers, null, 2)}</pre>
                               )}
                               {log.request.body && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100">
-                                  {JSON.stringify(log.request.body, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-green-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{typeof log.request.body === 'string' ? log.request.body : JSON.stringify(log.request.body, null, 2)}</pre>
                               )}
                             </div>
                           )}
@@ -561,14 +1043,10 @@ export const EbayConnectionPage: React.FC = () => {
                                 ← RESPONSE {log.response.status ?? ''}
                               </div>
                               {log.response.headers && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-blue-100">
-                                  {JSON.stringify(log.response.headers, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-32 text-blue-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{JSON.stringify(log.response.headers, null, 2)}</pre>
                               )}
                               {typeof log.response.body !== 'undefined' && (
-                                <pre className="mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-48 text-blue-100">
-                                  {JSON.stringify(log.response.body, null, 2)}
-                                </pre>
+                                <pre className={`mt-1 bg-gray-800 rounded p-2 text-xs overflow-auto max-h-48 text-blue-100 ${connWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}>{typeof log.response.body === 'string' ? log.response.body : JSON.stringify(log.response.body, null, 2)}</pre>
                               )}
                             </div>
                           )}
@@ -578,11 +1056,177 @@ export const EbayConnectionPage: React.FC = () => {
                         </div>
                       ))
                     )}
-                  </ScrollArea>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
 
+            {/* eBay Accounts tab */}
+            <TabsContent value="accounts" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-xl">eBay Accounts</CardTitle>
+                  <CardDescription className="text-sm text-gray-600">
+                    All eBay accounts for this organization, with token status and health.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {accountsLoading && (
+                    <div className="text-sm text-gray-600">Loading accounts...</div>
+                  )}
+                  {accountsError && (
+                    <Alert variant="destructive" className="mb-2">
+                      <AlertDescription>{accountsError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {!accountsLoading && !accountsError && accounts.length === 0 && (
+                    <div className="text-sm text-gray-600">No eBay accounts found. Connect to eBay to create an account.</div>
+                  )}
+                  {accounts.length > 0 && (
+                    <div className="space-y-3">
+                      {accounts.map((acc) => (
+                        <button
+                          key={acc.id}
+                          type="button"
+                          onClick={() => openAccountDetail(acc)}
+                          className="w-full text-left border rounded p-3 bg-gray-50 flex flex-col gap-2 text-sm hover:bg-white hover:border-blue-300 transition cursor-pointer"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-gray-900">
+                                  {acc.house_name || acc.username || acc.id}
+                                </span>
+                                <span className={`inline-flex h-2 w-2 rounded-full ${getAccountStatusDot(acc.status)}`} />
+                                <span className="text-xs uppercase tracking-wide text-gray-500">
+                                  {acc.status}
+                                </span>
+                              </div>
+                              <div className="text-xs text-gray-600">
+                                eBay: {acc.username || '—'} ({acc.ebay_user_id})
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                Connected at: {new Date(acc.connected_at).toLocaleString()}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-1 text-xs text-gray-600">
+                              {typeof acc.expires_in_seconds === 'number' && (
+                                <div>TTL: {acc.expires_in_seconds}s</div>
+                              )}
+                              {acc.token?.expires_at && (
+                                <div>Expires: {new Date(acc.token.expires_at).toLocaleString()}</div>
+                              )}
+                              {acc.last_health_check && (
+                                <div>Last health: {new Date(acc.last_health_check).toLocaleString()}</div>
+                              )}
+                              {acc.token?.refresh_error && (
+                                <div className="text-red-500">Last error: {acc.token.refresh_error}</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-xs text-blue-600 flex items-center gap-1">
+                            <span>View token details &amp; scopes</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Account detail modal */}
+              <Dialog open={accountDetailOpen} onOpenChange={(open) => {
+                setAccountDetailOpen(open);
+                if (!open) {
+                  setSelectedAccount(null);
+                  setAccountScopes([]);
+                  setAccountTokenInfo(null);
+                  setAccountDetailError('');
+                }
+              }}>
+                <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {selectedAccount ? (selectedAccount.house_name || selectedAccount.username || selectedAccount.id) : 'eBay Account'}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 text-sm">
+                    {selectedAccount && (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex h-2 w-2 rounded-full ${getAccountStatusDot(selectedAccount.status)}`} />
+                            <span className="text-xs uppercase tracking-wide text-gray-600">{selectedAccount.status}</span>
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            eBay: {selectedAccount.username || '—'} ({selectedAccount.ebay_user_id})
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Connected at: {new Date(selectedAccount.connected_at).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-600 space-y-1 text-right">
+                          {selectedAccount.token?.expires_at && (
+                            <div>Access expires: {new Date(selectedAccount.token.expires_at).toLocaleString()}</div>
+                          )}
+                          {selectedAccount.token?.last_refreshed_at && (
+                            <div>Last refresh: {new Date(selectedAccount.token.last_refreshed_at).toLocaleString()}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {accountDetailLoading && (
+                      <div className="flex items-center gap-2 text-xs text-gray-600">
+                        <Loader2 className="h-4 w-4 animate-spin" /> Loading token details...
+                      </div>
+                    )}
+
+                    {accountDetailError && (
+                      <Alert variant="destructive">
+                        <AlertDescription className="text-xs">{accountDetailError}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {accountTokenInfo && (
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Token</h3>
+                        <div className="bg-gray-50 border rounded p-2 text-xs font-mono space-y-1">
+                          <div>Access token: {maskToken(accountTokenInfo.token_full)}</div>
+                          <div>Expires at: {accountTokenInfo.token_expires_at || 'unknown'}</div>
+                          <div>Scopes count: {accountTokenInfo.scopes_count}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {accountScopes.length > 0 && (
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Scopes</h3>
+                        <div className="flex flex-wrap gap-1 max-h-48 overflow-y-auto">
+                          {accountScopes.map((s) => (
+                            <span key={s} className="text-[11px] px-2 py-0.5 border rounded bg-gray-50 break-all">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {accountScopes.length === 0 && !accountDetailLoading && !accountDetailError && (
+                      <div className="text-xs text-gray-500">No scopes recorded yet for this account.</div>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" size="sm" onClick={() => setAccountDetailOpen(false)}>
+                      Close
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+            </TabsContent>
+
+            {/* Sync Data tab */}
             <TabsContent value="sync" className="space-y-4">
               {error && (
                 <Alert variant="destructive">
@@ -769,10 +1413,12 @@ export const EbayConnectionPage: React.FC = () => {
               )}
             </TabsContent>
 
+            {/* API Debugger tab */}
             <TabsContent value="debugger" className="space-y-4">
               <EbayDebugger />
             </TabsContent>
 
+            {/* Connection Terminal tab (legacy logs) */}
             <TabsContent value="terminal" className="space-y-4">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
@@ -782,17 +1428,35 @@ export const EbayConnectionPage: React.FC = () => {
                       Real-time log of all eBay API credential exchanges and requests
                     </CardDescription>
                   </div>
-                  <Button variant="outline" size="sm" onClick={handleClearLogs}>
-                    Clear Logs
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder="Search logs"
+                      value={terminalSearch}
+                      onChange={(e) => setTerminalSearch(e.target.value)}
+                      className="h-8 w-40 text-xs bg-gray-800 text-gray-100 border-gray-700"
+                    />
+                    <Button variant="outline" size="sm" onClick={handleClearLogs}>
+                      Clear Logs
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="h-96 w-full rounded-md border bg-black text-white p-4 font-mono text-sm">
+                  <ScrollArea className="min-h-[60vh] max-h-[80vh] w-full rounded-md border bg-black text-white p-4 font-mono text-sm overflow-x-auto">
                     {logs.length === 0 ? (
                       <div className="text-gray-400">No logs yet. Connect to eBay to see credential exchanges.</div>
                     ) : (
                       <div className="space-y-2">
-                        {logs.map((log, index) => (
+                        {logs
+                          .filter((log) => {
+                            if (!terminalSearch.trim()) return true;
+                            const q = terminalSearch.toLowerCase();
+                            try {
+                              return JSON.stringify(log).toLowerCase().includes(q);
+                            } catch {
+                              return false;
+                            }
+                          })
+                          .map((log, index) => (
                           <div key={index} className="pb-2 border-b border-gray-800">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="text-gray-500">

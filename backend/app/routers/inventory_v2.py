@@ -8,7 +8,15 @@ import csv
 import io
 
 from ..models_sqlalchemy import get_db
-from ..models_sqlalchemy.models import Inventory, InventoryStatus, EbayStatus, ConditionType, Warehouse
+from ..models_sqlalchemy.models import (
+    Inventory,
+    InventoryStatus,
+    EbayStatus,
+    ConditionType,
+    Warehouse,
+    PartsDetail,
+    PartsDetailStatus,
+)
 from ..services.auth import get_current_user, admin_required
 from ..models.user import User
 from ..utils.logger import logger
@@ -168,7 +176,8 @@ async def search_inventory(
                 "author": r.author,
                 "buyer_info": r.buyer_info,
                 "tracking_number": r.tracking_number,
-                "notes": r.notes
+                "notes": r.notes,
+                "parts_detail_id": r.parts_detail_id,
             }
             for r in rows
         ],
@@ -239,7 +248,8 @@ async def get_inventory_item(
         "buyer_info": item.buyer_info,
         "tracking_number": item.tracking_number,
         "notes": item.notes,
-        "raw_payload": item.raw_payload
+        "raw_payload": item.raw_payload,
+        "parts_detail_id": item.parts_detail_id,
     }
 
 
@@ -254,11 +264,18 @@ async def update_inventory_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(admin_required)
 ):
-    """Partial update for inline edits (admin only)"""
+    """Partial update for inline edits (admin only).
+
+    When a row is linked to parts_detail via parts_detail_id, status changes
+    are mirrored to PartsDetail.status_sku so that the eBay listing worker
+    sees consistent lifecycle states.
+    """
     item = db.query(Inventory).filter(Inventory.id == id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-    
+
+    old_status = item.status
+
     if status:
         try:
             item.status = InventoryStatus[status.upper()]
@@ -280,6 +297,22 @@ async def update_inventory_item(
     
     if notes is not None:
         item.notes = notes
+
+    # Keep PartsDetail.status_sku in sync when an Inventory row is linked and
+    # its high-level status changes. We intentionally only handle the core
+    # states used by the listing worker.
+    if item.parts_detail_id is not None and old_status != item.status:
+        pd = db.query(PartsDetail).filter(PartsDetail.id == item.parts_detail_id).one_or_none()
+        if pd is not None:
+            if item.status == InventoryStatus.PENDING_LISTING:
+                pd.status_sku = PartsDetailStatus.AWAITING_MODERATION.value
+            elif item.status == InventoryStatus.AVAILABLE:
+                pd.status_sku = PartsDetailStatus.CHECKED.value
+            elif item.status == InventoryStatus.LISTED:
+                pd.status_sku = PartsDetailStatus.LISTED_ACTIVE.value
+
+            pd.status_updated_at = datetime.utcnow()
+            pd.status_updated_by = current_user.username
     
     item.rec_updated = datetime.utcnow()
     db.commit()

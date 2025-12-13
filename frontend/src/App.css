@@ -6,6 +6,29 @@
   text-align: left;
 }
 
+/* Shared app-wide grid theme applied via the .app-grid wrapper */
+.app-grid table {
+  font-size: 13px;
+}
+
+.app-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-grid tbody tr:nth-child(even) {
+  background-color: #f9fafb; /* light zebra striping */
+}
+
+.app-grid tbody tr:hover {
+  background-color: #eef2ff; /* subtle indigo hover */
+}
+
+.app-grid tbody td {
+  line-height: 1.25rem; /* comfortable row height */
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;
